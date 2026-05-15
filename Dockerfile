@@ -16,7 +16,11 @@ COPY navo.cocoon C:\src\navo.cocoon
 COPY global_output C:\src\global_output
 
 RUN C:\src\navo.cocoon\nuget.package\NuGet.exe restore C:\src\navo.cocoon\navo.cocoon.webapi\packages.config -PackagesDirectory C:\src\navo.cocoon\packages ; `
-    C:\src\navo.cocoon\nuget.package\NuGet.exe restore C:\src\navo.cocoon\navo.cocoon.webhost\packages.config -PackagesDirectory C:\src\navo.cocoon\packages
+    C:\src\navo.cocoon\nuget.package\NuGet.exe restore C:\src\navo.cocoon\navo.cocoon.webhost\packages.config -PackagesDirectory C:\src\navo.cocoon\packages ; `
+    dotnet restore C:\src\navo.cocoon\navo.cocoon.data\navo.cocoon.data.csproj -p:TargetFramework=net48 ; `
+    dotnet restore C:\src\navo.cocoon\navo.cocoon.ebwrap\navo.cocoon.ebwrap.vbproj -p:TargetFramework=net48 ; `
+    dotnet restore C:\src\navo.cocoon\navo.cocoon\navo.cocoon.csproj -p:TargetFramework=net48 ; `
+    dotnet restore C:\src\navo.cocoon\navo.cocoon.features\navo.cocoon.features.csproj -p:TargetFramework=net48
 
 RUN msbuild C:\src\navo.cocoon\navo.cocoon.webhost\navo.cocoon.webhost.csproj `
     /m `
@@ -47,4 +51,3 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 `
     "try { $r = Invoke-WebRequest -UseBasicParsing http://localhost:7901/api/v4/health/ws; if ($r.StatusCode -eq 200) { exit 0 } } catch { }; exit 1"
 
 ENTRYPOINT ["C:\\app\\navo.cocoon.webhost.exe"]
-

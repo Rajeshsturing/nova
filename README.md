@@ -12,12 +12,9 @@ It cannot run as a Linux container.
 A fresh clone still needs the private NAVO/EuroBusiness runtime files:
 
 - `docker/eb-runtime`: installer/registration files for `navo2002.client`.
-- `global_output/navo2012.net.proxy.interop.dll`: interop DLL referenced by
-  `navo.cocoon.data`.
-- The `nxm.system.core` project referenced by `navo.cocoon.ebwrap`.
 
 Those files are proprietary and are not included here. Without them the image
-cannot fully build/run.
+can build, but the service cannot connect to EuroBusiness at runtime.
 
 ## Run On Windows
 
@@ -34,4 +31,3 @@ Invoke-WebRequest http://localhost:7901/api/v4/health/ws
 ```
 
 See [docker/README.md](docker/README.md) for more details.
-

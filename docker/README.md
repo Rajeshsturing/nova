@@ -8,8 +8,7 @@ NAVO Cocoon is a Windows-only container workload because the WebHost targets
 - Windows host with Docker configured for Windows containers.
 - A build machine with Visual Studio/MSBuild and .NET Framework 4.8 targeting pack.
 - The NAVO/EuroBusiness runtime files needed to register `navo2002.client`.
-- Any private dependencies referenced by the solution, for example
-  `nxm.system.core` and `navo2012.net.proxy.interop.dll`.
+- The NAVO/EuroBusiness runtime files needed to register `navo2002.client`.
 
 ## Build The App Payload
 
