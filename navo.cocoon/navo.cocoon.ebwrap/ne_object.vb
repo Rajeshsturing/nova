@@ -79,7 +79,7 @@ Public Class ne_object
         m_oObject.field(strFieldName) = If(value_, "")
     End Sub
     Public Sub set_cy_field(strFieldName As String, value_ As Decimal)
-        m_oObject.field(strFieldName) = New CurrencyWrapper(value_)
+        m_oObject.field(strFieldName) = New Global.nxm.system.interop.CurrencyWrapper(value_)
     End Sub
     Public Sub set_int_field(strFieldName As String, value_ As Integer)
         m_oObject.field(strFieldName) = value_

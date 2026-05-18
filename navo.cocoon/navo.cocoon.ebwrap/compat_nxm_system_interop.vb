@@ -31,7 +31,7 @@ Namespace Global.nxm.system.interop
 
         Public Overrides ReadOnly Property Length As Long
             Get
-                Dim stat As STATSTG
+                Dim stat As System.Runtime.InteropServices.ComTypes.STATSTG
                 m_stream.Stat(stat, 1)
                 Return stat.cbSize
             End Get
@@ -61,9 +61,9 @@ Namespace Global.nxm.system.interop
             Dim ptr = Marshal.AllocHGlobal(4)
             Try
                 m_stream.Read(temp, count, ptr)
-                Dim read = Marshal.ReadInt32(ptr)
-                Array.Copy(temp, 0, buffer, offset, read)
-                Return read
+                Dim bytesRead = Marshal.ReadInt32(ptr)
+                Array.Copy(temp, 0, buffer, offset, bytesRead)
+                Return bytesRead
             Finally
                 Marshal.FreeHGlobal(ptr)
             End Try
