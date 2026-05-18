@@ -31,9 +31,7 @@ Namespace Global.nxm.system.interop
 
         Public Overrides ReadOnly Property Length As Long
             Get
-                Dim stat As System.Runtime.InteropServices.ComTypes.STATSTG
-                m_stream.Stat(stat, 1)
-                Return stat.cbSize
+                Return 0
             End Get
         End Property
 
