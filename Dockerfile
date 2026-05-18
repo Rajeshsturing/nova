@@ -17,6 +17,7 @@ COPY global_output C:\src\global_output
 
 RUN msbuild C:\src\navo.cocoon\navo.cocoon.webapi\navo.cocoon.webapi.csproj `
     /t:Restore `
+    /p:SolutionDir=C:\src\navo.cocoon\ `
     /p:RestorePackagesConfig=true `
     /p:RestorePackagesPath=C:\src\navo.cocoon\packages `
     /p:RestoreSources=https://api.nuget.org/v3/index.json `
@@ -24,6 +25,7 @@ RUN msbuild C:\src\navo.cocoon\navo.cocoon.webapi\navo.cocoon.webapi.csproj `
 
 RUN msbuild C:\src\navo.cocoon\navo.cocoon.webhost\navo.cocoon.webhost.csproj `
     /t:Restore `
+    /p:SolutionDir=C:\src\navo.cocoon\ `
     /p:RestorePackagesConfig=true `
     /p:RestorePackagesPath=C:\src\navo.cocoon\packages `
     /p:RestoreSources=https://api.nuget.org/v3/index.json `
