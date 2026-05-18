@@ -15,13 +15,24 @@ WORKDIR C:\src
 COPY navo.cocoon C:\src\navo.cocoon
 COPY global_output C:\src\global_output
 
-RUN C:\src\navo.cocoon\nuget.package\NuGet.exe install C:\src\navo.cocoon\navo.cocoon.webapi\packages.config -OutputDirectory C:\src\navo.cocoon\packages -NonInteractive ; `
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } ; `
-    C:\src\navo.cocoon\nuget.package\NuGet.exe install C:\src\navo.cocoon\navo.cocoon.webhost\packages.config -OutputDirectory C:\src\navo.cocoon\packages -NonInteractive ; `
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } ; `
-    if (!(Test-Path C:\src\navo.cocoon\packages\Microsoft.AspNet.WebApi.Core.5.2.9\lib\net45\System.Web.Http.dll)) { throw 'Missing restored System.Web.Http.dll' } ; `
-    if (!(Test-Path C:\src\navo.cocoon\packages\Microsoft.AspNet.WebApi.Client.5.2.9\lib\net45\System.Net.Http.Formatting.dll)) { throw 'Missing restored System.Net.Http.Formatting.dll' } ; `
-    dotnet restore C:\src\navo.cocoon\navo.cocoon.data\navo.cocoon.data.csproj -p:TargetFramework=net48 ; `
+RUN msbuild C:\src\navo.cocoon\navo.cocoon.webapi\navo.cocoon.webapi.csproj `
+    /t:Restore `
+    /p:RestorePackagesConfig=true `
+    /p:RestorePackagesPath=C:\src\navo.cocoon\packages `
+    /p:RestoreSources=https://api.nuget.org/v3/index.json `
+    /v:minimal
+
+RUN msbuild C:\src\navo.cocoon\navo.cocoon.webhost\navo.cocoon.webhost.csproj `
+    /t:Restore `
+    /p:RestorePackagesConfig=true `
+    /p:RestorePackagesPath=C:\src\navo.cocoon\packages `
+    /p:RestoreSources=https://api.nuget.org/v3/index.json `
+    /v:minimal
+
+RUN if (!(Test-Path C:\src\navo.cocoon\packages\Microsoft.AspNet.WebApi.Core.5.2.9\lib\net45\System.Web.Http.dll)) { throw 'Missing restored System.Web.Http.dll' } ; `
+    if (!(Test-Path C:\src\navo.cocoon\packages\Microsoft.AspNet.WebApi.Client.5.2.9\lib\net45\System.Net.Http.Formatting.dll)) { throw 'Missing restored System.Net.Http.Formatting.dll' }
+
+RUN dotnet restore C:\src\navo.cocoon\navo.cocoon.data\navo.cocoon.data.csproj -p:TargetFramework=net48 ; `
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } ; `
     dotnet restore C:\src\navo.cocoon\navo.cocoon.ebwrap\navo.cocoon.ebwrap.vbproj -p:TargetFramework=net48 ; `
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } ; `
