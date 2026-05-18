@@ -15,9 +15,9 @@ WORKDIR C:\src
 COPY navo.cocoon C:\src\navo.cocoon
 COPY global_output C:\src\global_output
 
-RUN C:\src\navo.cocoon\nuget.package\NuGet.exe restore C:\src\navo.cocoon\navo.cocoon.webapi\packages.config -PackagesDirectory C:\src\navo.cocoon\packages -NonInteractive ; `
+RUN C:\src\navo.cocoon\nuget.package\NuGet.exe install C:\src\navo.cocoon\navo.cocoon.webapi\packages.config -OutputDirectory C:\src\navo.cocoon\packages -NonInteractive ; `
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } ; `
-    C:\src\navo.cocoon\nuget.package\NuGet.exe restore C:\src\navo.cocoon\navo.cocoon.webhost\packages.config -PackagesDirectory C:\src\navo.cocoon\packages -NonInteractive ; `
+    C:\src\navo.cocoon\nuget.package\NuGet.exe install C:\src\navo.cocoon\navo.cocoon.webhost\packages.config -OutputDirectory C:\src\navo.cocoon\packages -NonInteractive ; `
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } ; `
     if (!(Test-Path C:\src\navo.cocoon\packages\Microsoft.AspNet.WebApi.Core.5.2.9\lib\net45\System.Web.Http.dll)) { throw 'Missing restored System.Web.Http.dll' } ; `
     if (!(Test-Path C:\src\navo.cocoon\packages\Microsoft.AspNet.WebApi.Client.5.2.9\lib\net45\System.Net.Http.Formatting.dll)) { throw 'Missing restored System.Net.Http.Formatting.dll' } ; `
