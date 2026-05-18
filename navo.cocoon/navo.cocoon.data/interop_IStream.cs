@@ -79,9 +79,9 @@ namespace navo.cocoon.data.utils
             m_oStream.SetLength(libNewSize);
         }
 
-        public void Stat(out STATSTG pstatstg, int grfStatFlag)
+        public void Stat(out System.Runtime.InteropServices.ComTypes.STATSTG pstatstg, int grfStatFlag)
         {
-            pstatstg = new STATSTG();
+            pstatstg = new System.Runtime.InteropServices.ComTypes.STATSTG();
         }
 
         public void UnlockRegion(long libOffset, long cb, int dwLockType)
