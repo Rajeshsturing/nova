@@ -1,0 +1,241 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+
+<!--
+#include "h1000.h"
+#include "h1200.h"
+#include "h1231.h"
+#include "h1203.h"
+-->
+<page>
+<config>
+<script>
+<!--
+	Wsparcie dla wyliczeń rentowności
+-->
+<![CDATA[
+
+#comment '------------------------------------------------------------------------------------
+
+#define TMP_RENTSP_TABLE_NAME #tmp_rentowsp
+
+class CRentSPHelper
+    private bDisposed
+
+	private sub class_initialize()
+    bDisposed = false
+    
+		dim strSQL
+		strSQL = "create table TMP_RENTSP_TABLE_NAME " + vbCrLf +_
+		"(" + vbCrLf +_
+		"trs_pProdukt integer not null," + vbCrLf +_
+		"trs_pOpak integer not null," + vbCrLf +_
+		"trs_pSprz integer not null," + vbCrLf +_
+		"trs_curIloscOpakSP		decimal(14,4) not null," + vbCrLf +_
+		"trs_curIloscOpakMag	decimal(14,4) not null," + vbCrLf +_
+		"trs_curWartSP			decimal(12,2) not null," + vbCrLf +_
+		"trs_curWartMag			decimal(12,2) not null," + vbCrLf +_
+		"trs_curWartTMP			decimal(12,2) not null," + vbCrLf +_
+		"trs_curCenaSP			decimal(12,2) not null," + vbCrLf +_
+		")" + vbCrLf
+		trans_.execsql strSQL
+		trans_.execsql "create index TMP_RENTSP_TABLE_NAME##1 on TMP_RENTSP_TABLE_NAME## (trs_pSprz)"
+	end sub
+
+public sub manual_done()
+  if not bDisposed then
+    bDisposed = true
+    
+    dim strSQL
+		strSQL =  "drop table TMP_RENTSP_TABLE_NAME" + vbCrLf
+		trans_.execsql strSQL
+
+  end if
+end sub
+
+private sub class_terminate() 'OK
+	  manual_done()
+end sub
+
+	public function get_okres_param()
+		dim pOkresParam : set pOkresParam = doc_.afc.rap.param.new_date_range("Analizowany okres").bindexpr("psp.p_ddatawyst")
+		set get_okres_param = pOkresParam
+	end function
+
+
+	public function get_okres_param_custom_binding(byval field)
+		dim pOkresParam : set pOkresParam = doc_.afc.rap.param.new_date_range("Analizowany okres").bindexpr(field)
+		set get_okres_param_custom_binding = pOkresParam
+	end function
+  
+	public sub fill_dok_handl(byref pOkresParam)
+		fill_dok_handl_ex pOkresParam.get_where_part(trans_),""
+	end sub  
+	
+	public sub fill_dok_handl_ex(strOkresParamWhere, strRejestrIDs)
+		fill_dok_handl_ex_uslugi strOkresParamWhere, strRejestrIDs, ""
+	end sub
+  
+	public sub fill_dok_handl_ex_uslugi(strOkresParamWhere, strRejestrIDs, strUslugi)
+		dim strTylkoTowar: strTylkoTowar = "and n5produkt.eRodzaj=N5PRODUKT_TOWAR"
+		if strUslugi <> "" then
+			strTylkoTowar = ""
+		end if
+		dim strSQL
+		strSQL = "insert into TMP_RENTSP_TABLE_NAME " + vbCrLf +_
+		"select psp.c_pprodukt,psp.c_popak,psp.p_idobj,sum(psp.c_curIloscopak - isnull(orgpsp.c_curIloscopak,0)),0.0," + vbCrLf +_
+		"sum(psp.c_curwartnetto - isnull(orgpsp.c_curwartnetto,0)),0.0,0.0,sum(psp.c_curcenanetto - isnull(orgpsp.c_curcenanetto,0))" + vbCrLf +_
+		" from vlist_n5sprzedaz_listPozycje as psp " + vbCrLf +_
+		" join n5produkt on psp.c_pprodukt = n5produkt.idobj " + vbCrLf +_
+		" left outer join vlist_n5sprzedaz_listPozycje orgpsp on psp.p_ppopsprzed = orgpsp.p_idobj and psp.coll_lp = orgpsp.coll_lp " + vbCrLf +_		
+		"where psp.p_pRozlVAT <> 0 " + strTylkoTowar + " and " + strOkresParamWhere + vbCrLf
+		if strRejestrIDs <> ""  then
+			strSQL = strSQL + " and psp.p_pRejestrDok in (" + strRejestrIDs + ")"
+		end if
+		strSQL = strSQL + " group by psp.c_pprodukt,psp.c_popak,psp.p_idobj" + vbCrLf
+		trans_.execsql strSQL  
+	end sub
+
+
+	public sub fill_dok_handl_ALL(byref pOkresParam)
+		dim strSQL
+		strSQL = "insert into TMP_RENTSP_TABLE_NAME " + vbCrLf +_
+		"select psp.c_pprodukt,psp.c_popak,psp.p_idobj,sum(psp.c_curIloscopak - isnull(orgpsp.c_curIloscopak,0)),0.0," + vbCrLf +_
+		"sum(psp.c_curwartnetto - isnull(orgpsp.c_curwartnetto,0)),0.0,0.0,sum(psp.c_curcenanetto - isnull(orgpsp.c_curcenanetto,0))" + vbCrLf +_
+		" from vlist_n5sprzedaz_listPozycje as psp " + vbCrLf +_
+		" join n5produkt on psp.c_pprodukt = n5produkt.idobj " + vbCrLf +_
+		" left outer join vlist_n5sprzedaz_listPozycje orgpsp on psp.p_ppopsprzed = orgpsp.p_idobj and psp.coll_lp = orgpsp.coll_lp " + vbCrLf +_
+		"where psp.p_pRozlVAT <> 0 and " + pOkresParam.get_where_part(trans_) + vbCrLf +_
+		"group by psp.c_pprodukt,psp.c_popak,psp.p_idobj" + vbCrLf
+		trans_.execsql strSQL
+	end sub
+
+#ifdef _RAND
+	public sub fill_dok_mag_related()
+		dim strSQL
+		strSQL = "insert into TMP_RENTSP_TABLE_NAME " + vbCrLf +_
+		"select pdm.c_pprodukt,pdm.c_popak,pdm.p_wrefdokhandl,0.0,-sum(n5gmop.gmo_curIlosc)," + vbCrLf +_
+		"0.0,sum(n5gmop.gmo_curIlosc * vlp.c_curcenanetto5),0.0,0.0" + vbCrLf +_
+		" from n5gmop join vlist_n5dokmag_listpozycje as pdm" + vbCrLf +_
+		" on pdm.c_pprodukt = n5gmop.gmo_pprod and pdm.c_popak=n5gmop.gmo_popak " +_
+		" and pdm.p_nnumoper = n5gmop.gmo_nnumop and pdm.coll_lp = n5gmop.gmo_nlp" +_
+		" join vlist_n5produkt_listopakowania vlp on n5gmop.gmo_pprod=vlp.p_idobj and n5gmop.gmo_popak=vlp.c_idobj"+_
+		" where pdm.p_wrefdokhandl_wrt=TYPEID_N5SPRZEDAZ and pdm.p_ntypdok in(N5REJESTRDOK__WZ,N5REJESTRDOK__ZZ) and pdm.p_wrefdokhandl in (select trs_pSprz from TMP_RENTSP_TABLE_NAME)" + vbCrLf +_
+		" and n5gmop.gmo_pMag  in (select idobj from n5magazyn where eTyp <> N5TYPMAG_ZWROTY)" + vbCrLf +_
+		" group by pdm.c_pprodukt,pdm.c_popak,pdm.p_wrefdokhandl" + vbCrLf
+		trans_.execsql strSQL
+	end sub
+#else
+	public sub fill_dok_mag_related()
+		dim strSQL
+		strSQL = "insert into TMP_RENTSP_TABLE_NAME " + vbCrLf +_
+		"select pdm.c_pprodukt,pdm.c_popak,pdm.p_wrefdokhandl,0.0,-sum(n5gmop.gmo_curIlosc)," + vbCrLf +_
+		"0.0,sum(n5gmop.gmo_curWartosc),0.0,0.0" + vbCrLf +_
+		" from n5gmop join vlist_n5dokmag_listpozycje as pdm" + vbCrLf +_
+		" on pdm.c_pprodukt = n5gmop.gmo_pprod and pdm.c_popak=n5gmop.gmo_popak " +_
+		" and pdm.p_nnumoper = n5gmop.gmo_nnumop and pdm.coll_lp = n5gmop.gmo_nlp" +_
+		" where pdm.p_wrefdokhandl_wrt=TYPEID_N5SPRZEDAZ and pdm.p_ntypdok in(N5REJESTRDOK__WZ,N5REJESTRDOK__ZZ) and pdm.p_wrefdokhandl in (select trs_pSprz from TMP_RENTSP_TABLE_NAME)" + vbCrLf +_
+#ifndef _IOW		
+    " and n5gmop.gmo_pMag  in (select idobj from n5magazyn where eTyp <> N5TYPMAG_ZWROTY)" + vbCrLf +_
+#endif
+		" group by pdm.c_pprodukt,pdm.c_popak,pdm.p_wrefdokhandl" + vbCrLf
+		trans_.execsql strSQL
+	end sub
+#endif
+
+  public sub fill_dok_mag_related_wz()
+  	dim strSQL
+		strSQL = "insert into TMP_RENTSP_TABLE_NAME " + vbCrLf +_
+		"select pdm.c_pprodukt,pdm.c_popak,pdm.p_wrefdokhandl,0.0,-sum(n5gmop.gmo_curIlosc)," + vbCrLf +_
+		"0.0,sum(n5gmop.gmo_curWartosc),0.0,0.0" + vbCrLf +_
+		" from n5gmop join vlist_n5dokmag_listpozycje as pdm" + vbCrLf +_
+		" on pdm.c_pprodukt = n5gmop.gmo_pprod and pdm.c_popak=n5gmop.gmo_popak " +_
+		" and pdm.p_nnumoper = n5gmop.gmo_nnumop and pdm.coll_lp = n5gmop.gmo_nlp" +_
+		" where pdm.p_wrefdokhandl_wrt=TYPEID_N5SPRZEDAZ and pdm.p_ntypdok in(N5REJESTRDOK__WZ,N5REJESTRDOK__ZZ) and pdm.p_wrefdokhandl in (select trs_pSprz from TMP_RENTSP_TABLE_NAME)" + vbCrLf +_
+		" and n5gmop.gmo_pMag  in (select idobj from n5magazyn where eTyp <> N5TYPMAG_ZWROTY)" + vbCrLf +_
+		" group by pdm.c_pprodukt,pdm.c_popak,pdm.p_wrefdokhandl" + vbCrLf
+		trans_.execsql strSQL
+  end sub
+	public sub fill_dok_mag_related_qty_only()
+		dim strSQL
+		strSQL = "insert into TMP_RENTSP_TABLE_NAME " + vbCrLf +_
+		"select pdm.c_pprodukt,pdm.c_popak,pdm.p_wrefdokhandl,0.0,sum(pdm.c_curIloscOpak)," + vbCrLf +_
+		"0.0,0.0,0.0,0.0" + vbCrLf +_
+		" from vlist_n5dokmag_listpozycje as pdm" + vbCrLf +_
+		" where pdm.p_wrefdokhandl_wrt=TYPEID_N5SPRZEDAZ and pdm.p_ntypdok in(N5REJESTRDOK__WZ) and pdm.p_wrefdokhandl in (select trs_pSprz from TMP_RENTSP_TABLE_NAME)" + vbCrLf +_
+		" group by pdm.c_pprodukt,pdm.c_popak,pdm.p_wrefdokhandl" + vbCrLf
+		trans_.execsql strSQL
+	end sub
+
+	public sub fill_dok_mag_unrelated(byref pOkresParam)
+		dim strSQL
+		strSQL = "insert into TMP_RENTSP_TABLE_NAME " + vbCrLf +_
+		"select pdm.c_pprodukt,pdm.c_popak,pdm.p_wrefdokhandl,0.0,-sum(n5gmop.gmo_curIlosc)," + vbCrLf +_
+		"0.0,sum(n5gmop.gmo_curWartosc),0.0,0.0" + vbCrLf +_
+		" from n5gmop join vlist_n5dokmag_listpozycje as pdm" + vbCrLf +_
+		" on pdm.c_pprodukt = n5gmop.gmo_pprod and pdm.c_popak=n5gmop.gmo_popak " +_
+		" and pdm.p_nnumoper = n5gmop.gmo_nnumop and pdm.coll_lp = n5gmop.gmo_nlp" +_
+		" where pdm.p_wrefdokhandl_wrt=0 and pdm.p_wrefdokhandl=0 and pdm.p_ntypdok in(N5REJESTRDOK__WZ) and " + pOkresParam.get_where_part(trans_) + vbCrLf +_
+		" group by pdm.c_pprodukt,pdm.c_popak,pdm.p_wrefdokhandl" + vbCrLf
+		trans_.execsql strSQL
+	end sub
+
+	public sub fill_dok_mag_unrelated_qty_only(byref pOkresParam)
+		dim strSQL
+		strSQL = "insert into TMP_RENTSP_TABLE_NAME " + vbCrLf +_
+		"select pdm.c_pprodukt,pdm.c_popak,pdm.p_wrefdokhandl,0.0,sum(pdm.c_curIloscOpak)," + vbCrLf +_
+		"0.0,0.0,0.0,0.0" + vbCrLf +_
+		" from vlist_n5dokmag_listpozycje as pdm" + vbCrLf +_
+		" where pdm.p_wrefdokhandl_wrt=0 and pdm.p_wrefdokhandl=0 and pdm.p_ntypdok in(N5REJESTRDOK__WZ) and " + pOkresParam.get_where_part(trans_) + vbCrLf +_
+		" group by pdm.c_pprodukt,pdm.c_popak,pdm.p_wrefdokhandl" + vbCrLf
+		trans_.execsql strSQL
+	end sub
+
+	public sub fill_cena_ost_zak_related_to_dok_handl()
+		dim strSQL
+		strSQL = "insert into TMP_RENTSP_TABLE_NAME " + vbCrLf +_
+		" select trs_pprodukt,trs_popak,trs_psprz,0.0,sum(trs_curIloscOpakSP),0.0," + vbCrLf +_
+		" - sum(trs_curIloscOpakSP) * isnull((select max(vzak.c_curwartnetto/vzak.c_curiloscopak),0.0,0.0 " + vbCrLf +_
+		" from vlist_n5zakup_listPozycje vzak " + vbCrLf +_
+		" where vzak.c_pprodukt = trs_pprodukt and  vzak.c_popak = trs_popak and " + vbCrLf +_
+		" vzak.p_ddatazakupu = (select vlz_ddatazakupu from view_lastzakup vlz " + vbCrLf +_
+		" where vlz.vlz_pProd =vzak.c_pprodukt and vlz.vlz_popak= vzak.c_popak) ),0) " + vbCrLf +_
+		" from TMP_RENTSP_TABLE_NAME " + vbCrLf +_
+		" group by trs_pprodukt,trs_popak,trs_psprz " + vbCrLf
+		trans_.execsql strSQL
+	end sub
+
+
+	public sub fill_dok_handl_MARSER(byref pOkresParam)
+		dim strSQL
+		strSQL = "insert into TMP_RENTSP_TABLE_NAME " + vbCrLf +_
+		"select psp.c_pprodukt,psp.c_popak,psp.p_idobj,sum(psp.c_curIloscopak - isnull(orgpsp.c_curIloscopak,0)),0.0," + vbCrLf +_
+		"0.0,0.0,sum(psp.c_curwartnetto - isnull(orgpsp.c_curwartnetto,0)),0.0" + vbCrLf +_
+		" from vlist_n5sprzedaz_listPozycje as psp " + vbCrLf +_
+		" join n5produkt on psp.c_pprodukt = n5produkt.idobj " + vbCrLf +_
+		" left outer join vlist_n5sprzedaz_listPozycje orgpsp on psp.p_ppopsprzed = orgpsp.p_idobj and psp.coll_lp = orgpsp.coll_lp " + vbCrLf +_
+		"where psp.p_pRozlVAT <> 0 and n5produkt.eRodzaj=N5PRODUKT_USLUGA and " + pOkresParam.get_where_part(trans_) + vbCrLf +_
+		"group by psp.c_pprodukt,psp.c_popak,psp.p_idobj" + vbCrLf
+		trans_.execsql strSQL
+	end sub
+
+	public sub prefill()
+		dim strSQL
+		'prefill table
+		'strSQL = "insert into TMP_RENTSP_TABLE_NAME select distinct p_idobj, c_idobj," +_
+		'"0,0,0,0,0,0,0,0,0 from vlist_n5produkt_listOpakowania"
+		trans_.execsql strSQL
+	end sub
+
+end class
+
+function new_rent_sp
+	set new_rent_sp = new CRentSPHelper
+end function
+
+
+]]>
+</script>
+</config>
+	<body>
+	</body>
+</page>

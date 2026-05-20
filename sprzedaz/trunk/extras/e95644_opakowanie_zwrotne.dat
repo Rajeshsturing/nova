@@ -1,0 +1,314 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+
+<!-- 18.07.2004 filtr na grupe nie jako checkboxy -->
+<!-- 13.01.2005 podgrupy produktow -->
+
+<!--
+
+
+#include "h1000.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1250.h"
+
+#define RAPORT_TITLE Niezafakturowane opakowania wg kontrahentów
+
+
+-->
+<page style='36'>
+	<config>
+		<title>RAPORT_TITLE</title>
+		<script>
+			<![CDATA[
+
+function fback()
+  dim strSQL
+	strSQL =  "drop table #dane_wstepne" + vbCrLf
+	trans_.execsql strSQL	
+  fback = std_fback()
+end function
+
+<%
+dim g_curIloscOtwarcia
+dim g_curDokladnosc
+dim g_strJednostka
+dim g_rejestr_typ_o, g_rejestr_typ_p
+dim g_produkt_idobj_o,g_produkt_idobj_p
+dim g_klient_idobj_o,g_klient_idobj_p
+
+
+function query()
+query = "select 'klient'=klient.strnazwa,'produkt'=prod.strnazwa, 'nr_dk'=vdokmag.p_strnrdok, " + vbNewLine +_
+"'data'=vdokmag.p_ddatawyst,'ilosc'=case rej.etyp when 19 then  vdokmag.c_curiloscewid  else -vdokmag.c_curiloscewid end, " + vbNewLine +_
+"'id_prod'=prod.idobj,'id_klient'=klient.idobj,'id_dok'=vdokmag.p_idobj,'wart_pocz'=isnull(dane_w.intilosc,0), " + vbNewLine +_
+"'jednostka'=jedn.strskrot,'dokladnosc'=jedn.ndokladnosc - 1,'c_typ_rej'=rej.eTyp,'c_typedok'=10162,'c_typeKl'=10108,'c_typeProd'=10131 " + vbNewLine +_
+"from vlist_n5dokmag_listPozycje as vdokmag " + vbNewLine +_
+"inner join n5klient as klient on klient.idobj=vdokmag.p_pklient " + vbNewLine +_
+"inner join n5produkt as prod on vdokmag.c_pprodukt=prod.idobj " + vbNewLine +_
+"inner join n5grupaproduktow as grProd on grProd.idobj=prod.pGrupaprod " + vbNewLine +_
+"inner join vlist_n5produkt_listOpakowania as vopak on vopak.p_idobj=prod.idobj " + vbNewLine +_
+"inner join n5jednostka as jedn on jedn.idobj=vopak.c_pjednopak " + vbNewLine +_
+"inner join #dane_wstepne as dane_w on dane_w.indeksobiektuklienta=klient.strindeks and " + vbNewLine +_
+"dane_w.indeksObiektuProduktu=prod.strindeks and vdokmag.p_ddatawyst>dane_w.ddata " + vbNewLine +_
+"inner join n5rejestrdok as rej on rej.idobj=vdokmag.p_prejestrdok " + vbNewLine +_
+"where %1 and %2 and %3 and %4 and %5 " + vbNewLine +_
+"order by klient.strnazwa,prod.strnazwa,vdokmag.p_nnumoper,rej.eTyp"
+end function
+%>
+<%
+
+
+
+dim pParamArray
+
+function default_param()
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwa Opakowania").bindexpr("prod.strNazwa")
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwa klienta").bindexpr("klient.strnazwa")
+	pParamArray.add doc_.afc.rap.param.new_text("Indeks klienta").bindexpr("klient.strindeks")
+	pParamArray.add doc_.afc.rap.param.new_date_range("Okres").bindexpr("vdokmag.p_ddatawyst")
+  
+ 	'wybór rejestrów
+	dim pParamTyp : set pParamTyp = doc_.afc.rap.param.new_choice("Rejestr dokumentów").bindexpr("rej.idobj")
+	with pParamTyp
+		.multiple = true
+ 		.names.add "MP i MW"
+ 		.values.add 1
+ 		.selected.add true
+ 		.names.add "Pozostałe"
+ 		.values.add 2
+ 		.selected.add false   
+	end with  
+	pParamArray.add pParamTyp
+
+	set default_param = pParamArray
+end function
+%>
+
+<%
+'zwraca filtr dla rejestrów
+function strRejFilter(byval nOption) : strRejFilter = ""
+  dim strSubQuery
+  if nOption = 1 then
+    strSubQuery = "select idobj from n5rejestrdok where eTyp in (N5REJESTRDOK__PW,N5REJESTRDOK__RW,N5REJESTRDOK__PZ,N5REJESTRDOK__WZ) " +_
+                  "and (strNazwa like 'MP%' or strNazwa like 'MW%')"
+  elseif nOption = 2 then
+    strSubQuery = "select idobj from n5rejestrdok where eTyp in (N5REJESTRDOK__PW,N5REJESTRDOK__RW,N5REJESTRDOK__PZ,N5REJESTRDOK__WZ) " +_
+                  "and (strNazwa not like 'MP%' and strNazwa not like 'MW%')"    
+  else
+    strSubQuery = "select idobj from n5rejestrdok where eTyp in (N5REJESTRDOK__PW,N5REJESTRDOK__RW,N5REJESTRDOK__PZ,N5REJESTRDOK__WZ)"
+  end if
+  dim oRS : set oRS = trans_.createadors(strSubQuery)
+  do while not oRS.EOF
+    strRejFilter = strRejFilter + cstr(oRS(0).value) + ","
+    oRS.movenext
+  loop
+  strRejFilter = "rej.idobj in (" + Left(strRejFilter,Len(strRejFilter) - 1) + ")"
+end function
+%>
+
+<%
+function section_header_1(byref pSection,byref pRec)
+%>
+<tr userprop='propc_section_start="1" propc_section_hidden="0" propc_section_req="0"' fontsize='4'>
+	<td style='27' colspan='7'>
+		<picture name='<%so.write cstr(nSectionPicCounter)%>' tip='Zwiń' ignoresysdisable='true' image='PICTURE_SMALL_MINUS' width='SIZE_FOR_PLUS' height='SIZE_FOR_PLUS' href='vs1022="section_hideshow_hli" vn100="<%so.write cstr(nSectionPicCounter)%>"'/>
+	RXE_T_LINK_FORM_CCC(c_typeKl,id_klient,klient)
+</td>
+</tr>
+<%
+nSectionPicCounter=nSectionPicCounter+1
+end function
+%>
+<%
+function section_footer_1(byref pSection)
+%>
+<tr hide='true' userprop='propc_section_end="1"'><td colspan='7' /></tr>
+<%
+end function
+%>
+<%
+function section_header_2(byref pSection,byref pRec)
+g_curIloscOtwarcia=ccur(pRec("wart_pocz"))
+g_curDokladnosc = ccur(pRec("dokladnosc"))
+g_strJednostka = cStr(pRec("jednostka"))
+if (g_produkt_idobj_o ="" and g_klient_idobj_o ="")   then
+	g_produkt_idobj_o = cStr(pRec("id_prod"))
+	g_klient_idobj_o = cStr(pRec("id_klient"))
+	g_produkt_idobj_p = cStr(pRec("id_prod"))
+	g_klient_idobj_p = cStr(pRec("id_klient"))
+end if
+
+if g_produkt_idobj_o <> cStr(pRec("id_prod")) then
+	g_produkt_idobj_p = g_produkt_idobj_o
+	g_produkt_idobj_o = cStr(pRec("id_prod"))
+end if
+
+if g_klient_idobj_o <> cStr(pRec("id_klient")) then
+	g_klient_idobj_p = g_klient_idobj_o
+	g_klient_idobj_o = cStr(pRec("id_klient"))
+end if
+
+%>
+<tr userprop='propc_section_start="2" propc_section_hidden="1" propc_section_req="0"' fontsize='4'>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+	<td style='27' colspan='6'>
+		<picture name='<%so.write cstr(nSectionPicCounter)%>' tip='Rozwiń' ignoresysdisable='true' image='PICTURE_SMALL_PLUS' width='SIZE_FOR_PLUS' height='SIZE_FOR_PLUS' href='vs1022="section_hideshow_hli" vn100="<%so.write cstr(nSectionPicCounter)%>"'/>
+	RXE_T_LINK_FORM_CCC(c_typeProd,id_prod,produkt)
+</td>
+</tr>
+<%
+nSectionPicCounter=nSectionPicCounter+1
+end function
+%>
+<%
+function section_footer_2(byref pSection)
+%>
+<tr hide='false' userprop='propc_section_end="2"'>
+<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+<td align='left' style='27' colspan='5'>
+	<t>Suma</t>
+</td>
+<td style='27' align='right'>
+		<t><%
+		so.write cstr(trans_.afc.convert.roundn(g_curIloscOtwarcia,g_curDokladnosc))
+		so.write " "
+		so.write cStr(g_strJednostka)
+		%></t>
+</td>
+</tr>
+<%
+end function
+%>
+
+<%
+function body_row(byref pSection,byref pRec)
+if pRapExec.RecNr mod 2 = 0 then
+%>
+<tr bordercolor='white' hide='true'>
+<%
+else
+%>
+<tr bordercolor='white' style='37' hide='true'>
+<%
+end if
+%>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+
+	<td align='left'>
+		RXE_T_LINK_FORM_CCC(c_typeDok,id_dok,nr_dk)
+	</td>
+	<td>
+		RXE_DATE(data)
+	</td>
+	<td align='right'>
+		<t><%
+		so.write cstr(ccur(trans_.afc.convert.roundn(pRec("ilosc"),pRec("dokladnosc"))))
+		so.write " "
+		so.write cStr(pRec("jednostka"))
+		%></t>
+	</td>
+</tr>
+<%
+g_curIloscOtwarcia = g_curIloscOtwarcia-ccur(pRec("ilosc"))
+end function
+%>
+<%
+function body_header(byref pSection,byref pRec)
+'so.write "<p backcolor='yellow'><text><![CD"+"ATA["+pRapExec.get_final_query() + "]"+"]></text></p><br/>" 
+%>
+<table border='1'>
+<thead>
+<tr style='21'>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+			<td width='min'>
+				<text><![CDATA[Klient]]></text>
+			</td>
+			<td width='min'>
+				<text><![CDATA[Nazwa produktu]]></text>
+			</td>
+			<td width='4000'>
+				<text><![CDATA[Numer dokumentu]]></text>
+			</td>
+			<td width='min'>
+				<text><![CDATA[Data wystawienia]]></text>
+			</td>      
+			<td width='min'>
+				<text><![CDATA[Ilość]]></text>
+			</td>
+			</tr>
+			</thead>
+			<tbody>
+				<%
+end function
+				%>
+				<%
+function body_footer(byref pSection)
+				%>
+			</tbody>
+			</table>
+			<%
+end function
+			%>
+			<%dim nSectionPicCounter : nSectionPicCounter = 10000000%>
+				function section_hideshow_hli(byref pHLI)
+				doc_.afc.formsection.section_hideshow page_, pHLI.prop(100)
+				end function
+				]]>
+
+		</script>
+	</config>
+	<header>
+	</header>
+	<body>
+		<p>
+			RAPORT_HEADER(3,0)
+		</p>
+
+		<p>
+			<t size='2'/>
+		</p>
+
+
+		<p>
+			<text fontsize='7'><![CDATA[RAPORT_TITLE]]></text>
+		</p><br/><br/>
+
+		<t fontsize='5' bold='true'>Kryteria selekcji:</t><br/>
+		<%
+		dim pRapExec : set pRapExec = rapeng_.new_engine()
+      with pRapExec
+      .add_body_ex getref("body_header"),getref("body_footer"),getref("body_row")
+      .add_group_section 0,getref("section_header_1"),getref("section_footer_1")
+      .add_group_section 1,getref("section_header_2"),getref("section_footer_2")
+
+      if .prepare("RAPORT_TITLE",default_param(),rapeng_.get_raport_param(),query()) then
+
+      dim pPerf : set pPerf = doc_.performing("Trwa przygotowywanie wyników...")
+      set pPerf = nothing
+      
+      .ReplaceQueryParam "rej.idobj = '1'",strRejFilter(1)
+      .ReplaceQueryParam "rej.idobj = '2'",strRejFilter(2)
+      .ReplaceQueryParam "rej.idobj IN ('1','2')",strRejFilter(3)
+
+      rapeng_.write_actual_param so,rapeng_.get_raport_param()
+
+      if not .perform then
+      so.write "<p style='21'><t>Brak danych spełniających podane kryteria</t></p>"
+		end if
+
+		end if
+		end with
+
+
+		%>
+	</body>
+	<footer>
+	</footer>
+</page>

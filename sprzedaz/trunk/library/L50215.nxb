@@ -1,0 +1,177 @@
+'//////////////////////////////////////////
+'// (C) 2001 NAVO					     //
+'// Manager zak³adek					 //
+'// Kosma Bieñkowski					 //
+'// external usage						 //
+'// 
+'//	wymaga include H1001.H
+'// w fopen wykonaj:
+'//	pGlobalTabMan.init
+'// 
+'// a potem tyle razy ile chcesz:
+'// pGlobalTabMan.addtab
+'// idgroup - id kontenera z przyciskami do prze³¹cznia zak³adek
+'//			  np. zrobiony przez Ciebie <p></p> na stronie. Kontener
+'//			  czlyli miejsce gdzie wstawic przyciski zakladek - 
+'//			  same przyciski dodawane automatycznie		 	
+'//	idtab - id zak³adki (czyli to co ma byæ ukrywane pokazywane)
+'//			np. wiersz tabeli, tabela, itd.
+'// strName - napis na prze³¹czniku zk³adek
+'//////////////////////////////////////////
+
+#ifndef LIBRARY_50215
+#define LIBRARY_50215
+
+sub set_ctrl_normal_font(byref pCtrl)
+	pCtrl.fontsize = 3
+	pCtrl.fontname = "Verdana"
+	pCtrl.bold = false
+	pCtrl.italic = false
+	pCtrl.strike = false
+end sub
+
+sub set_ctrl_active_font(byref pCtrl)
+	pCtrl.fontsize = 3
+	pCtrl.fontname = "Verdana"
+	pCtrl.bold = true
+	pCtrl.italic = false
+	pCtrl.strike = false
+end sub
+
+class CTabMan
+	private m_items()
+	private m_all_id
+	private m_pTabs
+
+	public sub init()
+		redim m_items(2,0)		'3x1
+		m_all_id=0
+		set m_pTabs = trans_.afc.new_navoarray()
+	end sub
+	
+	public sub addtab(byval idgroup,byval idtab,byval strName)
+		'zapisz w tablicy
+		dim nLastInx : nLastInx = ubound(m_items,2) + 1
+		redim preserve m_items(2,nLastInx)
+		m_items(0,nLastInx) = idgroup
+		m_items(1,nLastInx) = idtab
+		
+		'dodaj tab (static)
+		dim pCont : set pCont = page_.ctrl(idgroup)
+		dim pTab : set pTab = pCont.addnew(CTRL_TYPE_STATIC,-1)
+		pTab.text = strName
+
+		m_pTabs.add(pTab)
+		
+		dim pHLI : set pHLI = doc_.createhli()
+		pHLI.prop(GVAR_FUNCTIONHLI) = "tabman_activate"
+		pHLI.prop(PROPC_IDENT) = clng(idtab)	'todo: albo prywatne property aby nie by³o kolizji
+		
+		set pTab.hli=pHLI
+		set_ctrl_normal_font pTab
+		m_items(2,nLastInx) = pTab.ident
+		
+		'setup
+		page_.ctrl(idgroup).backcolor = RGB(&HCE,&HD3,&HE4)
+		pTab.forecolor = RGB(255,255,255)
+		
+		'add 'space'
+		pCont.addnew CTRL_TYPE_STATIC,-1
+	end sub
+
+	public sub addtaball(byval nIdGroup, byval strName)
+		dim pContener
+		set pContener = page_.ctrl(nIdGroup)
+
+		dim pTab
+		set pTab = pContener.addnew(CTRL_TYPE_STATIC, -1)
+		pTab.text = strName
+		set_ctrl_normal_font pTab
+		pTab.forecolor = RGB(255,255,255)
+		
+		m_all_id=pTab.ident
+
+		dim pHLI: set pHLI = doc_.createhli()
+		pHLI.prop(GVAR_FUNCTION) = "tabman_activateall"
+		set pTab.hli=pHLI
+	end sub
+	
+	public function activate(byval idtab)
+		dim i
+		for i = 0 to ubound(m_items,2)
+			
+			if m_items(1,i) = idtab then
+				'znajdz grupe
+				dim idgroup : idgroup = m_items(0,i)
+				
+				'schowaj wszystkie w grupie poza aktywowanym
+				dim j
+				for j = 0 to ubound(m_items,2)
+					if m_items(0,j) = idgroup and i <> j then
+						page_.ctrl(m_items(1,j)).hide = true
+						with page_.ctrl(m_items(2,j))
+							.forecolor = RGB(255,255,255)
+						end with
+						set_ctrl_normal_font page_.ctrl(m_items(2,j))
+					end if
+				next
+				
+				'poka¿ aktywowany
+				page_.ctrl(m_items(1,i)).hide = false
+				with page_.ctrl(m_items(2,i))
+					.forecolor = RGB(&H50,&H50,&H96)
+				end with
+				set_ctrl_active_font page_.ctrl(m_items(2,i))
+				exit for
+			end if
+
+		next
+	end function
+
+	public function activateall()
+		set_ctrl_active_font page_.ctrl(m_all_id)
+		page_.ctrl(m_all_id).forecolor = RGB(&H50,&H50,&H96)
+
+		dim i
+		for i = 0 to ubound(m_items,2)
+
+			dim j
+			for j = 1 to ubound(m_items,2)
+				page_.ctrl( m_items(1, j) ).hide = false
+				with page_.ctrl( m_items(2, j) )
+					.forecolor = RGB(255, 255, 255)
+				end with
+				set_ctrl_normal_font page_.ctrl( m_items(2, j) )
+			next
+
+		next
+
+	end function
+
+	public function get_tabs()
+		set get_tabs = m_pTabs
+	end function
+
+end class
+
+dim pGlobalTabMan
+set pGlobalTabMan = new CTabMan
+
+function tabman_activate(byref pHLI)
+	pGlobalTabMan.activate pHLI.prop(PROPC_IDENT)
+end function
+
+function tabman_activateall()
+	pGlobalTabMan.activateall
+end function
+
+function tabman_fsave()
+	tabman_fsave=std_fsave()
+	if (not tabman_fsave) then
+		tabman_activateall
+	end if
+end function
+
+#endif
+
+

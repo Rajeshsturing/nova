@@ -1,0 +1,350 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+interfejs modułu
+	create_config_object(pRejestr)
+
+interfejs obiektu "config"
+	
+	void load_from_string(byref strConfig)
+	function save_to_string
+	[property] string operation_name(nOperNr)
+	show_config_page(nOperNr)
+	perform_operation(nOperNr,byref pObject)
+	void init_with_defaults(nTypRej)
+
+moduł operacji dla obiektu - zlecenie produkcyjne
+
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1222.h"
+#include "h1224.h"
+
+#define SECID_ALL	1
+
+#define FORM_SPAN	2
+#define RCELL_SPAN	1
+
+#define CTRLID_DPC_1		101
+#define CTRLID_DPC_2		102
+#define CTRLID_CREATE_TASK	103
+
+
+#define CTRLID_PIC_DPC_1	104
+#define CTRLID_PIC_DPC_2	105
+
+
+#define CTRLID_DPC_1_PREVIEW	106
+#define CTRLID_DPC_2_PREVIEW	107
+
+
+#define CTRLID_KOLEKTOR			108
+#define CTRLID_DRUK_ETYK		109
+
+#ifdef ENABLE_DB13
+#define COUNT_OPERATIONS	13
+#define COUNT_OPERATIONS_INX	14
+#else
+#define COUNT_OPERATIONS	7
+#define COUNT_OPERATIONS_INX	8
+#endif
+
+
+-->
+<page style='STYLE_PAGE' width='10000'>
+<config>
+<startpos>center</startpos>
+<script>
+<![CDATA[
+#include "50200"
+'qxx_publication
+#include "50217"
+'realize publication
+#include "50518"
+
+class cn5dokmag_oper_config
+	public m_strName
+	public m_cCreateTask		
+	public m_cKolektor
+	
+
+	public m_eTypRej
+	
+	public m_idObjDPC_1
+	public m_idObjDPC_2
+	public m_cDrukEtykiet
+	
+	public sub class_initialize()
+		m_strName = ""
+		m_cCreateTask = "0"
+		m_cKolektor = "0"
+		m_idObjDPC_1 = 0	'no DP to perform
+		m_idObjDPC_2 = 0	'no DP to perform
+		m_cDrukEtykiet = "0"
+	end sub
+
+
+	public property get is_empty()		
+		is_empty =	(m_cCreateTask = "0") and _					
+					(m_idObjDPC_1 = clng(0)) and _
+					(m_idObjDPC_2 = clng(0)) and _
+					(m_cKolektor = "0") and _
+					(m_cDrukEtykiet = "0")
+	end property
+
+	public sub load_from_string(byref strConfig)
+		dim aItems : aItems = split(strConfig, vbTab)
+		if ubound(aItems) > 2 then
+			m_strName		= aItems(0)
+			m_cCreateTask	= left(aItems(1),1)
+			m_idObjDPC_1	= clng(aItems(2))
+			m_idObjDPC_2	= clng(aItems(3))								
+		end if
+
+		'compability mode - db6 :-)
+		if ubound(aItems) > 3 then
+			m_cKolektor	= left(aItems(4),1)
+		end if
+		if ubound(aItems) > 4 then
+			m_cDrukEtykiet = left(aItems(5),1)
+		end if
+	end sub
+	
+	public function save_to_string
+		save_to_string = doc_.afc.convert.formatter("%1"+vbTab+"%2"+vbTab+"%3"+vbTab+"%4"+vbTab+"%5"+vbTab+"%6") _
+			(m_strName)(cstr(m_cCreateTask))(cstr(m_idObjDPC_1))(cstr(m_idObjDPC_2))(cstr(m_cKolektor))(cstr(m_cDrukEtykiet)).done()
+	end function
+
+	public sub show_config_page
+		dim pPage : set pPage = doc_.getpagehli("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=THIS_FILE")
+
+		pPage.topelement.title = "Konfiguracja operacji """ + m_strName + """"
+
+		pPage.ctrl(CTRLID_CREATE_TASK).value = m_cCreateTask		
+		pPage.ctrl(CTRLID_KOLEKTOR).value = m_cKolektor
+		pPage.ctrl(CTRLID_DRUK_ETYK).value = m_cDrukEtykiet
+
+		'todo: otwieranie i wybór
+
+		dim strPubType : strPubType = "N5DPC_PUBTYPE_ZLEC_PROD"
+		
+		setup_choose_dpc_pic pPage,CTRLID_PIC_DPC_1,CTRLID_DPC_1_PREVIEW,CTRLID_DPC_1,m_idObjDPC_1,strPubType
+		setup_choose_dpc_pic pPage,CTRLID_PIC_DPC_2,CTRLID_DPC_2_PREVIEW,CTRLID_DPC_2,m_idObjDPC_2,strPubType
+		setup_choose_dpc_label pPage,CTRLID_DPC_1,abs(m_idObjDPC_1)
+		setup_choose_dpc_label pPage,CTRLID_DPC_2,abs(m_idObjDPC_2)
+		setup_choose_dpc_preview pPage , CTRLID_DPC_1_PREVIEW , m_idObjDPC_1 
+		setup_choose_dpc_preview pPage , CTRLID_DPC_2_PREVIEW , m_idObjDPC_2 
+
+		if pPage.domodalauto() = CMD_CHOICE then
+			m_cCreateTask = pPage.ctrl(CTRLID_CREATE_TASK).value
+			m_idObjDPC_1 = get_choosen_dpc(pPage,CTRLID_PIC_DPC_1,CTRLID_DPC_1_PREVIEW)
+			m_idObjDPC_2 = get_choosen_dpc(pPage,CTRLID_PIC_DPC_2,CTRLID_DPC_2_PREVIEW)			
+			m_cKolektor = pPage.ctrl(CTRLID_KOLEKTOR).value
+			m_cDrukEtykiet = pPage.ctrl(CTRLID_DRUK_ETYK).value
+		end if
+	end sub
+	public sub perform_operation(byref pObject , byref pPage)
+		perform_operation_on_config	Me, pObject , pPage
+	end sub
+end class
+
+class cn5dokmag_dok_config
+private m_aOperations(COUNT_OPERATIONS_INX)
+	public m_eTypRej
+
+
+	public function is_empty(byval nNumOper)		
+		dim pOperConf:set pOperConf = m_aOperations(nNumOper)
+		is_empty =	pOperConf.is_empty
+	end function
+	
+	public sub class_initialize()
+		dim i
+		for i = 0 to COUNT_OPERATIONS
+			set m_aOperations(i) = new cn5dokmag_oper_config
+		next
+	end sub
+
+
+	public sub setTypeRej(eTypRej)
+		m_eTypRej = eTypRej
+		dim i
+		for i = 0 to COUNT_OPERATIONS
+			m_aOperations(i).m_eTypRej = m_eTypRej
+		next
+	end sub
+
+	public sub init_with_defaults(nTypRej)
+		dim i
+		for i = 0 to COUNT_OPERATIONS
+			set m_aOperations(i) = new cn5dokmag_oper_config
+		next
+
+		setTypeRej nTypRej
+
+
+		
+		m_aOperations(2).m_strName = "Wydruk zlecenia"
+		'todo: wyszukanie publikacji: m_aOperations(1).m_idObjDPC_1		
+	end sub
+
+	public sub load_from_string(byref strConfig)
+		dim aItems : aItems = split(strConfig, REJDOK_CONG_SEPARATOR)
+		dim i 
+		dim last : last = ubound(aItems)
+		if last > COUNT_OPERATIONS then
+			last = COUNT_OPERATIONS
+		end if
+		for i = 0 to last
+			m_aOperations(i).load_from_string aItems(i)
+		next
+	end sub
+	
+	public function save_to_string
+		dim strTotal : strTotal = ""
+		dim i
+		for i = 0 to COUNT_OPERATIONS
+			strTotal = strTotal + m_aOperations(i).save_to_string() + REJDOK_CONG_SEPARATOR
+		next
+		save_to_string = strTotal
+	end function
+
+	public property get operation_name(byval nOperNr)
+		operation_name = m_aOperations(nOperNr).m_strName
+	end property
+	public property let operation_name(byval nOperNr,byref strName)
+		m_aOperations(nOperNr).m_strName = strName
+	end property
+
+	public sub show_config_page(byval nOperNr)
+		m_aOperations(nOperNr).show_config_page
+	end sub
+	public sub perform_operation(nOperNr,byref pObject,byref pPage)
+#ifdef _DEBUG
+		trans_.message 1002 , 0 , "DEBUG: " + cstr(operation_name(nOperNr))
+#endif
+		m_aOperations(nOperNr).perform_operation pObject , pPage
+	end sub
+end class
+
+function create_config_object(byref pRejestr)
+	dim pNewConfig : set pNewConfig = new cn5dokmag_dok_config
+	pNewConfig.setTypeRej pRejestr.eTyp
+	set create_config_object = pNewConfig
+end function
+
+
+'--------------------------- config page ------------------
+function fok
+	page_.result = CMD_CHOICE
+	page_.goback
+end function
+
+
+function fcancel
+	page_.goback
+end function
+
+'--------------------------- perform operation ------------------
+private sub perform_operation_on_config(byref pConfig,byref pDokMag , byref pPage)
+
+	if not doc_.getmodule(60183).make_task_on_dokmag(pConfig.m_cCreateTask,pDokMag,pPage) then
+		exit sub
+	end if
+	
+	if not doc_.getmodule(60183).make_publication_on_dokmag(pConfig.m_idObjDPC_1,pDokMag,pPage) then
+		exit sub
+	end if
+
+	if not doc_.getmodule(60183).make_publication_on_dokmag(pConfig.m_idObjDPC_2,pDokMag,pPage) then
+		exit sub
+	end if
+	
+	if not FillFromCollector(pConfig.m_cKolektor,pDokMag,pPage) then
+		exit sub
+	end if		
+  
+	if not drukuj_kody_kreskowe(pConfig.m_cDrukEtykiet,pDokMag,pPage) then
+		exit sub
+	end if  
+
+end sub
+
+private function drukuj_kody_kreskowe(cWypelnij,byref pDokMag , byref pPage) : drukuj_kody_kreskowe = true
+
+	'u60194
+	if cWypelnij = "0" then
+		exit function
+	end if
+	
+	drukuj_kody_kreskowe = false
+	
+	dim oProdukt
+	dim oNXArrayIdobj : set oNXArrayIdobj = nx_.new_array()
+	dim oNXArrayIlosc : set oNXArrayIlosc = nx_.new_array()
+	
+	dim poz_dok
+	for each poz_dok in pDokMag.listPozycje
+		set oProdukt=poz_dok.pProdukt
+		oNXArrayIdobj.add oProdukt.idobj
+		oNXArrayIlosc.add CLng(poz_dok.curIloscOpak)
+	next
+	dim pM60313 : set pM60313 = doc_.getmodule(60313)
+#ifdef _CONTRANS
+	pM60313.przekaz_checkBoxa_nazwIndeksow_obcych(pPage.ctrl(18).value)			'przekaz inf. czy jest wcisniety korzystaj z nazw/indeksow obcych
+#endif
+	pM60313.uruchom oNXArrayIdobj,oNXArrayIlosc,pDokMag
+
+end function
+
+'---------------------------------------------------------------------------------
+
+
+function FillFromCollector(cKolektor, byref pZlec, byref pPage)
+	FillFromCollector = doc_.getmodule(60194).FillFromCollector(cKolektor, pZlec, pPage)	
+end function
+
+
+]]>
+</script>
+</config>
+<body>
+QXF_BEGIN
+	QXS_BEGIN_FLAT(SECID_ALL,Konfiguracja,FORM_SPAN)
+		<tr>
+			QXX_CHOOSE_PUBLICATION(CTRLID_DPC_1,CTRLID_PIC_DPC_1,CTRLID_DPC_1_PREVIEW,1)
+		</tr>		
+
+		<tr>
+			QXX_CHOOSE_PUBLICATION(CTRLID_DPC_2,CTRLID_PIC_DPC_2,CTRLID_DPC_2_PREVIEW,1)
+		</tr>
+		
+		QXR_SEPARATOR(2)
+		QXR_LABELED_CHECK(CTRLID_KOLEKTOR,,Kolektor danych)
+		QXR_LABELED_CHECK(CTRLID_DRUK_ETYK,,Wydruk etykiet)
+		QXR_SEPARATOR(FORM_SPAN)
+
+#comment NEXTVERSION - wywalic hide
+		<tr hide='true'>
+			QXC_LABEL(Zdarzenia,1)
+			<td>
+				<checkbox width='max' name='CTRLID_CREATE_TASK' >
+					<text>zapamiętaj zdarzenie</text>
+				</checkbox>
+			</td>
+		</tr>				
+	
+
+		QXR_SEPARATOR(FORM_SPAN)
+
+	QXS_END_FLAT(FORM_SPAN)
+QXF_END
+
+XFDIALOGBUTTONS
+
+</body>
+</page>

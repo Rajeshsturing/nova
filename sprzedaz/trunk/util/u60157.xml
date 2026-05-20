@@ -1,0 +1,173 @@
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200.h"
+#include "h1201.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+
+<?xml version="1.0" encoding="windows-1250" ?>
+<page>
+<config>
+<script>
+<![CDATA[
+
+'------------------------------------------------------------------------
+'	(c) Navo 2002 Ltd.
+'
+'	RAPORT: Lista rabatów i cen specjalnych dla produktu
+'	Spikowski Piotr
+'------------------------------------------------------------------------
+
+#include "50126"
+#include "50519"
+
+function fopen()
+	fopen = true
+end function
+
+'-------------------------------------------------------------------------
+' Uruchamia raport
+'
+' idProdukt - id klienta dla którego uruchomic raport lub Null
+' dData - data raportu lub Null lub NullDate()
+'-------------------------------------------------------------------------
+function PromotionRaport(byval idProdukt, byval dData)
+	dim pRaport
+	set pRaport = CreateRaport(TYPEID_N5POLRAB, "Lista rabatów i cen specjalnych dla produktu")
+
+	if (isNull(idProdukt)) then
+		pRaport.AddSelection "10189;wpProdGrupa;(1)(1)10131;strNazwa(1)10116;strNazwa(1)"
+	end if
+
+	pRaport.AddOrderSequence "10189;strNazwaPromocji", false, false
+	pRaport.AddOrderSequence "10189;wpKlientGrupa;(1)(1)10108;strNazwa(1)10118;strNazwa(1)", false, false
+
+	pRaport.AddColumn "10189;strNazwaPromocji", false
+	pRaport.AddColumn "10189;wpKlientGrupa;(1)(1)10108;strNazwa(1)10118;strNazwa(1)", false
+	pRaport.AddColumn "10189;curCenaRab", false
+	pRaport.AddColumn "10189;dDataOd", false
+	pRaport.AddColumn "10189;dDataDo", false
+
+	if (isNull(dData)) then
+		'Dodajemy kontrolke do wyboru daty jak
+		'i transfer dla tej kontrolki
+		pRaport.AddCtrl "Na dzień", "<t>Data </t><date name='e501' style='STYLE_CTRL'><transfer mode='custom'/></date>"
+	
+		dim strScriptCode
+		strScriptCode = _
+		"dim dRapData: dRapData=DateSerial(" + CStr(Year(srvDate())) + "," + CStr(Month(srvDate())) + "," + CStr(Day(srvDate())) + ")" + vbNewLine + _
+		"function c501_ondataentered(ctrl, value): c501_ondataentered=true" + vbNewLine + _
+		"	dRapData=value" + vbNewLine + _
+		"end function" + vbNewLine + _
+		"function c501_ongetdata(byref oCtrl): c501_ongetdata=true" + vbNewLine + _
+		"oCtrl.value=dRapData"+vbNewLine + _
+		"end function"
+
+		pRaport.setScriptCode strScriptCode
+
+	end if
+
+	dim pSearchPage
+	set pSearchPage=pRaport.GetPage()
+
+	if (isNull(idProdukt)) then
+		pSearchPage.ctrl(1000).text = "Produkt"
+	end if
+
+	dim nResult
+	nResult=pRaport.DoModal( pSearchPage )
+
+	pRaport.strJoin = "LEFT OUTER JOIN n5produkt f60114n1 ON f60114n1.IdObj = n5polrab.wpProdGrupa LEFT OUTER JOIN n5grupaproduktow f60114n2 ON f60114n2.IdObj = n5polrab.wpProdGrupa LEFT OUTER JOIN n5klient f60114n3 ON f60114n3.IdObj = n5polrab.wpKlientGrupa LEFT OUTER JOIN n5grupaklient f60114n4 ON f60114n4.IdObj = n5polrab.wpKlientGrupa"
+
+	if (isNull(idProdukt)) then
+		dim strLikeGrupa: strLikeGrupa=""
+		dim strLikeProdukt: strLikeProdukt=""
+
+		'grupa
+		strLikeGrupa = " and f60114n2.strNazwa"
+		'produkt
+		strLikeProdukt = " and f60114n1.strNazwa"
+
+		dim strValueOd: strValueOd = CStr(pSearchPage.ctrl(102).value)
+		dim strValueDo: strValueDo = CStr(pSearchPage.ctrl(104).value)
+
+		dim strLikePart
+		select case CLng(pSearchPage.ctrl(100).value)
+			case 1 'wszystko
+				strLikePart = ""
+				strLikeGrupa = ""
+				strLikeProdukt = ""
+
+			case 2 'dokładnie
+				strLikePart = "='" + trans_.afc.convert.DoubleApostrophe(strValueOd) + "'"
+			
+			case 3 'początek
+				strLikePart = " like '" + trans_.afc.convert.str2SQL(strValueOd) + "'"
+			
+			case 4 'zawiera
+				strLikePart = " like '%" + trans_.afc.convert.str2SQL(strValueOd) + "%'"
+			
+			case 5 'zakres
+				strLikePart = " BETWEEN '" + trans_.afc.convert.DoubleApostrophe(strValueOd) + "' AND '" + trans_.afc.convert.DoubleApostrophe(strValueDo) + "'"
+		end select
+
+		strLikeGrupa = strLikeGrupa + strLikePart
+		strLikeProdukt = strLikeProdukt + strLikePart
+
+		'dodajemy where dla naszego produktu i grupy produktu
+		pRaport.strWhere = _
+			"(n5polrab.wpProdGrupa_wrt=TYPEID_N5GRUPAPRODUKTOW" + strLikeGrupa + ") or " + _
+			"(n5polrab.wpProdGrupa_wrt=TYPEID_N5PRODUKT" + strLikeProdukt + ") or " + _
+			"(n5polrab.wpProdGrupa_wrt=0 and n5polrab.wpProdGrupa=0)"
+
+	else
+
+		'Ustal id grupy produktu
+		dim idGrupaProd: idGrupaProd = 0
+			
+		dim pProdukt
+		set pProdukt = trans_.getobj(TYPEID_N5PRODUKT, idProdukt)
+		if (not pProdukt is nothing) then
+			idGrupaProd = pProdukt.pGrupaProd.IdObj
+		end if
+		set pProdukt = nothing
+
+		pRaport.strWhere = _
+			"(n5polrab.wpProdGrupa_wrt=TYPEID_N5GRUPAPRODUKTOW and n5polrab.wpProdGrupa=" + CStr(idGrupaProd) + strLikeGrupa + ") or " + _
+			"(n5polrab.wpProdGrupa_wrt=TYPEID_N5PRODUKT and n5polrab.wpProdGrupa=" + CStr(idProdukt) + strLikeProdukt + ") or " + _
+			"(n5polrab.wpProdGrupa_wrt=0 and n5polrab.wpProdGrupa=0)"
+
+	end if
+
+	'Dodajemy do whera date
+	dim dRaportDate
+
+	if (isNull(dData)) then
+		dRaportDate = CDate(pSearchPage.ctrl(501).value)
+	else
+		dRaportDate = CDate(dData)
+	end if
+
+	if (dRaportDate <> trans_.afc.globals.nulldate()) then
+		if (pRaport.strWhere<>"") then
+			pRaport.strWhere = "(" + pRaport.strWhere + ") AND "
+		end if
+
+		pRaport.strWhere = pRaport.strWhere + trans_.afc.convert.date2SQL(dRaportDate) + " BETWEEN n5polrab.dDataOd AND n5polrab.dDataDo"
+
+	end if
+
+	'Do kolumn dodajemy klient produkt gdy nie ma wybranego
+	pRaport.strColumns = "n5polrab.strNazwaPromocji, CASE n5polrab.wpKlientGrupa_wrt WHEN 10108 THEN f60114n3.strNazwa WHEN 10118 THEN f60114n4.strNazwa ELSE '<dowolny klient>' END, " + _
+			"n5polrab.curCenaRab, n5polrab.dDataOd, n5polrab.dDataDo"
+
+	pRaport.ShowResults()
+end function
+
+]]>
+</script>
+</config>
+	<body>		
+	</body>
+</page>

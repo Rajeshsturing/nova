@@ -1,0 +1,227 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+RAPTEMPLATE_PRODUKTY_RP_ZALEGAJACE
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1250.h"
+
+#define RAPORT_TITLE Produkty RP zalegające
+
+-->
+<page style='36'>
+<config>
+<title>RAPORT_TITLE</title>
+<script>
+<![CDATA[
+
+<%
+function query()
+query = "select * from " + vbNewLine +_ 
+        "(select 'nr_zlec'=zlec.strNrDok,'id_zlec'=zlec.IdObj,'data_zlec'=zlec.dDataWyst, " + vbNewLine +_
+        "'id_rp'=rp.p_IdObj,'nr_rp'=rp.p_strNrDok,'id_prod'=rp.c_pprodukt,'lp'=rp.coll_lp, " + vbNewLine +_
+        "'nazwa_prod'=p.strNazwa,'indeks_prod'=p.strIndeks, " + vbNewLine +_
+        "'jedn_opak'=j.strSkrot,'prec_opak'=j.nDokladnosc,'ilosc_rp'=rp.c_curiloscopak, " + vbNewLine +_
+        "'ilosc_prod_w_toku'=(select sum(gmo_curIlosc) as iloscPo from n5gmop " + vbNewLine +_
+        "where gmo_pProd = p.IdObj and gmo_pOpak = op.IdObj and gmo_pMag = 4 " + vbNewLine +_
+        "and NUMOPBORDER " + vbNewLine +_
+        "group by gmo_pProd , gmo_pOpak) " + vbNewLine +_ 
+        "from vlist_n5dokmag_listPozycje rp " + vbNewLine +_
+        "inner join n5zlecprod zlec on zlec.IdObj = rp.p_wrefdokhandl " + vbNewLine +_
+        "inner join n5produkt p on rp.c_pprodukt = p.IdObj " + vbNewLine +_
+        "inner join n5opakowanie_produktu op on rp.c_popak = op.IdObj " + vbNewLine +_
+        "inner join n5jednostka j on op.pJednOpak = j.IdObj " + vbNewLine +_
+        "where rp.p_wrefdokhandl in " + vbNewLine +_ 
+        "-- 1. Zapytanie pobiera zlecenia produkcyjne zakończone - czyli mające RP i PP, uzględniające filtry " + vbNewLine +_
+        "(select zlec.IdObj " + vbNewLine +_
+        "from n5zlecprod zlec " + vbNewLine +_
+        "inner join n5realprod rprod on rprod.pZlecProd = zlec.IdObj " + vbNewLine +_
+        "inner join n5dokmag rp on rp.wrefDokHandl = zlec.IdObj and rp.wrefDokHandl_wrt = TYPEID_N5ZLECPROD and rp.nTypDok = N5REJESTRDOK__RP " + vbNewLine +_
+        "where %1 and %2 " + vbNewLine +_
+        "group by zlec.IdObj) " + vbNewLine +_ 
+        "-- 2. Produkty które są na RP ale nie ma ich na RealProd.listPozycje " + vbNewLine +_ 
+        "and rp.p_wrefdokhandl_wrt = TYPEID_N5ZLECPROD and rp.c_ntypdok = N5REJESTRDOK__RP " + vbNewLine +_
+        "and rp.c_pprodukt not in " + vbNewLine +_ 
+        "(select rprod.c_pprodukt from vlist_n5realprod_listPozycje rprod where rprod.p_pzlecprod = rp.p_wrefdokhandl " + vbNewLine +_
+        "and rprod.c_popak = rp.c_popak) " + vbNewLine +_
+        "and rp.c_pprodukt not in " + vbNewLine +_ 
+        "(select zp.c_pprodukt from vlist_n5dokmag_listPozycje zp where zp.p_wrefdokhandl = rp.p_wrefdokhandl " + vbNewLine +_
+        "and zp.p_wrefdokhandl_wrt = TYPEID_N5ZLECPROD and zp.p_ntypdok = N5REJESTRDOK__PW and zp.c_popak = rp.c_popak)) pom " + vbNewLine +_
+        "where pom.ilosc_prod_w_toku > 0 " + vbNewLine +_
+        "order by data_zlec,lp"
+end function
+%>
+<%
+dim pRaportMomentParam
+
+function default_param()
+	dim pParamArray: set pParamArray = doc_.afc.new_navoarray()
+  pParamArray.add doc_.afc.rap.param.new_date_range("Data wystawienia").bindexpr("zlec.dDataWyst")
+	pParamArray.add doc_.afc.rap.param.new_text("Nr zlecenia").bindexpr("zlec.strNrDok")
+  set pRaportMomentParam = doc_.afc.rap.param.new_date("Analizowany moment").bindexpr("")
+  pParamArray.add pRaportMomentParam
+	set default_param = pParamArray
+end function
+%>
+<%
+function section_header_1(byref pSection,byref pRec)
+%>
+<tr userprop='propc_section_start="1" propc_section_hidden="0" propc_section_req="0"' fontsize='4'>
+<td style='27' colspan='9'>	
+		<picture name='<%so.write cstr(nSectionPicCounter)%>' tip='Zwiń' ignoresysdisable='true' image='PICTURE_SMALL_MINUS' width='SIZE_FOR_PLUS' height='SIZE_FOR_PLUS' href='vs1022="section_hideshow_hli" vn100="<%so.write cstr(nSectionPicCounter)%>"'/>
+    RXE_TEXT_LINK_FORM_VCC(TYPEID_N5ZLECPROD,id_zlec,nr_zlec)
+</td>
+</tr>
+<%
+nSectionPicCounter=nSectionPicCounter+1
+end function
+%>
+<%
+function section_footer_1(byref pSection)
+%>
+<tr hide='true' userprop='propc_section_end="1"'><td colspan='9' /></tr>
+<%
+end function
+%>
+<%
+function body_row(byref pSection,byref pRec)
+if pRapExec.RecNr mod 2 = 0 then
+%>
+<tr bordercolor='white'>
+<%
+else
+%>
+<tr bordercolor='white' style='37'>
+<%
+end if
+%>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+<td align='right'>RXE_LP</td>
+	<td>
+		RXE_DATE(data_zlec)
+	</td>
+	<td>
+		RXE_TEXT_LINK_FORM_VCC(TYPEID_N5DOKMAG,id_rp,nr_rp)
+	</td>
+	<td>
+		RXE_TEXT(lp)
+	</td>
+	<td>
+		RXE_TEXT_LINK_FORM_VCC(TYPEID_N5PRODUKT,id_prod,indeks_prod)
+	</td>
+	<td>
+		RXE_TEXT(nazwa_prod)
+	</td>
+  <td align='right'>
+	  RXE_QUANTITY_CCC(ilosc_prod_w_toku,jedn_opak,prec_opak)
+  </td> 
+  <td align='right'>
+	  RXE_QUANTITY_CCC(ilosc_rp,jedn_opak,prec_opak)
+  </td>   
+</tr><%
+end function
+%>
+<%
+function body_header(byref pSection,byref pRec) 
+%>
+<table border='1'>
+<thead>
+<tr style='21'>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+	<td width='min'><t>LP</t></td>
+	<td width='3000'>
+		<text><![CDATA[Data wystawienia]]></text>
+	</td>
+	<td width='3000'>
+		<text><![CDATA[Numer dokumentu RP]]></text>
+	</td>
+	<td width='2000'>
+		<text><![CDATA[Nr pozycji na RP]]></text>
+	</td>
+	<td width='3000'>
+		<text><![CDATA[Indeks produktu]]></text>
+	</td>
+	<td width='max'>
+		<text><![CDATA[Nazwa produktu]]></text>
+	</td>
+	<td width='2000'>
+		<text><![CDATA[Ilość na produkcji w toku]]></text>
+	</td>
+	<td width='2000'>
+		<text><![CDATA[Ilość na RP]]></text>
+	</td>  
+</tr>
+</thead>
+<tbody>
+<%
+end function
+%>
+<%
+function body_footer(byref pSection)
+%>
+</tbody>
+</table>
+<%
+end function
+%>
+<%dim nSectionPicCounter : nSectionPicCounter = 10000000%>
+function section_hideshow_hli(byref pHLI)
+doc_.afc.formsection.section_hideshow page_, pHLI.prop(100)
+end function
+]]>
+</script>
+</config>
+<header>
+</header>
+<body>
+<p>
+RAPORT_HEADER(3,0)
+</p>
+
+<p>
+<t size='2'/>
+</p>
+
+<p><text fontsize='7'><![CDATA[RAPORT_TITLE]]></text></p><br/><br/>
+<%
+if not doc_.getmodule(60253).gm_ensure_accuracy_ui(true) then
+%>
+<p border='1' fontsize='5' forecolor='red' bold='true'><t>Uwaga! Niepoprawny stan magazynu</t></p><br/><br/>
+<%
+end if
+%>  
+  
+<t fontsize='5' bold='true'>Kryteria selekcji:</t><br/>
+<%
+dim pRapExec : set pRapExec = rapeng_.new_engine()
+with pRapExec
+	.add_body_ex getref("body_header"),getref("body_footer"),getref("body_row")
+	.add_group_section 0,getref("section_header_1"),getref("section_footer_1")
+if .prepare("RAPORT_TITLE",default_param(),rapeng_.get_raport_param(),query()) then
+%>
+<%
+	dim pPerf : set pPerf = doc_.performing("Trwa przygotowywanie wyników...")
+	set pPerf = nothing
+
+	rapeng_.write_actual_param so,rapeng_.get_raport_param()
+  
+  dim nDummy
+	.ReplaceQueryParam "NUMOPBORDER", _
+		"gmo_nNumOp " + doc_.getmodule(43025).rap_param_date_2_gm_num_oper_where(pRaportMomentParam,nDummy)  
+
+	if not .perform then
+	so.write "<p style='21'><t>Brak danych spełniających podane kryteria</t></p>"
+	end if
+%>
+<%
+end if
+end with
+%>
+</body>
+<footer>
+</footer>
+</page>

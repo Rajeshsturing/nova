@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1001.h"
+#include "h1004.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1240.h"
+-->
+<page style='STYLE_PAGE'>
+<config>
+	<title>
+	Aktualizacja danych z MonPatrol
+	</title>
+<startpos>center</startpos>
+<iid>THIS_FILE</iid>
+<script>
+<![CDATA[
+#include "50629"
+
+'chooserejestrdok
+#include "50517"
+
+'MessageBox
+#include "50122"
+
+'HARUI
+#include "50101"
+
+#include "50203"
+#include "50613"
+
+function fopen()
+  
+  'wykonuje sie to tylko na koncie administratora lub konkretnych kontach
+  dim idAdminUser : idAdminUser = trans_.findobjid(TYPEID_N5UZYTKOWNIK, "strLogin='" + ADMIN_LOGIN + "'")
+  if not(idAdminUser = trans_.var(GVAR_USER) or (trans_.var(GVAR_USER) = 4 and trans_.var(GVAR_DBNAME) = "navo2002") or (trans_.var(GVAR_USER) = 7 and trans_.var(GVAR_DBNAME) = "navo2002bis")) then
+    fopen = false
+    exit function
+  end if
+
+  trans_.message 0,0, "Rozpoczynam sprawdzanie nowych wpisów w MONPATROL"
+
+  dim bSilent : bSilent = true
+  if trans_.isvar(1) then
+	  bSilent = false
+	end if
+  
+  check_monpatrol()
+  trans_.message 0,0, "Zakończono sprawdzanie nowych wpisów w MONPATROL"
+
+  fopen = not bSilent
+end function
+
+function check_monpatrol()
+  
+  'wybor rejestru dokumentów
+  dim idRejestr : idRejestr = choose_rejestr_dok("N5REJESTRDOK_ZADANIA", false, "Wybór rejestru zadań")
+	if idRejestr <= 0 then
+    trans_.message 0,0, "Brak rejestru dokumentów dla zadań"
+   	exit function
+	end if
+
+  dim pRejestr : set pRejestr = trans_.getobj(TYPEID_N5REJESTRDOK, idRejestr)
+	trans_.var(APPVAR_REJESTR_TYP) = pRejestr.eTyp
+	trans_.var(APPVAR_REJESTR_DOKUMENTOW) = idRejestr
+
+  dim strLastDataZdarzenia : strLastDataZdarzenia = nx_get_globprofile_value(GLOBPROF_LAST_MONPATROL_DATE)
+
+  dim strDNS_MonPatrol : strDNS_MonPatrol = "Provider=MSDASQL.1;Persist Security Info=True;Data Source=security_monpatrol"
+	dim g_pExportManager_MonPatrol : set g_pExportManager_MonPatrol = new CADOExportManager
+	dim g_bResult_MonPatrol: g_bResult_MonPatrol = g_pExportManager_MonPatrol.connectDSN(strDNS_MonPatrol, "", "")	
+  dim oRS : set oRS = g_pExportManager_MonPatrol.getConnection().execute("select * from navo_export order by data_zdarzenia ")
+  while not oRS.eof
+    
+    dim strDataZdarzenia : strDataZdarzenia = cstr(oRS.fields("data_zdarzenia").value)
+    dim strIdZdarzenia : strIdZdarzenia = oRS.fields("id_zdarzenia").value
+    dim strKryptonim  : strKryptonim = oRS.fields("kryptonim").value
+    dim strKategoria  : strKategoria = oRS.fields("kategoria").value
+    dim strTyp  : strTyp = oRS.fields("typ").value
+    dim strPrzyjazdPatrolu  : strPrzyjazdPatrolu = oRS.fields("przyjazd_patrolu").value
+
+    if strDataZdarzenia > strLastDataZdarzenia then
+      strLastDataZdarzenia = strDataZdarzenia
+  
+      dim idKLOB : idKLOB = trans_.findobjid(TYPEID_N5KLIENT_OBIEKT, "klob_strIndeks='"+ strKryptonim + "'")
+      if idKLOB > 0 then
+      
+        dim oZadanie : set oZadanie = trans_.newobj(TYPEID_N5ZADANIE)
+        with oZadanie
+          dim mp_data_zdarzenia : mp_data_zdarzenia = oRS.fields("data_zdarzenia").value
+          .dDataRozp = dateserial(year(mp_data_zdarzenia), month(mp_data_zdarzenia), day(mp_data_zdarzenia))
+          .tCzasRozp = clng(hour(mp_data_zdarzenia) * 100 + minute(mp_data_zdarzenia))
+          .dDataZakon = .dDataRozp
+          .dDataZamk = .dDataZakon
+  
+          dim idWykonawca : idWykonawca = trans_.findobjid(TYPEID_N5WYKONAWCA, "strIndeks='Monpatrol'")
+          if idWykonawca <= 0 then
+            trans_.message 0,0, "Brak wykonawcy MONPATROL"
+            exit function
+          end if 	      
+          set .pWykonawca = trans_.getobj(TYPEID_N5WYKONAWCA, idWykonawca)
+        
+          dim idTypDzialania : idTypDzialania = trans_.findobjid(TYPEID_N5TYPDZIALANIA, "strNazwa='Interwencja'")
+          if idTypDzialania <= 0 then
+            trans_.message 0,0, "Brak typu działania Interwencja"
+            exit function
+          end if
+          set .pTypDzialania = trans_.getobj(TYPEID_N5TYPDZIALANIA, idTypDzialania)
+        
+          .strTemat = strTyp
+          set .zad_pKLOB = trans_.getobj(TYPEID_N5KLIENT_OBIEKT, idKLOB)
+          .strOpis = strDataZdarzenia + ":" + strTyp + ", " + strKategoria
+        end with
+      
+        setglobprofile GLOBPROF_LAST_MONPATROL_DATE, strLastDataZdarzenia
+      
+        if not trans_.saveobjects() then
+          exit function
+        end if      
+        set oZadanie = nothing
+      else
+         trans_.message 0,0, "Brak obiektu klienta o indeksie " + strKryptonim
+      end if
+    end if
+    
+    'DBG: 
+    trans_.message 0,0, strDataZdarzenia + "/"+ strIdZdarzenia+"/"+strKryptonim
+        
+    oRS.movenext
+  wend
+
+end function
+]]>
+</script>
+
+</config>
+
+<header>
+</header>
+<body>
+<table>
+	<tbody border='1' style='STYLE_TABLE_BODY_RAPORT'>
+    <tr style='STYLE_TABLE_HEADER'>
+      <td>
+        <button style = 'STYLE_BUTTON' href='varFunction="check_monpatrol"'>Pobierz wpisy z MonPatrol</button>
+      </td>
+    </tr>
+  </tbody>
+</table>
+</body>
+</page>

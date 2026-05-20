@@ -1,0 +1,315 @@
+#include "h1000.h"
+#include "h1200.h"
+#include "h1201.h" 
+#include "h1240.h" 
+#include "h1232.h" 
+
+<?xml version="1.0" encoding="windows-1250" ?>
+<class>
+	<!-- przenieść do appvarSearchTypeId h1000.h  -->
+
+	<identifier>TYPEID_SEARCHTYPE</identifier>
+	<table>SearchType</table>
+	<humanname>Sposób wyszukiwania</humanname>	
+	<hidden/>
+	<idobj/>
+	<embedded> 
+		<name>Nazwa</name>
+		<sqltype>SQLvc256</sqltype>
+		<humanname>Nazwa sposobu wyszukiwania</humanname>
+		<unique/>
+	</embedded>
+	<embedded>
+		<name>ResultTypeId</name>
+		<sqltype>SQLlong</sqltype>
+		<humanname>Typ wyszukanych obiektów</humanname>
+		<nonempty/>
+	</embedded>
+	<list>
+		<name>listFilter</name>
+		<humanname>Elementy sposobu wyszukiwania</humanname>
+		<typeid>TYPEID_SEARCHTYPEITEM</typeid>
+	</list>
+	<list>
+		<name>listOrder</name>
+		<humanname>Elementy porządkowania</humanname>
+		<typeid>TYPEID_SEARCHTYPEITEM</typeid>
+	</list>
+	<list>
+		<name>listColumn</name>
+		<humanname>Kolumny</humanname>
+		<typeid>TYPEID_SEARCHTYPEITEM</typeid>
+	</list>
+	<embedded>
+		<name>cKind</name>
+		<sqltype>SQLc1</sqltype>
+		<humanname>Rodzaj szablonu</humanname>
+		<!-- 
+			'S'-szablon szukania, 
+			'R'-raport
+			'B'-browser
+			'F'-fuzzy
+		-->
+		<default>S</default>
+		<nonempty/>
+	</embedded>
+	<embedded>
+		<name>strKod</name>
+		<sqltype>SQLvc8</sqltype>
+		<humanname>Kod produktu</humanname>
+		<default>EB</default>
+		<nonempty/>
+	</embedded>
+	<!--
+	Wersja NAVO Kontakt
+	-->
+	<embedded>
+		<name>nIsSecurity</name>
+		<sqltype>SQLlong</sqltype>
+		<humanname>Ochrona danych</humanname>
+		<default>0</default>
+	</embedded>
+	<!--
+	Jeżeli wartość jest ustawiona na 1 obiekt jest chroniony (pojawia się odpowiedni wpis w SO i SOD)
+	-->
+	<embedded> 
+		<name>Opis</name>
+		<sqltype>SQLvc512</sqltype>
+		<humanname>Opis sposobu wyszukiwania</humanname>
+	</embedded>
+<script>
+<![CDATA[
+
+'getCurrentUserID
+#include "50203"
+
+'remove_SecurityObject_save
+'insert_SecurityObject_save
+#include "50626"
+
+'-----------------------------------------------------------------------------
+' Zainicjowanie obiektu
+'-----------------------------------------------------------------------------
+function SearchType_initnew(): SearchType_initnew = false
+	
+	if trans_.var(GVAR_OPERATION_MODE) <> clng(OPERATION_MODE_IMPORT) then
+		this_.ResultTypeId = trans_.var(APPVAR_SEARCH_TYPEID)
+		this_.cKind = trans_.var(APPVAR_SEARCH_KIND)
+	end if
+	if this_.cKind = "B" then
+		this_.Nazwa = "@browser_" + cstr(this_.ResultTypeId) + "@"
+	else
+		if this_.cKind = "F" then
+			this_.Nazwa = "@fuzzy_" + cstr(this_.ResultTypeId) + "@"
+		end if
+	end if
+	
+
+	SearchType_initnew = true
+end function
+
+
+'-----------------------------------------------------------------------------
+' Sprawdza, czy lista jest poprawna np. czy nie powtarzają się takie 
+' same pozycje
+'-----------------------------------------------------------------------------
+function SearchType_IsValidList(byref oList): SearchType_IsValidList = false
+	dim oSet 
+	Set oSet = CreateObject("Scripting.Dictionary")
+
+	dim item
+	for each item in oList
+		on error resume next
+		
+		Err.Clear
+		oSet.Add CStr(item.ComposedPath), ""
+		
+		if (Err.Number>0) then
+			exit function
+		end if
+		
+		on error goto 0 
+	next
+
+	SearchType_IsValidList = true
+end function
+
+
+'----------------------------------------------------------------------------
+' Wstawiamy obiekty security (nasz obiekt jest chroniony)
+'----------------------------------------------------------------------------
+function SearchType_InsertSOD()
+	SearchType_InsertSOD = insert_SecurityObject_save("Chronione sposoby wyszukiwania", _
+		this_.Nazwa, this_.IdObj, THIS_FILE, "IdObj = " + CStr(getCurrentUserID()) )
+end function
+
+
+'----------------------------------------------------------------------------
+' BEFORE INSERT
+'----------------------------------------------------------------------------
+function SearchType_befins(): SearchType_befins = false
+	
+	'Wykonujemy czesc wspolna sprawdzenia dla ins. i updt.
+	if (not SearchType_BefInsUpd()) then
+		exit function
+	end if
+
+	'Sprawdzamy czy obiekt ma być chroniony
+	if (this_.nIsSecurity = 1) then
+		
+		'Dodajemy obiekty uprawnien
+		if (not SearchType_InsertSOD()) then
+			exit function
+		end if
+
+	end if
+
+	SearchType_befins = true
+end function
+
+
+'----------------------------------------------------------------------------
+' BEFORE UPDATE
+'----------------------------------------------------------------------------
+function SearchType_befupd(): SearchType_befupd = false
+	
+	'Wykonujemy czesc wspolna sprawdzenia dla ins. i updt.
+	if (not SearchType_BefInsUpd()) then
+		exit function
+	end if
+
+	if (this_.old_nIsSecurity = 0 and this_.nIsSecurity = 1) then
+		
+		'Zmiana z 'nie' na 'tak'. Obiekt staje sie chroniony a
+		'wczesniej nie byl
+		
+		if (not SearchType_InsertSOD()) then
+			exit function
+		end if
+
+	end if
+
+	if (this_.old_nIsSecurity = clng(1) and  this_.nIsSecurity = clng(0))then
+		
+		'Jeżeli zmienił się z 'tak' na 'nie'
+		'Usuwamy obiekty security skojarzone z naszym obiektem
+
+		if (not remove_SecurityObject_save(THIS_FILE, this_.IdObj)) then
+			exit function
+		end if
+
+	end if
+
+	SearchType_befupd = true
+end function
+
+
+'----------------------------------------------------------------------------
+' BEFORE DELETE
+'----------------------------------------------------------------------------
+function SearchType_befdel(): SearchType_befdel = false
+
+	'Usuwamy obiekty security skojarzone z naszym obiektem
+	if (not remove_SecurityObject_save(THIS_FILE, this_.IdObj)) then
+		exit function
+	end if
+
+	SearchType_befdel = true
+end function
+
+
+'----------------------------------------------------------------------------
+' Część wspólna dla befins i befupdt
+'----------------------------------------------------------------------------
+function SearchType_BefInsUpd(): SearchType_BefInsUpd = false
+	
+	if trans_.var(GVAR_OPERATION_MODE) <> clng(OPERATION_MODE_IMPORT) then
+		
+		'Sprawdzaj czy wypelniono dopowiednie listy w zaleznosci
+		'od typu
+		if (this_.cKind="S") then
+			
+			if not this_.listFilter.exists(1) and not this_.listOrder.exists(1) then
+				trans_.message 6500, 0, "Należy podać conajmniej jedno kryterium lub jeden sposób uporządkowania"
+				exit function
+			end if
+
+		elseif this_.cKind="R" then
+			
+			if not this_.listColumn.exists(1) then
+				trans_.message 6501, 0, "Należy podać conajmniej jedną kolumnę"
+				exit function
+			end if
+		elseif this_.cKind="B" then
+			
+			if not this_.listColumn.exists(1) then
+				trans_.message 6501, 0, "Należy podać conajmniej jedną kolumnę"
+				exit function
+			end if
+
+			if not this_.listOrder.exists(1) then
+				trans_.message 6501, 0, "Należy podać conajmniej jedno kryterium uporzadkowania"
+				exit function
+			end if
+
+			if this_.listColumn.get(1).ComposedPath <> this_.listOrder.get(1).ComposedPath then
+				trans_.message 6501, 0, "Pierwsza kolumna musi być taka sama jak kryterium uporzadkowania"
+				exit function
+			end if
+			dim idObj : idObj =  trans_.findobjid(TYPEID_SEARCHTYPE,"cKind='B' and ResultTypeId=" + cstr(this_.ResultTypeId))	
+			if idObj > 0 and idObj <> this_.idobj then
+				trans_.message 6501, 0, "Mozna zdefiniowac tylko jeden sposob przegladania dla danego typu obiektow"
+				exit function
+			end if
+		end if
+
+		'Sprawdzaj czy lista jest poprawna czyli np. nie zawiera
+		'powtarzających się elementów
+
+		if (not SearchType_IsValidList(this_.listFilter)) then
+			trans_.message 6502,0,"Definicja listy kryterium jest nieprawidłowa - powtarzajace sie elementy"
+			exit function
+		end if
+		
+		if (not SearchType_IsValidList(this_.listOrder)) then
+			trans_.message 6503,0,"Definicja listy uporządkowania jest nieprawidłowa - powtarzajace sie elementy"
+			exit function
+		end if
+
+	end if
+
+	SearchType_BefInsUpd = true
+end function
+
+function SearchType_as_text(): SearchType_as_text=""
+	SearchType_as_text=this_.Nazwa	
+end function
+
+]]>
+</script>
+<cursors>
+	<cursor>
+		<identifier>CRSR_DEFAULT</identifier>
+		<humanname>Sposoby wyszukiwania wg nazw</humanname>
+		<where>(ResultTypeId=appvarSearchTypeId)  
+				AND cKind='appvarSearchKind' 
+				AND (nIsSecurity=0 
+						OR (nIsSecurity>0 AND ( (IdObj IN (SELECT SearchType.IdObj 
+														   FROM SearchType	
+														   JOIN n5sod ON n5sod.nIdent=SearchType.IdObj 
+														   JOIN n5securityobj ON n5sod.idObj=n5securityobj.pSOD 
+														   WHERE n5sod.nSecId=UOR_READ(TYPEID_SEARCHTYPE) AND gvar_user=n5securityobj.pUser
+														   )
+												 )
+											    OR (gvar_user = (select idobj 
+												                 from n5uzytkownik 
+																 where strLogin = Replace('ADMIN_LOGIN','"',''))
+									               )
+											   )
+							)
+					)
+		</where>
+		<orderby>Nazwa</orderby>
+	</cursor>
+</cursors>
+</class>

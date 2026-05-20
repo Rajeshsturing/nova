@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#comment NX_READY
+
+'wieksze' funkcje wspierajace runtimeowo NX forms
+
+#include "h1000"
+#include "h1001"
+#include "h1220"
+#include "h1240"
+-->
+<page>
+	<config>
+		<script>
+<![CDATA[
+#include "50203"
+
+#comment '--------------------------------------------------------
+#comment ' funkcja odpowiada za zwijanie/rozwijanie NX sekcji
+#comment '--------------------------------------------------------
+sub nx_section_hideshow_forwarder(byref oPage,byval idPictureCtrl)
+	dim oPicture : set oPicture = oPage.ctrl(idPictureCtrl)
+	dim oStartRow : set oStartRow = oPicture.parent.parent
+	dim bHide : bHide = (oPicture.image = PICTURE_SMALL_MINUS)
+	nx_section_hideshow_perform oPage,oStartRow,idPictureCtrl,bHide
+end sub
+
+#comment '--------------------------------------------------------
+#comment ' otwiera/zamyka sekcje
+#comment '--------------------------------------------------------
+sub nx_section_hideshow_perform(byref oPage,byref oStartRow,byval iSectionMarker,byval bHide)
+	dim oRow : set oRow = oStartRow.nextelement
+	do while not oRow is nothing
+		if nx_get_ctrl_userprop_value(oRow,PROPC_SECTION_END) = iSectionMarker then
+			exit do
+		end if
+		oRow.hide = bHide
+		set oRow = oRow.nextelement
+	loop
+	dim oPicture : set oPicture = oPage.ctrl(iSectionMarker)
+	if bHide then
+		oPicture.image = clng(PICTURE_SMALL_PLUS)
+		oPicture.tip = "Rozwiń"
+	else
+		oPicture.image = clng(PICTURE_SMALL_MINUS)
+		oPicture.tip = "Zwiń"
+	end if
+end sub
+
+#comment '--------------------------------------------------------
+#comment ' zachowuje w profilu uzytkownika stan sekcji
+#comment '--------------------------------------------------------
+function nx_section_save_state_forwarder(byref oPage,byval idProfile,byval strNXSectionInitialState)
+	nx_section_save_state_forwarder = true
+	dim strState : strState = nx_get_open_sections(oPage).join_to_string(";")
+	if strState <> strNXSectionInitialState then
+		dim pSubTrans
+		set pSubTrans=trans_.createsubtran()
+		setuserprofile idProfile, strState
+		nx_section_save_state_forwarder = trans_.saveobjects()
+		set pSubTrans=nothing
+	end if
+end function
+
+#comment '--------------------------------------------------------
+#comment ' tworzy tablice identyfikatorow sekcji (idPicture)
+#comment '--------------------------------------------------------
+function nx_get_open_sections(byref oPage)
+	dim oNXArray : set oNXArray = nx_.new_array()
+	Dim oTopElement: set oTopElement = oPage.topelement
+	nx_get_open_sections_internal oTopElement,oNXArray
+	set nx_get_open_sections = oNXArray
+end function
+
+private sub nx_get_open_sections_internal(byref oParentElement,byref oNXArray)
+	dim oElement
+	for each oElement in oParentElement
+		select case oElement.Type
+		case CTRL_TYPE_TABLE
+			dim oRow
+			for each oRow in oElement.body
+				if nx_get_ctrl_userprop_value(oRow,PROPC_SECTION_START) = 1 then
+					if oRow.element(1).element(1).image = PICTURE_SMALL_MINUS then
+						oNXArray.add oRow.element(1).element(1).ident
+					end if
+				end if
+				dim oCell
+				for each oCell in oRow
+					nx_get_open_sections_internal oCell,oNXArray
+				next
+			next
+		case CTRL_TYPE_PARAGRAPH,CTRL_TYPE_TABITEM,CTRL_TYPE_PAGEMAN
+			nx_get_open_sections_internal oElement,oNXArray
+		end select
+	next
+end sub
+
+#comment '--------------------------------------------------------
+#comment 'odtwarza stan sekcji
+#comment '--------------------------------------------------------
+function nx_section_load_state_forwarer(byref oPage,byval idProfile)
+	dim strInitialState : strInitialState = nx_get_current_userprofile_value(idProfile)
+	dim oNXArray : set oNXArray = nx_.new_array()
+	oNXArray.split_string strInitialState,";"
+	nx_set_open_sections oPage,oNXArray
+	nx_section_load_state_forwarer = strInitialState
+end function
+
+#comment '-------------------------------------q-------------------
+#comment ' ustawia stan sekcji na podstawie tablicy
+#comment '--------------------------------------------------------
+function nx_set_open_sections(byref oPage,byref oNXArray)
+	Dim oTopElement: set oTopElement = oPage.topelement
+	nx_set_open_sections_internal oPage,oTopElement,oNXArray,true
+end function
+
+#comment '--------------------------------------------------------
+#comment 'otwiera / zamyka wszystkie sekcje
+#comment '--------------------------------------------------------
+function nx_open_close_all_sections(byref oPage,byval bOpenAlways)
+	Dim oTopElement: set oTopElement = oPage.topelement
+	nx_set_open_sections_internal oPage,oTopElement,nothing,bOpenAlways
+end function
+
+private sub nx_set_open_sections_internal(byref oPage,byref oParentElement,byref oNXArray,byval bOpenAlways)
+	dim oElement
+	for each oElement in oParentElement
+		select case oElement.Type
+		case CTRL_TYPE_TABLE
+			dim oRow
+			for each oRow in oElement.body
+				if nx_get_ctrl_userprop_value(oRow,PROPC_SECTION_START) = 1 then
+					dim iSectionMarker : iSectionMarker = oRow.element(1).element(1).ident
+					dim bHide
+					if not oNXArray is nothing then
+						bHide = (oNXArray.find(cstr(iSectionMarker)) = -1)
+					else
+						bHide = not bOpenAlways
+					end if
+					nx_section_hideshow_perform oPage,oRow,iSectionMarker,bHide
+				end if
+				dim oCell
+				for each oCell in oRow
+					nx_set_open_sections_internal oPage,oCell,oNXArray,bOpenAlways
+				next
+			next
+		case CTRL_TYPE_PARAGRAPH,CTRL_TYPE_TABITEM,CTRL_TYPE_PAGEMAN
+			nx_set_open_sections_internal oPage,oElement,oNXArray,bOpenAlways
+		end select
+	next
+end sub
+
+#comment '--------------------------------------------------------
+#comment ' zwraca wartosc userprop dla property idProp i kontrolki oCtrl
+#comment '--------------------------------------------------------
+function nx_get_ctrl_userprop_value(byref oCtrl,byval idProp)
+	nx_get_ctrl_userprop_value = -1
+	dim oUserProp : set oUserProp = oCtrl.userprop
+	if oUserProp is nothing then
+		exit function
+	end if
+	if not oUserProp.exists(idProp) then
+		exit function
+	end if
+	nx_get_ctrl_userprop_value = oUserProp.prop(idProp)
+end function
+]]>
+</script>
+	</config>
+	<body></body>
+</page>

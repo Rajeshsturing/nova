@@ -1,0 +1,459 @@
+'----------------------------------------------------------------------
+' (c) 2001 Navo
+' Spikowski Piotr
+' Funckje do tworzenia i wyswietlania oferty z wizzarda ofery
+'----------------------------------------------------------------------
+
+#include "50523"
+
+'zmienne globalne
+dim gContainer		'referencja na kontener wizzarda
+dim pExcelContext	'informacje dla oferty Excel'owej - CExcelContext
+dim nVisibleColumns 'liczba widocznych kolumn
+
+
+'trzyma wszystko co jest potrzebne dla oferty Excelowej
+class CExcelContext
+	public pExcel
+	public y
+
+	private sub class_initialize()
+		set pExcel=new CExcel
+		y=1
+	end sub
+
+	public function InitExcel()
+		InitExcel=pExcel.NewExcel()
+	end function
+
+	public sub increment()
+		y = y + 1
+	end sub
+	
+end class
+
+function row_begin(byref pRRS,byref pSO, byref pCurrRec)
+
+	if (gContainer.nGroupBy<>2) then
+		exit function
+	end if
+	
+	'........................................
+	' wstawiamy kod poczatku grupy
+	'........................................
+
+	select case gContainer.nForm
+		case 1 'html
+			pSO.write "<raportrow>" + vbNewLine
+			pSO.write "<rowtype>1</rowtype>"  + vbNewLine
+
+	end select
+
+
+	'........................................
+	' wstawiamy kod grupy
+	'........................................
+
+	dim strGroupName
+	strGroupName=CStr(pCurrRec.fields(pCurrRec.fields.count-1).value)
+
+	select case gContainer.nForm
+		case 1: 'html
+			
+			pSO.write "<c1><" + "!" + "[C" + "DA" + "TA[" + strGroupName + "]" + "]></c1>" + vbNewLine
+
+
+		case 3:	'Excel
+
+			pExcelContext.pExcel.InsertValueXY 1, pExcelContext.y, strGroupName
+			pExcelContext.pExcel.SetBkgColor 1, pExcelContext.y, RGB(192,192,192)
+			pExcelContext.pExcel.MakeBoldXY 1, pExcelContext.y, true
+			pExcelContext.pExcel.MergeXY 1, pExcelContext.y, nVisibleColumns, pExcelContext.y
+
+	end select
+
+	'........................................
+	' wstawiamy kod zakonczenia grupy
+	'........................................
+
+	select case gContainer.nForm
+		case 1: 'html
+			pSO.write "</raportrow>" + vbNewLine
+
+
+		case 3:	'Excel
+
+			pExcelContext.increment
+	end select
+
+end function
+
+function row_end(byref pRRS,byref pSO)
+end function
+
+function row_proc(byref pRRS,byref pSO, byref pCurrRec)
+
+	'........................................
+	' wstawiamy kod poczatku wiersza
+	'........................................
+
+	select case gContainer.nForm
+		case 1 'html
+			pSO.write "<raportrow>" + vbNewLine
+			pSO.write "<rowtype>2</rowtype>"  + vbNewLine
+
+	end select
+
+
+	'........................................
+	' wstawiamy kod dla kazdego pola w danym 
+	' wierszu
+	'........................................
+
+	dim i, nField:nField=1
+	for i=1 to gContainer.pFieldsDB.Count()-1
+
+		'jezeli pole zostalo wybrane
+
+		dim iRealIndex:iRealIndex=i
+		if (i>=6) then iRealIndex=iRealIndex+1
+		
+		if (gContainer.pFields.Value(iRealIndex)="1") then			
+			dim valFieldValue
+			
+			if gContainer.pFieldsDB.Value(iRealIndex).strRaportName = "stawka VAT" then
+				valFieldValue= vat2name(pCurrRec.Fields(nField).value)
+			else
+				valFieldValue=pCurrRec.Fields(nField).value
+			end if
+
+			if (isNull(valFieldValue)) then
+				valFieldValue=""
+			end if
+		
+			select case gContainer.nForm
+				case 1: 'html
+					pSO.write "<c" + CStr(nField) + "><" + "!" + "[C" + "DA" + "TA[" + CStr(valFieldValue) + "]" + "]></c" + CStr(nField) + ">" + vbNewLine
+
+
+		case 3:	'Excel
+
+					if (VarType(valFieldValue)=vbString) then
+						valFieldValue = replace(valFieldValue, vbNewLine, Chr(10))
+					end if
+
+					pExcelContext.pExcel.InsertValueXY nField, pExcelContext.y, valFieldValue
+			
+			end select
+
+			nField=nField+1
+		end if
+
+	next
+
+	'........................................
+	' wstawiamy kod zakonczenia wiersza
+	'........................................
+
+	select case gContainer.nForm
+		case 1: 'html
+			pSO.write "</raportrow>" + vbNewLine
+
+
+		case 3:	'Excel
+
+			pExcelContext.increment
+
+	end select
+
+end function
+
+function Raport_Begin(byref pContainer, byref pSO)
+	set pSO=nothing	
+
+	'skladamy zapytanie
+	dim strStatement
+	strStatement="select " + pContainer.strSelect + " from n5produkt"
+
+	if (pContainer.strJoin<>"") then
+		strStatement=strStatement + " " + pContainer.strJoin
+	end if
+
+	if (pContainer.strWhere<>"") then
+		strStatement=strStatement + " where " + pContainer.strWhere
+	end if
+
+	if (pContainer.strOrderBy<>"") then
+		strStatement=strStatement + " order by " + pContainer.strOrderBy
+	end if
+
+	'kontener globalny
+	set gContainer=pContainer
+
+	'stream object
+	set pSO=doc_.createstreamobj()
+
+	'liczba kolumn wyswietlanych
+	dim i
+	nVisibleColumns=0
+
+	'okreslamy liczbe widocznych kolumn
+	dim strHeaderXML
+	strHeaderXML="<raportrow>" + vbNewLine
+	strHeaderXML=strHeaderXML + "<rowtype>3</rowtype>"  + vbNewLine
+
+	for i=1 to gContainer.pFields.Count()-1
+
+		'wyczysc wszystko co w grupie
+		if (i=6 and gContainer.pFields.Value(i)="0") then
+			dim z
+			for z=7 to 23
+				gContainer.pFields.Value(z)= "0"
+			next
+		end if
+
+		dim strColName
+		strColName=gContainer.pFieldsDB.Value(i).strRaportName
+
+		if (gContainer.pFields.Value(i)="1" and i<>6) then
+
+			select case gContainer.nForm
+				case 1:
+					strHeaderXML=strHeaderXML+"<c" + CStr(nVisibleColumns+1) + "><" + "!" + "[C" + "DA" + "TA[" + strColName + "]" + "]></c" + CStr(nVisibleColumns+1) + ">" + vbNewLine
+
+
+		case 3:	'Excel
+
+					pExcelContext.pExcel.InsertValueXY nVisibleColumns+1, pExcelContext.y, strColName
+					pExcelContext.pExcel.CenterXY nVisibleColumns+1, pExcelContext.y
+					pExcelContext.pExcel.SetTextColor nVisibleColumns+1, pExcelContext.y, RGB(255,255,255)
+					pExcelContext.pExcel.SetBkgColor nVisibleColumns+1, pExcelContext.y, RGB(0,0,0)
+					pExcelContext.pExcel.MakeBoldXY nVisibleColumns+1, pExcelContext.y, true
+
+			end select
+
+			nVisibleColumns=nVisibleColumns+1
+		end if
+	next
+
+	select case gContainer.nForm
+
+		case 3:	'Excel
+
+			pExcelContext.increment
+
+	end select
+
+	strHeaderXML=strHeaderXML+"</raportrow>" + vbNewLine
+
+	'tworzymy rdzen raportu, ktory odpowiedzialny jest za zarzadzanie
+	'wszystkimi sekcjami raportu jak rowniez przetrzymuje zapytanie
+	'sqlowe na podstawie ktorego powstaje caly raport
+	dim pRaportCore
+	set pRaportCore=new CRawRaport
+
+	'ustaw tresc zapytania
+	pRaportCore.m_strADOQuery=strStatement
+
+	'sekcja wywolujaca odpowiednie zdarzenia
+	dim pRRS
+	set pRRS = new CRawRapSection
+
+	if (gContainer.nGroupBy=2) then
+		pRRS.init nVisibleColumns+1 , "row_begin", "row_end", "row_proc", 0
+	else
+		pRRS.init -1, "row_begin", "row_end", "row_proc", 0
+	end if
+	
+	'dodaj sekcje naglowak i stopki do naszego raportu
+	pRaportCore.addsection	pRRS
+
+
+	'...............................................
+	' przygotowanie danych poczatkowych globalnych
+	'...............................................
+	
+	select case gContainer.nForm
+		case 1 'html
+			pSO.write "<raportdata>" + vbNewLine
+			pSO.write "<raportable>" + vbNewLine
+			pSO.write "<tablecolumns>" + CStr(nVisibleColumns) + "</tablecolumns>" + vbNewLine
+			pSO.write strHeaderXML
+
+	end select
+
+
+
+	'generowanie wynikow
+	dim pGenerateModule
+	set pGenerateModule=doc_.getmodule(60120)
+
+	pGenerateModule.generate_raport pSO, pRaportCore
+
+	'...............................................
+	' przygotowanie danych koncowych globalnych
+	'...............................................
+
+	select case gContainer.nForm
+		case 1 'html
+			pSO.write "</raportable>" + vbNewLine
+			pSO.write "</raportdata>" + vbNewLine
+
+			dim pPM
+			set pPM=doc_.getappfile(50502)
+
+			dim pHtmlSO
+			set pHtmlSO=doc_.createstreamobj()
+
+			pHtmlSO.attach pPM
+			
+			dim strHtml:strHtml=pHtmlSO.getString()
+			strHtml=replace(strHtml, "@XML_NAVO@", pSO.getString())
+
+			set pSO=nothing
+			set pSO=doc_.createstreamobj()
+			pSO.write strHtml
+
+		case 3: 'Excel
+					
+
+	end select
+
+end function
+
+function ExistFileContinue(byval strFileName):ExistFileContinue=false
+	if (pFD.isFile(strFileName)) then
+		if MessageBox("Na dysku istnieje plik """ + strFileName + _
+		 """. Móg³ on ulec zmianie. Czy chcesz kontynuowaæ i nadpisaæ istniej¹cy plik?", "Nadpisaæ?", vbYesNo, vbQuestion )<>vbYes then
+			exit function
+		end if
+	end if
+
+	ExistFileContinue=true
+end function
+
+function CreateOffer(byval bView, byref pContainer, byref pRootPage):CreateOffer=false
+	set pExcelContext=nothing
+
+	'ustaw odpowiednie zmienne i zainicjuj obiekt
+	select case pContainer.nForm
+
+		case 3:	'Excel
+
+			set pExcelContext=new CExcelContext
+
+			if (not pExcelContext.InitExcel()) then
+				' 1, 0, "Nie uda³o siê utworzenie obiektu aplikacji MS Excel."
+				view_message 6077, 0
+				exit function
+			end if
+
+	end select
+
+	dim pSO
+	Raport_Begin pContainer, pSO
+
+	dim strTempFileName
+
+
+	'Przygotowanie do podgladu lub edycji pliku
+
+	'create pFD object
+	if (not Create_FileDriveObject()) then
+		exit function
+	end if
+
+	if (not bView) then
+		'tworzymy katalog user'a jezeli go nie ma
+		if (not checkUserDirectory()) then
+			' 1, 0, "Utworzenie katalogu lub jego sprawdzenie nie jest mo¿liwe (" + getUserDirectory() + ")"
+			view_message1 6078, 0, getUserDirectory()
+			exit function
+		end if
+
+		dim strOfferFolder
+		strOfferFolder=getUserDirectory() + "\" + "Oferty"
+
+		if (not pFD.IsFolder( strOfferFolder )) then
+			if (not pFD.CreatePath( strOfferFolder )) then
+				' 1, 0, "Utworzenie katalogu lub jego sprawdzenie nie jest mo¿liwe - " + strOfferFolder
+				view_message1 6079, 0, strOfferFolder
+				exit function
+			end if
+		end if
+
+		strTempFileName=strOfferFolder+"\"+ pContainer.strFileName + "."
+	end if
+
+	'uruchom podglad wyniku
+	select case pContainer.nForm
+	
+		case 1:	'html
+	
+			if (bView) then
+				strTempFileName = doc_.system.createtempfilename("x", "htm")
+			else
+				strTempFileName = strTempFileName + "htm"
+				
+				if (not ExistFileContinue(strTempFileName)) then
+					exit function
+				end if
+
+			end if
+			
+			'zapis
+			pSO.save strTempFileName
+
+			if (bView) then
+				doc_.getmodule(PAGE_FORM_WEB).navigate "file://" + strTempFileName
+			end if
+
+		case 3:	'Excel
+
+			
+			if (bView) then
+				strTempFileName = doc_.system.createtempfilename("x", "xls")
+			else
+				strTempFileName = strTempFileName + "xls"
+				
+				if (not ExistFileContinue(strTempFileName)) then
+					exit function
+				else
+					pFD.DeleteFile strTempFileName
+				end if
+
+			end if
+
+			pExcelContext.pExcel.MakeWholeFrame
+			pExcelContext.pExcel.AutoFitWhole
+			
+			'zapisz wyniki
+			pExcelContext.pExcel.SetFileName strTempFileName
+			
+			if (bView) then
+				pExcelContext.pExcel.ManualSave
+				pExcelContext.pExcel.Save
+
+				'user musi reczeni zamknac Excela - obiekt
+				'nie jest niszczony
+				pExcelContext.pExcel.ManualClose
+				'show
+				pExcelContext.pExcel.Maximize
+			end if
+
+	end select
+
+	set pExcelContext=nothing
+
+	if (not bView) then
+
+		view_message1 4092, 0, strTempFileName
+
+		if MessageBoxAndForget("Oferta zosta³a zapisana jako """ + strTempFileName + """ Uruchomiæ podgl¹d oferty?", "Chcesz obejrzeæ teraz?", vbYesNo, vbQuestion, USERPROF_MSGBOX_EDITNOW)=vbYes then
+			Run strTempFileName
+		end if
+
+	end if
+
+	CreateOffer=true
+end function

@@ -1,0 +1,275 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+REV:KB:20020228
+
+#include "h1000.h" 
+#include "h1200.h" 
+#include "h1229.h"
+#include "h1231.h"
+-->
+<class>
+	<identifier>TYPEID_N5MAGAZYN</identifier>
+	<table>n5magazyn</table>
+	<humanname>Magazyn</humanname>
+	<hidden/>
+	<idobj/>
+	<embedded>
+		<name>strNazwa</name>
+		<sqltype>SQLvc64</sqltype>
+		<humanname>Nazwa magazynu</humanname>
+		<unique/>
+	</embedded>
+	<!--
+	Pełna nazwa magazynu
+	-->
+	<ref>
+		<name>pWaluta</name>
+		<humanname>Waluta</humanname>
+		<typeid>TYPEID_N5JEDNOSTKA</typeid>
+	</ref>
+
+	<enum>
+		<name>eTyp</name>
+		<humanname>Typ magazynu</humanname>
+		<default>N5TYPMAG_PODSTAWOWY</default>
+		<item>podstawowy</item>
+		<item>zwroty</item>
+		<item>towar w drodze</item>
+		<item>produkcja w toku</item>
+		<item>rezerwacje</item>
+	</enum>
+	<ref>
+		<name>pJednostkaOrg</name>
+		<humanname>Jednostka organizacyjna</humanname>
+		<typeid>TYPEID_N5JEDN_ORG</typeid>
+	</ref>
+
+
+	<!-- DB7 -->
+	XDF_ENUM(mag_eAktywny,Aktywny,N5PRODUKT_AKTYWNY,<item>Aktywny</item><item>Nieaktywny</item>)
+
+
+<cursors>
+	DEFAULT_CURSOR(wg nazwy,strNazwa)
+
+	<cursor>
+		<identifier>CURSOR_MAGAZYNY_PODSTAWOWE</identifier>
+		<humanname>Magazyny podstawowe</humanname>
+		<where>eTyp = N5TYPMAG_PODSTAWOWY and mag_eAktywny = N5PRODUKT_AKTYWNY </where>
+		<orderby>strNazwa</orderby>
+	</cursor>
+
+	<cursor>
+		<identifier>CURSOR_MAGAZYNY_PRODUKCYJNE</identifier>
+		<humanname>Magazyny produkcyjne</humanname>
+		<where>eTyp = N5TYPMAG_PRODUKCJAWTOKU and mag_eAktywny = N5PRODUKT_AKTYWNY</where>
+		<orderby>strNazwa</orderby>
+	</cursor>
+
+	<cursor>
+		<identifier>CURSOR_MAGAZYNY_ZWROTOW</identifier>
+		<humanname>Magazyny zwrotów</humanname>
+		<where>eTyp = N5TYPMAG_ZWROTY and mag_eAktywny = N5PRODUKT_AKTYWNY</where>
+		<orderby>strNazwa</orderby>
+	</cursor>
+
+	<cursor>
+		<identifier>CURSOR_MAGAZYNY_TOWAROWWDRODZE</identifier>
+		<humanname>Magazyny towarów w drodze</humanname>
+		<where>eTyp = N5TYPMAG_TOWARWARWDRODZE and mag_eAktywny = N5PRODUKT_AKTYWNY</where>
+		<orderby>strNazwa</orderby>
+	</cursor>
+
+	<cursor>
+		<identifier>CURSOR_MAGAZYNY_PRODUKCYJNE_I_PODSTAWOWE</identifier>
+		<humanname>Magazyny produkcyjne i podstawowe</humanname>
+		<where>(eTyp = N5TYPMAG_PRODUKCJAWTOKU or eTyp = N5TYPMAG_PODSTAWOWY ) and mag_eAktywny = N5PRODUKT_AKTYWNY</where>
+		<orderby>strNazwa</orderby>
+	</cursor>
+	<cursor>
+		<identifier>CURSOR_MAGAZYNY_NORMALNE</identifier>
+		<humanname>Magazyny produkcyjne,podstawowe i rezerwacje</humanname>
+		<where>(eTyp in(N5TYPMAG_PRODUKCJAWTOKU,N5TYPMAG_PODSTAWOWY,N5TYPMAG_REZERWACJE)) and mag_eAktywny = N5PRODUKT_AKTYWNY</where>
+		<orderby>strNazwa</orderby>
+	</cursor>
+
+</cursors>
+
+<script>
+<![CDATA[
+
+'getCurrentFirma
+#include "50203"
+
+
+'uprawnienia
+#include "50101"
+
+
+'remove_SecurityObject_save
+'insert_SecurityObject_save
+'update_SecurityObject_save
+#include "50626"
+
+function n5magazyn_as_text()
+    n5magazyn_as_text=this_.strNazwa
+end function
+
+function n5magazyn_initnew()
+	dim pFirma
+	set pFirma = getCurrentFirma()
+
+	if (not pFirma is nothing) then
+		set this_.pWaluta = pFirma.pWaluta
+	end if
+
+	set this_.pJednostkaOrg = getCurrentJO()
+
+	n5magazyn_initnew = true
+end function
+
+function n5magazyn_befdel(): n5magazyn_befdel = false
+
+	dim id_mag:id_mag = trans_.findobjid(TYPEID_N5MAGAZYN , "idobj<>" + cstr(this_.idobj) + " and eTyp=" + cstr(this_.eTyp) )
+
+	if id_mag = 0 then
+		trans_.message 1002 ,0, "Nie wolno usunąć magazynu """ + this_.strNazwa + _
+		""" ponieważ jest on ostatnim tego typu."
+		exit function			
+	end if
+
+	if this_.n5magazyn_hasUserRights then
+		n5magazyn_befdel = this_.n5magazyn_removeSOD()
+
+	else
+		trans_.message 1002 ,0, "Nie można usunąć magazynu - nie masz do niego uprawnień"
+	end if
+	if n5magazyn_befdel then
+		n5magazyn_unregister_in_apprep
+	end if
+end function
+
+
+
+
+
+function n5magazyn_befins():n5magazyn_befins = false
+
+	dim strUserWhere
+	if trans_.var(GVAR_OPERATION_MODE) <> clng(OPERATION_MODE_IMPORT) then
+		strUserWhere = "IdObj = " + CStr(getCurrentUserID())
+	else
+		strUserWhere = "IdObj < 0 "
+	end if
+
+	if not n5magazyn_InsertSOD(strUserWhere) then
+		trans_.message 7000 , 0 , "Nie udało się dodać uprawnień."
+		exit function
+	end if	
+
+	n5magazyn_register_in_apprep
+	
+	n5magazyn_befins = true
+
+end function
+
+function n5magazyn_InsertSOD(strUserWhere):n5magazyn_InsertSOD = false
+	if this_.eTyp = N5TYPMAG_PODSTAWOWY or this_.eTyp = N5TYPMAG_PRODUKCJAWTOKU then
+		n5magazyn_InsertSOD = insert_SecurityObjectCustom(nothing , "Magazyny" , this_.strNazwa, this_.idobj, THIS_FILE , strUserWhere , false , false, false, false , true , 1 )
+	else
+		n5magazyn_InsertSOD = true
+	end if
+end function
+
+
+
+function n5magazyn_hasUserRights()	
+	if this_.eTyp <> N5TYPMAG_PODSTAWOWY and this_.eTyp <> N5TYPMAG_PRODUKCJAWTOKU then 
+		n5magazyn_hasUserRights = true
+	else
+		n5magazyn_hasUserRights = HOR(STDR_READ,this_.type,this_.idobj)
+	end if
+end function
+
+
+
+function n5magazyn_befupd():n5magazyn_befupd = false
+	if this_.n5magazyn_hasUserRights then
+		this_.n5magazyn_updateSOD()
+	else
+		trans_.message 1002 ,0, "Nie można edytować magazynu - nie masz do niego uprawnień"
+		exit function
+	end if
+	n5magazyn_befupd = true
+end function
+
+
+
+function n5magazyn_updateSOD():n5magazyn_updateSOD = true
+
+	if this_.isnew then
+		exit function
+	end if
+
+	if this_.old_strNazwa = this_.strNazwa then
+		exit function
+	end if
+
+	'zmieniamy nazwę grupy jesli stara nazwa była inna
+	dim idSod:idSod = trans_.findobjid(TYPEID_N5SOD,"strNazwa like '" + this_.old_strNazwa + "'")
+	dim pSOD
+	if idSod > 0 then
+		set pSOD = trans_.getobj(TYPEID_N5SOD , idSod)
+		pSOD.strNazwa = this_.strNazwa
+	end if
+
+end function
+
+
+
+function n5magazyn_removeSOD():n5magazyn_removeSOD = false
+
+	if not remove_SecurityObject_save(THIS_FILE, this_.idobj) then
+		exit function
+	end if
+
+	n5magazyn_removeSOD = true
+
+end function
+
+function n5magazyn_register_in_apprep()
+	dim strFldName : strFldName = "@stan_mag_" + cstr(this_.idobj)
+	dim oFields : set oFields = nx_.apprep.objects.get_object(TYPEID_N5OPAKOWANIE_PRODUKTU).fields
+	dim oField : set oField = oFields.new_field(strFldName)
+	with oField
+		.human_name = "Stan magazynu " + this_.strNazwa
+		.reltype = 0 'relt_embedded
+		.sqltype = SQLcurrency
+		.getexpression = _
+			"result=doc_.getmodule(60300).get_stan_mag_for_prod_opak_mag("+cstr(this_.idobj)+",oObject.parent.idobj,oObject.idobj)"
+		
+		dim strFunctionName : strFunctionName = "display_##TYPEID_N5OPAKOWANIE_PRODUKTU##_stan_mag_" + cstr(this_.idobj)
+		dim oFieldDisplay : set oFieldDisplay = nx_.new_field_display(strFunctionName)
+		oFieldDisplay.codepart = _
+			"function " + strFunctionName + "(byref oASP,byref oEVal,byval strCEA,byref pOpak)" + vbCrLf + _
+			"set " + strFunctionName + "=display_quantity_no_unit(oASP,strCEA,oEVal.val(pOpak,""" + strFldName + """),pOpak.parent.pJednostkaEwid)" + vbCrLf + _
+			"end function" + vbCrLf
+		
+		oFieldDisplay.add2using "display_quantity_no_unit"
+		oField.set_display "browser",oFieldDisplay
+	end with
+	oFields.addfld strFldName,oField
+
+end function
+
+function n5magazyn_unregister_in_apprep()
+	dim strFldName : strFldName = "@stan_mag_" + cstr(this_.idobj)
+	nx_.apprep.objects.get_object(TYPEID_N5OPAKOWANIE_PRODUKTU).fields.remove_field(strFldName)
+end function
+]]>
+</script>
+	
+	
+	
+	
+</class>

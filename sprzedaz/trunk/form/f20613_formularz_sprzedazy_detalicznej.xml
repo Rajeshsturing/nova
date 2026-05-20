@@ -1,0 +1,1901 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+Sprzedaz detaliczna
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1004.h"
+#include "h1200.h"
+#include "h1201.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1222.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1240.h"
+#include "h1228.h"
+
+#define CTRLID_KLIENT						1
+#define CTRLID_KLIENT_INDEKS				2
+#define RCELL_SPAN					  3
+
+#define CTRLID_NUMDOK						6
+#define CTRLID_GRID							7
+
+#define CTRLID_ULICA_NUMER					19
+#define CTRLID_KOD_MIASTO					20
+
+#define CTRLID_GRID_PRODUKT_INDEKS			23
+#define CTRLID_GRID_PRODUKT_NAZWA			24
+
+#define CTRLID_OPAK							100
+#define CTRLID_ILOSC_OPAK					101
+#define CTRLID_SUMA_WARTOSCI_BRUTTO			102
+#define CTRLID_SPOS_PLAT					103
+#define CTRLID_CENA_BRUTTO					104
+#define CTRLID_WARTOSC_BRUTTO				105
+#define CTRLID_ILOSC_KARTONOW				121
+#define CTRLID_GOTOWKA						122
+#define CTRLID_RABAT_CONTAINER   131  
+#define CTRLID_ILOSC_OPAK_DOST			132
+
+#define SECID_PODSTAWOWE					1001
+#define SECID_POZYCJE						1002
+
+#define COLUMN_INDEX						2
+#define COLUMN_ILOSC						7
+#define COLUMN_CENA							8
+
+#comment tryb konfiguracji z Vatem
+#define SPF_NKONFIGURACJA					2
+
+#define FORM_SPAN							4
+#define SUMMARY_SPAN					1
+
+#define SPF_UAR_LOCAL	UAR_PARAGON
+
+
+#if vn311 = 1
+#define DZIAL_KASA  1
+#else
+#define DZIAL_KASA  0
+#endif
+
+#if appvar_rejestr_typ = N5REJESTRDOK_FAKT_SP
+#ifdef _GRAJEWSCY
+#define SPF_SHOW_PARAGON_FISKALNY
+#endif
+#define SPF_TITLE  Faktura Vat
+#endif
+
+#if appvar_rejestr_typ = N5REJESTRDOK_PARAGON
+#define SPF_TITLE  Paragon
+#define SPF_SHOW_PARAGON_FISKALNY
+
+#endif
+
+#macro VBG_PRODUKT_FLD_CUSTOM_PODPO_LUKI(_ctrl_,_list_,_prod_fld_,_crsr_,_nr_,_fld_,_bzam_)					\
+function c##_ctrl_##_ondataentered(pCtrl,nRow, strEntered) : c##_ctrl_##_ondataentered = true				\
+	dim pSuggCustomizer : set pSuggCustomizer = new CSuggInxCustomizer										\
+	pSuggCustomizer.setup_fld "_fld_"																		\
+	pSuggCustomizer.setup pCtrl.ident																		\
+	pSuggCustomizer.pokaz_z_cena	_bzam_																	\
+  if strEntered<>"" then  \
+  dim rs:set rs = trans_.createadors("select top 20 * from vlist_n5produkt_listOpakowania where c_strEan = '"+ trans_.afc.convert.str2SQL(strEntered)+"'")\
+	dim idobj_pr,ilosc_op								\
+	if not rs.eof then									\
+				idobj_pr = clng(rs.fields("p_idobj").value)		\
+				ilosc_op = clng(rs.fields("c_curilosc").value)	\
+				idProd = trans_.findobjid(TYPEID_N5PRODUKT,"idobj ="+cstr(idobj_pr))	\
+			dim pElement, idProd														\
+			  if page_.root.listPozycje.exists(nrow) then								\				
+					set pElement = page_.root.listPozycje.get(nrow)						\
+			  else																		\
+				set pElement = page_.root.listPozycje.AddNew()							\
+			  end if																	\		
+				set pElement.pProdukt = trans_.getobj(TYPEID_N5PRODUKT,idProd)							\
+				pElement.curIloscOpak = ccur(ilosc_op)													\
+        strEntered = pElement.pProdukt.strIndeks  \
+	else																						\
+    if len(strEntered)>12 then strEntered = left(strEntered,12) \
+       end if\
+     end if\
+		std_lrs_dataentered_n_zcena pCtrl,strEntered,g_fldnr_parent_list_fld##_nr_,nRow, _					\
+		g_fldnr_child_prod_fld##_nr_,TYPEID_N5PRODUKT,g_fldnr_prod_inx_fld##_nr_,_crsr_,pSuggCustomizer		\
+end function																								\
+function c##_ctrl_##_ongetdata(byref pCtrl,nRow)															\
+	std_lrs_getdata_n pCtrl,g_fldnr_parent_list_fld##_nr_,nRow,g_fldnr_child_prod_fld##_nr_, _				\
+		g_fldnr_prod_inx_fld##_nr_																			\
+	dim strTip : strTip = ""																				\
+	if page_.root._list_.exists(nRow) then																	\
+		if not page_.root._list_.get(nRow)._prod_fld_ is nothing then										\
+			strTip = page_.root._list_.get(nRow)._prod_fld_._fld_											\
+		end if																								\
+	end if																									\
+	pCtrl.tip = strTip																						\
+end function
+
+
+#macro VBG_INIT_CUSTOMIZER(_nr_)	init_fld_nrs_std##_nr_
+
+#macro VBG_PRODUKT_FLD_INIT_CUSTOMIZER(_typeid_parent_,_typeid_child_,_list_,_prod_fld_,_nr_,_fld_)			\
+dim g_fldnr_parent_list_fld##_nr_																			\
+dim g_fldnr_child_prod_fld##_nr_																			\
+dim g_fldnr_prod_inx_fld##_nr_																				\
+sub init_fld_nrs_std##_nr_()																				\
+	dim pStdObjDef : set pStdObjDef = doc_.stdobjdef.getobjdef(_typeid_parent_)								\
+	g_fldnr_parent_list_fld##_nr_ = pStdObjDef.getfieldindex("_list_")										\
+	set pStdObjDef = doc_.stdobjdef.getobjdef(_typeid_child_)												\
+	g_fldnr_child_prod_fld##_nr_ = pStdObjDef.getfieldindex("_prod_fld_")									\
+	set pStdObjDef = doc_.stdobjdef.getobjdef(TYPEID_N5PRODUKT)												\
+	g_fldnr_prod_inx_fld##_nr_ = pStdObjDef.getfieldindex("_fld_")											\
+end sub
+
+
+#macro SXX_EDIT_REF_PRODUKT_INDEX_CENA(_ctrl_,_size_,_listfield_,_field_,_cursor_)							\
+	   SXX_EDIT_REF_PRODUKT_INX_CUSTOM_PODPO_CENA_PRODORG(_ctrl_,_size_,_listfield_,_field_,_cursor_,0,)					
+
+#macro SXX_EDIT_REF_PRODUKT_INX_CUSTOM_PODPO_CENA_PRODORG(_ctrl_,_size_,_list_,_prod_,_crsr_,_zam_,_prodorg_)		\
+	<td keepline='true'>																							\
+		SXE_PICTURE_ACTION(-1,PICTURE_CHOICE_N5PRODUKT,varFunctionHLI="std_choose_prod_list_hli" vs1="_list_" vs2="_prod_" vs3="strIndeks" vs4="_zam_" vs5="_prodorg_" varCursor=_crsr_,Wybór produktu)		\
+		<edit width='max' name='_ctrl_' border='0' size='_size_' style='STYLE_CTRL'>																														\
+			<transfer mode='row_custom' />																																									\
+		</edit>																																																\
+	</td>
+	
+#macro SXX_EDIT_REF_PRODUKT_CENA(_ctrl_,_size_,_listfield_,_field_,_cursor_)														\
+	   SXX_EDIT_REF_PRODUKT_SPAN_CENA_PRODORG(_ctrl_,_size_,_listfield_,_field_,_cursor_,1,1,strNazwa,0,)	
+
+#macro SXX_EDIT_REF_PRODUKT_SPAN_CENA_PRODORG(_ctrl_,_size_,_listfield_,_field_,_cursor_,_rowspan_,_colspan_,_srchfld_,_zam_,_prodorg_)																			\
+	<td width='max' keepline='true' rowspan='_rowspan_' colspan='_colspan_'>																																	\
+		SXE_PICTURE_ACTION(-1,PICTURE_CHOICE_N5PRODUKT,varFunctionHLI="std_choose_prod_list_hli" vs1="_listfield_" vs2="_field_" vs3="_srchfld_" vs4="_zam_" vs5="_prodorg_" varCursor=_cursor_,Wybór produktu)		\
+		SXE_EDIT_REF(_ctrl_,_size_,_field_,_srchfld_,_cursor_)																																					\
+	</td>
+	
+#comment KB0914 ---------------------------------------------------------------
+#define REJESTR_PW_BRAKI    Braki (PWb)
+#comment ---------------------------------------------------------------
+
+
+#ifndef _DEBUG
+#define _DEBUGXXX
+#endif 
+
+-->
+<page style='STYLE_PAGE' fontsize='5'>
+  <config>
+    <title>
+      Sprzedaż detaliczna
+      #ifdef _DEBUG
+      [THIS_FILE]
+      #endif
+    </title>
+    <typeid>TYPEID_N5SPRZEDAZ</typeid>
+    <secidread>SPF_UAR_LOCAL##STDR_READ</secidread>
+    <secidins>SPF_UAR_LOCAL##STDR_INSERT</secidins>
+    <secidupd>SPF_UAR_LOCAL##STDR_UPDATE</secidupd>
+    <seciddel>SPF_UAR_LOCAL##STDR_DELETE</seciddel>
+
+    <script>
+      <![CDATA[
+'std_choice_list_hli
+#include "50200"
+#include "50509"
+#include "50517"
+#include "50518"
+
+'std_choose_prod_list_hli
+#include "50606"
+
+'section_fclose
+#include "50222"
+
+'operations buttons
+#include "50128"
+
+#include "50223"
+
+'getCurrentUserID
+#include "50203"
+
+'gm_ensure/lock_holder
+#include "50208"
+
+'============================================================================================
+' KB0914
+'============================================================================================
+
+
+'-----------GLOBAL VARIABLES -----------------
+dim pM60261 : set pM60261 = doc_.getmodule(60261)
+
+'id rejestru PW-braki
+dim g_idRejestrPWBraki : g_idRejestrPWBraki = clng(0)
+'obiekt bilansu dok-sprzedazy i dok-mag
+dim g_oDHMBalance : set g_oDHMBalance = nothing
+'ilosc gotowki przyjetej
+dim g_curPrzyjeto : g_curPrzyjeto = ccur(0.0)
+'id sposobow platnosci
+dim g_idPlatnoscGotowka : g_idPlatnoscGotowka = clng(0)
+dim g_idPlatnoscKarta : g_idPlatnoscKarta = clng(0)
+
+'multi-user lock for specific document
+dim g_oDocumentLock : set g_oDocumentLock = nothing
+
+'--- jednorazowe inicjowanie zmiennych globalnych
+function common_init() : common_init = false
+  
+  g_idRejestrPWBraki = trans_.findobjid(TYPEID_N5REJESTRDOK,"strNazwa = 'REJESTR_PW_BRAKI'")
+  if g_idRejestrPWBraki <= 0 then
+     MessageBox "Brak rejestru dokumentów PW o nazwie REJESTR_PW_BRAKI", "Nieprawidłowa konfiguracja", vbOKOnly, vbInformation
+     exit function
+  end if
+  
+  g_idPlatnoscGotowka = trans_.findobjid(TYPEID_N5SPOSPLAT , "strnazwa='gotówka'")
+	g_idPlatnoscKarta = trans_.findobjid(TYPEID_N5SPOSPLAT , "strnazwa='karta płatnicza'")
+  if g_idPlatnoscGotowka = 0 or g_idPlatnoscKarta = 0 then
+     MessageBox "Brak wymaganych sposobów płatności. Wymagane są: 'gotówka'lub'karta płatnicza'", "Nieprawidłowa konfiguracja", vbOKOnly, vbInformation
+     exit function
+  end if
+  
+  if page_.root.pRejestrDok.wrefParam2 is nothing then
+    MessageBox "Należy ustawić domyślny magazyn wydania w ustawieniach rejestru", "Nieprawidłowa konfiguracja", vbOKOnly, vbInformation
+    exit function
+  end if 
+
+  set g_oDHMBalance = pM60261.new_dhm_balance()
+
+  common_init = true
+  
+end function
+'============================================================================================
+'-----------------
+class CSuggInxCustomizer
+	private m_idCtrl
+	public m_strFld
+	private m_bCena
+	public function query(byval strEntered,byref strWhere,byref strOrderBy,byref strJoin)
+		'noop
+	end function
+
+	public function before_fill(byref pSubPage)
+			before_fill = false
+	end function
+
+	public function fill_item(byref pBody, byval pFoundObj)
+		'dodaj element
+		dim pTableRow:set pTableRow = pBody.addnew(CTRL_TYPE_TABLEROW,-1)
+
+		dim pTableCell
+		set pTableCell = pTableRow.addnew(CTRL_TYPE_TABLECELL,-1)		
+
+		dim pItemHLI : set pItemHLI = doc_.createhli()
+		
+		pItemHLI.prop(GVAR_FUNCTIONHLI) = "std_rs_choose"
+		pItemHLI.prop(PROPC_IDENT) = m_idCtrl
+		pItemHLI.prop(GVAR_TYPEID) = TYPEID_N5PRODUKT
+		pItemHLI.prop(GVAR_OBJECT) = pFoundObj.idobj
+		
+		'jak bdzie potrzeba dodania innych podpowiedzi zmienic tego if'a
+		dim pStatic
+		
+		set pStatic = pTableCell.addnew(CTRL_TYPE_STATIC,-1)
+		if m_strFld <> "" then
+			pStatic.text = pFoundObj.strIndeks + " ("+ pFoundObj.strNazwa +")"
+			pItemHLI.prop(1) = pFoundObj.strIndeks
+		else
+			pStatic.text = pFoundObj.strIndeks + " ("+ pFoundObj.strNazwa +")"
+			pItemHLI.prop(1) = pFoundObj.strIndeks
+		end if
+
+		if m_bCena then
+			dim pTableCell_ZCena
+			set pTableCell_ZCena = pTableRow.addnew(CTRL_TYPE_TABLECELL,-1)
+			dim pStatic_ZCena
+			set pStatic_ZCena = pTableCell_ZCena.addnew(CTRL_TYPE_STATIC,-1)
+			
+				dim pWalut: pWalut = pFoundObj.listopakowania.get(1).pWaluta.strSkrot
+				dim strPodpowCena: strPodpowCena=trans_.afc.display.money(pFoundObj.listopakowania.get(1).curcenabrutto1,"")			
+	'Wypisanie napisu cena	
+				pStatic_ZCena.fontsize = 5
+				pStatic_ZCena.text = " Cena: " 
+	'ustawienia wyswietlenia wartosci ceny w osobnej CELL
+				set pTableCell_ZCena = pTableRow.addnew(CTRL_TYPE_TABLECELL,-1)
+				pTableCell_ZCena.align=1
+				dim pStatic_ZCena_
+				set pStatic_ZCena_ = pTableCell_ZCena.addnew(CTRL_TYPE_STATIC,-1)
+				pStatic_ZCena_.text = strPodpowCena
+	'ustawienie wyswietlenia waluty (PLN,EUR..) w osobnym cell
+				set pTableCell_ZCena = pTableRow.addnew(CTRL_TYPE_TABLECELL,-1)
+				set pStatic_ZCena_ = pTableCell_ZCena.addnew(CTRL_TYPE_STATIC,-1)
+				pStatic_ZCena_.fontsize = 6
+				pStatic_ZCena_.text = pWalut
+		end if	
+	'pStatic jest hiperlinkiem czyli indeks artykułu
+		set pStatic.href = pItemHLI
+		fill_item = true
+	end function
+
+	public function after_fill(byref pSubPage)
+	end function
+	public sub setup(byval nCtrl)
+		m_idCtrl = nCtrl
+		m_bCena = false
+	end sub
+	public sub setup_fld(byval fld)
+		m_strFld = fld
+	end sub
+	public function pokaz_z_cena(byval b)
+		m_bCena = b
+	end function
+end class
+
+function std_lrs_dataentered_n_zcena(byref pCtrl,byval strEntered,byval nListField,byval nDataRow,byval nRefField,byval nRefTypeId,byval nMatchField,byval idCursor,byref pCustomizer)
+	std_lrs_dataentered_n_zcena = std_rs_dataentered_obj_cena(pCtrl,strEntered,nListField,nDataRow,nRefField,nRefTypeId,nMatchField,idCursor,pCustomizer)
+end function
+
+
+function std_rs_dataentered_obj_cena(byref pCtrl,byval strEntered,byval nListField,byval nDataRow,byval nRefField,byval nRefTypeId,byval nMatchField,byval idCursor,byref pCustomizer) : std_rs_dataentered_obj_cena = true
+
+	strEntered = trim(cstr(strEntered))
+
+	if nMatchField = -2 then
+		dim oNXRefObjDef : set oNXRefObjDef = nx_.apprep.objects.get_object(nRefTypeId)
+		nMatchField = oNXRefObjDef.default_search_field.field_nr
+	end if
+		
+	dim pRSWorker : set pRSWorker = pCtrl.suggestion
+
+	if pRSWorker is nothing then
+		set pRSWorker = new crefsugworker
+		pRSWorker.init pCtrl.ident,nRefField,nMatchField,nListField,nDataRow,nRefTypeId
+		set pCtrl.suggestion = pRSWorker
+	end if
+
+	if strEntered = "" then
+		pRSWorker.remove
+		set pRSWorker.get_dest_obj().field(nRefField) = nothing
+		exit function
+	end if
+	
+	dim pCursor
+	if idCursor = NX_CURSOR then
+		set pCursor = pRSWorker.nx_open_cursor(pRSWorker.get_dest_obj(),nRefField,nMatchField,strEntered)
+	else
+		set pCursor = pRSWorker.opencursor(nRefTypeId,nMatchField,strEntered,idCursor,pCustomizer)
+	end if
+
+	if pCursor.exists(2) then	'niejednoznaczność
+		pRSWorker.fill pCursor,pCustomizer,nMatchField
+		set pRSWorker.get_dest_obj().field(nRefField) = nothing
+	else
+		if pCursor.exists(1) then	'dokładnie jeden - wstaw
+			if not (pRSWorker.get_dest_obj().field(nRefField) is pCursor.get(1)) then
+				
+				dim pProdukt:set pProdukt = pCursor.get(1)
+				
+				set pRSWorker.get_dest_obj().field(nRefField) = pProdukt
+				with pCtrl
+					.value = cstr(pRSWorker.get_dest_obj().field(nRefField).field(nMatchField))
+					.valid = true
+					'.movecaretto 0,false
+					.selecttoend
+				end with
+			end if
+		else	'żaden 
+			set pRSWorker.get_dest_obj().field(nRefField) = nothing
+		end if
+		pRSWorker.remove	'usuń podpowiedź
+	end if
+end function
+
+
+
+'-----------------
+
+QVE_NRDOK_FROM_REJESTR(CTRLID_NUMDOK,pRejestrDok,strNrDok)
+
+function c##CTRLID_ULICA_NUMER##_ongetdata(byref oCtrl): c##CTRLID_ULICA_NUMER##_ongetdata=true
+	if not page_.root.pKlient is nothing then
+		oCtrl.text = doc_.getmodule(60182).get_street(page_.root.pKlient)
+	else
+		oCtrl.text = ""
+	end if
+end function
+
+
+
+function c##CTRLID_KOD_MIASTO##_ongetdata(byref oCtrl): c##CTRLID_KOD_MIASTO##_ongetdata=true
+	if not page_.root.pKlient is nothing then
+		oCtrl.text = doc_.getmodule(60182).get_code_and_city(page_.root.pKlient)
+	else
+		oCtrl.text = ""
+	end if
+end function
+
+
+function cust_operation_hli(byref pHLI)
+	std_cust_operation_hli pHLI,page_.root.pRejestrDok,page_.root,page_
+end function
+
+
+function create_sposplat_radio()
+	exit function
+	dim radio:set radio = page_.ctrl(CTRLID_SPOS_PLAT)
+	dim item
+	dim cursor:set cursor = trans_.createrawcursor(TYPEID_N5SPOSPLAT , "" , "" , "")
+	dim elem
+	dim hli
+	for each elem in cursor
+		set item = radio.addnew(CTRL_TYPE_STATIC,-1)
+		item.text = elem.text		
+
+		set hli = doc_.createhli()
+		hli.prop(1) = elem.idobj
+
+		set item.userprop = hli
+	next 
+end function
+
+dim g_nCurrentRow : g_nCurrentRow = -1
+
+'--zdarzenia na INDEX produktu
+VBG_PRODUKT_FLD_CUSTOM_PODPO_LUKI(CTRLID_GRID_PRODUKT_INDEKS,listPozycje,pProdukt,CRSR_N5PRODUKT_DEFAULT_INDEX,1,strIndeks,true)
+VBG_PRODUKT_FLD_INIT_CUSTOMIZER(TYPEID_N5SPRZEDAZ,TYPEID_N5POZSPRZEDAZ,listPozycje,pProdukt,1,strIndeks)
+																		
+function c##CTRLID_GRID_PRODUKT_INDEKS##_onlostfocus(byref pCtrl,nRow,idGotFocus)
+	c##CTRLID_GRID_PRODUKT_INDEKS##_onlostfocus = std_rs_lostfocus(pCtrl,idGotFocus)
+	if idGotFocus <> -1 and not g_bLostFocusMutex then
+		'inna komorka w tym samym wierszu
+		if page_.ctrl(idGotFocus).parent.parent.ident = pCtrl.parent.parent.ident then
+			nRow = pCtrl.parent.parent.parent.dr2tr(nRow)
+			if pCtrl.parent.parent.parent.count = nRow then
+				pCtrl.parent.parent.parent.datarowcount = nRow + 1
+			end if
+			if nRow+1 > pCtrl.parent.parent.parent.count then
+				nRow = nRow - 1
+			end if
+			'if find_produkt(page_.root.listpozycje.get(nRow)) then  'jesli indeks sie powtarza usun wiersz i dodaj do istniejacego
+			'	set page_.root.listPozycje.get(nRow).pProdukt=nothing
+			'	pCtrl.parent.parent.parent.row(nRow).cell(COLUMN_INDEX).element(1).focus=true
+			'else
+				pCtrl.parent.parent.parent.row(nRow+1).cell(COLUMN_INDEX).element(2).focus=true
+			'end if
+		end if
+	end if
+end function
+'--- end index
+'--- znajduje produkt juz wpisany na liscie potrzebne dla Ctrl_GRID_PRODUKT_INDEKS -na razie bez tego
+function find_produkt(byref oNowaPozycja)
+	find_produkt = false
+	dim oPozycja
+	for each oPozycja in page_.root.listPozycje
+		if (oPozycja.pProdukt is oNowaPozycja.pProdukt) and not (oPozycja is oNowaPozycja) then
+			oPozycja.curiloscopak=oPozycja.curiloscopak+oNowaPozycja.curIloscOpak
+			find_produkt = true
+			exit function
+		end if
+	next
+end function
+
+'---zdarzenie na NAZWA produktu
+VBG_PRODUKT_FLD_CUSTOM_PODPO_LUKI(CTRLID_GRID_PRODUKT_NAZWA,listPozycje,pProdukt,CRSR_N5PRODUKT_WSZYSTKIE,2,strNazwa,true)
+VBG_PRODUKT_FLD_INIT_CUSTOMIZER(TYPEID_N5SPRZEDAZ,TYPEID_N5POZSPRZEDAZ,listPozycje,pProdukt,2,strNazwa)
+
+dim g_bLostFocusMutex : g_bLostFocusMutex = false
+
+
+function c##CTRLID_CENA_BRUTTO##_ongotfocus(byref pCtrl,nRow,idLostFocus)
+	'g_bLostFocusMutex = false
+end function
+
+
+function navo_ceil(curValue)						
+	dim curTmp : curTmp = fix(curValue)				
+	if curTmp <> curValue then						
+	  curTmp = curTmp + ccur(1.0)					
+	end if											
+	navo_ceil = curTmp								
+end function										
+function c##CTRLID_ILOSC_KARTONOW##_ongetdata(pCtrl,row): c##CTRLID_ILOSC_KARTONOW##_ongetdata = true	
+	pCtrl.unit = ""	
+	pCtrl.precision = 0	
+	if page_.root.listPozycje.exists(row) then	
+		dim pElement:set pElement = page_.root.listPozycje.get(row)	
+		if not pElement is nothing then	
+			dim curKrotnosc : curKrotnosc = ccur(1.00)	
+			if not pElement.pProdukt is nothing then	
+				with pElement.pProdukt.listOpakowania	
+					curKrotnosc = .get(.count).curIlosc	
+				end with	
+			end if
+			pCtrl.value = ccur(navo_ceil(pElement.curIloscOpak / curKrotnosc))	
+			exit function	
+		end if	
+	end if	
+	pCtrl.value = CCur(0.0)	
+end function		
+function c##CTRLID_ILOSC_KARTONOW##_ondataentered(pCtrl, row, curValue) : c##CTRLID_ILOSC_KARTONOW##_ondataentered = true	
+	dim pElement	
+	if page_.root.listPozycje.exists(row) then	
+		set pElement = page_.root.listPozycje.get(row)	
+	else	
+		set pElement = page_.root.listPozycje.addnew()	
+	end if	
+	if pElement is nothing then	
+		c##CTRLID_ILOSC_KARTONOW##_ondataentered = false	
+		exit function	
+	end if	
+	dim curKrotnosc : curKrotnosc = ccur(1.00)	
+	if not pElement.pProdukt is nothing then	
+		with pElement.pProdukt.listOpakowania	
+			curKrotnosc = .get(.count).curIlosc	
+		end with	
+	end if	
+    if curValue>1000 then    
+      curValue=1
+    end if
+	pElement.curIloscOpak = ccur(curValue * curKrotnosc)	
+end function	
+
+
+function fopen(): fopen  = std_fopen()
+	if not fopen then
+		exit function
+	end if
+  
+  set g_oDocumentLock = new lock_holder
+  if not g_oDocumentLock.acquire_ui(TYPEID_N5SPRZEDAZ, page_.rootidobj, "Ten dokument jest już otwarty na innym stanowisku. Czy spróbować ponownie go otworzyć ?") then
+    fopen = false
+    exit function
+   end if
+
+
+  if not common_init() then
+    fopen = false
+    exit function
+  end if
+ 
+
+
+	section_fopen THIS_FILE
+  
+#ifdef _DEBUG
+	trans_.message 0,0,"Rejestr=" + cstr(page_.root.pRejestrDok.eTyp)
+#endif
+
+#if DZIAL_KASA = 0
+DEBUG_MESSAGE("Dzial 0 kontynuacja zakupow")
+#else
+DEBUG_MESSAGE("Dzial 1 zakonczenie zakupow")
+#endif
+
+  page_.enableedit = true
+ 
+	fopen = false
+	trans_.var(APPVAR_IS_ROOT_FOR_BC) = clng(1)
+	rebuild_configuration
+
+	
+	VBG_INIT_CUSTOMIZER(1)
+	VBG_INIT_CUSTOMIZER(2)
+
+
+	page_.cmdenabled CMD_NEWFORM, false
+	page_.cmdenabled CMD_SAVEFORM, false
+	page_.cmdenabled CMD_ENABLEEDIT, true
+
+  'gdy paragon sposób płatności => gotówka
+  if page_.root.pRejestrDok.eTyp = N5REJESTRDOK_PARAGON then
+    dim idPlat: idPlat = trans_.findobjid(TYPEID_N5SPOSPLAT,"strNazwa = 'gotówka'")
+    if idPlat > clng(0) then
+      set page_.root.pSposobPlatnosci = trans_.getobj(TYPEID_N5SPOSPLAT,idPlat)
+    end if
+  end if
+  
+	fopen = true
+end function
+
+function fback
+	fback=std_fback()
+end function
+
+
+function fsave
+#if DZIAL_KASA = 0
+  kont_zakupy
+#else
+  zakoncz_zakupy
+#endif
+end function
+
+function fclose
+	section_fclose THIS_FILE
+end function
+
+
+private sub rebuild_configuration
+	dim pConfigObject : set pConfigObject = nothing
+	dim pConfigModule : set pConfigModule = nothing
+end sub
+
+function foptions
+	FORCE_REALOAD_OBJECT(page_.root.pRejestrDok)
+
+	if doc_.getmodule(60175).dok_rej_preferences(page_.root.pRejestrDok.idobj,TYPEID_N5SPRZEDAZ) then
+		
+		FORCE_REALOAD_OBJECT(page_.root.pRejestrDok)
+
+		'apply settings
+		rebuild_configuration
+	end if
+end function
+
+function serch_set_klient (strCode , page)
+	dim id,pKlient
+	id = trans_.findobjid(TYPEID_N5KLIENT , "strIndeks='" + strCode + "'")
+	if id<=0 then
+		exit function
+	end if
+	set pKlient = trans_.getobj(TYPEID_N5KLIENT,id)
+	if not pKlient is nothing then
+		set page.root.pKlient = pKlient
+		nActualFocus=BUTTON_ADD
+		set_focus_ex(page)
+	end if
+end function
+
+
+function find(byval strCode , byref obj_type , byref obj_id)
+	obj_type = TYPEID_N5PRODUKT
+	obj_id = 1
+end function
+
+
+QVE_REF_OPEN_FORM(CTRLID_KLIENT,pKlient)
+VBG_OPAK_GETDATA(CTRLID_OPAK,listPozycje)
+
+
+function c##CTRLID_KLIENT##_ondataentered(pCtrl, row, curValue) : c##CTRLID_SUMA_WARTOSCI_BRUTTO##_ondataentered = true	
+	set page_.root.pSposobPlatnosci = trans_.getobj(TYPEID_N5SPOSPLAT , g_idPlatnoscGotowka)
+end function
+
+function c##CTRLID_SUMA_WARTOSCI_BRUTTO##_ongetdata(byref pCtrl) : c##CTRLID_SUMA_WARTOSCI_BRUTTO##_ongetdata = true
+	pCtrl.text = doc_.afc.display.money(page_.root.curSumaBrutto,"")
+end function
+function c##CTRLID_SUMA_WARTOSCI_BRUTTO##_ondataentered(pCtrl, row, curValue) : c##CTRLID_SUMA_WARTOSCI_BRUTTO##_ondataentered = true	
+end function
+
+function c##CTRLID_ILOSC_OPAK##_ongetdata(pCtrl,row): c##CTRLID_ILOSC_OPAK##_ongetdata = true	
+	if page_.root.listPozycje.exists(row) then							
+		dim pElement:set pElement = page_.root.listPozycje.get(row)		
+		if not pElement is nothing then
+
+			pCtrl.value = ccur(pElement.curIloscOpak)			
+
+			if not pElement.pOpak is nothing then					
+				pCtrl.unit = pElement.pOpak.pJednOpak.strSkrot		
+				pCtrl.precision = pElement.pOpak.pJednOpak.nDokladnosc-1		
+			end if														
+			if not false then										
+				pCtrl.unit = ""				
+			end if														
+			exit function												
+		end if															
+	end if																
+	pCtrl.unit = ""														
+	pCtrl.precision = 0													
+	pCtrl.value = CCur(0.0)												
+end function		
+
+function c##CTRLID_ILOSC_OPAK##_ondataentered(pCtrl, row, curValue) : c##CTRLID_ILOSC_OPAK##_ondataentered = true	
+	dim pElement														
+	if page_.root.listPozycje.exists(row) then							
+		set pElement = page_.root.listPozycje.get(row)					
+	else																
+		set pElement = page_.root.listPozycje.addnew()					
+	end if																
+	if pElement is nothing then	
+		c##CTRLID_ILOSC_OPAK##_ondataentered = false		
+		exit function	
+	end if	
+    if curValue>10000 then    
+      curValue=1
+    end if
+	pElement.curIloscOpak = ccur(curValue)
+end function		
+
+function c##CTRLID_CENA_BRUTTO##_ongetdata(pCtrl,row): c##CTRLID_CENA_BRUTTO##_ongetdata = true	
+	if page_.root.listPozycje.exists(row) then							
+		dim pElement:set pElement = page_.root.listPozycje.get(row)		
+		if not pElement is nothing then
+			pCtrl.value = ccur(pElement.curCenaBazowaBruttoWal)			
+			exit function												
+		end if															
+	end if																
+	pCtrl.value = CCur(0.0)												
+end function		
+function c##CTRLID_CENA_BRUTTO##_ondataentered(pCtrl, row, curValue) : c##CTRLID_CENA_BRUTTO##_ondataentered = true	
+	
+	if curValue > ccur(100000.0) or curValue < ccur(-100000.0) then
+		exit function
+	end if
+	dim pElement														
+	if page_.root.listPozycje.exists(row) then							
+		set pElement = page_.root.listPozycje.get(row)					
+	else																
+		set pElement = page_.root.listPozycje.addnew()					
+	end if																
+	if pElement is nothing then	
+		c##CTRLID_CENA_BRUTTO##_ondataentered = false		
+		exit function	
+	end if	
+#if appvar_rejestr_typ = N5REJESTRDOK_FAKT_SP
+  page_.root.eNettoBrutto = clng(2)
+#endif
+  pElement.curCenaBazowaBruttoWal = ccur(curValue)
+end function		
+
+function c##CTRLID_WARTOSC_BRUTTO##_ondataentered(pCtrl, row, curValue) : c##CTRLID_WARTOSC_BRUTTO##_ondataentered = true
+	dim pElement														
+	if page_.root.listPozycje.exists(row) then							
+		set pElement = page_.root.listPozycje.get(row)					
+	else																
+		set pElement = page_.root.listPozycje.addnew()					
+	end if																
+	if pElement is nothing then	
+		c##CTRLID_WARTOSC_BRUTTO##_ondataentered = false		
+		exit function	
+	end if	
+
+	pElement.curWartBrutto = ccur(curValue)
+
+end function
+
+function c##CTRLID_WARTOSC_BRUTTO##_ongetdata(pCtrl,row): c##CTRLID_WARTOSC_BRUTTO##_ongetdata = true	
+	if page_.root.listPozycje.exists(row) then							
+		dim pElement:set pElement = page_.root.listPozycje.get(row)		
+		if not pElement is nothing then
+
+			pCtrl.value = ccur(pElement.curWartBrutto)			
+
+			exit function												
+		end if															
+	end if																
+	pCtrl.value = CCur(0.0)	
+end function
+
+function c##CTRLID_GOTOWKA##_ongetdata(byref oCtrl): c##CTRLID_GOTOWKA##_ongetdata=true
+end function
+function c##CTRLID_GOTOWKA##_ondataentered(byref oCtrl , byval value): c##CTRLID_GOTOWKA##_ondataentered=true
+	g_curPrzyjeto = doc_.afc.display.money(page_.ctrl(CTRLID_GOTOWKA).value , "")
+end function
+
+
+
+function kont_zakupy
+  'HALT
+ 
+if page_.root.pTransakcja is nothing and (not page_.root.pKlient is nothing)then
+  dim strWhere,idTrans
+	strWhere = trans_.afc.convert.Formatter("strSymTrans='%1' and wrefPodmiot=%2 and wrefPodmiot_wrt=%3") _
+			(trans_.afc.convert.DoubleApostrophe(page_.root.strNrDok)) _
+			(page_.root.pKlient.idobj)(page_.root.pKlient.type).Done()
+
+	idTrans = trans_.findobjid(TYPEID_N5TRANSAKCJA,strWhere)
+		if idTrans > 0 then
+			set page_.root.pTransakcja = trans_.getobj(TYPEID_N5TRANSAKCJA,idTrans)
+		end if
+end if
+
+  NX_TRACE_START_STREAM("Kontynuacja zakupów",nothing)
+
+  section_fclose THIS_FILE
+
+  'zaznacz dokument jako 'OTWARTY'
+	page_.root.curExtra4 = CCur(1)
+  
+#if appvar_rejestr_typ = N5REJESTRDOK_PARAGON
+	
+  set page_.root.pSposobPlatnosci = trans_.getobj(TYPEID_N5SPOSPLAT , g_idPlatnoscGotowka)
+#endif	
+
+  dim bAllowMissing : bAllowMissing = false
+  dim bAllowNoNames : bAllowNoNames = false
+
+  do while true
+    select case fsave_internal(bAllowMissing, bAllowNoNames)
+      case "000"
+        exit function
+      case "001"
+        if MessageBox("Wartość magazynów nie może być ustalona. Spróbować ponownie?", "Aktualizacja magazynów", vbYesNo, vbQuestion) <> vbYes then
+        exit do
+        end if
+      case "003"
+        if MessageBox("Nie mogę zaktualizować pozycji na PW lub WZ. Spróbować ponownie?", "Aktualizacja pozycji PW/WZ", vbYesNo, vbQuestion) <> vbYes then
+          exit function
+        end if      
+      case "004"
+        if MessageBox("Nie mogę utworzyć PW lub WZ. Spróbować ponownie?", "Tworzenie PW/WZ", vbYesNo, vbQuestion) <> vbYes then
+          exit function
+        end if 
+      case "005"
+        if MessageBox("Nie mogę zaktualizować opisów produktów na PW. Spróbować ponownie?", "Aktualizacja opisów produktów", vbYesNo, vbQuestion) <> vbYes then
+          exit function
+        end if
+        
+      case "101"
+         if MessageBox("Brak dostępności na magazynie produktów oznaczonych kolorem czerwonym. Czy mimo tego chcesz zaakceptować dokument sprzedaży?", "Zapis dokumentu", vbYesNo, vbQuestion) <> vbYes then
+          exit function
+        end if
+        bAllowMissing = true
+
+      case "102"
+        if MessageBox("Znaleziono produkt sprzedaży ogólnej bez nazwy opisowej. Czy mimo tego chcesz zaakceptować dokument sprzedaży?", "Zapis dokumentu", vbYesNo, vbQuestion) <> vbYes then
+          exit function
+        end if
+        bAllowNoNames = true
+      
+      case "103"
+        if MessageBox("Nie udał się zapis dokumentu sprzedaży. Spójrz na komunikaty w prawym górnym rogu i zdecyduj czy kontynuować ?", "Zapis dokumentu", vbYesNo, vbQuestion) <> vbYes then
+          exit function
+        end if
+              
+      case "999" 'OK
+        exit do
+    end select
+  loop
+
+page_.goback
+set g_oDocumentLock = nothing
+
+'NX_TRACE_SHOW_LOG(1)
+  
+ NX_TRACE_END
+
+
+end function
+
+function fsave_internal(byval bAllowMissing, byval bAllowNoNames) 
+  fsave_internal = "999" 'OK
+  
+  dim oGMOperLock : set oGMOperLock = new lock_holder
+  
+  if not oGMOperLock.acquire_ui(TYPEID_N5DOKMAG, 1000000, "Trwa operacja zapisu na innym komputerze. Czy spróbować ponownie zapisać ?") then
+     fsave_internal = "000"
+     exit function
+  end if
+   
+  if not doc_.getmodule(60253).gm_ensure_accuracy_ui(true) then
+    fsave_internal ="001"
+    exit function
+  end if
+
+  fsave_internal = check_prods_and_save_doc(bAllowMissing, bAllowNoNames)
+  if fsave_internal <> "999" then
+    exit function
+  end if
+  
+  'gdy zmieniły się pozycje lub ilości
+  dim bPosChanged: bPosChanged = false
+  if not sync_wz_pwbraki_to_sprzedaz(page_, bPosChanged) then
+    fsave_internal ="003"
+  end if  
+  
+  'tworzy WZ/PW
+  if not create_wz_update_pwbraki(page_, bPosChanged) then
+    fsave_internal ="004"
+  end if
+
+  'uzupełnij nazwę w postaci opisu na PW
+  if not UpdateOpisProduktuPW(page_) then
+    fsave_internal ="005"
+  end if
+
+  set oGMOperLock = nothing
+  
+end function
+
+'-----PLATNOSC --luki
+function fill_kpkw_from_dokhandl(byref pPlatnosc,byval idDok , byval nTypeDok) : fill_kpkw_from_dokhandl = true
+
+	dim pDok : set pDok = trans_.getobj(nTypeDok,idDok)
+
+#ifdef APPCONFIG_KOPIUJ_ADNOTACJE_Z_FAKTUR
+	pPlatnosc.strOpis = left(pDok.strUwagi,128)
+#endif
+
+	select case nTypeDok
+		case TYPEID_N5SPRZEDAZ
+			set pPlatnosc.wrefPodmiot = pDok.pKlient	
+      if pDok.pRejestrDok.eTyp = 5 then
+			   pPlatnosc.curKwotaPodm = pDok.pTransakcja.curWn - pDok.pTransakcja.curMa
+      else
+         pPlatnosc.curKwotaPodm = ccur(g_curPrzyjeto)
+      end if   
+			pPlatnosc.strOpis = pDok.pTransakcja.strSymTrans
+			if pDok.pRejestrDok.eTyp = N5REJESTRDOK_KOR_FAKT_EXP or pDok.pRejestrDok.eTyp = N5REJESTRDOK_FAKT_EXP then
+				pPlatnosc.curKwotaPodm = pDok.curSumaWal
+				pPlatnosc.pWalutaPodm = pDok.pWaluta
+			end if
+		case TYPEID_N5ZAKUP
+			set pPlatnosc.wrefPodmiot = pDok.pDostawca
+			pPlatnosc.curKwotaPodm = -1 * (pDok.pTransakcja.curMa - pDok.pTransakcja.curWn)
+			pPlatnosc.strOpis = pDok.pTransakcja.strSymTrans
+	end select 
+
+
+	dim pPozPlatnosc
+	set pPozPlatnosc = pPlatnosc.listPozycje.addnew()
+	pPozPlatnosc.curPozKwotaPodm = pPlatnosc.curKwotaPodm
+	set pPozPlatnosc.pTransakcja = pDok.pTransakcja
+	
+end function
+function make_platnosc_on_dokhandl_localfunction(eKasaMode,byref pDokHandl , byref pPage,byval nTypRejestru) : make_platnosc_on_dokhandl_localfunction = false
+
+	if eKasaMode < 2 then
+		make_platnosc_on_dokhandl_localfunction = true
+		exit function
+	end if
+
+
+	if not pPage.std_fsave_external_with_saveobjects() then
+		make_platnosc_on_dokhandl_localfunction = false
+		exit function
+	end if
+
+	'sprawdzamy stan rozliczenia transakcji - jezeli jest rozliczona to nie ma po co robic KP
+	if pDokHandl.pTransakcja is nothing then
+		make_platnosc_on_dokhandl_localfunction = false
+		exit function
+	else
+		if pDokHandl.pTransakcja.curMa = pDokHandl.pTransakcja.curWn then
+			make_platnosc_on_dokhandl_localfunction = true
+			trans_.message 1002 , 0 , "Transakacja związana z dokumentem jest juz rozliczona - nie ma potrzeby tworzyć dokumentu kasowego/bankowego"
+			exit function
+		end if
+	end if
+
+
+	dim idDok : idDok = pDokHandl.idObj
+	dim nTypDok: nTypDok = pDokHandl.type
+	'zmieniamy środowisko, ale tylko lokalnie
+	dim pSubTrans
+	set pSubTrans = trans_.createsubtran()
+
+
+	
+		trans_.var(APPVAR_REJESTR_TYP) = clng(nTypRejestru)'N5REJESTRDOK_KASOWY)
+		trans_.var(GVAR_CURSOR) = clng(0)
+		dim pOpenFormKPKW : set pOpenFormKPKW = doc_.getmodule(60129).prepare_form_open_command(TYPEID_N5PLATNOSC,0,0)
+		if pOpenFormKPKW is nothing then
+			exit function
+		end if
+		dim pFormKPKW : set pFormKPKW = doc_.getpagehli(pOpenFormKPKW)
+		if pFormKPKW is nothing then
+			exit function
+		end if
+		if not fill_kpkw_from_dokhandl(pFormKPKW.root,idDok,nTypDok) then
+			exit function
+		end if
+		select case eKasaMode
+		case 2	'wypełnij i pokaż
+			make_platnosc_on_dokhandl_localfunction = true
+			pFormKPKW.root.curKwotaPodm = ccur(g_curPrzyjeto)
+			pFormKPKW.domodalauto()
+		case 3 'wypelnij i zapisz
+			pFormKPKW.fsave
+			make_platnosc_on_dokhandl_localfunction = not pFormKPKW.root.isnew()
+		end select
+		'todo:
+	set pSubTrans = nothing
+end function
+'--------------------
+
+function zakoncz_zakupy
+
+'HALT
+  
+dim t_start_all, t_end_all
+dim t_start_save_exit, t_end_save_exit
+dim t_start_print_inv, t_end_print_inv
+dim t_start_fisc, t_end_fisc
+t_start_all = Timer
+
+NX_TRACE_START_STREAM("Zakonczenie zakupów",nothing)
+if not page_.root.pKlient is nothing then
+
+section_fclose THIS_FILE
+if ((page_.root.pRejestrDok.eTyp = 1) and  (page_.root.pRejestrDok.rejdok_pDefKlient is nothing)) or _
+   ((page_.root.pRejestrDok.eTyp = 5) and  (not page_.root.pRejestrDok.rejdok_pDefKlient is nothing)) then  
+ 
+	dim pM60153 : set pM60153 = doc_.getmodule(60153)
+dim strWhere 
+dim idTrans
+#if appvar_rejestr_typ = N5REJESTRDOK_FAKT_SP
+  if page_.root.pSposobPlatnosci.eTyp = 1 then   'jeśli typ płatności gotówka
+		if page_.root.pTransakcja is nothing then
+			
+				 strWhere = trans_.afc.convert.Formatter("strSymTrans='%1' and wrefPodmiot=%2 and wrefPodmiot_wrt=%3") _
+				(trans_.afc.convert.DoubleApostrophe(page_.root.strNrDok)) _
+				(page_.root.pKlient.idobj)(page_.root.pKlient.type).Done()
+
+				idTrans = trans_.findobjid(TYPEID_N5TRANSAKCJA,strWhere)
+				if idTrans > 0 then
+					set page_.root.pTransakcja = trans_.getobj(TYPEID_N5TRANSAKCJA,idTrans)
+				end if
+		end if
+		if not (make_platnosc_on_dokhandl_localfunction(2,page_.root, page_,N5REJESTRDOK_KASOWY)) then 'pierwszy parametr mowi czy wyswietlic dla 2 wyswietla
+		page_.root.curextra4 = CCur(0)			'sprzedaz detaliczna zamknieta
+			exit function
+		end if
+  else
+	 if page_.root.pTransakcja is nothing then
+			
+				strWhere = trans_.afc.convert.Formatter("strSymTrans='%1' and wrefPodmiot=%2 and wrefPodmiot_wrt=%3") _
+				(trans_.afc.convert.DoubleApostrophe(page_.root.strNrDok)) _
+				(page_.root.pKlient.idobj)(page_.root.pKlient.type).Done()
+
+				idTrans = trans_.findobjid(TYPEID_N5TRANSAKCJA,strWhere)
+				if idTrans > 0 then
+					set page_.root.pTransakcja = trans_.getobj(TYPEID_N5TRANSAKCJA,idTrans)
+				end if
+		end if
+		page_.root.curextra4 = CCur(0)			'sprzedaz detaliczna zamknieta
+  end if
+#else
+	if page_.root.pRejestrDok.eTyp = N5REJESTRDOK_PARAGON then
+  page_.root.recalcenabled = false
+			set page_.root.pKlient = page_.root.pRejestrDok.rejdok_pDefKlient
+			if not page_.root.pTransakcja is nothing then
+					set page_.root.pTransakcja.wrefPodmiot = page_.root.pRejestrDok.rejdok_pDefKlient
+			end if
+      page_.root.recalcenabled = true
+	end if			
+    if not (make_platnosc_on_dokhandl_localfunction(3,page_.root, page_,N5REJESTRDOK_KASOWY)) then
+			page_.root.curextra4 = CCur(0)			'sprzedaz detaliczna zamknieta
+			
+			exit function
+		end if
+'page_.root.pKlient = nothing
+#endif
+  t_start_fisc = Timer
+	'trans_.message 0,0,"UWAGA na razie fiskalizacja jest zakomentowana" 	
+#if appvar_rejestr_typ = N5REJESTRDOK_PARAGON
+	if not print_fiscal_paragon(page_.root) then
+		trans_.message 0,0,"Nie udała się fiskalizacja" 
+		page_.root.curextra4 = CCur(0)			'sprzedaz detaliczna zamknieta
+		trans_.saveobjects
+    page_.goback
+		exit function
+	end if	
+#endif
+  t_end_fisc = Timer
+
+  page_.root.curextra4 = CCur(0)			'sprzedaz detaliczna zamknieta
+
+  dim bSaveRes : bSaveRes = check_prods_and_save_doc(true, true)
+  if bSaveRes <> "999" then
+    trans_.message 7000, 0, "Nie udało się zapisać dokumentu sprzedaży"
+    exit function
+  end if
+
+  'drukuj na laserze
+#if appvar_rejestr_typ = N5REJESTRDOK_FAKT_SP 
+#ifdef ENABLE_DB12
+	if page_.root.pRejestrDok.eTyp = N5REJESTRDOK_FAKT_SP and page_.root.sprzed_pDostawa is nothing then
+		'utwórz dostawę
+		if not pM60153.create_dok_handl_ex("1",page_.root.IdObj,page_,true,false) then
+			trans_.message 7000, 0, "Nie udało się utworzyć dokumentu dostawy."
+			exit function
+		end if
+	end if
+#endif  
+  t_start_print_inv = Timer
+   dim idpub2: idpub2 = trans_.findobjid(TYPEID_N5DPC , "strNazwa like '%laser detaliczna%'")
+  if idpub2>0 then
+      if  realize_publication(abs(idpub2), page_.root, false, nothing) then
+	   
+      end if
+   else
+      MessageBox "Ustaw publikację z plikiem wydruku laserowego o nazwie zawierającej 'laser detaliczna'", "Brak publikacji wydruku laserowego", vbOKOnly, vbInformation
+   end if     
+	t_end_print_inv = Timer
+#endif
+
+  t_start_save_exit = t_end_print_inv
+	
+  page_.goback
+  t_end_save_exit = Timer
+  
+  else
+    MessageBox "Nie jest ustawiony klient domyślny", "Brak klienta", vbOKOnly, vbInformation
+  end if
+  else
+     MessageBox "","Brak klienta", vbOKOnly, vbInformation
+  end if
+
+t_end_all = Timer
+
+trans_.message 0,0,"Pomiar czasu: Zakończenie zakupów: wydruk faktury: " + cstr(t_end_print_inv - t_start_print_inv)
+trans_.message 0,0,"Pomiar czasu: Zakończenie zakupów: zapis paragonu: " + cstr(t_end_save_exit - t_start_save_exit)
+trans_.message 0,0,"Pomiar czasu: Zakończenie zakupów: fiskalizacja: " + cstr(t_end_fisc - t_start_fisc)
+trans_.message 0,0, page_.root.strNrDok +": Pomiar czasu: Zakończenie zakupów: całkowity czas wykonania: " + cstr(t_end_all - t_start_all)
+
+set g_oDocumentLock = nothing
+
+NX_TRACE_SHOW_LOG(1)	
+
+end function
+
+'------------------
+'tworzy dokument BP
+'------------------
+function platnosc(): platnosc = false
+  if page_.root.isnew() then
+    trans_.message 7000, 0, "Dokument musi być najpierw zapisany."
+    exit function    
+  end if
+  if page_.root.pKlient is nothing then
+    trans_.message 7000, 0, "Brak klienta."
+    exit function
+  end if
+  if not page_.root.pTransakcja is nothing then
+    if page_.root.pTransakcja.eStatus = clng(N5TRANSAKCJA_ZAMKNIETA) then
+      trans_.message 7000, 0, "Transakacja związana z dokumentem jest juz rozliczona - nie ma potrzeby tworzyć dokumentu bankowego."
+      exit function      
+    end if
+  end if
+  
+  section_fclose THIS_FILE  
+  
+  'zamień klienta w przypadku paragonu => sprzedaż detaliczna
+  if page_.root.pRejestrDok.eTyp = N5REJESTRDOK_PARAGON then
+    page_.root.recalcenabled = false
+    set page_.root.pKlient = page_.root.pRejestrDok.rejdok_pDefKlient
+    if not page_.root.pTransakcja is nothing then
+      set page_.root.pTransakcja.wrefPodmiot = page_.root.pRejestrDok.rejdok_pDefKlient
+    end if
+    page_.root.recalcenabled = true    
+  end if
+  
+  'tworzy BP
+  dim pM60153: set pM60153 = doc_.getmodule(60153)
+  platnosc = pM60153.make_platnosc_on_dokhandl(4,page_.root,page_,N5REJESTRDOK_BANKOWY)
+  
+  'drukuje paragon fiskalny
+  if page_.root.pRejestrDok.eTyp = N5REJESTRDOK_PARAGON then
+    if not print_fiscal_paragon(page_.root) then
+      trans_.message 0,0,"Nie udała się fiskalizacja"
+      page_.root.curextra4 = CCur(0)
+      trans_.saveobjects
+      page_.goback
+      'KB: byl blad: wyjscie bez zwolnienia locka
+      exit function
+    end if
+  end if
+  
+  'zamknięcie dokumentu
+  if platnosc then
+    page_.root.curextra4 = CCur(0)
+  end if
+	if not trans_.saveobjects() then
+	end if  
+
+#if appvar_rejestr_typ = N5REJESTRDOK_FAKT_SP 
+#ifdef ENABLE_DB12
+	if page_.root.pRejestrDok.eTyp = N5REJESTRDOK_FAKT_SP and page_.root.sprzed_pDostawa is nothing then
+		'utwórz dostawę
+		if not pM60153.create_dok_handl_ex("1",page_.root.IdObj,page_,true,false) then
+			trans_.message 7000, 0, "Nie udało się utworzyć dokumentu dostawy."
+			exit function
+		end if
+	end if
+#endif 
+#endif
+  
+  dim bSaveRes : bSaveRes = check_prods_and_save_doc(true, true)
+  if bSaveRes <> "999" then
+    trans_.message 7000, 0, "Nie udało się zapisać dokumentu sprzedaży"
+    exit function
+  end if
+  page_.goback
+ 
+  set g_oDocumentLock = nothing
+
+end function
+
+'----------------------------------
+'tworzy WZ w rejestrze o IdObj = 18
+'----------------------------------
+function create_wz_update_pwbraki(byref pPage, bPosChanged): create_wz_update_pwbraki = false
+
+  if not pPage.root.pRejestrDok.wrefParam2 is nothing then
+    if pPage.root.pRejestrDok.wrefParam2.type = TYPEID_N5MAGAZYN then
+      dim nIdMag: nIdMag = pPage.root.pRejestrDok.wrefParam2.IdObj
+      
+      'jeżeli WZ już istnieje a nie zmieniły się pozycje => nic nie rób
+      dim nIdWZ: nIdWZ = trans_.findobjid(TYPEID_N5DOKMAG,"nTypDok = N5REJESTRDOK__WZ and wrefDokHandl = " + CStr(pPage.root.Idobj) + " and wrefDokHandl_wrt = TYPEID_N5SPRZEDAZ ")
+      
+      if nIdWZ > clng(0) and not bPosChanged then
+        create_wz_update_pwbraki = true
+        exit function
+      end if
+      
+      if MakePW(pPage, nIdMag) then
+        if nIdWZ <= clng(0) then
+          nIdWz = clng(0)
+        end if
+        if not doc_.getmodule(60226).utworz_dokmag_z_dokhandl_automat(pPage.root, N5REJESTRDOK__WZ , nIdWz, clng(18), nIdMag) then
+          trans_.message 7000, 0, "Nie udało się zapisać WZ do faktury: " + pPage.root.strNrDok
+          exit function          
+        end if
+      else
+        exit function
+      end if
+      create_wz_update_pwbraki = true
+    end if
+  end if
+  
+end function
+
+'--------------------------------------------------------------------
+'ustawia strUwagi z pozycji sprzedaży na PW (nazwa opisowa produktu)
+'--------------------------------------------------------------------
+function UpdateOpisProduktuPW(byref pPage): UpdateOpisProduktuPW = false
+  dim oPW: set oPW = find_pw_braki()
+  
+  if not oPW is nothing then
+  
+    dim pPos, pPosSprzed
+    for each pPos in oPW.listPozycje
+      for each pPosSprzed in pPage.root.listPozycje
+        if pPos.curExtra4 = ccur(pPage.root.IdObj) and pPos.curExtra5 = ccur(pPosSprzed.IdObj) then
+          pPos.strUwagi = pPosSprzed.strUwagi
+        end if
+      next
+    next
+    
+    if not trans_.saveobjects() then
+      trans_.message 7000, 0, "Nie udało się zapisać nazwy opisowej produktu na pozycji PW."
+      exit function
+    end if
+    
+  else
+    exit function    
+  end if  
+  
+  UpdateOpisProduktuPW = true
+end function
+
+'---------------------------------------------------
+'dopisuje do PW pozycje których brakuje na magazynie
+'---------------------------------------------------
+function MakePW(byref pPage, byref nIdMag): MakePW = false
+  'HALT
+  'znajdź lub utwórz PW
+  dim oPW: set oPW = FindOrCreatePW(nIdMag)
+  
+  if not oPW is nothing then
+    if not pM60261.dhmBalance_isOK_new(g_oDHMBalance, pPage.root) then
+      dim nIdSprz: nIdSprz = pPage.root.IdObj
+    
+      'dopisz brakujące pozycje
+      dim pSprzed: set pSprzed = trans_.getobj(TYPEID_N5SPRZEDAZ,nIdSprz)
+      dim pPos
+      for each pPos in pSprzed.listPozycje
+        if pPos.curIloscOpak > ccur(0.0) and pPos.strExtra1 <> "" then
+          
+          dim curStan: curStan = get_stan_mag_for_prod_opak_mag(1, pPos.pProdukt.idobj , pPos.pOpak.idobj)
+          
+          'dim iInx : iInx = g_oDHMBalance.find_on_prod (pPos.pProdukt.idobj , pPos.pOpak.idobj)
+				  'if iInx > -1 then
+            'dim oPosDHM : set oPosDHM = g_oDHMBalance.get_pos(iInx)
+			    
+            if curStan < pPos.curIloscOpak then
+      
+              dim oPozycja: set oPozycja = oPW.listPozycje.addnew()
+              with oPozycja
+                set .pProdukt = trans_.getobj(TYPEID_N5PRODUKT,pPos.pProdukt.IdObj)
+                set .pOpak = .pProdukt.listOpakowania.get(.pProdukt.listOpakowania.findonid(pPos.pOpak.IdObj))
+                .curIloscOpak = pPos.curIloscOpak - curStan
+                'zapamiętaj usera i IdObj sprzedaży
+                .strExtra1 = pPos.strExtra1
+                .strUwagi = pPos.strUwagi
+                .curExtra4 = ccur(pSprzed.IdObj)
+                .curExtra5 = ccur(pPos.IdObj)
+              end with
+              
+           end if     
+           
+         'end if     
+         
+        end if        
+      next
+      if not trans_.saveobjects() then
+        trans_.message 7000, 0, "Nie udało się dopisać pozycji z brakującym towarem do PW."
+        exit function
+      end if
+    end if
+  else
+    trans_.message 7000, 0, "Nie udało się wyszukać lub utworzyć dokumentu PW w dniu: " + doc_.afc.display.fulldate(trans_.var(GVAR_TODAY))
+    exit function
+  end if
+  MakePW = true
+end function
+
+'-----------------------------------
+'znajduje lub tworzy PW w danym dniu
+'-----------------------------------
+function FindOrCreatePW(byref nIdMag)
+
+  set FindOrCreatePW = find_pw_braki()
+  
+  if FindOrCreatePW is nothing then
+    set FindOrCreatePW = CreatePW(nIdMag)
+  end if
+ 
+end function
+
+'------------------------------------------------------------
+'wyszukuje PW utworzone w danym dniu w rejestrze Braki (PWb)
+'------------------------------------------------------------
+function find_pw_braki()
+  set find_pw_braki = nothing
+  
+  dim idPW: idPW = trans_.findobjid(TYPEID_N5DOKMAG,"pRejestrDok = " + CStr(g_idRejestrPWBraki) + " and dDataWyst = " + trans_.afc.convert.date2SQL(trans_.var(GVAR_TODAY)))
+  
+  if idPW > clng(0) then
+    set find_pw_braki = trans_.getobj(TYPEID_N5DOKMAG, idPW)
+  else
+    if idPW < clng(0) then
+      trans_.message 7000, 0, "Znaleziono wiele dokumentów PWBraki na dzień " + nx_.display.fulldate(trans_.var(GVAR_TODAY))
+    end if
+  end if
+  
+end function
+
+'----------------------------------
+'tworzy PW w rejestrze Braki (PWb)
+'----------------------------------
+function CreatePW(byref nIdMag)
+  set CreatePW = nothing
+  
+  if nIdMag > clng(0) then
+    
+      trans_.var(APPVAR_REJESTR_DOKUMENTOW) = clng(g_idRejestrPWBraki)
+      trans_.var(APPVAR_REJESTR_TYP) = clng(N5REJESTRDOK__PW)
+      dim pPW : set pPW = trans_.newobj(TYPEID_N5DOKMAG)
+      set pPW.pMagDocel = trans_.getobj(TYPEID_N5MAGAZYN,nIdMag)
+      pPW.n5dokmag_GenerateNumDok()
+      if not trans_.saveobjects() then
+        trans_.message 7000, 0, "Nie udało się utworzyć dokumentu PW."
+        exit function
+      end if    
+      set CreatePW = pPW
+      
+  end if
+end function
+
+
+'sprawdz produkty i wprowadz zmiany (jesli jest zgoda)
+function check_prods_and_save_doc(byval bAllowMissing, byval bAllowNoNames): check_prods_and_save_doc = "999"
+
+  'sprawdzenie stanu magazynowego przed zapisem
+  'always call following due side effects
+  if not pM60261.dhmBalance_isOK_new(g_oDHMBalance, page_.root) then
+    'sprawdź czy jest coś do zaakceptowania
+    dim pPos, nIdCurUser
+    
+    if not bAllowMissing then
+      for each pPos in page_.root.listPozycje
+        if pPos.isbad_pProdukt and pPos.isbad_pOpak and pPos.strExtra1 = "" and pPos.pProdukt.strIndeks <> "SO5" and pPos.pProdukt.strIndeks <> "SO8" and pPos.pProdukt.strIndeks <> "SO23" then
+          check_prods_and_save_doc = "101"
+          exit function
+         end if
+      next   
+    end if
+    
+  end if
+    
+  if not bAllowNoNames then    
+  'sprawdzenie zawsze nawet jak balance jest OK
+  'sprawdź czy nie występują produkty sprzedaży ogólnej
+    dim nLP: nLP = 1
+    for each pPos in page_.root.listPozycje
+      if pPos.isbad_pProdukt and pPos.isbad_pOpak and pPos.strExtra1 = "" and (pPos.pProdukt.strIndeks = "SO5" or pPos.pProdukt.strIndeks = "SO8" or pPos.pProdukt.strIndeks = "SO23") then
+        if pPos.strUwagi = "" then
+          check_prods_and_save_doc = "102"
+          exit function
+        else
+          bAllowNoNames = true
+        end if
+      end if
+      nLP = nLP + 1
+    next 
+  end if
+    
+  if bAllowMissing then
+    'zapamiętaj na pozycjach sprzedaży IdObj użytkownika akceptującego
+    nIdCurUser = getCurrentUserID()
+      
+    for each pPos in page_.root.listPozycje
+      if pPos.isbad_pProdukt and pPos.isbad_pOpak and pPos.strExtra1 = "" and pPos.pProdukt.strIndeks <> "SO5" and pPos.pProdukt.strIndeks <> "SO8" and pPos.pProdukt.strIndeks <> "SO23" then
+        pPos.strExtra1 = cstr(nIdCurUser)
+      end if
+    next
+  end if
+
+  if bAllowNoNames then
+    'zawsze pamiętaj na pozycjach sprzedaży IdObj użytkownika akceptującego dla produktów sprzedaży ogólnej
+    nIdCurUser = getCurrentUserID()
+
+    for each pPos in page_.root.listPozycje
+      if pPos.pProdukt.strIndeks = "SO5" or pPos.pProdukt.strIndeks = "SO8" or pPos.pProdukt.strIndeks = "SO23" then
+        pPos.strExtra1 = cstr(nIdCurUser)
+      end if
+    next
+      
+  end if
+
+	if not trans_.saveobjects() then
+    check_prods_and_save_doc = "103"
+		exit function
+	end if
+  
+end function
+
+function sync_wz_pwbraki_to_sprzedaz(byref pPage, byref bPosChanged): sync_wz_pwbraki_to_sprzedaz = false
+
+  if pPage.root.isnew() then
+    sync_wz_pwbraki_to_sprzedaz = true
+    exit function
+  end if
+  
+  'znajdź WZ powiązana z fakturą
+  dim nIdWZ: nIdWZ = trans_.findobjid(TYPEID_N5DOKMAG,"nTypDok = N5REJESTRDOK__WZ and wrefDokHandl = " + CStr(pPage.root.Idobj) + " and wrefDokHandl_wrt = TYPEID_N5SPRZEDAZ ")
+  if nIdWZ <= clng(0) then
+    sync_wz_pwbraki_to_sprzedaz = true
+    exit function
+  end if
+   
+  'no changes detected for now
+  bPosChanged = false
+  dim oWZ: set oWZ = trans_.getobj(TYPEID_N5DOKMAG,nIdWZ)
+  
+  bPosChanged = not (pPage.root.listPozycje.count = oWZ.listPozycje.count)
+      
+  if not bPosChanged then
+    dim pPos, pPosWZ, nLP: nLP = 1 
+    for each pPos in pPage.root.listPozycje
+      set pPosWZ = oWZ.listPozycje.get(nLP)
+      if not pPos.pProdukt is nothing and not pPos.pOpak is nothing and not pPosWZ.pProdukt is nothing and not pPosWZ.pOpak is nothing then
+        if not (pPos.pProdukt.IdObj = pPosWZ.pProdukt.IdObj and pPos.pOpak.IdObj = pPosWZ.pOpak.IdObj and pPos.curIloscOpak = pPosWZ.curIloscOpak) then
+          bPosChanged = true
+          exit for
+        end if
+      end if
+      nLP = nLP + 1
+    next
+  end if
+    
+  if bPosChanged then
+    'usuń pozycje z WZ oraz PW
+    oWZ.listPozycje.deleteall
+    
+    if not trans_.saveobjects() then
+      trans_.message 7000, 0, "Nie mogę usunąć pozycji z WZ"
+      exit function
+    end if
+        
+    'znajdź i popraw PW
+    dim iter
+    
+    if not pPage.root.pRejestrDok.wrefParam2 is nothing then
+      if pPage.root.pRejestrDok.wrefParam2.type = TYPEID_N5MAGAZYN then
+        dim nIdMag: nIdMag = pPage.root.pRejestrDok.wrefParam2.IdObj        
+            
+        dim oPW: set oPW = find_pw_braki()
+             
+        if  oPW is nothing then
+          sync_wz_pwbraki_to_sprzedaz = true
+          exit function
+        end if
+        
+        for iter = oPW.listPozycje.count to 0 step -1
+          if oPW.listPozycje.exists(iter) then
+            if clng(oPW.listPozycje.get(iter).curExtra4) = pPage.root.IdObj then
+              oPW.listPozycje.delete(iter)
+            end if
+          end if
+        next
+              
+        if not trans_.saveobjects() then
+          trans_.message 7000, 0, "Nie mogę usunąć pozycji z PW powiązanych z fakturą: " + pPage.root.strNrDok
+          exit function
+        end if              
+        
+      end if
+    end if
+  end if
+
+  sync_wz_pwbraki_to_sprzedaz = true
+  
+end function
+
+function print_fiscal_paragon(byref oSprzedaz)
+
+#ifdef _DEBUG
+  print_fiscal_paragon = true
+  exit function
+#endif
+
+	print_fiscal_paragon = false
+
+		if oSprzedaz.sprzed_strNrDokFisk <> "" then
+			MessageBox "Paragon dla tego dokumentu został już wydrukowany", "Wydruk paragonu fiskalnego", vbOKOnly, vbInformation
+			trans_.message 1002 , 0 , "Paragon dla tego dokumentu został już wydrukowany"
+			exit function
+		end if 
+		if not std_fsave() then
+			exit function
+		end if 
+		dim pM60310 : set pM60310 = doc_.getmodule(60310)
+		if not pM60310.print_paragon(oSprzedaz) then
+			if not page_.enableedit then 
+				fenableedit
+				exit function
+			end if
+		end if
+		if not std_fsave() then
+			exit function
+		end if 
+
+		oSprzedaz.sprzed_strNrDokFisk = oSprzedaz.strNrDok
+		if not std_fsave() then
+			exit function
+		end if 
+
+	print_fiscal_paragon = true
+end function
+
+function cancel_document
+	cancel_document=std_fback()
+	page_.goback	
+end function
+
+function c##CTRLID_SPOS_PLAT##_ongetdata(byref pCtrl,nRow): c##CTRLID_SPOS_PLAT##_ongetdata = true	
+
+end function
+
+function c##CTRLID_SPOS_PLAT##_ondataentered(pCtrl,nRow, strEntered) : c##CTRLID_SPOS_PLAT##_ondataentered = true
+end function
+
+function pokaz_rabat
+  dim id_dok_sprz:id_dok_sprz = page_.root.idobj
+  dim oWyrazenie : set oWyrazenie = nothing
+  dim g_pModule : set g_pModule = nothing
+  dim pContainer : set pContainer = page_.ctrl(CTRLID_RABAT_CONTAINER)
+  pContainer.removeall
+  
+  set g_pModule = doc_.getmodule(60314)
+  set oWyrazenie = g_pModule.new_cwyrazenia
+  
+  dim idGlobFile : idGlobFile = trans_.findobjid(TYPEID_N5GLOBFILE,"nIndeks=GLOB_FILE_BONUSY")
+  if idGlobFile > 0 then
+		dim oGlobFile:set oGlobFile = trans_.getobj(TYPEID_N5GLOBFILE,idGlobFile)
+  else
+    trans_.message 0,0,"Brak pliku z definicjami bonusów"
+    exit function  
+	end if
+
+	if not oGlobFile.fPlik.isempty() then
+		g_pModule.load_data oWyrazenie, oGlobFile.fPlik 
+	end if
+    
+  g_pModule.pok_rabat oWyrazenie, id_dok_sprz, pContainer
+  
+end function
+
+function przydziel_rabat
+  if page_.root.pKlient is nothing then
+    trans_.message 7000, 0, "Należy wybrać klienta."
+    exit function
+  end if
+  
+  dim id_dok_sprz:id_dok_sprz = page_.root.idobj
+  dim oWyrazenie : set oWyrazenie = nothing
+  dim g_pModule : set g_pModule = nothing 
+  dim pContainer : set pContainer = page_.ctrl(CTRLID_RABAT_CONTAINER)  
+  pContainer.removeall
+  
+  set g_pModule = doc_.getmodule(60314)
+  set oWyrazenie = g_pModule.new_cwyrazenia
+  
+  dim idGlobFile : idGlobFile = trans_.findobjid(TYPEID_N5GLOBFILE,"nIndeks=GLOB_FILE_BONUSY")
+  if idGlobFile > 0 then
+		dim oGlobFile:set oGlobFile = trans_.getobj(TYPEID_N5GLOBFILE,idGlobFile)
+  else
+      trans_.message 0,0,"Brak pliku z definicjami bonusów"
+    exit function  
+	end if
+
+	if not oGlobFile.fPlik.isempty() then
+		g_pModule.load_data oWyrazenie, oGlobFile.fPlik 
+	end if
+    
+  g_pModule.przy_rabat oWyrazenie, id_dok_sprz, pContainer
+  
+end function
+
+function cofnij_rabat
+  dim id_dok_sprz:id_dok_sprz = page_.root.idobj
+  dim oWyrazenie : set oWyrazenie = nothing
+  dim g_pModule : set g_pModule = nothing
+  dim pContainer : set pContainer = page_.ctrl(CTRLID_RABAT_CONTAINER)
+  pContainer.removeall   
+  
+  set g_pModule = doc_.getmodule(60314)
+  set oWyrazenie = g_pModule.new_cwyrazenia
+  
+  dim idGlobFile : idGlobFile = trans_.findobjid(TYPEID_N5GLOBFILE,"nIndeks=GLOB_FILE_BONUSY")
+  if idGlobFile > 0 then
+		dim oGlobFile:set oGlobFile = trans_.getobj(TYPEID_N5GLOBFILE,idGlobFile)
+  else
+      trans_.message 0,0,"Brak pliku z definicjami bonusów"
+    exit function  
+	end if
+
+	if not oGlobFile.fPlik.isempty() then
+		g_pModule.load_data oWyrazenie, oGlobFile.fPlik 
+	end if
+    
+  g_pModule.cofn_rabat oWyrazenie, id_dok_sprz, nothing
+end function
+
+'ta funkcja sprawdza czy zmienił się root i jeśli tak to regeneruje wyniki
+dim g_idLastRoot : g_idLastRoot = -1
+
+function c##CTRLID_RABAT_CONTAINER##_ongetdata(byref pCtrl)
+	if g_idLastRoot <> page_.root.idobj then
+		g_idLastRoot = page_.root.idobj
+		page_.ctrl(CTRLID_RABAT_CONTAINER).removeall
+	end if										
+end function
+
+function c##CTRLID_ILOSC_OPAK_DOST##_ongetdata(pCtrl,row): c##CTRLID_ILOSC_OPAK_DOST##_ongetdata = true	
+	dim pElement,curIloscDost
+	pCtrl.text = "-"
+	if not page_.root.pRejestrDok.wrefParam2 is nothing then
+		if page_.root.pRejestrDok.wrefParam2.type = TYPEID_N5MAGAZYN then
+			if page_.root.listPozycje.exists(row) then							
+				set pElement = page_.root.listPozycje.get(row)					
+				if not pElement.pProdukt is nothing and not pElement.pOpak is nothing then
+					dim dummy
+					curIloscDost = g_oDHMBalance.update_add_check_entry ( pElement , page_.root.pRejestrDok.wrefParam2.idobj , clng(0) ,  true , dummy )
+					pCtrl.text = doc_.afc.display.quantity(curIloscDost,pElement.pOpak.pJednOpak.strSkrot,pElement.pOpak.pJednOpak.nDokladnosc - 1)
+				end if
+			end if
+		end if
+	end if
+end function
+]]>
+    </script>
+  </config>
+  <header>
+  </header>
+  <body>
+
+    <table style='STYLE_TABLE' border='
+#ifdef _DEBUG	
+	1
+#else
+	0
+#endif	
+	'>
+      <thead>
+      </thead>
+      <tbody>
+
+        QXS_BEGIN_FLAT(SECID_PODSTAWOWE,Informacje podstawowe,FORM_SPAN)
+
+        <tr>
+          <td width='min' fontsize='8' align='left' colspan='4'>
+            QXE_LABEL_REQ(SPF_TITLE)
+          </td>
+        </tr>
+
+        <tr>
+          QXC_LABEL(Data wystawienia,1)
+          <td width='min' colspan='1'  disable='true'>
+            QXE_DATE_FIELD(-1,ddatawyst)
+          </td>
+
+          QXC_LABEL_REQ(Indeks klienta,1)
+          QXC_EDIT_REF(CTRLID_KLIENT_INDEKS,20,PICTURE_CHOICE_N5KLIENT,pKlient,strIndeks,CRSR_N5KLIENT_WG_INX,1)
+
+        </tr>
+
+        <tr>
+          QXC_LABEL_REQ(Numer dokumentu,1)
+          QXC_EDIT_CUSTOM(CTRLID_NUMDOK,20,1)
+
+          QXC_LABEL(Nazwa,1)
+          <td width='min' colspan='1'>
+            <text name='-1' size='30'>
+              <transfer mode='edit_ref'>
+                <field>pKlient</field>
+                <searchfield>strNazwa</searchfield>
+              </transfer>
+            </text>
+          </td>
+        </tr>
+        <tr>
+          QXC_LABEL_REQ(Sposób płatności,1)
+          QXC_EDIT_REF(-1,20,PICTURE_CHOICE_N5SPOSPLAT,pSposobPlatnosci,strNazwa,CRSR_DEFAULT,1)
+          QXC_LABEL(Ulica,1)
+          QXC_LABEL_CUSTOM(CTRLID_ULICA_NUMER,30,1)
+        </tr>
+        <tr>
+          <td colspan='2'></td>
+          QXC_LABEL(Kod i miasto,1)
+          QXC_LABEL_CUSTOM(CTRLID_KOD_MIASTO,30,1)
+        </tr>
+
+
+        QXS_END_FLAT(FORM_SPAN)
+        QXR_SEPARATOR(FORM_SPAN)
+
+        #ifdef SPF_SHOW_PARAGON_FISKALNY
+        <tr>
+          QXC_LABEL(Numer paragonu fiskalnego,1)
+          QXC_EDIT_FIELD(-1,20,sprzed_strNrDokFisk,RCELL_SPAN)
+        </tr>
+        #endif
+
+        QXR_SEPARATOR(FORM_SPAN)
+
+        QXS_BEGIN_FLAT(SECID_POZYCJE,Pozycje,FORM_SPAN)
+        <tr>
+          <td colspan='FORM_SPAN'>
+            <grid style='STYLE_TABLE' name='CTRLID_GRID' >
+              <transfer mode='grid_list'>
+                <field>listPozycje</field>
+              </transfer>
+
+              <thead style='STYLE_TABLE_HEADER'>
+                <tr>
+                  <td width='min'>
+                    <t>LP</t>
+                  </td>
+                  <td width='3000'>
+                    <text>Indeks</text>
+                  </td>
+                  <td width='max'>
+                    <t>Nazwa</t>
+                  </td>
+                  <td align='right' width='min'>
+                    <text>Opak</text>
+                  </td>
+                  <td align='right' width='min'>
+                    <t>Ilość</t>
+                  </td>
+                  <td align='right' width='min'>
+                    <t>Cena br</t>
+                  </td>
+                  <td align='right' width='min'>
+                    <t>Wart br</t>
+                  </td>
+                  <td></td>
+                </tr>
+              </thead>
+              <tbody style='STYLE_TABLE_BODY' maxvisiblerows='500'>
+                <tr fontsize='6'>
+                  SXC_LP
+                  SXX_EDIT_REF_PRODUKT_INDEX_CENA(CTRLID_GRID_PRODUKT_INDEKS,15,listPozycje,pProdukt,CRSR_N5PRODUKT_DEFAULT_INDEX)
+
+                  SXX_EDIT_REF_PRODUKT_CENA(CTRLID_GRID_PRODUKT_NAZWA,45,listPozycje,pProdukt,CRSR_DEFAULT)
+
+                  SXC_CURRENCY_CUSTOM(CTRLID_ILOSC_KARTONOW,8,0,)
+
+                  <td>
+                    <t name='CTRLID_ILOSC_OPAK_DOST' border='0' width='0'>
+                      <transfer mode='row_custom' />
+                    </t>
+                    <currency name='CTRLID_ILOSC_OPAK' border='0' width='max' style='STYLE_CTRL' size='8' precision='0' unit='' disable='false'	>
+                      <transfer mode='row_custom' />
+                    </currency>
+                  </td>
+
+                  <td>
+                    <currency name='CTRLID_CENA_BRUTTO' width='max' border='0' unit=''
+                      size='9' precision='#*gvar_price_prec' style='STYLE_CTRL'
+                      disable='false'>
+                      <transfer mode='row_custom' />
+                    </currency>
+                  </td>
+
+                  <td>
+                    <currency name='CTRLID_WARTOSC_BRUTTO' width='max' border='0' unit=''
+                      size='9' precision='2' style='STYLE_CTRL'
+                      disable='true'							>
+                      <transfer mode='row_custom' />
+                    </currency>
+                  </td>
+                  <td>
+                    SXE_PICTURE_ACTION(-1,PICTURE_CHOICE_N5POZSPRZEDAZ,varFunctionHLI="std_pozycja_zaawansowane_hli" vn1=PAGE_FORM_POZSPRZEDAZ vs2="listPozycje" vs3="#*appvar_rejestr_typ" ,Zaawansowane)
+                  </td>
+                </tr>
+              </tbody>
+              <tfooter style='STYLE_TABLE_BODY'>
+                <tr style='STYLE_GRID_FOOTER' fontsize='6' bold='true'>
+                  <td colspan='5'/>
+                  QXC_LABEL(Razem:,SUMMARY_SPAN)
+                  QXC_RTEXT_CUSTOM(CTRLID_SUMA_WARTOSCI_BRUTTO,0,1)
+                  <td></td>
+                </tr>
+                #if DZIAL_KASA = 1
+                #if appvar_rejestr_typ = N5REJESTRDOK_FAKT_SP
+                <tr style='STYLE_GRID_FOOTER' fontsize='6' bold='true'>
+                  <td colspan='5'></td>
+                  QXC_LABEL(Przyjęto:,1)
+                  <td colspan='1' align='right'>
+                    <currency unit='' prec='2' name='CTRLID_GOTOWKA' size='11'>
+                      <transfer mode='custom'/>
+                    </currency>
+                  </td>
+                  <td></td>
+                </tr>
+                #endif
+                #endif
+              </tfooter>
+            </grid>
+          </td>
+        </tr>
+        <tr>
+          <td colspan='6'>
+            <grid style='STYLE_TABLE'>
+              <thead>
+                <tr>
+                  <td width='max' colspan='1'>
+                  </td>
+                  <td width='9000' name='CTRLID_RABAT_CONTAINER' colspan='1' style='STYLE_GRID_FOOTER' align='right'>
+                    <transfer mode='custom' />
+                  </td>
+                  <td width='min'>
+                    <button style='STYLE_BUTTON' href='varFunction=pokaz_rabat'>Pokaż rabat</button>
+                  </td>
+                  <td width='min'>
+                    <button style='STYLE_BUTTON' href='varFunction=przydziel_rabat'>Przydziel rabat</button>
+                  </td>
+                  <td width='min'>
+                    <button style='STYLE_BUTTON' href='varFunction=cofnij_rabat'>Cofnij rabat</button>
+                  </td>
+                </tr>
+              </thead>
+            </grid>
+          </td>
+        </tr>
+        QXS_END_FLAT(FORM_SPAN)
+
+        QXR_SEPARATOR(FORM_SPAN)
+        <tr fontsize='6' bold='true'>
+          #if DZIAL_KASA = 0
+          <td colspan='4' align='right'>
+            <button name='2678' skey='F5' style='STYLE_BUTTON' href='varFunction="kont_zakupy"'>F5 - Kontynuacja zakupów</button>
+          </td>
+          #else
+          <td colspan='4' bold='true' align='right'>
+            <button skey='F4' style='STYLE_BUTTON' href='varFunction="platnosc"'>F4 - Płatność kartą</button>
+            <button name='2678' skey='F5' style='STYLE_BUTTON' href='varFunction="zakoncz_zakupy"'>F5 - Zakończenie zakupów</button>
+          </td>
+          #endif
+
+        </tr>
+      </tbody>
+    </table>
+  </body>
+  <footer>
+  </footer>
+</page>

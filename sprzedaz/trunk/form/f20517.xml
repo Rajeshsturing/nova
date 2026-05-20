@@ -1,0 +1,331 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+
+<!--
+ALWAYS MANUAL
+Opcja programu
+
+
+#include "h1000.h"
+#include "h1240.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1200.h"
+#include "h1220.h"
+#include "h1201.h"
+#include "h1224.h"
+#include "h1222.h"
+
+#define ID_INDEKS_FORMAT		1001
+#define ID_INDEKS_NR			1002
+
+-->
+
+
+<page width='8000' style='STYLE_PAGE'>
+
+<config>
+
+	<title>
+	Ustawienia tego komputera
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+
+<startpos>center</startpos>
+
+<script>
+<![CDATA[
+
+'messagebox
+#include "50122"
+
+'underConstruction
+#include "50200"
+
+#include "50222"
+#include "50516"
+
+dim bFastGraphics
+dim pSys
+
+function fopen()
+	set pSys=doc_.system
+	
+	bFastGraphics=true
+
+	dim strFastGrph
+	strFastGrph=pSys.registry(hKey_LocalMachine,"SOFTWARE\NAVO\NAVO2002\Support", "FastGraphics")
+
+	if (strFastGrph="" or strFastGrph="0") then
+		bFastGraphics=false
+	end if
+
+	ShowOfficeOptions
+	fopen=true
+end function
+
+function fclose()
+	fclose=true
+end function
+
+function fsave()
+	dim strWrite: strWrite="0"
+	if (bFastGraphics) then
+		strWrite="1"
+	end if
+
+	pSys.registry(hKey_LocalMachine,"SOFTWARE\NAVO\NAVO2002\Support", "FastGraphics")=strWrite
+	fsave=true
+end function
+
+function fback()
+	fback=std_fback()
+end function
+
+function fok()
+	fsave
+	page_.goback
+end function
+
+function fcancel()	
+	page_.goback
+end function
+
+'---------------------------------------------------------------------
+'wymiana z kontrolkami
+'---------------------------------------------------------------------	
+function c4_ongetdata(byref oCtrl): c4_ongetdata=true
+	if (bFastGraphics) then
+		oCtrl.value="1"
+	else
+		oCtrl.value="0"
+	end if
+end function
+
+function c4_ondataentered(byref oCtrl, byval newValue)
+	if (newValue="1") then
+		bFastGraphics=true
+	else
+		bFastGraphics=false
+	end if
+	c4_ondataentered=true
+end function
+
+
+sub ShowSettingsPage(settings_page,registry_key,title)
+
+	dim pNewHli
+	set pNewHli=doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=" + CStr(settings_page))
+
+	dim pPage:set pPage=doc_.getpagehli(pNewHli)
+	if pPage is nothing then
+		exit sub
+	end if
+
+	if registry_key <> "" then
+		pPage.setup CStr(title) , CStr(registry_key)
+	end if
+
+	pPage.domodalauto
+	set pPage=nothing
+end sub
+
+function bar_code_settings
+	ShowSettingsPage PAGE_FORM_COMM_PORT_SETTINGS,"HKLM_BARCODE_SETTINGS","Parametry komunikacji dla czytnika kodów kreskowych"
+end function
+
+function collector_settings
+	'najpierw zapytamy czy chcemy ustawić port czy eksportować produkty
+	dim nQuestionResult
+	nQuestionResult = MessageBoxCustom("Korzystając z tej opcji możesz skonfigurować port do ktorego podlączony jest kolektor lub eksportować do niego wybrane produkty. Co chcesz zrobić?", "Kolektor", vbYesNo, vbQuestion, "Ustawienia portu;Eksport produktów")
+	if nQuestionResult = vbYes then
+
+		ShowSettingsPage PAGE_FORM_COMM_PORT_SETTINGS,"HKLM_KOLEKTOR_SETTINGS","Parametry komunikacji dla kolektora danych"
+
+	elseif nQuestionResult = vbNo then
+
+		dim dialog_produkt_filtr : set dialog_produkt_filtr = doc_.getpagehli("varCmd=CMD_OPEN_WIZARD_PAGE varDestPage=DIALOG_PRODUKT_FILTR")
+		dim nRes:nRes = dialog_produkt_filtr.domodalauto()
+		if nRes <> 0 then
+			'wybierzemy sobie najpierw magazyn
+			dim mag_id:mag_id = fire_choice_list(TYPEID_N5MAGAZYN ,"","","","","")
+			if mag_id > 0 then
+				dim pCursor:set pCursor = dialog_produkt_filtr.cursor_for_send_to_collector(mag_id)		
+				if pCursor is nothing then
+					exit function
+				end if
+
+				dim pCollectorUtil:set pCollectorUtil = doc_.getmodule(60205)
+				pCollectorUtil.send_products_to_collector pCursor
+
+			end if
+			
+		end if
+
+	end if	
+end function
+
+function printer_settings
+	ShowSettingsPage PAGE_FORM_PRINTER_SETTINGS,"",""
+end function
+
+function kasa_settings
+	ShowSettingsPage PAGE_FORM_KASA_FISK_SETTINGS,"",""
+end function
+
+function getOfficeConnectorInstallPath()
+	dim strOCRegPath
+		strOCRegPath=Trim(pSys.registry(hKey_LocalMachine,"SOFTWARE\NAVO\NAVO2002\Setup", "InstallationRoot"))
+		if not Right(strOCRegPath,1)="\" then strOCRegPath=strOCRegPath+"\"
+	getOfficeConnectorInstallPath=strOCRegPath+"System\navooffc.dll"
+end function
+
+
+function fOCon()
+	doc_.system.registerdll getOfficeConnectorInstallPath()
+
+	if (not isOfficeConnectorInstalled()) then
+		view_message 6259, 0
+	else
+		view_message 6260, 0
+	end if
+end function
+
+'-----------------------------------------------------------------
+' Poniewaz Outlook ma błąd i sam nie woła event'a OnDisconnection
+' dla AddIn'a przy wyjsciu z aplikacji my recznie odinstalujemy
+' pozycje menu
+'-----------------------------------------------------------------
+function Unregister_Outlook_AddIn(): Unregister_Outlook_AddIn = false
+	on error resume next
+
+	dim pAddIn: set pAddIn = nothing
+	set pAddIn = CreateObject("NavoOffC.Extensions")
+
+	if (pAddIn is nothing) then
+		exit function
+	end if
+
+	pAddIn.UnregisterOutlook doc_
+
+	set pAddIn = nothing
+	Unregister_Outlook_AddIn = (err.Number=0)
+	
+	on error goto 0
+
+	ShowOfficeOptions
+end function
+
+function fOCoff()
+	if (Unregister_Outlook_AddIn()) then
+		page_.updateview
+	end if
+
+	doc_.system.unregisterdll getOfficeConnectorInstallPath() 
+
+	if (isOfficeConnectorInstalled()) then
+		view_message 6258, 0
+	else
+		view_message 6257, 0
+	end if
+
+	ShowOfficeOptions
+end function
+
+function isOfficeConnectorInstalled()
+	dim pOfficeConnector: set pOfficeConnector = nothing
+
+	on error resume next
+	set pOfficeConnector = CreateObject("NavoOffC.Extensions")
+	on error goto 0
+
+	isOfficeConnectorInstalled = (not pOfficeConnector is nothing)
+end function
+
+function ShowOfficeOptions()
+	if (isOfficeConnectorInstalled()) then
+'		page_.ctrl(20).hide = true
+'		page_.ctrl(21).hide = false
+	else
+'		page_.ctrl(20).hide = false
+'		page_.ctrl(21).hide = true
+	end if
+end function
+
+function fRemoveCache()
+	doc_.purgelocalcache
+end function
+
+]]>
+</script>
+
+</config>
+
+<body>
+
+<table>
+<tbody>
+
+<!--
+XFOPTSECBEG(6,Grafika,2)
+<tr>
+	<td colspan='2'>
+		<checkbox name='c4'><t>Używaj szybkiej grafiki</t>
+			<transfer mode='custom'/>
+		</checkbox>
+	</td>
+</tr>
+XFSECEND
+
+-->
+
+
+XFOPTSECBEG(7,Konfiguracja urządzeń zewnętrznych,2)
+
+#macro TR_CONFIG_BUTTON(_function_,_title_)	\
+		<tr>	\
+			<td colspan='2'>	\
+				<button style='STYLE_BUTTON' size='40' href='varFunction="_function_"'>_title_</button>	\
+			</td>	\
+		</tr>
+
+
+TR_CONFIG_BUTTON(bar_code_settings,Czytnik kodów kreskowych)
+TR_CONFIG_BUTTON(printer_settings,Drukarka fiskalna)
+TR_CONFIG_BUTTON(collector_settings,Kolektor)
+TR_CONFIG_BUTTON(kasa_settings,Kasa fiskalna)
+
+XFSECEND
+
+#ifdef NEXTVERSION
+XFOPTSECBEG(8,NAVO Office Expander,2)
+<tr name='t20'>
+	<td colspan='2'>
+			<button style='STYLE_BUTTON' size='40' href='varFunction="fOCon"'>Włącz
+			</button>
+	</td>
+</tr>
+
+<tr  name='t21'>
+	<td colspan='2'>
+			<button style='STYLE_BUTTON' size='40' href='varFunction="fOCoff"'>Wyłącz
+			</button>
+	</td>
+</tr>
+
+XFSECEND
+
+XFOPTSECBEG(9,Tymczasowe pliki aplikacji,2)
+TR_CONFIG_BUTTON(fRemoveCache,Usuń całą zawartość offline)	
+
+XFSECEND
+#endif
+
+</tbody>
+</table>
+
+XFDIALOGBUTTONS
+
+</body>
+</page>

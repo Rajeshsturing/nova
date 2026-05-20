@@ -1,0 +1,488 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+REV:KB:20030212
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1201.h"
+#include "h1231.h"
+#include "h1230.h"
+
+#define CTRLID_LEFT_PANE		1001
+#define CTRLID_RIGHT_PANE		1002
+#define DOMYSLNA_ILOSC_DRUKU_KODKRESK	1
+
+-->
+<page style='STYLE_PAGE'>
+<config>
+	<title>
+Karta produktu 
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+<typeid>TYPEID_N5PRODUKT</typeid>
+<script>
+      <![CDATA[
+
+'CCardBuilder
+#include "50131"
+'GetMenu
+#include "50506"
+'section_*
+#include "50222"
+'std_openform_field_hli
+#include "50610"
+'fire_choicelist
+#include "50200"
+'popraw dane
+#include "50609"
+
+'add_to_choicelist
+'delete_from_choicelist_hli
+#include "50102"
+
+dim g_pCardBuilder : set g_pCardBuilder = nothing
+dim g_bHideOption : g_bHideOption = false  'gdy true => ukrywanie wybranych elementów
+
+function fopen
+#ifdef _ABAKUS
+	if not doc_.getmodule(60106).FindRightFullMenu() then
+		g_bHideOption = true
+	end if
+#endif
+
+#ifdef APPCONFIG_SHOW_ALL_DOKUM_PROD
+  trans_.var(GVAR_SELECTED_TAB_ITEM_PROD) = 0
+  trans_.var(GVAR_SPRZEDAZ_LAST_12_MONTHS) = 0
+#endif
+
+	set g_pCardBuilder = new CCardBuilder
+	
+	'REV:KB:TODO: Arek: proszę sobie zobaczyć jak można przełączać (true/false - 8 kombinacji)
+	'g_pCardBuilder.prepare_framework page_.topelement,false,true,false
+	g_pCardBuilder.prepare_framework_ex page_.topelement,false,true,true,CTRLID_LEFT_PANE,CTRLID_RIGHT_PANE
+
+	build_menu
+	rebuild_contents
+
+	fopen = true
+end function
+
+'called once to build menu
+sub build_menu
+	'dodajemy menu items
+	with g_pCardBuilder.menu
+		if not g_bHideOption then
+		  .add_item "Dodaj produkt do listy wyboru","varFunctionHLI=""add_to_choicelist"" vs100=""TYPEID_N5PRODUKT"" vs101=""" + cstr(page_.root.idobj) + """ "
+		  .add_item "Usuń produkt z listy wyboru","varFunctionHLI=""delete_from_choicelist_hli"" vs100=""0"" vs101=""0"" vs102=""TYPEID_N5PRODUKT"" "
+		  .add_item "Utwórz wizytówkę produktu","varFunction=""generate_produkt_card"" "
+		  .add_item "Wydrukuj etykiety produktu","varFunction=""print_etyk_prod"""
+		end if
+#ifdef _KOMPOZYTY
+    .add_item "Kreator realizacji","varFunction=""kreator_realizacji"""
+#endif
+#ifdef _ALMA_TREND    
+		.add_item "Lista dostaw", "varFunction=""lista_dostaw"""
+#endif
+		if not g_bHideOption then
+		  .add_item_pic "Wyślij opis produktu","varFunction=""send_email_on_prod"" ", PICTURE_SMALL_EMAIL
+		end if
+    
+		.add_item "Popraw dane", "varFunction=""popraw_dane"""
+
+	end with
+end sub
+
+
+function product_form()
+
+	dim idRoot: idRoot=page_.root.idobj
+	dim pSubTrans:set pSubTrans = trans_.createsubtran()
+		doc_.getmodule(60129).form_domodal TYPEID_N5PRODUKT,idRoot,USAGE_EDIT
+	set pSubTrans=nothing
+	rebuild_contents
+
+end function
+
+dim g_pPlugFactory:set g_pPlugFactory = nothing
+dim g_bMoreOpak
+
+'called on every root object change (including fopen)
+sub rebuild_contents
+	g_bMoreOpak = (page_.root.listOpakowania.count > 1) 
+	set g_pPlugFactory = doc_.getmodule(60160)
+	with g_pCardBuilder
+		.reset_framework
+		
+		'tool pane
+		dim strStatus
+		select case page_.root.eAktywny 
+			case N5PRODUKT_AKTYWNY
+				strStatus = "   Status: dostępny"
+			case N5PRODUKT_NIEAKTYWNY
+				strStatus = "   Status: niedostępny"
+		end select
+		.toolpane.addnew(CTRL_TYPE_STATIC,-1).text = strStatus
+	
+		'title
+		.title = page_.root.strNazwa
+
+
+		g_pPlugFactory.plug_produkt_podstawowe .new_section(.fixedpane, "Informacje podstawowe"), page_.rootidobj
+
+
+#ifndef _IOW
+		'5 g_pPlugFactory.plug_produkt_zamienniki .new_section(.leftpane, "Zamienniki"), page_.rootidobj
+		g_pPlugFactory.plug_produkt_opis .new_section(.leftpane, "Opis"), page_.rootidobj
+#endif
+
+#ifdef _IOW
+		  g_pPlugFactory.plug_produkt_zamienniki .new_section(.leftpane, "Zamienniki"), page_.rootidobj 
+		'.new_section .leftpane, "Zamienniki"
+#endif
+
+		if not g_bHideOption then
+		  '2 g_pPlugFactory.plug_produkt_cechy .new_section(.leftpane, "Cechy"), page_.rootidobj
+		  .new_section .leftpane, "Cechy"
+
+		  ' 3 g_pPlugFactory.plug_produkt_listy .new_section(.leftpane, "Listy"), page_.rootidobj
+#ifdef _FRAM
+		  .new_section .leftpane, "Receptura"
+#else
+		  .new_section .leftpane, "Listy"
+#endif      
+
+		  '4 g_pPlugFactory.plug_produkt_pic .new_section(.leftpane, "Zdjęcie"), page_.rootidobj
+		  .new_section .leftpane, "Zdjęcie"
+		end if
+
+#ifndef _IOW
+		'5 g_pPlugFactory.plug_produkt_zamienniki .new_section(.leftpane, "Zamienniki"), page_.rootidobj
+		if not g_bHideOption then
+		  .new_section .leftpane, "Zamienniki"
+		end if
+#endif
+
+#ifdef _IOW
+		'5 g_pPlugFactory.plug_produkt_zamienniki .new_section(.leftpane, "Zamienniki"), page_.rootidobj
+		g_pPlugFactory.plug_produkt_opis .new_section(.leftpane, "Opis"), page_.rootidobj		
+#endif
+
+		if not g_bHideOption then
+		  '6 g_pPlugFactory.plug_produkt_sprzedaz .new_section(.leftpane, "Sprzedaż"), page_.rootidobj
+		  .new_section .leftpane, "Sprzedaz"
+
+		  '7 g_pPlugFactory.plug_produkt_zakup .new_section(.leftpane, "Zakup"), page_.rootidobj		
+		  .new_section .leftpane, "Zakup" 
+
+		  '8 
+		  .new_section .leftpane, "Oferty własne"
+
+		  '9 g_pPlugFactory.plug_produkt_zamowienia .new_section(.leftpane, "Zamówienia"), page_.rootidobj	
+		  .new_section .leftpane, "Zamówienia"
+
+
+		  '10 g_pPlugFactory.plug_produkt_zamowienia_wl2 .new_section(.leftpane, "Zamówienia własne"), page_.rootidobj		
+		  .new_section .leftpane, "Zamówienia własne"
+
+		  '11 g_pPlugFactory.plug_produkt_rezerwacje .new_section(.leftpane, "Rezerwacje"), page_.rootidobj		
+		  .new_section .leftpane, "Rezerwacje"
+		end if
+
+#ifdef _AMPLUS
+		  .new_section .leftpane, "Kody indywidualne"
+#endif
+    
+#ifdef _ABAS_INWESTYCJE
+		  .new_section .leftpane, "RW"
+#endif
+
+#ifdef _PAKART
+		  .new_section .leftpane, "Produkcja"  
+		  .new_section .leftpane, "Opakowania"
+#endif
+
+#ifdef _TORAL
+		  .new_section .leftpane, "Rozchody"  
+		  .new_section .leftpane, "Przychody"
+#endif
+
+		g_pPlugFactory.plug_produkt_opakowania .new_section(.rightpane, "Ceny"), page_.rootidobj , g_bMoreOpak
+  
+		if not g_bHideOption then
+		  '2 g_pPlugFactory.plug_produkt_promocje .new_section(.rightpane, "Promocje"), page_.rootidobj
+		  .new_section .rightpane, "Promocje"
+		end if
+
+		if page_.root.eRodzaj <> N5PRODUKT_USLUGA then
+			'3 g_pPlugFactory.plug_produkt_magazyny .new_section(.rightpane, "Magazyny"), page_.rootidobj , g_bMoreOpak
+			.new_section .rightpane, "Magazyny"
+
+			'4 g_pPlugFactory.plug_produkt_zam_wlasne .new_section(.rightpane, "Prognoza dostepności"), page_.rootidobj  , g_bMoreOpak
+			.new_section .rightpane, "Prognoza dostępności"
+		end if
+    
+
+
+	end with
+end sub
+
+#ifdef APPCONFIG_SHOW_ALL_DOKUM_PROD
+sub ShowAllDokProd(pHLI)
+  if pHLI.exists(100) then
+    trans_.var(GVAR_SELECTED_TAB_ITEM_PROD) = pHLI.prop(100)
+  end if
+  if pHLI.exists(101) then
+    trans_.var(GVAR_SPRZEDAZ_LAST_12_MONTHS) = pHLI.prop(101)
+  end if  
+  frefresh
+  'ustaw się na wybranej zakładce
+  page_.ctrl(CTRLID_LEFT_PANE).activeitem = trans_.var(GVAR_SELECTED_TAB_ITEM_PROD)
+end sub
+#endif
+
+sub ShowAllDokMag(pHLI)
+  if pHLI.exists(100) then
+    trans_.var(GVAR_SELECTED_TAB_ITEM_PROD) = pHLI.prop(100)
+  end if
+  frefresh
+  'ustaw się na wybranej zakładce
+  page_.ctrl(CTRLID_LEFT_PANE).activeitem = trans_.var(GVAR_SELECTED_TAB_ITEM_PROD)
+end sub
+
+function fclose
+  trans_.var(GVAR_SELECTED_TAB_ITEM_PROD) = -1
+  set g_pCardBuilder = nothing
+end function
+
+function frefresh
+	rebuild_contents
+end function
+
+'REV:KB:TODO: Arek: przenieść ze starej wersji funkcje obsługi w rodzaju SendToCustomer
+
+'3. SendToCustomer - przenieść do osobnego modułu służacego do redagowania tego typu maili
+'jako parametr powinno być idProdukt
+'zapewnić łatwość zmian treści
+
+'4. GeneratHTML - proszę zrobić ileś stringów HTML z %1, %2 i użyć afc.formatter'a do generowania
+'HTML - teraz jest to kompletnie nieczytelne. Przenieść do osobnego modułu - funkcja w tym module
+'ma generować i zwracać strumień,
+'jako parametr powinno być idProdukt
+
+'promocje zrobić jako plug_produkt_promocje obok cen : DONE
+
+
+' funkcje specyficzne dla karty produktu
+function print_etyk_prod()
+dim oNXArrayIdobj : set oNXArrayIdobj = nx_.new_array()
+dim oNXArrayIlosc : set oNXArrayIlosc = nx_.new_array()
+	oNXArrayIdobj.add (page_.root.idobj)								'przekazanie idobjta
+	oNXArrayIlosc.add CLng(DOMYSLNA_ILOSC_DRUKU_KODKRESK)				'przekazanie ilosci domyslnej do druku
+
+	dim pM60313 : set pM60313 = doc_.getmodule(60313)
+	pM60313.uruchom oNXArrayIdobj,oNXArrayIlosc,nothing 'dla dok.  magazynowych przekazujemy roota
+end function
+
+function generate_produkt_card()
+	doc_.getmodule(60162).generate_prod_card(page_.root)
+end function
+
+
+function send_email_on_prod()
+	doc_.getmodule(60163).send_email_on_prod(page_.root)
+end function
+
+
+function pokaz_wiecej( hli )
+	dim table_body:set table_body = page_.ctrl(hli.prop(1))
+	table_body.hide = false
+	
+end function
+
+function kreator_realizacji
+  dim idProd : idProd = page_.root.idobj
+  dim pSubTrans
+  set pSubTrans = trans_.createsubtran()
+  dim pMod : set pMod = doc_.getmodule(60302)
+  pMod.ZlecProdWizzard_Start_Prod idProd
+  set pSubTrans = nothing  
+end function
+
+function lista_dostaw()
+  dim pChooseSupplyMod: set pChooseSupplyMod = doc_.getmodule(43024)
+
+  if pChooseSupplyMod is nothing then
+    exit function 
+  end if
+  
+	pChooseSupplyMod.choose_supply_manual page_.root
+end function
+
+function c##CTRLID_LEFT_PANE##_ongetdata(byref oCtrl)
+	c##CTRLID_LEFT_PANE##_ongetdata = true
+#ifdef APPCONFIG_SHOW_ALL_DOKUM
+  RefreshLeftPanel oCtrl
+#endif  
+end function
+
+function RefreshLeftPanel(byref oTabCtrl)
+  dim nActiveItem: nActiveItem = trans_.var(GVAR_SELECTED_TAB_ITEM_PROD)
+	select case nActiveItem
+	case 2
+		g_pPlugFactory.plug_produkt_cechy oTabCtrl.element(nActiveItem), page_.root.idobj
+	case 3
+		g_pPlugFactory.plug_produkt_listy oTabCtrl.element(nActiveItem), page_.root.idobj
+	case 4
+		g_pPlugFactory.plug_produkt_pic oTabCtrl.element(nActiveItem), page_.root.idobj
+	case 5
+#ifndef _IOW
+		g_pPlugFactory.plug_produkt_zamienniki oTabCtrl.element(nActiveItem), page_.root.idobj
+#endif
+#ifdef _IOW
+		g_pPlugFactory.plug_produkt_opis oTabCtrl.element(nActiveItem), page_.rootidobj		
+#endif
+	case 6
+		g_pPlugFactory.plug_produkt_sprzedaz oTabCtrl.element(nActiveItem), page_.root.idobj
+	case 7
+		g_pPlugFactory.plug_produkt_zakup oTabCtrl.element(nActiveItem), page_.root.idobj
+	case 8
+		g_pPlugFactory.plug_produkt_oferty_wl oTabCtrl.element(nActiveItem), page_.root.idobj
+	case 9
+		g_pPlugFactory.plug_produkt_zamowienia oTabCtrl.element(nActiveItem), page_.root.idobj
+	case 10
+		g_pPlugFactory.plug_produkt_zamowienia_wl2 oTabCtrl.element(nActiveItem), page_.root.idobj
+	case 11
+		g_pPlugFactory.plug_produkt_rezerwacje oTabCtrl.element(nActiveItem), page_.root.idobj
+#ifdef _AMPLUS
+  case 12
+    g_pPlugFactory.plug_produkt_kody_indywidualne oTabCtrl.element(nActiveItem), page_.root.idobj
+#endif
+#ifdef _ABAS_INWESTYCJE
+	case 12
+		g_pPlugFactory.plug_produkt_dokmag_RW oTabCtrl.element(nActiveItem), page_.root.idobj
+#endif
+#ifdef _PAKART
+	case 12
+		g_pPlugFactory.plug_produkt_dokmag_PP oTabCtrl.element(nActiveItem), page_.root.idobj
+	case 13
+		g_pPlugFactory.plug_produkt_opak oTabCtrl.element(nActiveItem), page_.root.idobj    
+#endif
+
+#ifdef _TORAL
+	case 12
+		g_pPlugFactory.plug_produkt_rozchody oTabCtrl.element(nActiveItem), page_.root.idobj
+	case 13
+		g_pPlugFactory.plug_produkt_przychody oTabCtrl.element(nActiveItem), page_.root.idobj    
+#endif
+
+	end select
+	
+  trans_.var(GVAR_SELECTED_TAB_ITEM_PROD) = 0
+  trans_.var(GVAR_SPRZEDAZ_LAST_12_MONTHS) = 0
+end function
+
+function c##CTRLID_LEFT_PANE##_ontabitemactivate(oTabCtrl,nActiveItem,bFirstTime)
+	if not bFirstTime then
+		exit function
+	end if
+	select case nActiveItem
+	case 2
+		g_pPlugFactory.plug_produkt_cechy oTabCtrl.element(nActiveItem), page_.root.idobj
+	case 3
+		g_pPlugFactory.plug_produkt_listy oTabCtrl.element(nActiveItem), page_.root.idobj
+	case 4
+		g_pPlugFactory.plug_produkt_pic oTabCtrl.element(nActiveItem), page_.root.idobj
+	case 5
+#ifndef _IOW
+		g_pPlugFactory.plug_produkt_zamienniki oTabCtrl.element(nActiveItem), page_.root.idobj
+#endif
+#ifdef _IOW
+		g_pPlugFactory.plug_produkt_opis oTabCtrl.element(nActiveItem), page_.rootidobj		
+#endif
+	case 6
+		g_pPlugFactory.plug_produkt_sprzedaz oTabCtrl.element(nActiveItem), page_.root.idobj
+	case 7
+		g_pPlugFactory.plug_produkt_zakup oTabCtrl.element(nActiveItem), page_.root.idobj
+	case 8
+		g_pPlugFactory.plug_produkt_oferty_wl oTabCtrl.element(nActiveItem), page_.root.idobj
+	case 9
+		g_pPlugFactory.plug_produkt_zamowienia oTabCtrl.element(nActiveItem), page_.root.idobj
+	case 10
+		g_pPlugFactory.plug_produkt_zamowienia_wl2 oTabCtrl.element(nActiveItem), page_.root.idobj
+	case 11
+		g_pPlugFactory.plug_produkt_rezerwacje oTabCtrl.element(nActiveItem), page_.root.idobj
+#ifdef _AMPLUS
+  case 12
+    g_pPlugFactory.plug_produkt_kody_indywidualne oTabCtrl.element(nActiveItem), page_.root.idobj
+#endif
+#ifdef _ABAS_INWESTYCJE
+	case 12
+		g_pPlugFactory.plug_produkt_dokmag_RW oTabCtrl.element(nActiveItem), page_.root.idobj
+#endif
+#ifdef _PAKART
+	case 12
+		g_pPlugFactory.plug_produkt_dokmag_PP oTabCtrl.element(nActiveItem), page_.root.idobj
+	case 13
+		g_pPlugFactory.plug_produkt_opak oTabCtrl.element(nActiveItem), page_.root.idobj    
+#endif
+
+#ifdef _TORAL
+	case 12
+		g_pPlugFactory.plug_produkt_rozchody oTabCtrl.element(nActiveItem), page_.root.idobj
+	case 13
+		g_pPlugFactory.plug_produkt_przychody oTabCtrl.element(nActiveItem), page_.root.idobj    
+#endif
+
+	end select
+end function
+
+
+
+function c##CTRLID_RIGHT_PANE##_ongetdata(byref oCtrl)
+	c##CTRLID_RIGHT_PANE##_ongetdata = true
+end function
+function c##CTRLID_RIGHT_PANE##_ontabitemactivate(oTabCtrl,nActiveItem,bFirstTime)
+	if not bFirstTime then
+		exit function
+	end if
+
+	select case nActiveItem
+	case 2
+		g_pPlugFactory.plug_produkt_promocje oTabCtrl.element(nActiveItem), page_.root.idobj
+	case 3
+		g_pPlugFactory.plug_produkt_magazyny oTabCtrl.element(nActiveItem), page_.root.idobj , g_bMoreOpak
+	case 4
+		g_pPlugFactory.plug_produkt_zam_wlasne oTabCtrl.element(nActiveItem), page_.root.idobj	, g_bMoreOpak
+	end select
+end function
+'----------------------------------------------------------------
+
+'----------------------------------------------------------------
+'interfejs do wypełniania innej strony
+'----------------------------------------------------------------
+function fill_external_container(byref pContainer)
+	set g_pCardBuilder = new CCardBuilder
+	g_pCardBuilder.prepare_framework pContainer,false,true,true
+
+	rebuild_contents
+	set g_pCardBuilder = nothing
+end function
+'----------------------------------------------------------------
+
+
+
+]]></script>
+</config>
+<header>
+</header>
+<body>
+
+</body>
+<footer>
+</footer>
+</page>
+
+

@@ -1,0 +1,412 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+RAPTEMPLATE_ZAKUP_ROZLICZENIA_RR_ZAPLCONE
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1240.h"
+#include "h1231.h"
+#include "h1250.h"
+
+#define RAPORT_TITLE Zapłacone dokumenty RR
+#define TABLE_RR #temp_table_rr
+
+#define SPOSOB_PLATNOSCI                                                            \
+      <%                                                                            \
+         if pRec("Spos").value = 9     then                                         \
+          so.write "gotówka"                                                \
+         elseif pRec("Spos").value = 10 then                                         \ 
+          so.write "przelew"                                                \
+         end if                                                                     \
+      %>             
+#define TEXT_SPOSOB_PLATNOSCI <text fontcolor='red'>SPOSOB_PLATNOSCI</text>
+#define KOLOR                                                                                                                                                           \
+              <%                                                                                                                                                        \
+                if cstr(pRec("grupa").value) = "Nie zapłacone w terminie" or cstr(pRec("grupa").value) = "Nie zapłacone przelewem" or cstr(pRec("grupa").value) = "Nie zapłacone przelewem i po terminie"  then          \
+                  so.write "forecolor='red'"                                                                                                                            \
+                else                                                                                                                                                    \
+                  so.write "forecolor='black'"                                                                                                                          \
+                end if                                                                                                                                                  \
+              %>
+
+
+-->
+<page style='36'>
+<config>
+<title>RAPORT_TITLE</title>
+<script>
+<![CDATA[
+<%
+
+function query()
+  dim temp_query :
+
+   temp_query = " create table TABLE_RR "+_
+                   " ( "+_
+                   " grupa varchar(50) not null, "+_
+                   " idtrans integer not null, "+_
+                   " idzak integer not null, "+_
+                   " strNrDok varchar(128) not null, "+_
+                   " strklient varchar(128) not null, "+_
+                   " ddatawyst datetime not null, "+_
+                   " dTermplat datetime not null, "+_
+                   " curZaplacono decimal(14,4) not null, "+_
+                   " ddataPlat datetime not null, "+_
+                   " Spos integer not null, "+_
+                   " ccurNetto decimal(14,4), "+_
+                   " ccurVAT decimal(14,4), "+_
+                   " ccurBrutto decimal(14,4) "+_
+                   " ) "
+                   
+   trans_.execsql temp_query
+
+   temp_query =  "insert into TABLE_RR select "+_
+                 " 'grupa' =  "+_
+                 " (   "+_
+                 " case when max(t_zak.ddataplat)< max(t_plat.dDataOper) and max(t_rej_plat.eTyp)=9  then  'Nie zapłacone przelewem i po terminie'    "+_
+                 " else  "+_    
+	               "   case when max(t_rej_plat.eTyp)=9 then 'Nie zapłacone przelewem'  "+_   
+	               "   else  "+_
+		             "      case when max(t_zak.ddataplat)< max(t_plat.dDataOper) then 'Nie zapłacone w terminie' "+_
+		             "     else 'Prawidłowe' "+_
+		             "     end "+_    
+	               "   end "+_  
+                 " end "+_  
+                 " ), "+_  
+                " 'c_trans' = t_trans.idobj, "+_
+                " 'c_zak' = t_zak.idobj, "+_
+                " 'strnrDok' = max(t_zak.strNrDok), "+_
+                " 'strklient' = max(t_klient.strNazwa), "+_
+                " 'ddatawyst' = max(t_zak.ddatawyst), "+_
+                " 'dTermplat' = max(t_zak.ddataplat), "+_
+                " 'curZaplacono' = (select max(t_trans.curWn) - max(t_trans.curMa)), "+_
+                " 'ddataPlat' = max(t_plat.dDataOper), "+_
+                " 'Spos' = max(t_rej_plat.eTyp), "+_
+                "  max(t_zak.curSumaNetto), "+_
+                "  max(t_zak.curSumaVat), "+_
+                "  max(t_zak.curSumaBrutto) "+_
+                " from n5zakup t_zak "+_
+                " join n5transakcja t_trans on t_zak.pTransakcja = t_trans.idObj "+_
+                " join n5klient t_klient on t_zak.pDostawca = t_klient.idObj "+_
+                " left outer join vlist_n5platnosc_listpozycje v_pozplat on v_pozplat.c_ptransakcja = t_trans.idobj "+_
+                " join n5platnosc t_plat on v_pozplat.p_idObj = t_plat.idObj "+_
+				" join n5rejestrdok t_rej_plat on t_plat.pRejestrDok = t_rej_plat.idobj "+_
+                " left outer join n5sposplat t_spos on t_zak.pSposobPlatnosci = t_spos.idobj "+_
+                " join n5rejestrdok t_rej on t_zak.pRejestrDok = t_rej.idobj and t_rej.eTyp = 52 "+_
+				" where t_plat.plat_pRapKas <> 0"+_ 
+                " group by t_trans.idobj, t_zak.idobj"+_
+                " having max(t_trans.curMa) - max(t_trans.curWn) = 0"
+                
+    trans_.execsql temp_query
+                
+             
+                
+    query =     " select "+_
+                " 'grupa' = t_tmp.grupa, "+_
+                " 'c_trans' = t_tmp.idtrans, "+_
+                " 'c_zak' = t_tmp.idzak, "+_
+                " 'strnrDok' = max(t_tmp.strNrDok), "+_
+                " 'strklient' = max(t_tmp.strklient), "+_
+                " 'ddatawyst' = max(t_tmp.ddatawyst), "+_
+                " 'dTermplat' = max(t_tmp.dTermplat), "+_
+                " 'curZaplacono' = max(t_tmp.curZaplacono), "+_
+                " 'ddataPlat' = max(t_tmp.ddataPlat), "+_
+                " 'Spos' = max(t_tmp.Spos), "+_
+                " 'ccurNetto' = max(t_tmp.ccurNetto), "+_
+                " 'ccurVAT' = max(t_tmp.ccurVAT), "+_
+                " 'ccurBrutto' = max(t_tmp.ccurBrutto) "+_
+                " from TABLE_RR t_tmp "+_
+                " where %1 and %2 and t_tmp.Spos [%3] and %4 "+_
+                " group by t_tmp.grupa, t_tmp.idtrans, t_tmp.idzak "
+                 
+              
+    
+end function
+%>
+<%
+
+
+function default_param()
+  dim pParamArray
+  dim pParamRaport
+  
+	set pParamArray = doc_.afc.new_navoarray()
+	pParamArray.add doc_.afc.rap.param.new_text("Klient").bindexpr("t_tmp.strklient")
+  pParamArray.add doc_.afc.rap.param.new_text("Numer dokumentu").bindexpr("t_tmp.strNrDok")
+  dim pParamFactory2: set pParamFactory2= doc_.afc.rap.param
+  'dim pParam2: Set pParam2= pParamFactory2.new_choice("Sposób zapłaty").bindexpr("t_tmp.Spos")
+	'pParamFactory2.init_on_enum pParam2, 10145 ,"eTyp" in (9,10)
+	
+	Set pParamRaport = pParamFactory2.new_choice("Sposób zapłaty")
+  with pParamRaport
+	  .multiple = true
+    .names.add "gotówka"
+    .values.add N5REJESTRDOK_KASOWY
+    .selected.add True
+    
+    .names.add "przelew"
+    .values.add N5REJESTRDOK_BANKOWY
+    .selected.add true
+  end with  
+  pParamArray.add pParamRaport
+	
+  'pParamArray.add pParam2
+	pParamArray.add doc_.afc.rap.param.new_date_range("Data zapłaty").bindexpr("t_tmp.ddataPlat")
+
+
+	set default_param = pParamArray
+  
+end function
+%>
+
+
+<%
+function write_actual_param(byref pActualParam)
+	write_actual_param = "0=1" 
+
+	dim iter
+	dim bAnyWritten : bAnyWritten = false
+
+	if not pActualParam is nothing then
+		for iter = 0 to pActualParam.upperIndex
+			if pActualParam.value(iter).get_desc() <> "" then 
+				bAnyWritten = true
+				so.write "<t size='5' /><text fontsize='4'><![CD"+"ATA[" + pActualParam.value(iter).get_desc() + "]"+"]></text><br/>"
+			end if
+		next
+	end if
+
+	if not bAnyWritten then 
+		so.write "<t fontsize='4'>brak</t><br/>"
+	end if
+
+	so.write "<br/>"
+end function
+%>
+
+<%
+function section_header_1(byref pSection,byref pRec)
+%>
+
+<tr userprop='propc_section_start="1" propc_section_hidden="0" propc_section_req="0"' fontsize='4'>
+	<td style='27' colspan='10'>
+		<picture name='<%so.write cstr(nSectionPicCounter)%>' tip='Zwiń' ignoresysdisable='true' image='PICTURE_SMALL_MINUS' width='SIZE_FOR_PLUS' height='SIZE_FOR_PLUS' href='vs1022="section_hideshow_hli" vn100="<%so.write cstr(nSectionPicCounter)%>"'/>
+      RXE_AUTO_TEXT(grupa)
+  </td>
+
+</tr>
+
+<%
+nSectionPicCounter=nSectionPicCounter+1
+end function
+%>
+
+<%
+function section_footer_1(byref pSection)
+%>
+<tr hide='true' userprop='propc_section_end="1"'><td colspan='9' /></tr>
+<tr bold = 'true'>
+	<td style='27' colspan='7'/>
+  <td style='27' align='right'>
+    <t>
+      <%so.write doc_.afc.display.quantity(pSection.counter(0).result,"",2)%>
+    </t>
+  </td>
+  <td style='27' align='right'>
+    <t>
+      <%so.write doc_.afc.display.quantity(pSection.counter(1).result,"",2)%>
+    </t>
+  </td>
+  <td style='27' align='right'>
+    <t>
+      <%so.write doc_.afc.display.quantity(pSection.counter(2).result,"",2)%>
+    </t>
+  </td>
+  
+  
+</tr>
+<tr border='0'><td colspan='10' /></tr>
+<%
+end function
+%>
+
+<%
+function body_row(byref pSection,byref pRec)
+if pRapExec.RecNr mod 2 = 0 then
+%>
+
+<tr KOLOR bordercolor='white'>
+
+<%
+else
+%>
+
+<tr KOLOR bordercolor='white' style='37'>
+
+<%
+end if
+%>
+
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+	<td align='right'>RXE_LP</td>
+	<td width='max'>
+		RXE_TEXT_LINK_FORM_VCC(TYPEID_N5ZAKUP, c_zak , strnrDok) 
+	</td>
+	<td>
+		RXE_DATE(ddatawyst)
+	</td>
+  <td align='right'>
+		RXE_DATE(dTermplat)
+	</td>
+	 <td align='right'>
+		RXE_DATE(ddataPlat)
+	</td>
+  <td align='right'>
+    TEXT_SPOSOB_PLATNOSCI
+	</td>
+  <td align='right'>
+		RXE_QUANTITY_CVV(ccurNetto,"",2)
+	</td>
+  <td align='right'>
+		RXE_QUANTITY_CVV(ccurVAT,"",2)
+	</td>
+   <td align='right'>
+		RXE_QUANTITY_CVV(ccurBrutto,"",2)
+	</td>
+ </tr>
+<%
+end function
+%>
+<%
+function body_header(byref pSection,byref pRec)
+%>
+<table border='1'>
+<thead>
+<tr style='21'>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+	<td width='min'><t>LP</t></td>
+	<td width='max'>
+		<t><![CDATA[Numer dokumentu]]></t>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Data wystawienia]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Termin płatności]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Data zapłaty]]></text>
+	</td>
+  <td width='min'>
+    <text><![CDATA[Sposób płatności]]></text>
+  </td>
+  <td width='min'>
+    <text><![CDATA[Kwota netto]]></text>
+  </td>
+  <td width='min'>
+    <text><![CDATA[Kwota VAT]]></text>
+  </td>
+  <td width='min'>
+    <text><![CDATA[Kwota brutto]]></text>
+  </td>
+
+</tr>
+</thead>
+<tbody>
+<%
+end function
+%>
+  
+<%
+function body_footer(byref pSection)
+%>
+<tr hide='true' userprop='propc_section_end="1"'>
+  <td colspan='10' />
+</tr>
+<tr style='21' bold='true'>
+	<td style='27' colspan='7'/>
+  <td style='27' align='right'>
+    <t>
+      <%so.write doc_.afc.display.quantity(pSection.counter(0).result,"",2)%>
+    </t>
+  </td>
+  <td style='27' align='right'>
+    <t>
+      <%so.write doc_.afc.display.quantity(pSection.counter(1).result,"",2)%>
+    </t>
+  </td>
+  <td style='27' align='right'>
+    <t>
+      <%so.write doc_.afc.display.quantity(pSection.counter(2).result,"",2)%>
+    </t>
+  </td>
+  
+  
+
+</tr>
+<tr border='0'>
+  <td colspan='10' />
+</tr>
+</tbody>
+</table>
+<%
+end function
+%>
+  
+<%dim nSectionPicCounter : nSectionPicCounter = 10000000%>
+function section_hideshow_hli(byref pHLI)
+doc_.afc.formsection.section_hideshow page_, pHLI.prop(100)
+end function
+]]>
+</script>
+</config>
+<header>
+</header>
+<body>
+<p>
+RAPORT_HEADER(3,0)
+</p>
+
+<p>
+<t size='2'/>
+</p>
+
+<p><text fontsize='7'><![CDATA[RAPORT_TITLE]]></text></p><br/><br/>
+<%
+dim pParamTypPro
+if not doc_.getmodule(60253).gm_ensure_accuracy_ui(true) then
+%>
+<p border='1' fontsize='5' forecolor='red' bold='true'><t>Uwaga! Niepoprawny stan magazynu</t></p><br/><br/>
+<%
+end if
+%>
+<t fontsize='5' bold='true'>Kryteria selekcji:</t><br/>
+<%
+dim pRapExec : set pRapExec = rapeng_.new_engine()
+with pRapExec
+	.add_body_ex (getref("body_header"),getref("body_footer"),getref("body_row")).add_sumator("ccurNetto").add_sumator("ccurVat").add_sumator("ccurBrutto")
+  .add_group_section (0,getref("section_header_1"),getref("section_footer_1")).add_sumator("ccurNetto").add_sumator("ccurVat").add_sumator("ccurBrutto")
+if .prepare("RAPORT_TITLE",default_param(),rapeng_.get_raport_param(),query()) then
+	.ReplaceQueryParam "[( ",""
+    .ReplaceQueryParam ")]",""
+
+  dim pPerf : set pPerf = doc_.performing("Trwa przygotowywanie wyników...")
+  set pPerf = nothing
+
+  dim nropmag_str : nropmag_str = write_actual_param(rapeng_.get_raport_param())
+
+
+
+  if not .perform then
+  so.write "<p style='21'><t>Brak danych spełniających podane kryteria</t></p>"
+  end if
+  end if
+  end with
+
+  trans_.execsql "drop table TABLE_RR"
+  %>
+</body>
+<footer>
+</footer>
+</page>

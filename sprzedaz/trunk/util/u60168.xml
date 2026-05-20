@@ -1,0 +1,386 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!-- 
+REV:KB:20030212
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200.h"
+#include "h1231.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1234.h"
+#include "h1240.h"
+
+#define ID_TABLE_OBROTY  777
+-->
+<page>
+<config>
+<script>
+<!--
+	Karta konta - plugins
+-->
+<![CDATA[
+
+'count_salda
+#include "50107"
+
+'getCurrentRKS
+#include "50120"
+
+'srvDate
+#include "50126"
+
+
+sub plug_konto_podstawowe(byref pContainer,byval idKonta)
+
+	dim pKonto : set pKonto = trans_.getobj(TYPEID_N5KONTO,idKonta)
+	
+	dim pPlugInTable : set pPlugInTable = pContainer.addnew(CTRL_TYPE_TABLE,-1)
+	pPlugInTable.border = 0
+	
+	dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(pPlugInTable)
+
+	pTB.newrow.newcell.addtext("Nazwa").element.bold = true
+	pTB.newcell.addtext pKonto.strNazwa
+
+	pTB.newrow.newcell.addtext("Podmiot").element.bold = true
+	if not pKonto.wrefPodmiotRozrach is nothing then
+		pTB.newcell.addtexthli pKonto.wrefPodmiotRozrach.text , doc_.createhlistr("varFunctionHLI='std_openform_object_hli' vn1='"+cstr(pKonto.wrefPodmiotRozrach.type)+"' vn2='"+cstr(pKonto.wrefPodmiotRozrach.idobj)+"'")
+	else
+		pTB.newcell.addtext "<brak>"
+	end if
+	
+end sub
+
+
+sub plug_konto_opis(byref pContainer,byval idKonto)
+
+	dim pKonto : set pKonto = trans_.getobj(TYPEID_N5KONTO,idKonto)
+
+	if pKonto.strOpis="" then
+		exit sub
+	end if
+	
+	dim pPlugInTable : set pPlugInTable = pContainer.addnew(CTRL_TYPE_TABLE,-1)
+	pPlugInTable.border = 0
+	
+	dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(pPlugInTable)
+
+	pTB.newrow.newcell.addtext pKonto.strOpis
+
+end sub
+
+#define FULL_COLSPAN		5
+#define SIZE_DO_ROZEPCHANIA	16
+
+sub plug_konto_obroty(byref pContainer,byval idKonto)
+	dim pKonto : set pKonto = trans_.getobj(TYPEID_N5KONTO,idKonto)
+	
+	dim pPlugInTable : set pPlugInTable = pContainer.addnew(CTRL_TYPE_TABLE,ID_TABLE_OBROTY)
+	pPlugInTable.border = 0
+	
+	dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(pPlugInTable)
+
+	dim pRKS : set pRKS = getCurrentRKS()
+	if pRKS is nothing then
+		pTB.newrow.newcell.addtext "Nie określono bieżącego roku księgowego"
+		with pTB.element
+			.bold = true
+			.forecolor = RGB(255,0,0)
+		end with
+
+		with pTB.cell
+			.colspan=clng(FULL_COLSPAN)
+			.keepline=true
+		end with
+		pTB.cell.align = ALIGN_CENTER
+		exit sub
+	end if
+
+	'--- nagłówek 
+	pTB.section_head
+		pTB.newrow.newcell
+		with pTB.row
+			.styleitem=STYLE_TABLE_HEADER
+			.border = 0
+		end with
+		pTB.newcell.addtext("Obroty Wn").element.bold = true
+		pTB.cell.align = ALIGN_RIGHT
+		pTB.newcell.addtext("Obroty Ma").element.bold = true
+		pTB.cell.align = ALIGN_RIGHT
+		dim strTitle
+		if pKonto.eAnalit=N5KONTO_ANALITYCZNE then
+			strTitle = "Saldo Wn"
+		else
+			strTitle = "Saldo Sald Wn"
+		end if
+		pTB.newcell.addtext(strTitle).element.bold = true
+		pTB.cell.align = ALIGN_RIGHT
+		if pKonto.eAnalit=N5KONTO_ANALITYCZNE then
+			strTitle = "Saldo Ma"
+		else
+			strTitle = "Saldo Sald Ma"
+		end if
+		pTB.newcell.addtext(strTitle).element.bold = true
+		pTB.cell.align = ALIGN_RIGHT
+
+	pTB.section_body
+	
+	dim strWaluta: strWaluta = pKonto.pJednostka.strSkrot
+	dim dStartDate : dStartDate = dateserial(year(pRKS.dDataRozp),month(pRKS.dDataRozp),1)
+	dim dEndDate : dEndDate = dateserial(year(pRKS.dDataZakon),month(pRKS.dDataZakon) + 1,0)
+	
+	dim curSaldoWn,curSaldoMa
+	dim curObrWn : curObrWn = ccur(0.0)
+	dim curObrMa : curObrMa = ccur(0.0)
+	dim curBOWn, curBOMa
+
+	'-------- BO
+		pTB.newrow
+		pTB.row.styleitem = STYLE_ROW_EVEN
+			dim oRSBO : set oRSBO = trans_.createadors("select isnull(sum(curWN),0) as wn,isnull(sum(curMA),0) as ma from n5dekret_sums where pKonto=" + cstr(pKonto.idobj) +_
+			" and ddataksieg between "+ doc_.afc.convert.Date2Sql(dStartDate) +" and "+ doc_.afc.convert.Date2Sql(dEndDate) +_
+			 " and eTyp=N5_DEKRET_TYP_BO")
+
+			curBOWn = ccur(oRSBO("wn"))
+			curBOMa = ccur(oRSBO("ma"))
+			
+			curSaldoWn = curBOWn
+			curSaldoMa = curBOMa
+			count_salda curSaldoWn,curSaldoMa
+
+			pTB.row.bold = true
+			pTB.newcell.addtext "BO"
+			with pTB.newcell.addtext("").cell
+				pTB.element.size = SIZE_DO_ROZEPCHANIA
+				pTB.element.align = ALIGN_RIGHT
+				.align = ALIGN_RIGHT
+			end with
+			with pTB.newcell.addtext("").cell
+				pTB.element.size = SIZE_DO_ROZEPCHANIA
+				pTB.element.align = ALIGN_RIGHT
+				.align = ALIGN_RIGHT
+			end with
+			with pTB.newcell.addtext(doc_.afc.display.money(curSaldoWn, strWaluta)).cell
+				pTB.element.size = SIZE_DO_ROZEPCHANIA
+				pTB.element.align = ALIGN_RIGHT
+				.align = ALIGN_RIGHT
+			end with
+			with pTB.newcell.addtext(doc_.afc.display.money(curSaldoMa, strWaluta)).cell
+				pTB.element.size = SIZE_DO_ROZEPCHANIA
+				pTB.element.align = ALIGN_RIGHT
+				.align = ALIGN_RIGHT
+			end with
+
+	'-------- stworzenie przestrzeni dla wyników
+
+	dim dCurrMonth : dCurrMonth = dStartDate
+	dim bEven : bEven = false
+	
+	dim nFirstMonthRow : nFirstMonthRow = pTB.rownr()
+	do while dCurrMonth <= dEndDate
+		pTB.newrow
+		dim pHli: set pHli=doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=PAGE_RAPORT_ZAPISY_NA_KONTACH " + _
+		" appvar_raport_type=RAPTEMPLATE_ZAPISY_NA_KONCIE appvar_zapisy_report_analit='"+cstr(pKonto.eAnalit)+"' appvar_zapisy_report_konto='"+ CStr(pKonto.strSymbol) + _
+		"' appvar_zapisy_report_rok=" + cstr(year(dCurrMonth)) + " appvar_zapisy_report_mies=" + cstr(month(dCurrMonth)))
+		
+		pTB.newcell.addtexthli cstr(year(dCurrMonth))+" "+ MonthName(month(dCurrMonth)) , pHLI
+		dim iter 
+		for iter = 1 to 4
+			with pTB.newcell.addtext(doc_.afc.display.money(ccur(0) , strWaluta)).cell
+				.align = ALIGN_RIGHT
+				if iter mod 2 <> 0 then
+					.styleitem = STYLE_OPTION_PAD
+				end if
+			end with
+		next 
+		dCurrMonth = dateserial(year(dCurrMonth),month(dCurrMonth)+1,1)
+
+		bEven = not bEven
+	loop 
+
+  '---
+  'uwaga: algorytm nie obsluguje lat ksiegowych niezgodnych z kalendarzowymi
+  '---
+  
+	dim curWn,curMa
+	dim oRS : set oRS = trans_.createadors("select nNumer as miesiac," +_
+  "isnull((select sum(curWN)  from n5dekret_sums where  pKonto=" + cstr(pKonto.idobj) +" and ddataksieg " +_
+  "between "+ doc_.afc.convert.Date2Sql(dStartDate) +" AND "+ doc_.afc.convert.Date2Sql(dEndDate) + " and eTyp=N5_DEKRET_TYP_NORMALNY and month(ddataksieg)=n5miesiac.nNumer),0) as wn," +_
+	"isnull((select sum(curMA)  from n5dekret_sums where  pKonto=" + cstr(pKonto.idobj) +" and ddataksieg " +_
+  "between "+ doc_.afc.convert.Date2Sql(dStartDate) +" AND "+ doc_.afc.convert.Date2Sql(dEndDate) + " and eTyp=N5_DEKRET_TYP_NORMALNY and month(ddataksieg)=n5miesiac.nNumer),0) as ma" +_
+  " from n5miesiac order by nNumer")
+	
+	do while not oRS.EOF
+		dim nRok : nRok = clng(year(dStartDate))
+		dim nMc :  nMc = clng(oRS("miesiac"))
+		curWn = CCur(oRS("wn"))
+		curMa = CCur(oRS("ma"))
+		
+		curObrWn = curObrWn + curWn
+		curObrMa = curObrMa + curMa
+		curSaldoWn = curObrWn + curBOWn
+		curSaldoMa = curObrMa + curBOMa
+		count_salda curSaldoWn,curSaldoMa
+
+		dim nRow : nRow = countMonths(dStartDate,dateserial(nRok,nMc,1)) + nFirstMonthRow
+		dim pRow : set pRow = pPlugInTable.body.row(nRow)
+
+		pRow.cell(2).element(1).text  = doc_.afc.display.money(curWn , strWaluta)
+		pRow.cell(3).element(1).text  = doc_.afc.display.money(curMa , strWaluta)
+		pRow.cell(4).element(1).text  = doc_.afc.display.money(curSaldoWn , strWaluta)
+		pRow.cell(5).element(1).text  = doc_.afc.display.money(curSaldoMa , strWaluta)
+		oRS.MoveNext
+	loop
+
+	'-------- BZ
+	pTB.newrow
+		pTB.row.styleitem = STYLE_ROW_EVEN
+		dim oRSBZ : set oRSBZ = trans_.createadors("select isnull(sum(curWN),0) as wn,isnull(sum(curMA),0) as ma from n5dekret where pKonto=" + cstr(pKonto.idobj) +_
+		" and ddataksieg between "+ doc_.afc.convert.Date2Sql(dStartDate) +" and "+ doc_.afc.convert.Date2Sql(dEndDate) +_
+		 "and eTyp=N5_DEKRET_TYP_BZ_OSTAT")
+
+		curWn = CCur(oRSBZ("wn"))
+		curMa = CCur(oRSBZ("ma"))
+
+		curObrWn = curObrWn + curWn
+		curObrMa = curObrMa + curMa
+		curSaldoWn = curObrWn + curBOWn
+		curSaldoMa = curObrMa + curBOMa
+		count_salda curSaldoWn,curSaldoMa
+
+		pTB.row.bold = true
+		pTB.newcell.addtext "Bilans zamknięcia"
+		pTB.newcell.addtext("").cell.align = ALIGN_RIGHT
+		pTB.newcell.addtext("").cell.align = ALIGN_RIGHT
+		pTB.newcell.addtext(doc_.afc.display.money(curSaldoWn, strWaluta)).cell.align = ALIGN_RIGHT
+		pTB.newcell.addtext(doc_.afc.display.money(curSaldoMa, strWaluta)).cell.align = ALIGN_RIGHT
+
+
+	'-------- Razem
+	pTB.newrow
+		curSaldoWn = curObrWn + curBOWn
+		curSaldoMa = curObrMa + curBOMa
+		count_salda curSaldoWn,curSaldoMa
+
+		with pTB.row
+			.bold = true
+			.styleitem=STYLE_TABLE_HEADER
+			.border =0
+		end with
+
+		pTB.newcell.addtext "Narastająco"
+		pTB.newcell.addtext(doc_.afc.display.money(curObrWn, strWaluta)).cell.align = ALIGN_RIGHT
+		pTB.newcell.addtext(doc_.afc.display.money(curObrMa, strWaluta)).cell.align = ALIGN_RIGHT
+		pTB.newcell.addtext(doc_.afc.display.money(curSaldoWn, strWaluta)).cell.align = ALIGN_RIGHT
+		pTB.newcell.addtext(doc_.afc.display.money(curSaldoMa, strWaluta)).cell.align = ALIGN_RIGHT
+
+end sub
+
+
+private function countMonths(dDataRozp,dDataZakon)
+	countMonths = 12*(year(dDataZakon) - year(dDataRozp)) + ((month(dDataZakon) - month(dDataRozp)) + 1)
+end function
+
+
+
+sub plug_konto_budzety(byref pContainer,byval idKonto)
+
+	dim pKonto : set pKonto = trans_.getobj(TYPEID_N5KONTO,idKonto)
+
+	dim crs:set crs = trans_.createrawcursor(TYPEID_N5KONTO_BUDZET,"pKonto=" + cstr(idKonto),"n5budzet.strNazwa","n5budzet on n5budzet.idobj = n5konto_budzet.pBudzet")
+	dim elem
+
+	if not crs.exists(1) then
+		exit sub
+	end if
+	
+	
+	dim pPlugInTable : set pPlugInTable = pContainer.addnew(CTRL_TYPE_TABLE,-1)
+	pPlugInTable.border = 1
+	
+	dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(pPlugInTable)	
+
+	pTB.newrow
+	pTB.row.styleitem=STYLE_TABLE_HEADER
+	pTB.newcell.addtext("Nazwa").element.bold = true
+	pTB.cell.width = MINIMIZE_SIZE
+
+	pTB.newcell.addtext("Plan").element.bold = true
+	pTB.cell.align = ALIGN_CENTER
+
+	pTB.newcell.addtext("Realizacja").element.bold = true
+	pTB.cell.align = ALIGN_CENTER
+	pTB.cell.colspan = 2
+	pTB.newcell.addtext("Realizacja %").element.bold = true
+	pTB.cell.align = ALIGN_CENTER
+	pTB.cell.colspan = 2
+
+	pTB.newrow
+	pTB.newcell.addtext("")
+	pTB.cell.colspan = 2
+	pTB.newcell.addtext("Faktyczne").element.bold = true
+	pTB.cell.align = ALIGN_RIGHT
+	pTB.newcell.addtext("Prognoza").element.bold = true
+	pTB.cell.align = ALIGN_RIGHT
+	pTB.newcell.addtext("Faktyczne").element.bold = true
+	pTB.cell.align = ALIGN_RIGHT
+	pTB.newcell.addtext("Prognoza").element.bold = true
+	pTB.cell.align = ALIGN_RIGHT
+	dim curMa, curWn
+
+	for each elem in crs
+		pTB.newrow.newcell.addtexthli elem.pBudzet.strNazwa , _
+			doc_.createhlistr(doc_.afc.convert.formatter("OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5KONTO_BUDZET,%1,USAGE_VIEW)") _
+						 (elem.idobj).Done())		
+
+		pTB.newcell.addtext doc_.afc.display.money(elem.curKwota,elem.pKonto.pJednostka.strSkrot)
+		pTB.cell.align = ALIGN_RIGHT				
+
+		pTB.newcell.addtext doc_.afc.display.money(elem.curRealizacja, elem.pKonto.pJednostka.strSkrot)
+		pTB.cell.align = ALIGN_RIGHT				
+
+		'wykonanie  przewidywane
+		pTB.newcell.addtext doc_.afc.display.money(elem.curPrognoza, elem.pKonto.pJednostka.strSkrot)
+		pTB.cell.align = ALIGN_RIGHT				
+
+
+		dim strValue
+		'wykonanie  aktualne procentowo		
+		if elem.curKwota = 0 then
+			strValue = "plan równy 0"
+		else
+			strValue = doc_.afc.display.quantity(100 * elem.curRealizacja / elem.curKwota,"%",2)
+		end if		
+		pTB.newcell.addtext strValue
+		pTB.cell.align = ALIGN_RIGHT				
+
+		'wykonanie  przewidywane procentowe
+		if elem.curKwota = 0 then
+			strValue = "plan równy 0"
+		else
+			strValue = doc_.afc.display.quantity(100 * elem.curPrognoza / elem.curKwota,"%",2)
+		end if				
+
+		pTB.newcell.addtext strValue
+		pTB.cell.align = ALIGN_RIGHT				
+
+	next
+	
+	pTB.newrow.newcell.cell.colspan = 6
+	with pTB.cell.addnew(CTRL_TYPE_BUTTON,-1)
+		.text = "Aktualizuj"
+		.tip = "Przycisk aktualizuje budżety od razu dla wszystkich kont"
+		set .hli = doc_.createhlistr("varFunction='refresh_budzet_section'")
+		.styleitem = STYLE_BUTTON
+	end with
+end sub
+
+
+]]>
+</script>
+</config>
+	<body>
+		<t>Karta konta - plugins</t>
+	</body>
+</page>

@@ -1,0 +1,448 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1001.h"
+#include "h1220.h"
+
+#comment possible modes
+
+#define CALENDAR_MODE_DAY		1
+#define CALENDAR_MODE_WEEK		2
+#define CALENDAR_MODE_MONTH		3
+#define CALENDAR_MODE_YEAR		4
+-->
+
+<page>
+<config>
+<script>
+<![CDATA[
+function nazwa_miesiaca_w_dopelniaczu(byval iMc)
+	select case iMc
+	case 1
+		nazwa_miesiaca_w_dopelniaczu = "stycznia"
+	case 2
+		nazwa_miesiaca_w_dopelniaczu = "lutego"
+	case 3
+		nazwa_miesiaca_w_dopelniaczu = "marca"
+	case 4
+		nazwa_miesiaca_w_dopelniaczu = "kwietnia"
+	case 5
+		nazwa_miesiaca_w_dopelniaczu = "maja"
+	case 6
+		nazwa_miesiaca_w_dopelniaczu = "czerwca"
+	case 7
+		nazwa_miesiaca_w_dopelniaczu = "lipca"
+	case 8
+		nazwa_miesiaca_w_dopelniaczu = "sierpnia"
+	case 9
+		nazwa_miesiaca_w_dopelniaczu = "września"
+	case 10
+		nazwa_miesiaca_w_dopelniaczu = "października"
+	case 11
+		nazwa_miesiaca_w_dopelniaczu = "listopada"
+	case 12
+		nazwa_miesiaca_w_dopelniaczu = "grudnia"
+	end select
+end function
+
+class CCalendarBuilder
+	private m_nMode			'operation mode
+
+	private m_dFirstDay		'first visible day
+	private m_dLastDay		'last visible day
+	
+	private m_pTable		'destination container
+	private m_pTB			'table builder helper
+	
+	private m_dCurrentDate	'current date (for operations)
+	private m_iCurrentHour	'current hour (for operations)
+	private m_pCurrentCell	'current cell (for current date/hour)
+	private m_pLastElement	'last element
+
+	private m_nRowMultiplier'row multiplying factor
+	private m_nExtraCols
+
+	private sub class_initialize()
+		set m_pTB = nothing
+		set m_pTable = nothing
+		set m_pCurrentCell = nothing
+		set m_pLastElement = nothing
+		m_nRowMultiplier = 1
+		m_nExtraCols = 0
+	end sub
+
+	private sub class_terminate() 'OK
+		set m_pTB = nothing
+		set m_pTable = nothing
+		set m_pCurrentCell = nothing
+		set m_pLastElement = nothing
+	end sub
+
+	public sub init(byref pContainer,byval nMode,byval dMainDate)
+		m_nMode = nMode
+		set m_pTable = pContainer.addnew(CTRL_TYPE_TABLE,-1)
+		m_pTable.border = 1
+		set m_pTB = doc_.afc.new_tb(nothing).attach(m_pTable)
+		roundup_dates dMainDate
+		m_dCurrentDate = dMainDate
+		m_iCurrentHour = -1
+	end sub
+
+	public sub build_frame()
+		select case m_nMode
+		case CALENDAR_MODE_DAY
+			build_internal_day
+		case CALENDAR_MODE_WEEK
+			build_internal_week
+		case CALENDAR_MODE_MONTH
+			build_internal_month
+		case CALENDAR_MODE_YEAR
+			build_internal_year
+		end select
+	end sub
+
+	public property let extracols(byval nExtra)
+		m_nExtraCols = nExtra
+	end property
+
+	'------------------------------------------------------------------
+	' currentday property
+	'------------------------------------------------------------------
+	public property get firstday()
+		firstday = m_dFirstDay
+	end property
+	'------------------------------------------------------------------
+	public property get lastday()
+		lastday = m_dLastDay
+	end property
+	'------------------------------------------------------------------
+
+	public property get currentday()
+		currentday = m_dCurrentDate
+	end property
+
+	public property get currenthour()
+		currenthour = m_iCurrentHour
+	end property
+
+	public property let currentday(byval dDate)
+		if dDate <> currentday then
+			m_dCurrentDate = dDate
+			recalc_coords
+#ifdef _DEBUG
+			m_pCurrentCell.backcolor = rgb(255,0,0)
+#endif
+		end if
+	end property
+
+	public property let currenthour(byval iHour)
+		if iHour <> m_iCurrentHour then
+			m_iCurrentHour = iHour
+			recalc_coords
+		end if
+	end property
+
+	public sub restart
+		currentday = m_dFirstDay
+	end sub
+	public property get nextday()
+		if currentday < m_dLastDay then
+			currentday = currentday + 1
+			nextday = true
+		else
+			nextday = false
+		end if
+	end property
+
+	public property get cell()
+		set cell = m_pCurrentCell
+	end property
+
+	public property get element()
+		set element = m_pLastElement
+	end property
+
+	public function addtext(byval strTxt)
+		set addtext = addtexthli(strTxt,nothing)
+	end function
+	public function addtexthli(byval strTxt,byref pHLI)
+		dim pTxtCtrl
+		if len(strTxt) >= 64 then
+			set pTxtCtrl = cell.addnew(CTRL_TYPE_STATICEX,-1)
+		else
+			set pTxtCtrl = cell.addnew(CTRL_TYPE_STATIC,-1)
+		end if
+		pTxtCtrl.value = strTxt
+		set pTxtCtrl.hli = pHLI
+		set m_pLastElement = pTxtCtrl
+		set addtexthli = me
+	end function
+
+	public property get extracell(byval nMonth,byval nExtraCol)
+		if nMonth = -1 then
+			set extracell = m_pTable.header.row(2).cell(nExtraCol + 31 + 1)
+		else
+			set extracell = m_pTable.body.row(nMonth).cell(nExtraCol + 31 + 1)
+		end if
+	end property
+	'------------------------------------------------------------------
+	'internal utilities
+	'------------------------------------------------------------------
+	private sub roundup_dates(byval dMainDate)
+		select case m_nMode
+		case CALENDAR_MODE_DAY
+			m_dFirstDay = dMainDate
+			m_dLastDay = dMainDate
+		case CALENDAR_MODE_WEEK
+			m_dFirstDay = dMainDate - weekday(dMainDate,vbMonday) + 1
+			m_dLastDay = m_dFirstDay + 6
+		case CALENDAR_MODE_MONTH
+			m_dFirstDay = dateserial(year(dMainDate),month(dMainDate),1)
+			m_dFirstDay = m_dFirstDay - weekday(m_dFirstDay,vbMonday) + 1
+			m_dLastDay = dateserial(year(dMainDate),month(dMainDate)+1,0)
+			m_dLastDay = m_dLastDay + (7 - weekday(m_dLastDay,vbMonday))
+		case CALENDAR_MODE_YEAR
+			m_dFirstDay = dateserial(year(dMainDate),1,1)
+			m_dLastDay = dateserial(year(dMainDate)+1,1,1)-1	
+		end select
+
+#ifdef _DEBUG
+		trans_.message 0,0,cstr(m_dFirstDay) + "...." + cstr(m_dLastDay)
+#endif
+	end sub
+
+	private sub recalc_coords
+		dim nRow,nCol
+		select case m_nMode
+		case CALENDAR_MODE_DAY
+			set m_pCurrentCell = m_pTable.body.row(currenthour + 1).cell(2)
+			exit sub
+		case CALENDAR_MODE_WEEK
+			nCol = 3
+			nRow = weekday(currentday,vbMonday)
+		case CALENDAR_MODE_MONTH
+			nCol = weekday(currentday,vbMonday) + 1
+			nRow = datediff("w",m_dFirstDay,currentday) * 2 + 2
+		case CALENDAR_MODE_YEAR
+			nRow = month(currentday)
+			nCol = day(currentday) + 1
+		end select
+		set m_pCurrentCell = m_pTable.body.row(nRow).cell(nCol)
+	end sub
+
+
+	private sub build_internal_day()
+		'--- header
+		m_pTB.section_head
+		m_pTB.newrow
+		with m_pTB.newcell.newcell.cell
+			.align = ALIGN_CENTER
+			dim strTxt : strTxt = cstr(datepart("d",currentday)) + _
+			" " + nazwa_miesiaca_w_dopelniaczu(month(currentday)) + " " + cstr(year(currentday))
+			m_pTB.addtext strTxt
+		end with
+		'--- body
+		m_pTB.section_body
+		dim iter
+		for iter = 0 to 23
+			m_pTB.newrow
+			with m_pTB.newcell.cell
+				.width = MINIMIZE_SIZE
+				.align = ALIGN_RIGHT
+				m_pTB.addtext cstr(iter) + ":00"
+			end with
+			m_pTB.newcell
+		next
+	end sub
+
+	private sub build_internal_week()
+		dim dDate : dDate = m_dFirstDay
+		'--- header
+		m_pTB.section_head
+		m_pTB.newrow
+		with m_pTB.newcell.cell
+			.colspan =3
+			.align = ALIGN_CENTER
+		end with
+			m_pTB.addtext "Tydzień " + right(" "  + cstr(datepart("ww",dDate)),2) + _
+			" (" + nx_.display.fulldate(firstday) + " ... " + nx_.display.fulldate(lastday) + ")"
+		'--- body
+		m_pTB.section_body
+		dim iter
+		for iter = 1 to 7
+			m_pTB.newrow
+			if iter < 6 then
+				m_pTB.row.height=2000
+			else
+				m_pTB.row.backcolor = rgb(224,224,224)
+			end if
+			'----------------
+			with m_pTB.newcell.cell
+				.width = 1800
+				.keepline=true
+			end with
+			dim strTxt : strTxt = cstr(datepart("d",dDate)) + " " + nazwa_miesiaca_w_dopelniaczu(month(dDate))
+			m_pTB.addtext strTxt
+			if iter > 5 then
+				m_pTb.element.forecolor=rgb(255,0,0)
+			end if
+			'----------------
+			with m_pTB.newcell.cell
+				.width = MINIMIZE_SIZE
+				.keepline=true
+			end with
+			
+			m_pTB.addtext WeekdayName(iter,true,vbMonday)
+			m_pTB.element.bold = true
+			if iter > 5 then
+				m_pTb.element.forecolor=rgb(255,0,0)
+			end if
+			'----------------
+			m_pTB.newcell
+			dDate = dDate + 1
+		next 
+	end sub
+
+	private sub build_internal_month()
+		'--- header
+		m_pTB.section_head
+		m_pTB.newrow
+		m_pTB.newcell.addtext MonthName(month(m_dCurrentDate)) + " " + cstr(year(m_dCurrentDate))
+		with m_pTB.cell
+			.colspan = 8
+			.align = ALIGN_CENTER
+		end with
+		m_pTB.newrow
+		with m_pTB.newcell.cell
+			.width = MINIMIZE_SIZE
+		end with
+
+		dim iter
+		for iter = 1 to 7
+			m_pTB.newcell.cell.align = ALIGN_CENTER
+			m_pTB.addtext WeekdayName(iter,true,vbMonday)
+			if iter > 5 then
+				m_pTb.element.forecolor=rgb(255,0,0)
+			end if
+			m_pTb.element.bold = true
+		next 
+		'--- body
+		m_pTB.section_body
+		dim dDate : dDate = m_dFirstDay
+		do while dDate <= m_dLastDay
+			m_pTB.newrow
+			with m_pTB.newcell.cell
+'				.rowspan = 2
+				.align = ALIGN_RIGHT
+			end with
+			m_pTB.addtext right(" "  + cstr(datepart("ww",dDate)),2)
+			m_pTB.element.bold=true
+			for iter = 1 to 7
+				with m_pTB.newcell.cell
+					.align = ALIGN_RIGHT
+					.width = 1400
+					if month(m_dCurrentDate) <> month(dDate + iter - 1) then
+						.backcolor = rgb(224,224,224)
+					end if
+				end with
+				m_pTB.addtext day(dDate + iter - 1)
+				if iter > 5 then
+					m_pTb.element.forecolor=rgb(255,0,0)
+				end if
+			next
+			m_pTB.newrow.row.height=1000
+			m_pTB.newcell
+			for iter = 1 to 7
+				m_pTB.newcell
+				if month(m_dCurrentDate) <> month(dDate + iter - 1) then
+					m_pTB.cell.backcolor = rgb(224,224,224)
+				end if
+			next
+			dDate = dDate + 7
+		loop
+	end sub
+
+	private sub build_internal_year()
+		'--- header
+		m_pTB.section_head
+		m_pTB.newrow
+    m_pTB.row.fontsize=1
+		m_pTB.newcell.addtext "rok " + cstr(year(m_dCurrentDate))
+		with m_pTB.cell
+			.colspan = 32 + m_nExtraCols
+			.align = ALIGN_CENTER
+		end with
+		m_pTB.newrow
+    m_pTB.row.fontsize=1
+		m_pTB.newcell.addtext "Miesiąc"
+		dim iter 
+		for iter = 1 to 31 + m_nExtraCols
+			m_pTB.newcell.cell.align = ALIGN_RIGHT
+			m_pTB.addtext right(" " + cstr(iter),2)
+		next
+		'--- body
+		m_pTB.section_body
+		dim iterMc
+		for iterMc = 1 to 12
+			m_pTB.newrow
+      m_pTB.row.fontsize=1
+			m_pTB.newcell.addtext MonthName(iterMc)
+			m_pTB.cell.width = MAXIMIZE_SIZE
+
+			for iter = 1 to 31 + m_nExtraCols
+				m_pTB.newcell
+			next
+		next
+	end sub
+
+	'---------------------------------
+public function add_extra_row(byref intCol, byref strNapis)
+  if intCol = 1 then
+    m_pTB.newrow
+    m_pTB.row.fontsize=1
+    m_pTB.newcell.addtext ""
+    m_pTB.cell.colspan=30
+    m_pTB.cell.align=ALIGN_RIGHT
+    m_pTB.newcell.addtext strNapis
+    m_pTB.cell.colspan=2
+    m_pTB.cell.align=ALIGN_RIGHT
+
+  else
+    m_pTB.newcell.addtext strNapis
+    m_pTB.cell.align=ALIGN_LEFT
+  end if
+   
+end function
+	'iteracja *****************************
+	public function init_iterator
+		currentday = m_dDataOd - 1
+		set init_iterator = me
+	end function
+
+	public function next_day
+		currentday = currentday + 1
+		if currentday > m_dDataDo then
+			next_day = false
+		else
+			next_day = true
+		end if		
+	end function
+
+
+end class
+
+'--- utworz calendar builder dla daty dMainDate, w trybie wyswietlania nMode
+'--- pracujący w kontenerze pContainer
+function get_calendar_builder(byref pContainer,byval nMode,byval dMainDate)
+	dim pCB : set pCB = new CCalendarBuilder
+	pCB.init pContainer,nMode,dMainDate
+	set get_calendar_builder = pCB
+end function
+]]>
+</script>
+</config>
+<body>
+</body>
+</page>
+
+

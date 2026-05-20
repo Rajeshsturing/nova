@@ -1,0 +1,496 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#comment NX_READY
+
+pozycja płatności
+
+#include "h1000.h" 
+#include "h1200.h" 
+#include "h1231.h" 
+#include "h1203.h"
+
+#define _RECALC_TABLENAME_	n5pozplatnosc
+
+-->
+<class>
+	<identifier>TYPEID_N5POZPLATNOSC</identifier>
+	<table>n5pozplatnosc</table>
+	<humanname>Pozycja płatności</humanname>
+	<child/>
+	<hidden/>
+	<idobj/>
+	<embedded>
+		<name>curPozKwotaPodm</name>
+		<sqltype>SQLcurrency</sqltype>
+		<humanname>Kwota dla/od podmiotu</humanname>
+		<default>0.0</default>
+	</embedded>
+	<embedded>
+		<name>curPozKwotaEwid</name>
+		<sqltype>SQLcurrency</sqltype>
+		<humanname>Kwota zarachowania</humanname>
+		<default>0.0</default>
+	</embedded>
+	<embedded>
+		<name>curPozKwotaTrans</name>
+		<sqltype>SQLcurrency</sqltype>
+		<humanname>Kwota uznania/obciążenia transakcji</humanname>
+		<default>0.0</default>
+	</embedded>
+
+	<embedded>
+		<name>curPozKursPodm</name>
+		<sqltype>SQLqty</sqltype>
+		<humanname>Kurs uznania/obciążenia</humanname>
+		<default>1.0</default>
+	</embedded>
+	<embedded>
+		<name>curPozKursEwid</name>
+		<sqltype>SQLqty</sqltype>
+		<humanname>Kurs zarachowania</humanname>
+		<default>1.0</default>
+	</embedded>
+
+	<ref>
+		<name>pTransakcja</name>
+		<humanname>Transakcja</humanname>
+		<typeid>TYPEID_N5TRANSAKCJA</typeid>
+	</ref>
+
+	<!-- DB8 -->
+	<embedded>
+		<name>pplat_curPozRoznicaKursowa</name>
+		<sqltype>SQLcurrency</sqltype>
+		<humanname>Różnica kursowa pozycji</humanname>
+		<default>0.0</default>
+		<virtual/>
+	</embedded>
+
+#ifdef _IOW
+  <embedded>
+		<name>pplat_curPozRoznicaKursowaNetto</name>
+		<sqltype>SQLcurrency</sqltype>
+		<humanname>Różnica kursowa pozycji netto</humanname>
+		<default>0.0</default>
+		<virtual/>
+	</embedded>
+#endif
+
+#ifdef ENABLE_DB14
+  <embedded>
+    <name>pplat_curVAT</name>
+    <sqltype>SQLcurrency</sqltype>
+    <humanname>Kwota VAT</humanname>
+    <default>0.0</default>
+  </embedded>
+#endif
+  
+  <cursors />
+<script>
+<![CDATA[
+
+'getCurrentFirma
+#include "50203"
+'kantor,przelicz_walute
+#include "50523"
+
+'operacja transakcji
+#include "50525"
+
+#comment '--------------------------------------------------------------------------
+#comment ' przerobione w DB8 (2005-09-29)
+#comment '--------------------------------------------------------------------------
+function n5pozplatnosc_reinit() : n5pozplatnosc_reinit = true
+	COMPUTE(pplat_curPozRoznicaKursowa)
+#ifdef _IOW
+	COMPUTE(pplat_curPozRoznicaKursowaNetto)
+#endif
+end function
+#comment '--------------------------------------------------------------------------
+#comment ' compute
+#comment '--------------------------------------------------------------------------
+
+BEGIN_COMPUTE(curPozKwotaTrans)
+	this_.curPozKwotaTrans = przelicz_walute(this_.curPozKwotaPodm, this_.curPozKursPodm)
+END_COMPUTE
+
+BEGIN_COMPUTE(curPozKwotaEwid)
+	this_.curPozKwotaEwid = przelicz_walute(this_.curPozKwotaTrans, this_.curPozKursEwid)
+END_COMPUTE
+
+BEGIN_COMPUTE(curPozKursEwid)
+	dim curKursTrn2Ewid : curKursTrn2Ewid = ccur(1.0000)
+	if not this_.pTransakcja is nothing then
+		if not (this_.pTransakcja.pWaluta is getCurrentFirma().pWaluta) then
+			if this_.pTransakcja.pWaluta is this_.parent.pWalutaPodm then
+				curKursTrn2Ewid = this_.parent.curKursEwid
+			else
+				if kantor(ccur(100.00),this_.pTransakcja.pWaluta,getCurrentFirma().pWaluta,this_.parent.dDataOper, N5KURSWALUT_KUPNA, curKursTrn2Ewid) then
+					curKursTrn2Ewid = ccur(curKursTrn2Ewid / ccur(100.0))
+				end if
+			end if
+		end if
+	end if
+	this_.curPozKursEwid = curKursTrn2Ewid
+END_COMPUTE
+
+BEGIN_COMPUTE(pplat_curPozRoznicaKursowa)
+
+#ifdef _IOW
+	if not this_.pTransakcja is nothing then
+    if left(this_.pTransakcja.strSymTrans,1) ="#" then
+		  this_.pplat_curPozRoznicaKursowa = ccur(0.0)
+    else
+		this_.pplat_curPozRoznicaKursowa = this_.curPozKwotaEwid - _
+			przelicz_walute(this_.curPozKwotaTrans, this_.pTransakcja.trn_curKurs)
+    end if
+	else
+		this_.pplat_curPozRoznicaKursowa = ccur(0.0)
+	end if
+#else
+	if not this_.pTransakcja is nothing then
+		this_.pplat_curPozRoznicaKursowa = this_.curPozKwotaEwid - _
+			przelicz_walute(this_.curPozKwotaTrans, this_.pTransakcja.trn_curKurs)
+	else
+		this_.pplat_curPozRoznicaKursowa = ccur(0.0)
+	end if
+#endif
+
+END_COMPUTE
+
+#ifdef _IOW
+BEGIN_COMPUTE(pplat_curPozRoznicaKursowaNetto)
+	if not this_.pTransakcja is nothing then
+		this_.pplat_curPozRoznicaKursowaNetto = brutto2netto(this_.pplat_curPozRoznicaKursowa, STAWKA_VAT_23)
+	else
+		this_.pplat_curPozRoznicaKursowaNetto = ccur(0.0)
+	end if
+END_COMPUTE
+#endif
+
+#comment '--------------------------------------------------------------------------
+#comment ' recalc
+#comment '--------------------------------------------------------------------------
+
+BEGIN_RECALC(curPozKwotaPodm)
+	COMPUTE(curPozKwotaTrans)
+	this_.parent.curSumaPozPodm = this_.parent.curSumaPozPodm + this_.curPozKwotaPodm - oldval
+END_RECALC
+
+BEGIN_RECALC(curPozKursPodm)
+	COMPUTE(curPozKwotaTrans)
+END_RECALC
+
+BEGIN_RECALC(curPozKwotaTrans)
+	COMPUTE(curPozKwotaEwid)
+	COMPUTE(pplat_curPozRoznicaKursowa)
+#ifdef _IOW 
+  COMPUTE(pplat_curPozRoznicaKursowaNetto)
+#endif
+END_RECALC
+
+BEGIN_RECALC(curPozKursEwid)
+	COMPUTE(curPozKwotaEwid)
+END_RECALC
+
+BEGIN_RECALC(curPozKwotaEwid)
+	COMPUTE(pplat_curPozRoznicaKursowa)
+#ifdef _IOW  
+  COMPUTE(pplat_curPozRoznicaKursowaNetto)
+#endif  
+	this_.parent.plat_curSumaPozEwid = this_.parent.plat_curSumaPozEwid + this_.curPozKwotaEwid - oldval
+END_RECALC
+
+BEGIN_RECALC(pplat_curPozRoznicaKursowa)
+	this_.parent.plat_curRoznicaKursowa = this_.parent.plat_curRoznicaKursowa + this_.pplat_curPozRoznicaKursowa - oldval
+END_RECALC
+
+#ifdef _IOW
+BEGIN_RECALC(pplat_curPozRoznicaKursowaNetto)
+	this_.parent.plat_curRoznicaKursowaNetto = this_.parent.plat_curRoznicaKursowaNetto + this_.pplat_curPozRoznicaKursowaNetto - oldval
+END_RECALC
+#endif
+
+BEGIN_RECALC(pTransakcja)
+	if this_.pTransakcja is nothing then
+		this_.curPozKwotaPodm = ccur(0.0)
+		exit function
+	end if
+
+	set this_.parent.wrefPodmiot = this_.pTransakcja.wrefPodmiot
+
+#comment '--------------------------------------------------------------------------
+#comment ' saldo transakcji przeliczamy na wal. wplaty (podmiotu)
+#comment '--------------------------------------------------------------------------
+
+	dim curFactor : curFactor = ccur(1.0)
+	dim curSaldoTransWalTrans : curSaldoTransWalTrans = (this_.pTransakcja.curWn - this_.pTransakcja.curMa)
+
+	if curSaldoTransWalTrans < ccur(0.0) then
+		curFactor = ccur(-1.0)
+		curSaldoTransWalTrans = - curSaldoTransWalTrans
+	end if
+
+#comment 'przelicz saldo transakcji walutę wplaty
+	dim curSaldoTransWalPodm : curSaldoTransWalPodm = curSaldoTransWalTrans
+	if not (this_.pTransakcja.pWaluta is this_.parent.pWalutaPodm) then
+		if not kantor(curSaldoTransWalTrans,this_.pTransakcja.pWaluta,this_.parent.pWalutaPodm, _
+			this_.parent.dDataOper, N5KURSWALUT_KUPNA, curSaldoTransWalPodm) then
+			nx_.trace.warning "WPI003","Brak kursu z "+ this_.pTransakcja.pWaluta.text +" na "+ this_.parent.pWalutaPodm.text +" - przyjmuję 1,0000"
+		end if
+	end if
+
+#comment 'kwota wplaty jeszcze nie rozliczona (wal. wplaty)
+	dim curDoRozbWalPodm : curDoRozbWalPodm = this_.parent.curKwotaPodm - this_.parent.curSumaPozPodm + this_.curPozKwotaPodm
+	if curDoRozbWalPodm < ccur(0.0) then
+		curDoRozbWalPodm = - curDoRozbWalPodm		'(ABS)
+	end if
+
+#ifdef _IOW
+		this_.curPozKwotaPodm = curSaldoTransWalPodm * curFactor
+#else
+	if (curSaldoTransWalPodm < curDoRozbWalPodm) or (this_.parent.pRejestrDok.eTyp = N5REJESTRDOK_KOMPENSATY) then
+		this_.curPozKwotaPodm = curSaldoTransWalPodm * curFactor
+	else
+		this_.curPozKwotaPodm = curDoRozbWalPodm * curFactor
+	end if
+#endif  
+
+#ifdef ENABLE_DB14
+  dim curSaldoTransVAT : curSaldoTransVAT = (this_.pTransakcja.trn_curWnVAT - this_.pTransakcja.trn_curMaVAT)
+  dim curSumaVAT : curSumaVAT = ccur(0.0)
+  
+  dim oPozycja
+	for each oPozycja in this_.parent.listPozycje
+		curSumaVAT = curSumaVAT + oPozycja.pplat_curVAT
+	next
+  
+  dim curDoRozbVAT : curDoRozbVAT = this_.parent.plat_curVAT - curSumaVAT + this_.pplat_curVAT
+	if curDoRozbVAT < ccur(0.0) then
+		curDoRozbVAT = - curDoRozbVAT		'(ABS)
+	end if
+  
+  if (curSaldoTransVAT < curDoRozbVAT) then
+		this_.pplat_curVAT = curSaldoTransVAT * curFactor
+	else
+		this_.pplat_curVAT = curDoRozbVAT * curFactor
+	end if
+  
+#endif  
+
+	n5pozplatnosc_update_kurs
+	COMPUTE(pplat_curPozRoznicaKursowa)
+#ifdef _IOW
+  COMPUTE(pplat_curPozRoznicaKursowaNetto)
+#endif
+END_RECALC
+
+#comment '--------------------------------------------------------------------------
+#comment ' check
+#comment '--------------------------------------------------------------------------
+private function n5pozplatnosc_checkPodmiot()
+	n5pozplatnosc_checkPodmiot = false
+	if this_.pTransakcja is nothing then
+		nx_.trace.fatal "FPI001", "Brak transakcji na pozycji " + cstr(this_.parent.listPozycje.findonid(this_.idobj))
+		exit function
+	end if
+
+	n5pozplatnosc_checkPodmiot = (this_.parent.wrefPodmiot is this_.pTransakcja.wrefPodmiot)
+	if not n5pozplatnosc_checkPodmiot then
+		nx_.trace.fatal "FPI002", "Transakcja na pozycji " + cstr(this_.parent.listPozycje.findonid(this_.idobj)) + _
+		" jest powiązana z innym podmiotem niż operacja"
+	end if 
+end function
+
+#comment '--------------------------------------------------------------------------
+#comment ' trigger
+#comment '--------------------------------------------------------------------------
+private sub n5pozplatnosc_update_transaction(byref pTransakcja,byval curKwota,byval curKwotaEwid)
+	if not pTransakcja is nothing then
+		with pTransakcja
+			if .eTyp = N5TRANSAKCJA_ZOBOWIAZANIE then
+				dim curOldWnEwid : curOldWnEwid = .curWnEwid
+#ifndef ENABLE_DB11_TROP         
+				.curWn = .curWn - curKwota
+				.curWnEwid = curOldWnEwid - curKwotaEwid
+#endif        
+			else
+				dim curOldMaEwid : curOldMaEwid = .curMaEwid
+#ifndef ENABLE_DB11_TROP        
+				.curMa = .curMa + curKwota
+				.curMaEwid = curOldMaEwid + curKwotaEwid
+#endif        
+			end if
+		end with
+	end if
+end sub
+
+#comment '--------------------------------------------------------------------------
+function n5pozplatnosc_befins() : n5pozplatnosc_befins = false
+	if not n5pozplatnosc_checkPodmiot() then
+		exit function
+	end if 
+  
+  if not n5pozplatnosc_rebuild_trop(false) then
+    exit function
+  end if
+
+	n5pozplatnosc_update_transaction this_.pTransakcja, this_.curPozKwotaTrans, this_.curPozKwotaEwid
+
+#ifdef APPCONFIG_KONTROLUJ_KWOTY_ZARACHOWANIA
+ if not this_.pTransakcja is nothing then
+    if this_.pTransakcja.curWn <> this_.pTransakcja.curMa then
+      nx_.trace.warning "WPI002","Transakcja " + this_.pTransakcja.text + " nie zostaje wyzerowana."
+    end if
+  end if
+#endif  
+
+	n5pozplatnosc_befins = true
+end function
+
+function n5pozplatnosc_rebuild_trop(byval bMode) : n5pozplatnosc_rebuild_trop = false
+  dim oTransOper
+  initialize_transaction_oper this_, oTransOper
+
+#ifdef ENABLE_DB14
+  update_transaction_oper this_, oTransOper, this_.curPozKwotaTrans, ccur(0.0), ccur(0.0), ccur(0.0), this_.pplat_curVAT, ccur(0.0)
+#else
+  update_transaction_oper this_, oTransOper, this_.curPozKwotaTrans, this_.curPozKwotaEwid, 0, 0
+#endif
+  
+  if trans_.var(GVAR_OPERATION_MODE) = clng(OPERATION_MODE_UPGRADE) then
+    if not oTransOper is nothing then
+      set oTransOper.trop_pTransakcja = this_.pTransakcja
+    end if
+    n5pozplatnosc_rebuild_trop = true
+  else
+    dim idTransOper, idTrans
+    get_id_trans oTransOper, idTransOper, this_.pTransakcja, idTrans
+    n5pozplatnosc_rebuild_trop = save_transaction_oper(idTransOper, idTrans) 
+  end if
+end function
+
+#comment '--------------------------------------------------------------------------
+function n5pozplatnosc_befupd() : n5pozplatnosc_befupd = false
+	if not n5pozplatnosc_checkPodmiot() then
+		exit function
+	end if 
+
+  dim oTransOper
+  'update obiektu n5transakcja_operacja
+  if not this_.old_pTransakcja is nothing then  
+    set oTransOper = find_transaction_oper(this_,this_.old_pTransakcja)       
+
+#ifdef ENABLE_DB14
+   update_transaction_oper this_, oTransOper, ccur(0), ccur(0), ccur(0), ccur(0), ccur(0), ccur(0)
+#else
+  update_transaction_oper this_, oTransOper, ccur(0), ccur(0), ccur(0), ccur(0)
+#endif
+    
+  end if
+  if not this_.pTransakcja is nothing then
+    set oTransOper = find_transaction_oper(this_,this_.pTransakcja)    
+    'gdy nie może znaleźć tropa dla bieżącej transakcji => zakłada nowego
+    if oTransOper is nothing then
+      initialize_transaction_oper this_, oTransOper
+    end if    
+    oTransOper.trop_curKursOp = this_.curPozKursEwid
+
+#ifdef ENABLE_DB14
+  update_transaction_oper this_, oTransOper, this_.curPozKwotaTrans, ccur(0.0), ccur(0.0), ccur(0.0), this_.pplat_curVAT, ccur(0.0)
+#else
+  update_transaction_oper this_, oTransOper, this_.curPozKwotaTrans, this_.curPozKwotaEwid, 0, 0
+#endif
+
+  end if
+
+  n5pozplatnosc_update_transaction this_.old_pTransakcja, - this_.old_curPozKwotaTrans, _
+		- this_.old_curPozKwotaEwid
+	n5pozplatnosc_update_transaction this_.pTransakcja, this_.curPozKwotaTrans, _
+		this_.curPozKwotaEwid
+    
+#ifdef APPCONFIG_KONTROLUJ_KWOTY_ZARACHOWANIA
+ if not this_.pTransakcja is nothing then
+    if this_.pTransakcja.curWn <> this_.pTransakcja.curMa then
+      nx_.trace.warning "WPI002","Transakcja " + this_.pTransakcja.text + " nie zostaje wyzerowana."
+    end if
+  end if
+#endif
+
+  dim idTransOper, idTrans
+  get_id_trans oTransOper, idTransOper, this_.pTransakcja, idTrans
+  n5pozplatnosc_befupd = save_transaction_oper(idTransOper, idTrans)
+end function
+
+#comment '--------------------------------------------------------------------------
+function n5pozplatnosc_befdel()
+
+  dim oTransOper  
+  if not this_.old_pTransakcja is nothing then  
+    set oTransOper = find_transaction_oper(this_,this_.old_pTransakcja)
+    if not oTransOper is nothing then
+       'usuń operację transakcji
+       try_delete_transaction_oper oTransOper.IdObj
+    end if
+  end if
+
+  n5pozplatnosc_update_transaction this_.old_pTransakcja, - this_.old_curPozKwotaTrans, _
+		- this_.old_curPozKwotaEwid
+
+	n5pozplatnosc_befdel = true
+end function
+
+#comment '--------------------------------------------------------------------------
+function n5pozplatnosc_as_text()
+	if not this_.pTransakcja is nothing then
+		n5pozplatnosc_as_text = this_.pTransakcja.text
+	else
+		n5pozplatnosc_as_text = ""
+	end if
+	n5pozplatnosc_as_text = n5pozplatnosc_as_text + " (kwota: "+ trans_.afc.display.money(this_.curPozKwotaPodm,"") +")"
+
+end function
+
+'---------------------------------------------------------------------
+function n5pozplatnosc_listop(byval nInx)
+	if nInx < 0 then	'usuwanie
+		this_.parent.curSumaPozPodm = this_.parent.curSumaPozPodm - this_.curPozKwotaPodm
+		this_.parent.plat_curSumaPozEwid = this_.parent.plat_curSumaPozEwid - this_.curPozKwotaEwid
+	end if
+	n5pozplatnosc_listop = true
+end function
+
+'---------------------------------------------------------------------
+' Ustala kurs
+'---------------------------------------------------------------------
+sub n5pozplatnosc_update_kurs
+	if this_.pTransakcja is nothing then 
+		exit sub
+	end if
+
+
+	dim nKursType : nKursType = N5KURSWALUT_SPRZEDAZY
+	if this_.curPozKwotaTrans > 0 then	
+		nKursType = N5KURSWALUT_KUPNA
+	elseif this_.curPozKwotaTrans < 0 then	
+		nKursType = N5KURSWALUT_SPRZEDAZY
+	end if
+
+	dim curPozKursPodm : curPozKursPodm = ccur(1.0)
+	if this_.pTransakcja.pWaluta.idobj <> this_.parent.pWalutaPodm.idobj then	
+		if kantor (ccur(100.0), this_.parent.pWalutaPodm , this_.pTransakcja.pWaluta, this_.parent.dDataOper , nKursType , curPozKursPodm) then 
+			curPozKursPodm = ccur(curPozKursPodm / ccur(100.0))
+		end if
+	end if	
+
+	this_.curPozKursPodm = curPozKursPodm
+
+	COMPUTE(curPozKursEwid)
+end sub
+
+
+
+]]>
+</script>
+	
+</class>

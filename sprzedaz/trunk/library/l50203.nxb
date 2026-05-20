@@ -1,0 +1,531 @@
+#comment '---------------------------------------------------------------------------------------------
+#comment ' profile globalne i zmienne powszechnie uzywane (current user, current firma)
+#comment '
+#comment ' czesc jest NX_READY
+#comment '
+#comment ' reszta OBSOLETE - ale duzo odwolan
+#comment '---------------------------------------------------------------------------------------------
+
+#ifdef _DEBUG
+'//////////////////////////////////////////
+'// (C) 2001 NAVO					     //
+'// Funkcje przydatne w calej aplikacji  //
+'//////////////////////////////////////////
+'getCurrentUser/ID
+'getCurrentWykonawca/ID
+'GetAdminID
+'ConfigureUser				REV:KB:TODO: przesun¹æ
+'getCurrentDate
+'getCurrentJO/ID
+'getCurrentFirma/ID
+'getuserprofile/getuserprofileByID/setuserprofile/setuserprofileByID
+'getuserprofileObj/
+'getuserprofileLong
+'getuserprofileBOOL/setuserprofileBOOL
+'getglobprofile/getglobprofileLong/getglobprofileObj
+'setglobprofile
+'load_choicelist
+'IsWykonawcaOfCurrUser
+'class CMailAttachment		REV:KB:TODO: przesun¹æ
+'Beep						REV:KB:TODO: przesun¹æ do AFC
+'//////////////////////////////////////////
+#endif
+
+#ifndef LIBRARY_50203
+#define LIBRARY_50203
+
+#ifndef TYPEID_N5UZYTKOWNIK
+#include "h1200.h"
+#endif
+#include "h1201.h" 
+#include "h1203.h" 
+#include "h1240.h" 
+
+
+#ifdef _DEBUG
+dim continue_debugging: continue_debugging=true
+#define debug_now if (continue_debugging) then debug_break_point
+#else
+#define	debug_now 'removed_break_point
+#endif
+
+
+#ifndef EMPTY
+
+#comment '-------------------------------
+#comment ' NX Profile
+#comment '-------------------------------
+#comment '-------------------------------
+#comment 'zwraca obiekt profilu dla podanego u¿ytkownika
+#comment 'lub nothing gdy nie istnieje
+#comment '-------------------------------
+private function nx_get_userprofile_obj(byval iIndeks,byval iIdUser)
+	Set nx_get_userprofile_obj = Nothing
+	
+	dim idprof : idprof = nx_.slot0.profile_id_cache.get_idobj_for_inx(iIdUser,iIndeks)
+	
+	if idprof = 0 then
+		idProf = trans_.findobjid(TYPEID_USERPROFILE, "pn5user=" + CStr(iIdUser) + " and Indeks=" + CStr(iIndeks))
+	end if
+	
+	If idProf < 0 Then
+		Err.Raise 1, "getprofileobj_user", "Zduplikowany profil #" + CStr(iIndeks) + " dla u¿ytkownika id=" + CStr(iIdUser)
+	else
+		if idProf > 0 then
+			nx_.slot0.profile_id_cache.set_idobj_for_inx iIdUser,iIndeks,idprof
+			set nx_get_userprofile_obj = trans_.getobj(TYPEID_USERPROFILE, idProf)
+		end if
+	End If
+end function
+
+#comment '--------------------------------------------------------------
+#comment 'zwraca wartoœæ profilu dla podanego u¿ytkownika
+#comment 'lub pusty napis gdy nie istnieje
+#comment '--------------------------------------------------------------
+private function nx_get_userprofile_value(byval iIndeks,byval iIdUser)
+	dim pUserProfileObj : set pUserProfileObj = nx_get_userprofile_obj(iIndeks,iIdUser)
+    if pUserProfileObj Is nothing then
+        nx_get_userprofile_value = ""
+    else
+        nx_get_userprofile_value = pUserProfileObj.Wartosc
+    end if
+end function
+
+#comment '--------------------------------------------------------------
+#comment 'zwraca wartoœæ profilu dla biezacego u¿ytkownika
+#comment 'lub pusty napis gdy nie istnieje
+#comment '--------------------------------------------------------------
+private function nx_get_current_userprofile_value(byval iIndex)
+	nx_get_current_userprofile_value = nx_get_userprofile_value(iIndex,trans_.var(GVAR_USER))
+end function
+
+#comment '--------------------------------------------------------------
+#comment 'zwraca obiekt globalnego profilu
+#comment 'lub nothing gdy nie istnieje
+#comment '--------------------------------------------------------------
+private function nx_get_globprofile_obj(byval iIndeks)
+	set nx_get_globprofile_obj = nothing
+#ifdef _ABAS_INWESTYCJE
+	dim idprof : idprof = 0
+#else
+	dim idprof : idprof = nx_.slot0.profile_id_cache.get_idobj_for_inx(0,iIndeks)
+#endif
+	if idprof = 0 then
+		idprof=trans_.findobjid(TYPEID_GLOBPROFILE,"Indeks=" + CStr(iIndeks))
+	end if
+
+	if idprof < 0 then
+		err.raise 1,"getglobprof","Zduplikowany profil globalny #" + CStr(iIndeks)
+		exit function
+	else
+		if idprof > 0 then
+			nx_.slot0.profile_id_cache.set_idobj_for_inx 0,iIndeks,idprof
+			set nx_get_globprofile_obj = trans_.getobj(TYPEID_GLOBPROFILE,idprof)
+		end if
+	end if
+
+end function
+
+#comment '--------------------------------------------------------------
+#comment 'zwraca wartoœæ globalnego profilu
+#comment 'lub pusty napis gdy nie istnieje
+#comment '--------------------------------------------------------------
+private function nx_get_globprofile_value(byval iIndeks)
+	dim pGlobProfileObj : set pGlobProfileObj = nx_get_globprofile_obj(iIndeks)
+    if pGlobProfileObj is nothing then
+        nx_get_globprofile_value = ""
+    else
+        nx_get_globprofile_value = pGlobProfileObj.Wartosc
+    end if
+end function
+
+'-------------------------------
+dim g_navo_cocoon_version : g_navo_cocoon_version = "?"
+private function get_navo_cocoon_version()
+	if g_navo_cocoon_version <> "?" then
+		get_navo_cocoon_version =	g_navo_cocoon_version
+		exit function
+	end if
+
+	g_navo_cocoon_version = ""
+
+	on error resume next
+
+	Err.Clear
+	g_navo_cocoon_version = nx_.features.get_cocoon_version()
+	on error goto 0 
+	
+	get_navo_cocoon_version =	g_navo_cocoon_version
+	'trans_.message 0,0,"found navo.cocoon version " + g_navo_cocoon_version
+end function
+
+dim g_nxm_jse_mode : g_nxm_jse_mode = "?"
+
+private function nxm_jse_mode()
+
+#ifdef APPCONFIG_ALLOW_NXM_JSE
+
+#ifndef GLOBPROF_NXM_JSE_MODE
+#define GLOBPROF_NXM_JSE_MODE					1157
+#endif
+
+	if g_nxm_jse_mode = "?" then
+		g_nxm_jse_mode = getglobprofile(GLOBPROF_NXM_JSE_MODE)
+	end if
+
+	nxm_jse_mode = g_nxm_jse_mode
+
+#else
+	nxm_jse_mode = false
+#endif
+
+end function
+
+'-------------------------------
+private function has_nxm_feature(strFeature)
+	
+	dim oNXMFeatures
+	set oNXMFeatures = nothing
+	
+	on error resume next
+	Err.Clear
+	set oNXMFeatures = nx_.nxm_features
+	on error goto 0 
+		
+	if oNXMFeatures is nothing then
+		has_nxm_feature = false
+	else
+		has_nxm_feature = nx_.nxm_features.has_feature(strFeature)
+	end if
+
+end function
+'-------------------------------
+'UZYTKOWNICY
+'-------------------------------
+
+'-------------------------------
+'pobiera obiekt zalogowanego user'a
+'-------------------------------
+private function getCurrentUser():set getCurrentUser=nothing
+	if (trans_.var(GVAR_USER)<>0) then
+		set getCurrentUser=trans_.getobj(TYPEID_N5UZYTKOWNIK, trans_.var(GVAR_USER))
+	end if
+end function
+
+'-------------------------------
+'zwraca id zalogowanego user'a
+'-------------------------------
+private function getCurrentUserID():getCurrentUserID=CLng(0)
+	getCurrentUserID=CLng(trans_.var(GVAR_USER))
+end function
+
+private function getCurrentWykonawca(): set getCurrentWykonawca=nothing
+	dim pUser
+	set pUser=getCurrentUser()
+
+	if (pUser is nothing) then
+		exit function
+	end if
+
+	set getCurrentWykonawca=pUser.pWykonawca
+end function
+
+private function getCurrentWykonawcaID(): getCurrentWykonawcaID=0
+	dim pWykonawca
+	set pWykonawca=getCurrentWykonawca()
+
+	if (pWykonawca is nothing) then
+		exit function
+	end if
+
+	getCurrentWykonawcaID=pWykonawca.IdObj
+end function
+
+
+private function GetAdminID():GetAdminID=0
+	dim nAdmin
+	nAdmin=trans_.findobjid(TYPEID_N5UZYTKOWNIK, "strLogin='" + ADMIN_LOGIN + "'")
+	if (nAdmin>0) then
+		GetAdminID=nAdmin
+	end if
+end function
+
+
+'-------------------------------
+'uruchamia konfiguracje uzytkownika
+'-------------------------------
+private function ConfigureUser(byval idUser)
+	dim pNewHli
+	set pNewHli=doc_.createhlistr("varCmd=CMD_OPEN_RECORD_PAGE varDestPage=20144 varModalRes4=" + CStr(idUser))
+	dim pPage:set pPage=doc_.getpagehli(pNewHli)
+	if pPage is nothing then
+		exit function
+	end if
+	ConfigureUser=pPage.domodalauto()
+end function
+
+
+'-------------------------------
+'DATA
+'-------------------------------
+
+private function getCurrentDate()
+	getCurrentDate = trans_.var(GVAR_TODAY)
+end function
+
+'------------------------------------------------------------
+'true  => gdy ustawiony jest tryb ze stawkami VAT na 2011 rok
+'false => gdy ustawiony jest tryb ze stawkami VAT na 2010 rok
+'domyœlnie przestawiony na true w dniu 2019-08-21
+'------------------------------------------------------------
+private function isModeVAT2011() : isModeVAT2011 = true
+	'dim pGlobProf : set pGlobProf = nx_get_globprofile_obj(GLOBPROF_STAWKI_VAT2011)
+    'if not pGlobProf is nothing then
+		'if pGlobProf.Wartosc = cstr(1) then
+			'isModeVAT2011 = true
+		'end if
+	'end if
+end function
+
+'---------------------------------------------
+'zwraca true gdy ustawiony rok 2011 (nowy VAT)
+'---------------------------------------------
+private function isYear2011() : isYear2011 = false
+	if getCurrentDate() >= DateSerial(2011,1,1) then
+		isYear2011 = true
+	end if
+end function
+
+'-------------------------------------------------
+'zwraca true gdy ustawiony rok 2014 (VAT 23% o.o.)
+'-------------------------------------------------
+private function isYear2014() : isYear2014 = false
+	if getCurrentDate() >= DateSerial(2014,1,1) then
+		isYear2014 = true
+	end if
+end function
+
+'-------------------------------
+'JEDNOSTKA ORGANIZACYJNA
+'-------------------------------
+
+private function getCurrentJOID(): getCurrentJOID=CLng(0)
+	if (trans_.isvar(GVAR_CURR_JO)) then
+		getCurrentJOID=CLng(trans_.var(GVAR_CURR_JO))
+	end if
+end function
+
+private function getCurrentJO():set getCurrentJO=nothing
+	dim nJOIdObj
+	nJOIdObj = getCurrentJOID()
+
+	if (nJOIdObj > 0) then
+		set getCurrentJO = trans_.getobj(TYPEID_N5JEDN_ORG, nJOIdObj)
+	end if
+end function
+
+private function getCentrala() : set getCentrala = nothing
+	dim pFirma : set pFirma = getCurrentFirma()
+	if not pFirma is nothing then 
+		set getCentrala = pFirma.pMainJO
+	end if
+end function
+
+'-------------------------------
+'FIRMA
+'-------------------------------
+'-------------------------------
+'pobiera obiekt aktywanej firmy
+'-------------------------------
+private function getCurrentFirma():set getCurrentFirma=nothing
+	dim idFirma:idFirma=getCurrentFirmaID()
+
+	if (idFirma>0) then
+		set getCurrentFirma=trans_.getobj(TYPEID_N5FIRMA, idFirma)
+	end if
+end function
+
+'-------------------------------
+'pobiera obiekt aktywanej firmy - za³o¿enie jest takie iz w tablicy 
+'n5 firma moze istnieæ tylko jedna firma
+'-------------------------------
+private function getCurrentFirmaID():getCurrentFirmaID=CLng(0)
+	dim IdFirmy:IdFirmy = clng(0)
+	
+	if (trans_.isvar(GVAR_FIRMA)) then
+		IdFirmy = trans_.var(GVAR_FIRMA)
+	end if
+		
+	if IdFirmy = clng(0) then
+		IdFirmy = trans_.findobjid(TYPEID_N5FIRMA, "")
+	end if
+
+	trans_.var(GVAR_FIRMA) = IdFirmy
+	getCurrentFirmaID = IdFirmy
+end function
+
+
+
+'-------------------------------
+'PROFILE
+'-------------------------------
+
+'-------------------------------
+' zwraca wartosc profilu dla biezacego uzytkownika
+'-------------------------------
+private function getuserprofile(byval iIndex)
+	getuserprofile = nx_get_current_userprofile_value(iIndex)
+end function
+'-------------------------------
+'zwraca wartoœæ profilu dla podanego u¿ytkownika
+'-------------------------------
+private function getuserprofileByID(byval Index, byval IdUser)
+	getuserprofileByID = nx_get_userprofile_value(Index,IdUser)
+end function
+
+
+'-------------------------------
+'zwraca obiekt profilu dla bie¿¹cego u¿ytkownika
+'-------------------------------
+private function getuserprofileObj(byval Index)
+	dim pUserProfileObj
+	set pUserProfileObj = nx_get_userprofile_obj(Index,trans_.var(GVAR_USER))
+    If pUserProfileObj Is Nothing Then
+		set pUserProfileObj = trans_.newobj(TYPEID_USERPROFILE)
+		set pUserProfileObj.pn5user = trans_.getobj(TYPEID_N5UZYTKOWNIK, trans_.var(GVAR_USER))
+		pUserProfileObj.Indeks = clng(Index)
+	end if 
+	set getuserprofileObj = pUserProfileObj
+end function
+
+
+'-------------------------------
+'podobne jak getuserprofile tylko, ze zwraca 0 jezeli nie istnieje profil
+'lub wartosc w profilu nie jest liczba calkowita - uzywamy tylko dla
+'liczb calkowitych
+'-------------------------------
+private function getuserprofileLong(byval Index):	getuserprofileLong=CLng(0)
+	dim strResult
+	strResult=getuserprofile(Index)
+
+	if isNumeric(strResult) then
+		getuserprofileLong=CLng(strResult)
+	end if
+
+end function
+
+'-------------------------------
+'funckje do pamietania wartoœci typu BOOL w profilach
+'-------------------------------
+private function setuserprofileBOOL(byval Index, byval bValue)
+	dim strValue: strValue="0"
+	
+	if (bValue) then
+		strValue="1"
+	end if
+	
+	setuserprofile Index, strValue
+end function
+
+'REV:KB:DONE:
+'---------------------------------------------------------------------------
+' Funkcja konwertuje wartoœæ profilu do BOOL.
+' Jezlie profilu pusty lub = "1" to zwraca TRUE
+'---------------------------------------------------------------------------
+private function getuserprofileBOOL(byval Index): getuserprofileBOOL=false
+	dim strResult
+	strResult=getuserprofile(Index)
+
+	if (strResult="1" or strResult="") then
+		getuserprofileBOOL=true
+	end if
+end function
+
+'-------------------------------
+'ustawia wartoœæ profilu dla bie¿¹cego u¿ytkownika
+'-------------------------------
+private sub setuserprofile(byval Index,byval newValue)
+	getuserprofileObj(Index).Wartosc = cstr(newValue)
+end sub
+
+private sub setuserprofileByID(byval Index,byval newValue, byval idUser)
+	dim pUserProfileObj
+	set pUserProfileObj = nx_get_userprofile_obj(Index,idUser)
+    If pUserProfileObj Is Nothing Then
+		set pUserProfileObj = trans_.newobj(TYPEID_USERPROFILE)
+		set pUserProfileObj.pn5user = trans_.getobj(TYPEID_N5UZYTKOWNIK, idUser)
+		pUserProfileObj.Indeks = clng(Index)
+	end if 
+	pUserProfileObj.Wartosc = newValue
+end sub
+
+'-------------------------------
+'zwraca wartoœæ globalnego profilu
+'-------------------------------
+private function getglobprofile(byval Index)
+	getglobprofile = nx_get_globprofile_value(Index)
+end function
+
+private function getglobprofileLong(byval Index):getglobprofileLong=CLng(0)
+	dim strProf : strProf=getglobprofile(Index)
+	if isNumeric(strProf) then
+		getglobprofileLong=CLng(strProf)
+	end if
+end function
+
+private function getglobprofileObj(byval iIndeks): set getglobprofileObj=nothing
+	dim pGlobProfileObj : set pGlobProfileObj = nx_get_globprofile_obj(iIndeks)
+	if pGlobProfileObj is nothing then
+		set pGlobProfileObj = trans_.newobj(TYPEID_GLOBPROFILE)
+		pGlobProfileObj.indeks=clng(iIndeks)
+	end if
+	set getglobprofileObj = pGlobProfileObj
+end function
+
+'---------------------------------------------------------------------------
+' Funkcja konwertuje wartoœæ profilu do BOOL.
+' Jezlie profilu pusty lub = "1" to zwraca TRUE
+'---------------------------------------------------------------------------
+private function getglobprofileBOOL(byval Index): getglobprofileBOOL=false
+	dim strResult
+	strResult=getglobprofile(Index)
+
+	if (strResult="1" or strResult="") then
+		getglobprofileBOOL=true
+	end if
+end function
+
+'-------------------------------
+'ustawia wartoœæ globalnego profilu
+'-------------------------------
+private sub setglobprofile(byval Index,byval newValue)
+	getglobprofileObj(Index).Wartosc = cstr(newValue)
+end sub
+
+
+private function IsWykonawcaOfCurrUser(pWyk)	
+	IsWykonawcaOfCurrUser = getCurrentWykonawcaID() = pWyk.idobj
+end function
+
+#endif
+
+'-------------------------------
+'E-MAIL
+'-------------------------------
+
+class CMailAttachment
+	public pSO			'strumieñ za³acznika
+	public strName		'nazwa za³¹cznika
+end class
+
+'-------------------------------
+' RESZTA
+'-------------------------------
+
+private function Beep()
+	doc_.afc.display.sound 850, 250
+end function
+
+#endif
+
+

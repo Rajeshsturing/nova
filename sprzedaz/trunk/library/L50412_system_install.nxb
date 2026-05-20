@@ -1,0 +1,487 @@
+-- NAVO Enterprise 2002 System script for MS SQL Server 7.0+
+-- version: release version 1.00 (2003-12-31)
+
+raiserror('system_install begin ....',0,1)
+GO
+
+set nocount    on
+set dateformat dmy
+SET ANSI_PADDING OFF
+
+USE master
+
+-- creating logins
+--EXEC sp_MSgetversion
+
+
+--sprawdzenie wersji sql2000 or sql2005 i podstawienie odpowiedniego kodu przy pomocy replace() z m72002 sql_prepare_and_execute_script
+-- pod master..sysxlogins -> sys.syslogins lub nie podstawianie gdy sql2000
+
+if not exists (select * from master..sysxlogins where name = N'navo2002user')
+	BEGIN
+		declare @logindb nvarchar(132), @loginlang nvarchar(132) select @logindb = N'navo2002', @loginlang = N'polski'
+		if @loginlang is null or (not exists (select * from master..syslanguages where name = @loginlang) and @loginlang <> N'us_english')
+			select @loginlang = @@language
+		exec sp_addlogin N'navo2002user', N'y7410xru3', N'master', @loginlang
+	END
+else
+	BEGIN
+		exec sp_password @new='y7410xru3', @loginame='navo2002user'
+	END
+
+GO
+-- general granting procedure
+
+if exists (select * from sysobjects where name = 'n2001_makegrants')
+	drop procedure n2001_makegrants
+go
+
+create procedure n2001_makegrants(@username nchar(50)) with encryption
+as
+	declare cur cursor for select o.name as name, o.type as type from sysobjects o where ObjectProperty(o.id, 'IsMSShipped') = 0
+	open cur
+
+	declare @name nchar(100)
+	declare @type nchar(2)
+	fetch next from cur into @name, @type
+	while @@FETCH_STATUS = 0
+		begin
+			declare @text nchar(200), @what nchar(50)
+			set @what = NULL
+			set @type = rtrim(@type)
+			if ((@type = N'P') or (@type = N'FN'))
+				set @what = N'exec'
+			if ((@type = N'U') or (@type = N'V'))
+				set @what = N'select,insert,update,delete'
+			if @what IS NOT NULL
+				begin
+					set @text = N'grant ' + RTRIM(@what) + N' on ' + RTRIM(@name) + N' to ' + RTRIM(@username)
+					execute sp_executesql @text
+				end
+			fetch next from cur into @name, @type
+		end
+	close cur
+	deallocate cur
+	return 0
+go
+
+
+-- creating users on master
+if exists (select * from sysusers where name = N'navo2002user' and uid < 16382)
+	EXEC sp_revokedbaccess N'navo2002user'
+GO
+EXEC sp_grantdbaccess N'navo2002user', N'navo2002user'
+GO
+
+-- granting on master
+n2001_makegrants 'navo2002user'
+go
+
+if exists (select * from sysdatabases where name='%DBNAME%')
+begin
+	raiserror('dropping existing %DBNAME% database ....',0,1)
+	drop database %DBNAME%
+end
+go
+
+if (1=%LOCAL_INSTALL%)
+begin
+
+	exec master..xp_cmdshell 'md "%DBDIR%"'
+
+	-- create specified database
+	-- %DBDIR% - trzeba zamienic w skrypcie na path do katalogu Database
+	create database %DBNAME% on
+	(
+		NAME = %DBNAME%_dat,
+		FILENAME = '%DBDIR%\%DBNAME%.mdf'
+	)
+	log on
+	(
+		NAME = '%DBNAME%_log',
+		FILENAME = '%DBDIR%\%DBNAME%_log.ldf'
+	)
+
+end else begin
+	create database %DBNAME%
+end
+go
+
+CHECKPOINT
+GO
+
+USE %DBNAME%	
+
+-- general granting procedure
+
+if exists (select * from sysobjects where name = 'n2001_makegrants')
+	drop procedure n2001_makegrants
+go
+create procedure n2001_makegrants(@username nchar(50)) with encryption
+as
+	declare cur cursor for select o.name as name, o.type as type from sysobjects o where ObjectProperty(o.id, 'IsMSShipped') = 0
+	open cur
+
+	declare @name nchar(100)
+	declare @type nchar
+	fetch next from cur into @name, @type
+	while @@FETCH_STATUS = 0
+		begin
+			declare @text nchar(200), @what nchar(50)
+			set @what = NULL
+			if (@type = N'P')
+				set @what = N'exec'
+			if ((@type = N'U') or (@type = N'V'))
+				set @what = N'select,insert,update,delete'
+			if @what IS NOT NULL
+				begin
+					set @text = N'grant ' + RTRIM(@what) + N' on ' + RTRIM(@name) + N' to ' + RTRIM(@username)
+					execute sp_executesql @text
+				end
+			fetch next from cur into @name, @type
+		end
+	close cur
+	deallocate cur
+	return 0
+go
+
+execute sp_dboption '%DBNAME%' ,'trunc. log on chkpt.' ,'true'
+GO
+
+
+-- creating users on user database
+if exists (select * from sysusers where name = N'navo2002user' and uid < 16382)
+	EXEC sp_revokedbaccess N'navo2002user'
+GO
+EXEC sp_grantdbaccess N'navo2002user', N'navo2002user'
+GO
+
+-- for restore 
+sp_addsrvrolemember 'navo2002user','dbcreator'
+go
+-- adding roles (it can be tighter just for backup purpose i.e. db_backupoperator)
+sp_addrolemember 'db_owner','navo2002user'
+go
+
+--granting rights
+n2001_makegrants 'navo2002user'
+go
+
+
+-- system table: collections
+CREATE TABLE Collections
+(
+	IdObj			INTEGER,
+	IdParent		INTEGER,
+	LP				INTEGER,
+	IdCollection	INTEGER
+)
+go
+
+-- nie powtarzaj¹ce siê lp dla tego samego ojca
+CREATE UNIQUE INDEX NINXCollections2 ON Collections (IdParent,IdCollection,LP)
+go
+
+-- brak wspólnych dzieci (dziecko mo¿e wyst¹piæ tylko raz)
+CREATE UNIQUE INDEX NINXCollections3 ON Collections (IdCollection,IdObj)
+go
+
+create index NINXCollections4 on Collections(IdCollection,IdParent,LP,IdObj)
+go
+
+alter table Collections add constraint Collections_IdObj_1 check (IdObj > 0)
+go
+
+-- collections related system procedures
+create procedure
+navo2001_delcoll(@idparent_par integer,@idcollection_par integer)
+with encryption
+as
+delete from Collections where IdParent=@idparent_par AND IdCollection=@idcollection_par
+
+go
+
+
+create procedure
+navo2001_insertcoll(@idparent_par integer,@idcollection_par integer,@lp_par integer,@idobj_par integer)
+with encryption
+as
+insert into Collections(IdParent,IdCollection,LP,IdObj) values(@idparent_par,@idcollection_par,@lp_par,@idobj_par)
+go
+
+if exists (select * from sysobjects where name='navo2001_updatekey')
+	drop procedure navo2001_updatekey
+go
+
+-- filemapping subsystem -----------------------------
+create table StreamMap
+(
+	IdStream	INTEGER unique,
+	IdParent	INTEGER,
+	IdMapping	INTEGER,
+	VersionId   integer not null,	-- DB version: 3
+)
+go
+
+create unique index NINXStreamMap1 on StreamMap(IdMapping,IdParent)
+go
+create unique clustered index NINXStreamMap2 on StreamMap(IdMapping,IdParent,IdStream)
+go
+
+alter table StreamMap add constraint StreamMap_IdStream_1 check (IdStream > 0)
+go
+alter table StreamMap add constraint StreamMap_IdParent_1 check (IdParent > 0)
+go
+
+create procedure
+navo2001_delstrmap(@idparent_par integer,@idmapping_par integer)
+with encryption
+as
+delete from StreamMap where IdParent=@idparent_par AND IdMapping=@idmapping_par
+go
+
+create procedure
+navo2001_insstrmap(@idparent_par integer,@idmapping_par integer,@idstream_par integer)
+with encryption
+as
+insert into StreamMap(IdStream,IdParent,IdMapping,VersionId) values(@idstream_par,@idparent_par,@idmapping_par,1)
+go
+
+create procedure
+navo2001_updstrmap(@idparent_par integer,@idmapping_par integer,@versionid_par integer)
+with encryption
+as
+update StreamMap set VersionId=@versionid_par where IdParent=@idparent_par AND IdMapping=@idmapping_par
+go
+
+create procedure navo2001_selstrmap(@idparent_par integer,@idmapping_par integer,@idstream_par integer output,@versionid_par integer output) 
+with encryption 
+as 
+	select @idstream_par=IdStream,@versionid_par=VersionId from StreamMap where IdParent=@idparent_par AND IdMapping=@idmapping_par
+return @@rowcount
+go
+------------------------------------------------------
+
+create procedure
+navo2001_updatekey(@exprod_par varchar(8))
+with encryption
+as
+	--licence_get_exdata
+	declare @a1 integer
+	declare @a2 integer
+	select @a1=isNull(sum(len(strnazwa)), 0), @a2=isNull(sum(len(strindeks)),0) from n5klient
+
+	--poprzedni klucz
+	declare @strKontrola varchar(512), @strTmp varchar(512)
+	declare @iIdVersion int
+	select @strKontrola=strKontrola, @iIdVersion=VersionId from n5licencja where strKod=@exprod_par
+	-- decode strKontrola
+	declare @position int, @charVal int
+	set @position = 1
+	set @strTmp = ''
+	
+	while @position <= DATALENGTH(@strKontrola)
+	begin
+		set @charVal = ASCII(SUBSTRING(@strKontrola, @position, 1))
+		if (@position % 3 = 0)
+		begin
+			set @charVal = @charVal - 2
+			--GUCIO
+		end
+
+		set @strTmp = @strTmp + char(@charVal)
+		set @position = @position + 1
+	end
+	set @strKontrola = @strTmp
+	--end of deencode
+
+	--ustal nowa wersje rekordu - info dla cache NE, ze cos sie zmienilo
+	--i dane trzeba przeslac do klienta
+	set @iIdVersion=@iIdVersion+1
+
+	-- wyszukaj pierwszy znak "-" w stringu
+	declare @nFirstDash int
+	set @nFirstDash=patindex('%-%', @strKontrola)
+
+	--nowy klucz - domyslnie taki sam jak stary
+	declare @strNewKontrola varchar(512)
+	set @strNewKontrola=@strKontrola
+
+	--jezeli brak pierwszej "-" to klucz jest uszkodzony
+	if (@nFirstDash>0)
+	begin
+		--ustaw nowy klucz tzn. z nowym exdata
+		declare @strNewEx varchar(64)
+		set @strNewEx=cast(@a1 as varchar(64))
+
+		if (@strNewEx='0')
+		begin
+			set @strNewEx=''
+		end
+
+		set @strNewKontrola= 'B' + @strNewEx + substring(@strKontrola, @nFirstDash, len(@strKontrola)-@nFirstDash+1)
+	end
+
+	--licence_compose_key
+	if (@strNewKontrola!=@strKontrola)
+	begin
+		--encode strNewKontrola
+		set @position = 1
+		set @strTmp = ''
+		
+		while @position <= DATALENGTH(@strNewKontrola)
+		begin
+			set @charVal = ASCII(SUBSTRING(@strNewKontrola, @position, 1))
+			if (@position % 3 = 0)
+			begin
+				set @charVal = @charVal + 2
+				--GUCIO
+			end
+
+			set @strTmp = @strTmp + char(@charVal)
+			set @position = @position + 1
+		end
+		set @strNewKontrola = @strTmp
+		--end of encode
+
+		update n5licencja set strKontrola = @strNewKontrola,
+		VersionId=@iIdVersion where strKod=@exprod_par
+	end
+go
+
+create table FCDBId
+(
+	strDBID varchar(512) unique,
+	strFCG  varchar(512)
+)
+go
+
+create procedure
+navo2001_insertdbid(@strDBID_par varchar(512),@strFCG_par varchar(512))
+with encryption
+as
+	insert into FCDBId(strDBID,strFCG) values(@strDBID_par,@strFCG_par)
+go
+
+create procedure
+navo2001_selectdbid(@strDBID_par varchar(512),@strFCG_par varchar(512) output)
+with encryption
+as
+	select @strFCG_par = strFCG from FCDBId where strDBID=@strDBID_par
+go
+
+
+
+
+
+
+
+
+
+-- wy³¹czamy to na poziomie SQL --
+
+if(1=0)
+begin
+------------------------------------------------------------------
+-- skrypt automatycznej archiwizacji
+------------------------------------------------------------------
+BEGIN TRANSACTION            
+declare @param_sql_user_account nvarchar(64)
+declare @param_sql_database nvarchar(64)
+declare @param_backup_dir nvarchar(512)
+declare @strTmp nvarchar(512)
+
+
+------------------------------------------------------------------
+-- PARAMETRY DO ZMIANY
+------------------------------------------------------------------
+select @param_sql_user_account = N'%SQLLOGIN%'
+select @param_sql_database = N'%DBNAME%'
+select @param_backup_dir = N'%DBBACKUPDIR%' 
+------------------------------------------------------------------
+------------------------------------------------------------------
+print 'starting script'
+
+  DECLARE @JobID BINARY(16)  
+  DECLARE @ReturnCode INT    
+  SELECT @ReturnCode = 0     
+
+IF (SELECT COUNT(*) FROM msdb.dbo.syscategories WHERE name = N'Database Maintenance') < 1 
+  EXECUTE msdb.dbo.sp_add_category @name = N'Database Maintenance'
+
+  -- Delete the job with the same name (if it exists)
+  SELECT @JobID = job_id FROM   msdb.dbo.sysjobs WHERE (name = N'Zadanie archiwizacji w ramach ''Plan bezpieczenstwa''')       
+  IF (@JobID IS NOT NULL)    
+  BEGIN  
+  -- Check if the job is a multi-server job  
+  IF (EXISTS (SELECT  * 
+              FROM    msdb.dbo.sysjobservers 
+              WHERE   (job_id = @JobID) AND (server_id <> 0))) 
+  BEGIN 
+    -- There is, so abort the script 
+    RAISERROR (N'Unable to import job ''Zadanie archiwizacji w ramach ''Plan bezpieczenstwa'''' since there is already a multi-server job with this name.', 16, 1) 
+    GOTO QuitWithRollback  
+  END 
+  ELSE 
+	print 'deleted exiting job zadanie archiwizacji'
+    -- Delete the [local] job 
+    EXECUTE msdb.dbo.sp_delete_job @job_name = N'Zadanie archiwizacji w ramach ''Plan bezpieczenstwa''' 
+    SELECT @JobID = NULL
+  END 
+
+BEGIN 
+
+  print 'adding job zadanie archiwizacji'
+  EXECUTE @ReturnCode = msdb.dbo.sp_add_job @job_id = @JobID OUTPUT , @job_name = N'Zadanie archiwizacji w ramach ''Plan bezpieczenstwa''', 
+	@owner_login_name = @param_sql_user_account, @description = N'No description available.', @category_name = N'Database Maintenance', @enabled = 1, @notify_level_email = 2, @notify_level_page = 0, @notify_level_netsend = 0, @notify_level_eventlog = 2, @delete_level= 0, @notify_email_operator_name = N''
+  IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback 
+
+  -- Add the job steps
+  -- -BkUpOnlyIfClean -CkDBRepair 
+  select @strTmp  = N'EXECUTE master.dbo.xp_sqlmaint N''-D ' + @param_sql_database + 
+	' -VrfyBackup  -BkUpMedia DISK ' +
+	' -BkUpDB "' + @param_backup_dir + '" -DelBkUps 4WEEKS -CrBkSubDir -BkExt "BAK"'''
+  EXECUTE @ReturnCode = msdb.dbo.sp_add_jobstep @job_id = @JobID, @step_id = 1, @step_name = N'Step 1', @command = @strTmp, 
+	@database_name = N'master', @server = N'', @database_user_name = N'', @subsystem = N'TSQL', @cmdexec_success_code = 0, @flags = 4, @retry_attempts = 0, @retry_interval = 0, @output_file_name = N'', 
+	@on_success_step_id = 0, @on_success_action = 1, @on_fail_step_id = 0, @on_fail_action = 2
+  IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback 
+  EXECUTE @ReturnCode = msdb.dbo.sp_update_job @job_id = @JobID, @start_step_id = 1 
+
+  IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback 
+
+  -- Add the job schedules
+  EXECUTE @ReturnCode = msdb.dbo.sp_add_jobschedule @job_id = @JobID, @name = N'Schedule 1', @enabled = 1, @freq_type = 8, @active_start_date = 20030222, @active_start_time = 230000, @freq_interval = 62, @freq_subday_type = 1, @freq_subday_interval = 0, @freq_relative_interval = 0, @freq_recurrence_factor = 1, @active_end_date = 99991231, @active_end_time = 235959
+  IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback 
+
+  -- Add the Target Servers
+  EXECUTE @ReturnCode = msdb.dbo.sp_add_jobserver @job_id = @JobID, @server_name = N'(local)' 
+  IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback 
+
+  print 'job zadanie archiwizacji added'
+END
+
+COMMIT TRANSACTION          
+print 'script finished successfuly'
+
+GOTO   EndSave              
+QuitWithRollback:
+  print 'script rolling back'
+  IF (@@TRANCOUNT > 0) ROLLBACK TRANSACTION 
+EndSave: 
+
+end
+
+go
+
+
+
+
+
+
+
+
+
+
+raiserror('system_install finished ....',0,1)
+GO
+

@@ -1,0 +1,1318 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1001.h"
+#include "h1201.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1200.h"
+
+
+#comment makra dla formularzy
+#include "h1222.h"
+
+#comment Makra dla pitów
+#include "h1206.h"
+
+
+#comment Szablony dokumentów
+#include "h1234.h"
+
+
+#define FORM_SPAN		4
+#define RCELL_SPAN		3
+
+
+#define CTRLID_UZYTKREJ		1
+#define CTRLID_ZADANIE		2
+#define CTRLID_DOWKSIEG		3
+#define CTRLID_SCHEMAT		4
+#define CTRLID_TRANSAKCJA			5
+#define CTRLID_TRANSAKCJA_EDIT		6
+#define CTRLID_BTN_EXPORT_TO_XML	 7
+
+
+#define SECID_US						1000
+#define SECID_PODATNIK					1001
+#define SECID_ROZLICZENIE_TRANSAKCJI	1002
+#define SECID_ROZLICZENIE_PODATKU		1003
+#define SECID_OBLICZENIE_WYS_ZOOBOW		1004
+#define SECID_DODATKOWE					1005
+#define SECID_ZALACZNIKI				1006
+#define SECID_OSWIADCZENIE				1007
+
+#macro QXC_LABEL_VALUE_VAT(_label_,_field_)							\
+		<td keepline='true'>										\
+			<t size='5'>_label_</t>									\
+			QXE_CURRENCY_FIELD(-1,CTRL_CURR_SIZE,0,,_field_,)		\
+		</td>
+
+
+#define INCLUDE_BULID_CHOICELIST_TRANSAKCJA
+
+-->
+<page style='STYLE_PAGE'
+#ifdef _DEBUG
+border='1'
+#endif
+>
+<config>
+	<title>
+VAT-7
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+<typeid>TYPEID_N5ROZLVAT</typeid>
+<script>
+    <![CDATA[
+
+'asp_raport_appfile
+#include "50518"	
+
+#include "50222"
+#include "50200"
+#include "50514"
+
+'std_choice_list_hli_tran
+#include "50513"
+
+
+'Bulid_Choicelist_Transakcja_Row
+#include "50634"
+
+'selectfile
+#include "50123"
+
+#include "50610"
+
+
+
+
+#ifndef APPCONFIG_DEKLARACJE
+
+function fopen:fopen = std_fopen()
+	section_fopen THIS_FILE
+	
+	'ustawiamy sie na pierwszym rekordzie kursora
+	if not page_.cursoriter is nothing then
+		page_.root.ignore=true
+		silent_ffirst()		
+	end if
+end function
+
+function fsave
+	dim bSave: bSave=std_fsave()
+	if not bSave then
+		section_fsave THIS_FILE
+	end if
+	fsave=bSave
+end function
+
+
+function fclose:fclose = true
+	section_fclose THIS_FILE
+end function
+
+#ifdef _BARTEK
+'mod 0990
+if page_.root.vat7_curNadwyzkaNaliczNalez > 0 then
+dim pole_58 : pole_58 = (page_.root.vat7_curWDT + page_.root.vat7_curEksportTowarow)*0.22 + page_.root.vat7_curNabycieTowUslSrtrwPodatek
+page_.root.vat7_curNNNDoZwrotuRachBank = pole_58
+dim pole_62 : pole_62 = page_.root.vat7_curNadwyzkaNaliczNalez - page_.root.vat7_curNNNDoZwrotuRachBank
+end if
+#endif
+#endif
+
+
+QVX_PIT_REJESTRACJA(pt5,CTRLID_UZYTKREJ,CTRLID_ZADANIE,CTRLID_TRANSAKCJA,CTRLID_TRANSAKCJA_EDIT,CTRLID_DOWKSIEG,CTRLID_SCHEMAT)
+
+
+
+#ifdef APPCONFIG_DEKLARACJE
+
+function fopen:fopen = true
+end function
+
+
+'getUserDirectory()
+#include "50212"
+
+
+'selectfile
+#include "50123"
+
+'fopen,fsave, itd...
+#include "50632"
+
+
+
+#endif
+
+
+function print_page(hli)
+
+#ifdef APPCONFIG_DEKLARACJE
+	if check_licence(page_.root.vat7_strNIPPlatnik , page_.root.vat7_dDataOd) then
+		trans_.var(4040) = clng(1)	
+	else
+		trans_.var(4040) = clng(0)
+	end if
+#else
+	trans_.var(4040) = clng(1)
+#endif
+
+
+	dim pHLI : set pHLI = asp_object_appfile_hli(hli.prop(1),page_.root)
+	if not pHLI is nothing then
+		pHLI.prop(GVAR_NEWTHREAD) = 1
+
+		dim pPage : set pPage = doc_.getpagehli(pHLI)
+		pPage.domodalauto()
+	end if
+
+end function
+
+
+QVX_PIT_REJESTRACJA(vat7,CTRLID_UZYTKREJ,CTRLID_ZADANIE,CTRLID_TRANSAKCJA,CTRLID_TRANSAKCJA_EDIT,CTRLID_DOWKSIEG,CTRLID_SCHEMAT)
+
+
+
+function wypelnij()
+	dim pM60238 : set pM60238 = doc_.getmodule(60238)
+	pM60238.fill_VAT7_from_EB page_.root
+end function
+
+function getVat7Folder(byref pVat7)
+	getVat7Folder=getUserDirectory() + "\" + pVat7.getobjdef.humanname
+end function
+
+function normalize_text_for_filename(byval strText)
+	normalize_text_for_filename = replace(replace(replace(replace(strText," ","_"),"/","_"),"\","_"),":","_")
+end function
+
+'--------------
+'Eksport do xml
+'--------------
+function export_to_xml()
+  if not trans_.saveobjects () then
+	  exit function
+  end if
+  if not export_vat7_to_xml(page_.root) then
+	  exit function
+  end if
+  trans_.discard
+end function
+
+'----------------------
+'Eksportuje vat7 do xml
+'----------------------
+function export_vat7_to_xml(byval pVat7): export_vat7_to_xml = false
+  dim pFD, bOK
+  set pFD = CFileDrive(bOK)
+
+  if (not bOK) then
+    view_message 6161, 0
+    exit function
+  end if
+
+  'tworzymy katalog user'a jezeli go nie ma
+  if (not checkUserDirectory()) then
+    view_message1 6063, 0, cstr(getUserDirectory())
+    exit function
+  end if
+  
+  dim strVatFolder: strVatFolder = getVat7Folder(pVat7) + " XML"
+
+  'tworzymy teraz katalog ale dla danego user'a i rodzaju deklaracji
+  if (not pFD.IsFolder(strVatFolder)) then
+    if (not pFD.CreatePath(strVatFolder)) then
+      view_message1 6064, 0, cstr(strVatFolder)
+      exit function
+    end if
+  end if
+
+  dim strStartPath: strStartPath = strVatFolder + "\" + normalize_text_for_filename("VAT7_"  + cstr(year(pVat7.vat7_dDataOd)) + "_" + Right(CStr(100 + Month(pVat7.vat7_dDataOd)),2))
+  dim strStartFile: strStartFile = pFD.GetFileName(strStartPath)
+  strStartPath = pFD.GetPath( strStartPath )
+
+  dim strFolderName: strFolderName = SelectFolderNewFile(strStartPath, strStartFile)
+  dim strFileName
+  strFileName = pFD.GetFileName(strFolderName)
+		
+  if (pFD.GetFileExtension(strFileName) = "" and strFileName <> "") then
+    strFolderName = strFolderName + ".xml"
+  end if
+  
+  strFileName = pFD.GetFileName(strFolderName)
+  strVatFolder = pFD.getFolderName(strFolderName)
+
+  if strFolderName <> "" then
+    dim pSO : set pSO = doc_.createstreamobj
+    vat_to_xml pVat7, pSO
+    pSO.save strFolderName
+    export_vat7_to_xml = true
+    MessageBox "Plik został zapisany w lokalizacji: " + strVatFolder + vbNewLine + "Pod nazwą: " + strFileName, "Eksport do xml", vbOKOnly, vbInformation
+  end if
+
+end function
+
+function vat_to_xml(byref pVat7, byref pSO)
+  write_header pVat7, pSO
+  write_part_A pVat7, pSO
+  write_part_B pVat7, pSO  
+  write_part_CDE pVat7, pSO
+  'write_part_DEF pVat7, pSO
+  write_footer pVat7, pSO
+end function
+
+'---------------
+'nagłówek pliku
+'---------------
+function write_header(byref pVat7, byref pSO)
+  pSO.write "<?xml version=""1.0"" encoding=""windows-1250""?>" + vbCrLf
+  pSO.write "<Deklaracja xmlns=""http://crd.gov.pl/wzor/2019/11/08/8836/"" xmlns:etd=""http://crd.gov.pl/xml/schematy/dziedzinowe/mf/2018/08/24/eD/DefinicjeTypy/"">" + vbCrLf
+  pSO.write "<Naglowek>" + vbCrLf
+  pSO.write "<KodFormularza kodSystemowy=""VAT-7 (20)"" kodPodatku=""VAT"" rodzajZobowiazania=""Z"" wersjaSchemy=""1-0E"">VAT-7</KodFormularza>" + vbCrLf
+  pSO.write "<WariantFormularza>20</WariantFormularza>" + vbCrLf
+end function
+
+'------------------
+'część A deklaracji
+'------------------
+function write_part_A(byref pVat7, byref pSO)
+  dim strCel: strCel = "1"
+  if pVat7.vat7_cKorekta = "1" then
+    strCel = "2"
+  end if
+  pSO.write "<CelZlozenia poz=""P_7"">" + strCel + "</CelZlozenia>" + vbCrLf
+  pSO.write "<Rok>" + CStr(year(pVat7.vat7_dDataOd)) + "</Rok>" + vbCrLf
+  pSO.write "<Miesiac>" + CStr(month(pVat7.vat7_dDataOd)) + "</Miesiac>" + vbCrLf
+  
+  dim strKodUrzedu: strKodUrzedu = ""
+  if not pVat7.vat7_pUrzadSkarbowy is nothing then
+    strKodUrzedu = pVat7.vat7_pUrzadSkarbowy.strTel2
+  end if
+  pSO.write "<KodUrzedu>" + strKodUrzedu + "</KodUrzedu>" + vbCrLf
+  
+  pSO.write "</Naglowek>" + vbCrLf
+end function
+
+'------------------
+'część B deklaracji
+'------------------
+function write_part_B(byref pVat7, byref pSO)
+  pSO.write "<Podmiot1 rola=""Podatnik"">" + vbCrLf
+  if pVat7.vat7_eTypPlatnika = 1 then 'Podatnik niebędacy osobą fizyczną
+    pSO.write "<OsobaNiefizyczna>" + vbCrLf
+    pSO.write "<NIP>" + Replace(pVat7.vat7_strNIPPlatnik,"-","") + "</NIP>" + vbCrLf
+    pSO.write "<PelnaNazwa>" + UCase(pVat7.vat7_strNazwaPlatnik) + "</PelnaNazwa>" + vbCrLf    
+    pSO.write "</OsobaNiefizyczna>" + vbCrLf
+  else  'osoba fizyczna
+    pSO.write "<OsobaFizyczna>" + vbCrLf
+    pSO.write "<NIP>" + Replace(pVat7.vat7_strNIPPlatnik,"-","") + "</NIP>" + vbCrLf
+    pSO.write "<ImiePierwsze>" + UCase(pVat7.vat7_strImiePlatnik) + "</ImiePierwsze>" + vbCrLf
+    pSO.write "<Nazwisko>" + UCase(pVat7.vat7_strNazwiskoPlatnik) + "</Nazwisko>" + vbCrLf
+    pSO.write "<DataUrodzenia>" + nx_.display.fulldate(pVat7.vat7_dDataUrPlatnik) + "</DataUrodzenia>" + vbCrLf
+    pSO.write "</OsobaFizyczna>" + vbCrLf  
+  end if
+  pSO.write "</Podmiot1>" + vbCrLf
+end function
+
+'------------------------
+'część C, D, E deklaracji
+'------------------------
+function write_part_CDE(byref pVat7, byref pSO)
+  pSO.write "<PozycjeSzczegolowe>" + vbCrLf
+  PSO.write "<P_10>" + Replace(CStr(liczba(pVat7.vat7_curDostawyUslugiKrajZW))," ","") + "</P_10>" + vbCrLf
+  PSO.write "<P_11>" + Replace(CStr(liczba(pVat7.vat7_curDostawyUslugiPozaKrajZW))," ","") + "</P_11>" + vbCrLf
+  PSO.write "<P_12>" + Replace(CStr(liczba(pVat7.vat7_curDostawyUslugiPozaKrajZW_Art100))," ","") + "</P_12>" + vbCrLf
+  PSO.write "<P_13>" + Replace(CStr(liczba(pVat7.vat7_curDostawyUslugiKraj0))," ","") + "</P_13>" + vbCrLf
+  PSO.write "<P_14>" + Replace(CStr(liczba(pVat7.vat7_curDostawyUslugiKraj0Art129))," ","") + "</P_14>" + vbCrLf
+  PSO.write "<P_15>" + Replace(CStr(liczba(pVat7.vat7_curDostawyUslugiKraj3))," ","") + "</P_15>" + vbCrLf
+  PSO.write "<P_16>" + Replace(CStr(liczba(pVat7.vat7_curDostawyUslugiKraj3Podatek))," ","") + "</P_16>" + vbCrLf
+  PSO.write "<P_17>" + Replace(CStr(liczba(pVat7.vat7_curDostawyUslugiKraj7))," ","") + "</P_17>" + vbCrLf
+  PSO.write "<P_18>" + Replace(CStr(liczba(pVat7.vat7_curDostawyUslugiKraj7Podatek))," ","") + "</P_18>" + vbCrLf
+  PSO.write "<P_19>" + Replace(CStr(liczba(pVat7.vat7_curDostawyUslugiKraj22))," ","") + "</P_19>" + vbCrLf
+  PSO.write "<P_20>" + Replace(CStr(liczba(pVat7.vat7_curDostawyUslugiKraj22Podatek))," ","") + "</P_20>" + vbCrLf
+  PSO.write "<P_21>" + Replace(CStr(liczba(pVat7.vat7_curWDT))," ","") + "</P_21>" + vbCrLf
+  PSO.write "<P_22>" + Replace(CStr(liczba(pVat7.vat7_curEksportTowarow))," ","") + "</P_22>" + vbCrLf
+  PSO.write "<P_23>" + Replace(CStr(liczba(pVat7.vat7_curWNT))," ","") + "</P_23>" + vbCrLf
+  PSO.write "<P_24>" + Replace(CStr(liczba(pVat7.vat7_curWNTPodatek))," ","") + "</P_24>" + vbCrLf
+  PSO.write "<P_25>" + Replace(CStr(liczba(pVat7.vat7_curImportTowarow))," ","") + "</P_25>" + vbCrLf
+  PSO.write "<P_26>" + Replace(CStr(liczba(pVat7.vat7_curImportTowarowPodatek))," ","") + "</P_26>" + vbCrLf
+  PSO.write "<P_27>" + Replace(CStr(liczba(pVat7.vat7_curImportUslug))," ","") + "</P_27>" + vbCrLf
+  PSO.write "<P_28>" + Replace(CStr(liczba(pVat7.vat7_curImportUslugPodatek))," ","") + "</P_28>" + vbCrLf
+  PSO.write "<P_29>" + Replace(CStr(liczba(pVat7.vat7_curImportUslug_Art28b))," ","") + "</P_29>" + vbCrLf
+  PSO.write "<P_30>" + Replace(CStr(liczba(pVat7.vat7_curImportUslugPodatek_Art28b))," ","") + "</P_30>" + vbCrLf
+  PSO.write "<P_31>" + Replace(CStr(liczba(pVat7.vat7_curDostawaTowarowSprzedaz))," ","") + "</P_31>" + vbCrLf
+  PSO.write "<P_32>" + Replace(CStr(liczba(pVat7.vat7_curDostawaPodNab1_5))," ","") + "</P_32>" + vbCrLf
+  PSO.write "<P_33>" + Replace(CStr(liczba(pVat7.vat7_curDostawaPodNabPodatek1_5))," ","") + "</P_33>" + vbCrLf
+  PSO.write "<P_34>" + Replace(CStr(liczba(pVat7.vat7_curDostawaPodNab))," ","") + "</P_34>" + vbCrLf
+  PSO.write "<P_35>" + Replace(CStr(liczba(pVat7.vat7_curDostawaPodNabPodatek))," ","") + "</P_35>" + vbCrLf
+  PSO.write "<P_36>" + Replace(CStr(liczba(pVat7.vat7_curKwotaPodatkuSpis))," ","") + "</P_36>" + vbCrLf
+  PSO.write "<P_37>" + Replace(CStr(liczba(pVat7.vat7_curPodatekPojazdy))," ","") + "</P_37>" + vbCrLf
+  PSO.write "<P_38>" + Replace(CStr(liczba(pVat7.vat7_curKwotaPodatkuTransport))," ","") + "</P_38>" + vbCrLf
+  PSO.write "<P_39>" + Replace(CStr(liczba(pVat7.vat7_curKwotaPodatkuNabyciaPaliw))," ","") + "</P_39>" + vbCrLf
+  PSO.write "<P_40>" + Replace(CStr(liczba(pVat7.vat7_curPodstawaPodatkuRazem))," ","") + "</P_40>" + vbCrLf
+  PSO.write "<P_41>" + Replace(CStr(liczba(pVat7.vat7_curKwotaPodatkuRazem))," ","") + "</P_41>" + vbCrLf
+  PSO.write "<P_42>" + Replace(CStr(liczba(pVat7.vat7_curNadwyzkaPop))," ","") + "</P_42>" + vbCrLf
+  PSO.write "<P_43>" + Replace(CStr(liczba(pVat7.vat7_curNabycieTowUslSrtrwNetto))," ","") + "</P_43>" + vbCrLf
+  PSO.write "<P_44>" + Replace(CStr(liczba(pVat7.vat7_curNabycieTowUslSrtrwPodatek))," ","") + "</P_44>" + vbCrLf
+  PSO.write "<P_45>" + Replace(CStr(liczba(pVat7.vat7_curNabycieTowUslNetto))," ","") + "</P_45>" + vbCrLf
+  PSO.write "<P_46>" + Replace(CStr(liczba(pVat7.vat7_curNabycieTowUslPodatek))," ","") + "</P_46>" + vbCrLf
+  PSO.write "<P_47>" + Replace(CStr(liczba(pVat7.vat7_curKorektaNabycieSrTrwPodatek))," ","") + "</P_47>" + vbCrLf
+  PSO.write "<P_48>" + Replace(CStr(liczba(pVat7.vat7_curKorektaNabyciePodatek))," ","") + "</P_48>" + vbCrLf
+  PSO.write "<P_49>" + Replace(CStr(liczba(pVat7.vat7_curKorektaPodatkuArt89b))," ","") + "</P_49>" + vbCrLf
+  PSO.write "<P_50>" + Replace(CStr(liczba(pVat7.vat7_curKorektaPodatkuArt89bUst4))," ","") + "</P_50>" + vbCrLf
+  PSO.write "<P_51>" + Replace(CStr(liczba(pVat7.vat7_curRazemPodatekOdl))," ","") + "</P_51>" + vbCrLf
+  PSO.write "<P_52>" + Replace(CStr(liczba(pVat7.vat7_curZakupKas))," ","") + "</P_52>" + vbCrLf
+  PSO.write "<P_53>" + Replace(CStr(liczba(pVat7.vat7_curKwotaZaniechPob))," ","") + "</P_53>" + vbCrLf
+  PSO.write "<P_54>" + Replace(CStr(liczba(pVat7.vat7_curKwotaWplataUS))," ","") + "</P_54>" + vbCrLf
+  PSO.write "<P_55>" + Replace(CStr(liczba(pVat7.vat7_curZakupKasZwrot))," ","") + "</P_55>" + vbCrLf
+  PSO.write "<P_56>" + Replace(CStr(liczba(pVat7.vat7_curNadwyzkaNaliczNalez))," ","") + "</P_56>" + vbCrLf
+  PSO.write "<P_57>" + Replace(CStr(liczba(pVat7.vat7_curNNNDoZwrotuRachBank))," ","") + "</P_57>" + vbCrLf
+	
+  if pVat7.vat7_curNaRachunekVAT > ccur(0) then
+    PSO.write "<P_58>" + Replace(CStr(liczba(pVat7.vat7_curNaRachunekVAT))," ","") + "</P_58>" + vbCrLf
+  end if	
+  if pVat7.vat7_curNNNDoZwrotu25 > ccur(0) then
+    PSO.write "<P_59>" + Replace(CStr(liczba(pVat7.vat7_curNNNDoZwrotu25))," ","") + "</P_59>" + vbCrLf
+  end if
+  if pVat7.vat7_curNNNDoZwrotu60 > ccur(0) then
+    PSO.write "<P_60>" + Replace(CStr(liczba(pVat7.vat7_curNNNDoZwrotu60))," ","") + "</P_60>" + vbCrLf
+  end if
+  PSO.write "<P_61>" + Replace(CStr(liczba(pVat7.vat7_curNNNDoZwrotu180))," ","") + "</P_61>" + vbCrLf
+  PSO.write "<P_62>" + Replace(CStr(liczba(pVat7.vat7_curNNNDoPrzeniesienia))," ","") + "</P_62>" + vbCrLf
+  
+  dim strCzynnosci: strCzynnosci = page_.root.vat7_strCzynnosc
+  if mid(strCzynnosci,1,1) = "1" then
+    PSO.write "<P_63>1</P_63>" + vbCrLf
+  end if
+  if mid(strCzynnosci,2,1) = "1" then
+    PSO.write "<P_64>1</P_64>" + vbCrLf
+  end if  
+  if mid(strCzynnosci,3,1) = "1" then
+    PSO.write "<P_65>1</P_65>" + vbCrLf
+  end if 
+  if mid(strCzynnosci,4,1) = "1" then
+    PSO.write "<P_66>1</P_66>" + vbCrLf
+  end if
+	
+  if page_.root.vat7_strObnizenieZobowPodatkow = "1" then
+    PSO.write "<P_67>1</P_67>" + vbCrLf
+  end if
+  if page_.root.vat7_strZwrotPodatkuVAT = "1" then
+    PSO.write "<P_68>1</P_68>" + vbCrLf
+  end if
+  if page_.root.vat7_strFakturaArt106e = "1" then
+    PSO.write "<P_69>1</P_69>" + vbCrLf
+  end if
+
+  dim bZalacznikZD: bZalacznikZD = false
+  if page_.root.vat7_strZawiadSkorygPodstawy = "1" then
+    PSO.write "<P_70>1</P_70>" + vbCrLf
+    bZalacznikZD = true
+  else
+    PSO.write "<P_70>2</P_70>" + vbCrLf
+  end if
+
+  if trim(page_.root.vat7_strEmail) <> "" then
+    PSO.write "<P_73>" + trim(page_.root.vat7_strEmail) + "</P_73>" + vbCrLf
+  end if
+
+  if trim(page_.root.vat7_strTelefonRej) <> "" then
+    PSO.write "<P_74>" + trim(page_.root.vat7_strTelefonRej) + "</P_74>" + vbCrLf
+  end if
+  
+  PSO.write "<P_75>" + trans_.afc.display.fulldate(page_.root.vat7_dDataWyp) + "</P_75>" + vbCrLf
+  
+  pSO.write "</PozycjeSzczegolowe>" + vbCrLf
+  pSO.write "<Pouczenia>1</Pouczenia>" + vbCrLf
+  
+  if bZalacznikZD then
+    pSO.write "<Zalaczniki>" + vbCrLf
+    pSO.write "<vzd:Wniosek_VAT-ZD xmlns:vzd=""http://crd.gov.pl/xml/schematy/dziedzinowe/mf/2019/02/07/eD/VATZD/"">" + vbCrLf
+    pSO.write "<vzd:Naglowek>" + vbCrLf
+    pSO.write "<vzd:KodFormularza kodSystemowy=""VAT-ZD (1)"" wersjaSchemy=""3-0E"">VAT-ZD</vzd:KodFormularza>" + vbCrLf
+    pSO.write "<vzd:WariantFormularza>1</vzd:WariantFormularza>" + vbCrLf
+    pSO.write "</vzd:Naglowek>" + vbCrLf
+    pSO.write "<vzd:PozycjeSzczegolowe>" + vbCrLf
+    pSO.write "<vzd:P_B typ=""G"">" + vbCrLf
+    pSO.write "<vzd:P_BB/>" + vbCrLf
+    pSO.write "<vzd:P_BC/>" + vbCrLf
+    pSO.write "<vzd:P_BD1/>" + vbCrLf
+    pSO.write "<vzd:P_BD2/>" + vbCrLf
+    pSO.write "<vzd:P_BE/>" + vbCrLf
+    pSO.write "<vzd:P_BF/>" + vbCrLf
+    pSO.write "<vzd:P_BG/>" + vbCrLf
+    pSO.write "</vzd:P_B>" + vbCrLf
+    pSO.write "<vzd:P_10>0</vzd:P_10>" + vbCrLf
+    pSO.write "<vzd:P_11>0</vzd:P_11>" + vbCrLf
+    pSO.write "</vzd:PozycjeSzczegolowe>" + vbCrLf
+    pSO.write "</vzd:Wniosek_VAT-ZD>" + vbCrLf  
+    pSO.write "</Zalaczniki>" + vbCrLf
+  end if
+end function
+
+'-------------
+'koniec pliku
+'-------------
+function write_footer(byref pVat7, byref pSO)
+  pSO.write "</Deklaracja>"
+end function
+
+
+]]></script>
+</config>
+<header>
+</header>
+<body>
+
+QXF_BEGIN
+
+
+
+		<tr>
+			<td  colspan='5' keepline='true'>
+				<t>Od</t>
+				<t size='2'></t>
+				QXE_DATE_FIELD(-1,vat7_dDataOd)				
+				<t size='2'></t>
+				<t>do</t>
+				<t size='2'></t>
+				QXE_DATE_FIELD(-1,vat7_dDataDo)				
+			</td>
+		</tr>
+#ifndef APPCONFIG_DEKLARACJE
+		<tr>
+			<td colspan='5'>
+				QXE_BUTTON(-1,15,Wypełnij,varFunction="wypelnij")
+			</td>
+		</tr>
+#endif
+
+		QXS_BEGIN_REQ_PIT(SECID_US,A. MIEJSCE i CEL SKŁADANIA DEKLARACJI,FORM_SPAN)
+			#ifndef APPCONFIG_DEKLARACJE
+				QXR_EDIT_REF_REQ(Urząd skarbowy,-1,40,PICTURE_CHOICE_N5INSTYTUCJA,vat7_pUrzadSkarbowy,strNazwa,CURSOR_PO_URZEDACH_SKARBOWYCH,RCELL_SPAN)		
+
+			#else
+				QXR_EDIT_FIELD(Urząd skarbowy,-1,40,vat7_strUS,RCELL_SPAN)
+			#endif
+
+			<tr>
+				<td colspan='FORM_SPAN'>
+					<checkbox border='0'>						
+						<t>Korekta deklaracji</t>
+							<transfer mode='edit_field'>
+								<field>vat7_cKorekta</field>
+							</transfer>
+					</checkbox>																								
+				</td>														
+			</tr>
+
+		QXS_END_REQ_PIT(FORM_SPAN)
+
+		QXS_BEGIN_REQ_PIT(SECID_PODATNIK,B. DANE PODATNIKA,FORM_SPAN)
+			<tr>
+				QXC_LABEL(Typ płatnika,1)
+				QXC_RADIO2_FIELD(-1,nie będący osobą fizyczną,osoba fizyczna,vat7_eTypPlatnika,RCELL_SPAN)
+			</tr>
+			QXR_EDIT_FIELD(NIP,-1,40,vat7_strNIPPlatnik,RCELL_SPAN)
+			QXR_EDIT_FIELD(Nazwa,-1,40,vat7_strNazwaPlatnik,RCELL_SPAN)
+			QXR_EDIT_FIELD(Nazwisko,-1,40,vat7_strNazwiskoPlatnik,RCELL_SPAN)
+			QXR_EDIT_FIELD(Imię,-1,40,vat7_strImiePlatnik,RCELL_SPAN)
+			QXR_DATE_FIELD(Data urodzenia,-1,vat7_dDataUrPlatnik,1)
+		QXS_END_REQ_PIT(FORM_SPAN)    
+
+
+		QXS_BEGIN_REQ_PIT(SECID_ROZLICZENIE_TRANSAKCJI,C. ROZLICZENIE TRANSAKCJI PODLEGAJĄCYCH OPODATKOWANIU ORAZ PODATKU NALEŻNEGO,FORM_SPAN)
+
+		<tr>
+			<td colspan='FORM_SPAN'>
+				<table style='STYLE_TABLE_PIT' border='1'>
+					<tbody>
+						<tr>							
+							<td align='left'>
+								QXE_LABEL_REQ(C.1. Dostawa towarów i usług)
+							</td>
+							<td align='center'>
+								QXE_LABEL_REQ(Podstawa opodatkowania)
+							</td>
+							<td align='center'>
+								QXE_LABEL_REQ(Podatek nalezny)
+							</td>							
+						</tr>
+
+						<tr>
+							<td>
+								<text size='60'>
+									1. Dostawa towarów oraz świadczenia usług na terytorium kraju, zwolniona od podatku
+								</text>
+								<br/>
+								<br/>
+							</td>
+							QXC_LABEL_VALUE_VAT(10.,vat7_curDostawyUslugiKrajZW)
+							<td/>
+						</tr>
+
+						<tr>
+							<td>
+								<text size='60'>
+									2. Dostawa towarów oraz świadczenia usług poza terytorium kraju
+								</text>
+								<br/>
+								<br/>
+							</td>
+							QXC_LABEL_VALUE_VAT(11.,vat7_curDostawyUslugiPozaKrajZW)
+							<td/>
+						</tr>
+
+						<tr>
+							<td>
+								<text size='60'>
+									2a. w tym świadczenie usług, o których mowa w art.100 ust.1 pkt 4 ustawy
+								</text>
+								<br/>
+								<br/>
+							</td>
+							QXC_LABEL_VALUE_VAT(12.,vat7_curDostawyUslugiPozaKrajZW_Art100)
+							<td/>
+						</tr>            
+
+						<tr>
+							<td>
+								<text size='60'>
+									3. Dostawa towarów oraz świadczenie usług, na terytorium kraju opodatkowana stawką 0%
+								</text>
+								<br/>
+								<br/>
+							</td>
+							QXC_LABEL_VALUE_VAT(13.,vat7_curDostawyUslugiKraj0)
+							<td/>
+						</tr>
+
+						<tr>
+							<td>
+								<text size='60'>
+									3a. w tym dostawa towarów o ktorej mowa w art. 129 ustawy
+								</text>
+								<br/>
+								<br/>
+							</td>
+							QXC_LABEL_VALUE_VAT(14.,vat7_curDostawyUslugiKraj0Art129)
+							<td/>
+						</tr>
+
+						<tr>
+							<td>
+								<text size='60'>
+									4. Dostawa towarów oraz świadczenie usług na terytorium kraju, opodatkowane stawką 5%
+								</text>
+								<br/>
+								<br/>
+							</td>
+							QXC_LABEL_VALUE_VAT(15.,vat7_curDostawyUslugiKraj3)
+							QXC_LABEL_VALUE_VAT(16.,vat7_curDostawyUslugiKraj3Podatek)
+						</tr>
+
+						<tr>
+							<td>
+								<text size='60'>
+									5. Dostawa towarów oraz świadczenie usług, na terytorium kraju opodatkowana stawką odpowiednio 7% albo 8%
+								</text>
+								<br/>
+								<br/>
+							</td>
+							QXC_LABEL_VALUE_VAT(17.,vat7_curDostawyUslugiKraj7)
+							QXC_LABEL_VALUE_VAT(18.,vat7_curDostawyUslugiKraj7Podatek)
+						</tr>
+
+
+
+						<tr>
+							<td>
+								<text size='60'>
+									6. Dostawa towarów oraz świadczenie usług, na terytorium kraju opodatkowana stawką odpowiednio 22% albo 23%
+								</text>
+								<br/>
+								<br/>
+							</td>
+							QXC_LABEL_VALUE_VAT(19.,vat7_curDostawyUslugiKraj22)
+							QXC_LABEL_VALUE_VAT(20.,vat7_curDostawyUslugiKraj22Podatek)
+						</tr>
+
+
+						<tr>
+							<td>
+								<text size='60'>
+									7. Wewnątrzwspólnotowa dostawa towarów
+								</text>
+								<br/>
+								<br/>
+							</td>
+							QXC_LABEL_VALUE_VAT(21,vat7_curWDT)
+							<td/>
+						</tr>
+
+
+
+						<tr>
+							<td>
+								<text size='60'>
+									8. Eksport towarów
+								</text>
+								<br/>
+								<br/>
+							</td>
+							QXC_LABEL_VALUE_VAT(22,vat7_curEksportTowarow)
+							<td/>
+						</tr>
+
+
+						<tr>
+							<td>
+								<text size='60'>
+									9. Wewnątrzwspolnotowe nabycie towarów
+								</text>
+								<br/>
+								<br/>
+							</td>
+							QXC_LABEL_VALUE_VAT(23.,vat7_curWNT)
+							QXC_LABEL_VALUE_VAT(24.,vat7_curWNTPodatek)
+						</tr>
+		
+						<tr>
+							<td>
+								<text size='60'>
+									10. Import towarów, podlegających rozliczeniu zgodnie z art.33a ustawy
+								</text>
+								<br/>
+								<br/>
+							</td>
+								QXC_LABEL_VALUE_VAT(25.,vat7_curImportTowarow)
+								QXC_LABEL_VALUE_VAT(26.,vat7_curImportTowarowPodatek)
+						</tr>
+
+						<tr>
+							<td>
+								<text size='60'>
+									11. Import usług z wyłączeniem usług nabywanych od podatników podatku od wartości dodanej, do których stosuje się art. 28b ustawy
+								</text>
+								<br/>
+								<br/>
+							</td>
+							QXC_LABEL_VALUE_VAT(27.,vat7_curImportUslug)
+							QXC_LABEL_VALUE_VAT(28.,vat7_curImportUslugPodatek)
+						</tr>
+
+						<tr>
+							<td>
+								<text size='60'>
+									12. Import usług nabywanych od podatników podatku od wartości dodanej, do których stosuje się art. 28b ustawy
+								</text>
+								<br/>
+								<br/>
+							</td>
+							QXC_LABEL_VALUE_VAT(29.,vat7_curImportUslug_Art28b)
+							QXC_LABEL_VALUE_VAT(30.,vat7_curImportUslugPodatek_Art28b)
+						</tr>
+
+
+            <tr>
+              <td>
+                <text size='60'>
+                  13. Dostawa towarów oraz świadczenie usług, dla których podatnikiem jest nabywca zgodnie z art. 17 ust. 1 lub 8 ustawy
+                </text>
+                <br/>
+                <br/>
+              </td>
+              QXC_LABEL_VALUE_VAT(31.,vat7_curDostawaTowarowSprzedaz)
+              <td/>
+            </tr>
+
+
+            <tr>
+              <td>
+                <text size='60'>
+                  14. Dostawa towarów, dla których podatnikiem jest nabywca zgodnie z art. 17 ust. 1 pkt 5 ustawy
+                </text>
+                <br/>
+                <br/>
+              </td>
+              QXC_LABEL_VALUE_VAT(32.,vat7_curDostawaPodNab1_5)
+              QXC_LABEL_VALUE_VAT(33.,vat7_curDostawaPodNabPodatek1_5)
+            </tr>            
+            
+
+						<tr>
+							<td>
+								<text size='60'>
+									15. Dostawa towarów oraz świadczenie usług, dla których podatnikiem jest nabywca zgodnie z art. 17 ust. 1 pkt 7 lub 8 ustawy
+								</text>
+								<br/>
+								<br/>
+							</td>
+							QXC_LABEL_VALUE_VAT(34.,vat7_curDostawaPodNab)
+							QXC_LABEL_VALUE_VAT(35.,vat7_curDostawaPodNabPodatek)
+						</tr>
+
+
+						<tr>
+							<td colspan='2'>
+								<text>
+									16. Kwota podatku należnego od towarów i usług objętych spisem z natury, o którym mowa w art. 14 ust. 5 ustawy
+								</text>
+								<br/>
+								<br/>
+							</td>
+							QXC_LABEL_VALUE_VAT(36.,vat7_curKwotaPodatkuSpis)
+						</tr>
+            
+						<tr>
+							<td colspan='2'>
+								<text>
+									17. Zwrot odliczonej lub zwróconej kwoty wydatkowanej na zakup kas rejestrujących, o którym mowa w art. 111 ust. 6 ustawy
+								</text>
+								<br/>
+								<br/>
+							</td>
+							<!-- W wersji 16 pole vat7_curPodatekPojazdy wykorzystane do pola 37 (Zwrot odliczonej lub zwróconej kwoty wydatkowanej na zakup kas rejestrujących) -->
+							QXC_LABEL_VALUE_VAT(37.,vat7_curPodatekPojazdy) 
+						</tr>
+
+						<tr>
+							<td colspan='2'>
+								<text>
+									18. Kwota podatku należnego od wewnątrzwspólnotowego nabycia środków transportu, wykazanego w poz. 24, podlegająca wpłacie w terminie, o którym mowa w art. 103 ust.3, w związku z ust. 4 ustawy
+								</text>
+								<br/>
+								<br/>
+							</td>
+							QXC_LABEL_VALUE_VAT(38.,vat7_curKwotaPodatkuTransport)
+						</tr>
+            
+						<tr>
+							<td colspan='2'>
+								<text>
+                  19. Kwota podatku od wewnątrzwspólnotowego nabycia środków trasportu, o których mowa w art. 103 ust. 5aa ustawy, podlegająca wpłacie w terminach, o których mowa w art. 103 ust. 5a i 5b ustawy
+                </text>
+								<br/>
+								<br/>
+							</td>
+							QXC_LABEL_VALUE_VAT(39.,vat7_curKwotaPodatkuNabyciaPaliw)
+						</tr>            
+
+
+						<tr>
+							<td>
+								<text>
+									Razem podatek należny
+								</text>
+								<br/>
+								<br/>
+							</td>
+							QXC_LABEL_VALUE_VAT(40.,vat7_curPodstawaPodatkuRazem)
+							QXC_LABEL_VALUE_VAT(41.,vat7_curKwotaPodatkuRazem)
+						</tr>
+
+
+					</tbody>
+				</table>
+			</td>
+		</tr>
+
+		QXS_END_REQ_PIT(FORM_SPAN)
+
+
+
+
+		QXS_BEGIN_REQ_PIT(SECID_ROZLICZENIE_PODATKU,D. ROZLICZENIE PODATKU NALICZONEGO,FORM_SPAN)
+
+		<tr>
+			<td colspan='FORM_SPAN'>
+				<table style='STYLE_TABLE_PIT' border='1'>
+					<tbody>
+						<tr>							
+							<td align='left' colspan='2'>
+								QXE_LABEL_REQ(D.1. Przeniesienia)
+							</td>
+							<td align='center'>
+								QXE_LABEL_REQ(Podatek do odliczenia)
+							</td>
+						</tr>
+
+
+						<tr>
+							<td colspan='2'>
+								<text>
+									Kwota nadwyżki z poprzedniej deklaracji
+								</text>
+								<br/>
+								<br/>
+							</td>
+							QXC_LABEL_VALUE_VAT(42.,vat7_curNadwyzkaPop)
+						</tr>
+
+						<tr>							
+							<td align='left' colspan='3'>
+								QXE_LABEL_REQ(D.2. Nabycie towarów i usług oraz podatek naliczony z uwzględnieniem korekt)
+							</td>							
+						</tr>
+
+						<tr>
+							<td/>							
+							<td align='center'>
+								QXE_LABEL_REQ(Wartość netto w zł)
+							</td>							
+							<td align='center'>
+								QXE_LABEL_REQ(Podatek naliczony w zł)
+							</td>							
+						</tr>
+
+						<tr>
+							<td>
+								<text size='60'>
+									Nabycie towarów i usług zaliczanych u podatnika do środków trwałych
+								</text>
+								<br/>
+								<br/>
+							</td>
+							QXC_LABEL_VALUE_VAT(43.,vat7_curNabycieTowUslSrtrwNetto)
+							QXC_LABEL_VALUE_VAT(44.,vat7_curNabycieTowUslSrtrwPodatek)
+						</tr>
+
+						<tr>
+							<td>
+								<text size='60'>
+									Nabycie towarów i usług pozostałych
+								</text>
+								<br/>
+								<br/>
+							</td>
+							QXC_LABEL_VALUE_VAT(45.,vat7_curNabycieTowUslNetto)
+							QXC_LABEL_VALUE_VAT(46.,vat7_curNabycieTowUslPodatek)
+						</tr>
+
+
+						<tr>							
+							<td align='left' colspan='3'>
+								QXE_LABEL_REQ(D.3. Podatek naliczony - do odliczenia (w zł))
+							</td>							
+						</tr>
+
+
+
+						<tr>
+							<td colspan='2'>
+								<text>
+									Korekta podatku naliczonego od nabycia środków trwałych
+								</text>
+								<br/>
+								<br/>
+							</td>
+							QXC_LABEL_VALUE_VAT(47.,vat7_curKorektaNabycieSrTrwPodatek)
+						</tr>
+
+
+						<tr>
+							<td colspan='2'>
+								<text>
+									Korekta podatku naliczonego od pozostałych nabyć
+								</text>
+								<br/>
+								<br/>
+							</td>
+							QXC_LABEL_VALUE_VAT(48.,vat7_curKorektaNabyciePodatek)
+						</tr>
+
+
+            <tr>
+              <td colspan='2'>
+                <text>
+                  Korekta podatku naliczonego, o której mowa w art. 89b ust.1 ustawy
+                </text>
+                <br/>
+                <br/>
+              </td>
+              QXC_LABEL_VALUE_VAT(49.,vat7_curKorektaPodatkuArt89b)
+            </tr>            
+
+            <tr>
+              <td colspan='2'>
+                <text>
+                  Korekta podatku naliczonego, o której mowa w art. 89b ust. 4 ustawy
+                </text>
+                <br/>
+                <br/>
+              </td>
+              QXC_LABEL_VALUE_VAT(50.,vat7_curKorektaPodatkuArt89bUst4)
+            </tr>             
+            
+
+						<tr>
+							<td colspan='2'>
+								<text>
+									Razem kwota podatku naliczonego do odliczenia
+								</text>
+								<br/>
+								<br/>
+							</td>
+							QXC_LABEL_VALUE_VAT(51.,vat7_curRazemPodatekOdl)
+						</tr>
+
+
+
+					</tbody>
+				</table>
+			</td>
+		</tr>
+
+		QXS_END_REQ_PIT(FORM_SPAN)
+
+
+		QXS_BEGIN_REQ_PIT(SECID_OBLICZENIE_WYS_ZOOBOW,E. OBLICZENIE WYSOKOŚCI ZOBOWIĄZANIA PODATKOWEGO LUB KWOTY ZWROTU (W ZŁ),FORM_SPAN)
+
+		<tr>
+			<td colspan='FORM_SPAN'>
+				<table style='STYLE_TABLE_PIT' border='1'>
+					<tbody>
+
+
+						<tr>
+							<td colspan='2'>
+								<text>
+									Kwota wydatkowana na zakup kas rejestrujących, do odliczenia w danym okresie rozliczeniowym
+								</text>
+								<br/>
+								<br/>
+							</td>
+							QXC_LABEL_VALUE_VAT(52.,vat7_curZakupKas)
+						</tr>
+
+						<tr>
+							<td colspan='2'>
+								<text>
+									Kwota objęta zaniechaniem poboru
+								</text>
+								<br/>
+								<br/>
+							</td>
+							QXC_LABEL_VALUE_VAT(53.,vat7_curKwotaZaniechPob)
+						</tr>
+
+
+						<tr>
+							<td colspan='2'>
+								<text>
+									Kwota podatku podlegająca wpłacie do urzędu skarbowego
+								</text>
+								<br/>
+								<br/>
+							</td>
+							QXC_LABEL_VALUE_VAT(54.,vat7_curKwotaWplataUS)
+						</tr>
+
+
+						<tr>
+							<td colspan='2'>
+								<text>
+									Kwota wydatkowana na zakup kas rejestrujących, przysługująca do zwrotu w danym okresie rozliczeniowym
+								</text>
+								<br/>
+								<br/>
+							</td>
+							QXC_LABEL_VALUE_VAT(55.,vat7_curZakupKasZwrot)
+						</tr>
+
+						<tr>
+							<td colspan='2'>
+								<text>
+									Nadwyżka podatku naliczonego nad należnym
+								</text>
+								<br/>
+								<br/>
+							</td>
+							QXC_LABEL_VALUE_VAT(56.,vat7_curNadwyzkaNaliczNalez)
+						</tr>
+
+						<tr>
+							<td colspan='2'>
+								<text>
+									Kwota do zwrotu na rachunek bankowy wskazany przez podatnika
+								</text>
+							</td>
+							QXC_LABEL_VALUE_VAT(57.,vat7_curNNNDoZwrotuRachBank)
+						</tr>
+
+						<tr>
+							<td colspan='2'>
+								<text>
+									&nbsp;&nbsp;&nbsp;na rachunek VAT
+								</text>
+							</td>
+							QXC_LABEL_VALUE_VAT(58.,vat7_curNaRachunekVAT)
+						</tr>						
+						
+						<tr>
+							<td colspan='2'>
+								<text>
+									&nbsp;&nbsp;&nbsp;kwota do zwrotu w terminie 25 dni
+								</text>
+							</td>
+							QXC_LABEL_VALUE_VAT(59.,vat7_curNNNDoZwrotu25)
+						</tr>
+            
+						<tr>
+							<td colspan='2'>
+								<text>
+									&nbsp;&nbsp;&nbsp;kwota do zwrotu w terminie 60 dni
+								</text>
+							</td>
+							QXC_LABEL_VALUE_VAT(60.,vat7_curNNNDoZwrotu60)
+						</tr>
+
+
+						<tr>
+							<td colspan='2'>
+								<text>
+									&nbsp;&nbsp;&nbsp;kwota do zwrotu w terminie 180 dni
+								</text>
+							</td>
+							QXC_LABEL_VALUE_VAT(61.,vat7_curNNNDoZwrotu180)
+						</tr>
+
+
+						<tr>
+							<td colspan='2'>
+								<text>
+									Kwota do przeniesienia na następny okres rozliczeniowy
+								</text>
+							</td>
+							QXC_LABEL_VALUE_VAT(62.,vat7_curNNNDoPrzeniesienia)
+						</tr>
+
+
+					</tbody>
+				</table>
+			</td>
+		</tr>
+
+
+		QXS_END_REQ_PIT(FORM_SPAN)
+
+
+		QXS_BEGIN_REQ_PIT(SECID_DODATKOWE,F. INFORMACJE DODATKOWE,FORM_SPAN)
+
+		<tr>
+			<td colspan='FORM_SPAN'>
+				<table style='STYLE_TABLE_PIT' border='1'>
+					<tbody>
+
+						<tr>
+							<td colspan='2'>
+								<t>
+									Podatnik wykonywał w okresie rozliczeniowym czynności, o których mowa w (zaznaczyć właściwe kwadraty):
+								</t>
+							</td>														
+						</tr>
+						<tr>
+							<td colspan='2'>
+								<t size='29'>63.</t>
+								<t size='31'>64.</t>
+								<t size='30'>65.</t>
+								<t>66.</t>																						
+							</td>														
+						</tr>            
+						<tr>
+							<td colspan='2'>
+								<checkbox colspan='5' border='0'>
+									<t size='25'>art.119 ustawy</t>
+									<t size='27'>art.120 ust.4 lub 5 ustawy</t>
+									<t size='26'>art.122 ustawy</t>
+									<t>srt.136 ustawy</t>
+									<t hide='true'></t>
+									<transfer mode='edit_field'>
+										<field>vat7_strCzynnosc</field>
+									</transfer>
+								</checkbox>																								
+							</td>														
+						</tr>
+						
+						<tr>
+							<td>
+								<checkbox border='0'>
+									<t>67. Podatnik korzysta z obniżenia zobowiązania</t>
+									<transfer mode='edit_field'>
+										<field>vat7_strObnizenieZobowPodatkow</field>
+									</transfer>
+								</checkbox>																							
+								<br/>
+								<t>podatkowego, o którym mowa w art. 108d ustawy</t>								
+							</td>														
+							<td>
+								<checkbox border='0'>
+									<t>68. Podatnik wnioskuje o zwrot podatku</t>
+									<transfer mode='edit_field'>
+										<field>vat7_strZwrotPodatkuVAT</field>
+									</transfer>
+								</checkbox>																			
+								<br/>
+								<t>na rachunek VAT (wykazany w poz. 58)</t>								
+							</td>														
+						</tr>
+
+						<tr>
+							<td colspan='2'>
+								<checkbox border='0'>
+									<t>69. Podatnik wystawił w okresie rozliczeniowym fakturę, o której mowa w art. 106e ust. 1 pkt 18a ustawy</t>
+									<transfer mode='edit_field'>
+										<field>vat7_strFakturaArt106e</field>
+									</transfer>
+								</checkbox>
+							</td>
+						</tr>						
+<!--
+            <tr>
+							<td colspan='2'>
+								<checkbox border='0'>						
+									<t>66. Podatnik w okresie rozliczeniowym dokonał zwiększenia podatku naliczonego na podstawie art.89b ust.4 ustawy</t>
+									<transfer mode='edit_field'>
+										<field>vat7_strZwiekszeniePodatku</field>
+									</transfer>
+								</checkbox>	                
+							</td>														
+						</tr>
+
+
+						<tr>
+							<td>
+								<text size='60'>
+									Kwota podatku naliczonego od paliw silnikowych, oleju napędowego oraz gazu, która nie podlega odliczeniuod podatku należnego
+								</text>
+								<br/>
+								<br/>
+							</td>
+							QXC_LABEL_VALUE_VAT(61.,vat7_curPodatekPaliwa)
+						</tr>
+
+
+						<tr>
+							<td>
+								<text size='60'>
+									Kwota podatku VAT zapłaconego ptrzy nabyciu, imporcie, najmie, dzierżawie lub leasingu pojazdów samochodowych, która nie stanowi kwoty podatku
+								</text>
+								<br/>
+								<br/>
+							</td>
+							QXC_LABEL_VALUE_VAT(62.,vat7_curPodatekPojazdy)
+						</tr>
+-->
+					</tbody>
+				</table>
+			</td>
+		</tr>
+
+
+		QXS_END_REQ_PIT(FORM_SPAN)
+
+
+
+
+		QXS_BEGIN_REQ_PIT(SECID_ZALACZNIKI,G. INFORMACJA O ZAŁĄCZNIKACH,FORM_SPAN)
+		<tr>
+			<td colspan='FORM_SPAN'>
+				<table style='STYLE_TABLE_PIT' border='1'>
+					<tbody>
+
+						<tr>
+							<td colspan='2'>
+								<t>
+									Do niniejszej deklaracji dołączono:		
+								</t>
+							</td>														
+						</tr>
+						
+						<tr>
+							<td colspan='2'>
+								<checkbox border='0'>						
+									<t>70. Zawiadomienie o skorygowaniu podstawy opodatkowania oraz kwoty podatku należnego (VAT-ZD)</t>
+									<transfer mode='edit_field'>
+										<field>vat7_strZawiadSkorygPodstawy</field>
+									</transfer>
+								</checkbox>
+							</td>              
+						</tr>            
+
+					</tbody>
+				</table>
+			</td>
+		</tr>
+
+	
+		QXS_END_REQ_PIT(FORM_SPAN)
+
+
+		QXS_BEGIN_REQ_PIT(SECID_OSWIADCZENIE,H. DANE KONTAKTOWE PODATNIKA LUB OSOBY REPREZENTUJĄCEJ PODATNIKA,FORM_SPAN)
+
+
+#ifdef APPCONFIG_DEKLARACJE
+			QXR_EDIT_FIELD(Nazwisko,-1,40,vat7_strNazwiskoRej,1)
+			QXR_EDIT_FIELD(Imię,-1,40,vat7_strImieRej,1)
+			QXR_EDIT_FIELD(Telefon kontaktowy,-1,40,vat7_strTelefonRej,1)
+			QXR_DATE_FIELD(Data wypełnienia,-1,vat7_dDataWyp,1)
+#endif
+
+#ifndef APPCONFIG_DEKLARACJE
+			<tr>																					
+				QXC_LABEL_OPEN(CTRLID_UZYTKREJ,Wprowadził:&nbsp;,1)											
+				QXC_TEXT_REF(-1,20,vat7_pUzytRej,strNazwa,2)										
+			</tr>
+			QXR_EDIT_FIELD(Adres e-mail,-1,40,vat7_strEmail,1)
+			QXR_EDIT_FIELD(Telefon kontaktowy,-1,40,vat7_strTelefonRej,1)
+			QXR_DATE_FIELD(Data wypełnienia,-1,vat7_dDataWyp,1)																					
+			QXR_EDIT_REF_OPEN(Zadanie,CTRLID_ZADANIE,-1,40,PICTURE_CHOICE_N5ZADANIE,vat7_pZadanie,strTemat,CRSR_DEFAULT,RCELL_SPAN)		
+
+
+		<tr>
+			QXC_LABEL_OPEN(CTRLID_TRANSAKCJA,Transakcja,1)
+			<td width='min' keepline='true' colspan='RCELL_SPAN'>								
+				QXE_EDIT_REF_CQ(CTRLID_TRANSAKCJA_EDIT,40,vat7_pTransakcja,strSymTrans)					
+				QXE_PICTURE_ACTION(-1,PICTURE_CHOICE_N5TRANSAKCJA,varFunctionHLI="std_choice_field_cq_hli" vs1="vat7_pTransakcja" vs2="strSymTrans" vn3="CTRLID_TRANSAKCJA_EDIT" vs4="" vs5="Bulid_Choicelist_Transakcja_Row" ,Wybór z listy)
+			</td>
+		</tr>
+
+			<tr>																													
+				QXC_LABEL_OPEN(CTRLID_DOWKSIEG,Dowód księgowy,1)																			
+				QXC_EDIT_REF(-1,20,PICTURE_CHOICE_N5DOWODKSIEG,vat7_pDowKsieg,strNrDok,CRSR_DEFAULT,1)							
+				QXC_LABEL_OPEN(CTRLID_SCHEMAT,Schemat dekretacji,1)																		
+				QXC_EDIT_REF(-1,25,PICTURE_CHOICE_N5SCHEMATDEKR,vat7_pSchematDekr,strNazwa,CRSR_SCHEMAT_AKTYWNY_PO_REJESTRACH,1)	
+			</tr>
+#endif																																			
+				
+	
+		QXS_END_REQ_PIT(FORM_SPAN)
+
+
+		<tr style='STYLE_DESC_ROW'>
+			<td colspan='FORM_SPAN'>
+				QXE_BUTTON(-1,15,Drukuj stronę 1,varFunctionHLI=print_page vn1=DOCFORM_VAT7_1)
+				QXE_BUTTON(-1,15,Drukuj stronę 2,varFunctionHLI=print_page vn1=DOCFORM_VAT7_2)
+				QXE_BUTTON(-1,15,Drukuj stronę 3,varFunctionHLI=print_page vn1=DOCFORM_VAT7_3)
+				QXE_BUTTON(CTRLID_BTN_EXPORT_TO_XML,15,Eksport do XML,varFunction=export_to_xml)              
+			</td>
+		</tr>
+
+
+QXF_END
+
+
+
+</body>
+<footer>
+</footer>
+</page>
+ 

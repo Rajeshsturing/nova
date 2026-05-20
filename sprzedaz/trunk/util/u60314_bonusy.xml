@@ -1,0 +1,397 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1200_typeid.h"
+#include "h1000.h"
+#include "h1001.h"
+#include "h1231.h"
+#include "h1240.h"
+
+	XML loader / saver
+-->
+<page>
+<config>
+<script>
+<![CDATA[
+
+'------------------------------- definicja storage, load save ------------------- 
+class cwyrazenia
+  public strWyrPokazRabat
+  public strWyrObliczRabat
+  
+  public sub class_initialize()
+		strWyrPokazRabat = ""
+		strWyrObliczRabat = ""
+	end sub
+  
+end class 
+
+function new_cwyrazenia()
+	set new_cwyrazenia = new cwyrazenia
+end function
+
+function save_data(byref oWyrazenie, byref pDestStream)
+  dim pExporter : set pExporter = doc_.system.activex("navoexpimp.exportpackage")
+	pDestStream.write "<?xml version=""1.0"" encoding=""windows-1250""?>" + vbCrLf
+	pExporter.ostream pDestStream
+
+	dim pMsg : set pMsg = pExporter.newmsg
+	
+	pMsg.header.save
+	dim pExpObj: set pExpObj = pMsg.newobj(1,1)
+	pExpObj("pokazrabat")  = oWyrazenie.strWyrPokazRabat
+	pExpObj("obliczrabat") = oWyrazenie.strWyrObliczRabat
+	pExpObj.save
+
+	pMsg.save
+	pExporter.save
+	save_data = true
+end function
+
+class cimportparser
+	private m_oWyrazenia
+
+	public sub init(byref pWyrazenia)
+		set m_oWyrazenia = pWyrazenia
+	end sub
+  
+  public sub OnMessageBegin(byref pMsgObj,byref bBreak)
+	end sub
+
+	public sub OnMessageEnd(pMsgObj,byref bBreak)
+	end sub
+
+	public sub OnObject(pObject,byref bBreak)
+	  m_oWyrazenia.strWyrPokazRabat = pObject("pokazrabat") 
+	  m_oWyrazenia.strWyrObliczRabat = pObject("obliczrabat")
+	end sub
+  
+end class
+
+function load_data(byref oWyrazenie, byref pSrcStream)
+	dim pImporter : set pImporter = doc_.system.activex("navoexpimp.importpackage")
+	dim pImportParser : set pImportParser = new cimportparser
+	pImportParser.init oWyrazenie
+
+	pImporter.sink = pImportParser
+	pImporter.istream  pSrcStream
+	pImporter.go
+  
+end function
+
+'------------------------------- obliczenia ------------------------
+class cobliczrabat
+  private m_idDokSprz
+  private m_oWyrazenie
+  private m_pContainer
+  
+  private sub class_initialize()
+		set m_oWyrazenie = nothing
+    set m_pContainer = nothing
+	end sub
+  
+	private sub class_terminate() 'OK
+		set m_oWyrazenie = nothing
+    set m_pContainer = nothing
+	end sub
+  
+  public sub init(byref oWyrazenie, byval idDokSprz, byref pContainer)
+    m_idDokSprz = idDokSprz
+    set m_oWyrazenie = oWyrazenie
+    set m_pContainer = pContainer
+	end sub
+  
+  public function dok
+    set dok = trans_.getobj(TYPEID_N5SPRZEDAZ , m_idDokSprz)
+  end function
+  
+  'wyświetla informację w kontenerze
+  public function info(byval strMsg)
+    dim pPlugInTable : set pPlugInTable = m_pContainer.addnew(CTRL_TYPE_TABLE,-1)
+    pPlugInTable.border = 0
+    dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(pPlugInTable)
+    pTB.newrow
+    pTB.row.styleitem = STYLE_GRID_FOOTER
+    pTB.row.border = 0
+    pTB.newcell.addtext strMsg
+  end function
+  
+  'wyznacza kwotę rabatu
+  public function obliczKwote
+    dim oSprz: set oSprz = dok
+    dim dData: dData = DateSerial(Year(oSprz.dDataWyst),Month(oSprz.dDataWyst) - 1,1)
+    dim strSQL
+	  strSQL = "select 'c_wart_netto'=isnull(sum(t_vlist_sprz1.c_curwartnetto - isnull(t_vlist_sprz2.c_curwartnetto,0)),0) " +_
+             "from vlist_n5sprzedaz_listpozycje as t_vlist_sprz1 " +_
+             "left outer join vlist_n5sprzedaz_listpozycje t_vlist_sprz2 on t_vlist_sprz1.p_ppopsprzed = " +_ 
+             "t_vlist_sprz2.p_idobj and t_vlist_sprz1.coll_lp = t_vlist_sprz2.coll_lp " +_
+             "inner join n5klient as t_klient on t_vlist_sprz1.p_pKlient = t_klient.IdObj " +_
+             "where (t_klient.idobj = " + CStr(oSprz.pKlient.IdObj) + " or t_vlist_sprz1.p_strextra1 = '" + oSprz.pKlient.strIndeks + "') " +_
+             "and t_vlist_sprz1.p_prejestrdok in (select idobj from n5rejestrdok where eTyp not in (N5REJESTRDOK_DOSTAWA, N5REJESTRDOK_KOR_DOSTAWA)) and  t_vlist_sprz1.c_currabat <= 10 and ((year(t_vlist_sprz1.p_ddatawyst) = " + CStr(Year(dData)) + " ) and " +_
+             "(month(t_vlist_sprz1.p_ddatawyst) = " + CStr(Month(dData)) + "))"
+    dim oRS : set oRS = trans_.createadors(strSQL)
+    obliczKwote = CCur(oRS("c_wart_netto").value)
+    
+  end function
+  
+  'zapamiętuje w polu strExtra2 rabat przed przyznaniem  
+  public function zapamRabat(byref oPoz)
+     'zamień pole strExtra2 na tablicę
+     dim tab:tab = Split(oPoz.strExtra2, ";")
+     dim iter
+     for iter = 0 to ubound(tab)
+       dim iPos:iPos = InStr(tab(iter), "rx:")
+       if iPos <> 0 then     
+         tab(iter) = ""
+         tab(iter) = tab(iter) + "rx:" + cstr(oPoz.curRabat)
+         oPoz.strExtra2 = Join(tab, ";")
+         exit function
+       end if  
+     next
+     oPoz.strExtra2 = oPoz.strExtra2 + "rx:" + cstr(oPoz.curRabat) + ";"
+  end function
+  
+  'zapamiętuje w polu strExtra2 kwote brutto przed przyznaniem  
+  public function zapamKwote(byref oPoz)
+     'zamień pole strExtra2 na tablicę
+     dim tab:tab = Split(oPoz.strExtra2, ";")
+     dim iter
+     for iter = 0 to ubound(tab)
+       dim iPos:iPos = InStr(tab(iter), "kx:")
+       if iPos <> 0 then     
+         tab(iter) = ""
+         tab(iter) = tab(iter) + "kx:" + cstr(oPoz.curWartBrutto)
+         oPoz.strExtra2 = Join(tab, ";")
+         exit function
+       end if  
+     next
+     oPoz.strExtra2 = oPoz.strExtra2 + "kx:" + cstr(oPoz.curWartBrutto) + ";"
+  end function
+  
+  'przed przyznaniem nowego rabatu cofnij stary 
+  public function cofnijRabat(byref oPoz)
+     'zamień pole strExtra2 na tablicę
+     dim tab:tab = Split(oPoz.strExtra2, ";")
+     dim iter
+     for iter = 0 to ubound(tab)
+       dim iPos:iPos = InStr(tab(iter), "rx:")
+       if iPos <> 0 then
+          'znajdz kwote
+          dim strRabat:strRabat = tab(iter)
+		      strRabat = Mid(strRabat, 4, Len(strRabat) - 3)
+          oPoz.curRabat= oPoz.curRabat - CCur(strRabat)
+          exit function
+       end if   
+     next  
+  end function
+  
+  'pobira kwotę brutto z pola strExtra2
+  public function pobierzKwote(byref oPoz)
+     'zamień pole strExtra2 na tablicę
+     dim tab:tab = Split(oPoz.strExtra2, ";")
+     dim iter
+     for iter = 0 to ubound(tab)
+       dim iPos:iPos = InStr(tab(iter), "kx:")
+       if iPos <> 0 then
+          'znajdz kwote
+          dim strKwota:strKwota = tab(iter)
+		      strKwota = Mid(strKwota, 4, Len(strKwota) - 3)
+          pobierzKwote = CCur(strKwota)
+          exit function
+       end if   
+     next      
+  end function
+  
+  'sprawdza czy nie istnieją przeterminowe należności
+  public function sprawdzNalezno: sprawdzNalezno = false
+    dim oSprz: set oSprz = dok
+    dim strSQL
+	  strSQL = "select * from n5transakcja where wrefPodmiot = " + CStr(oSprz.pKlient.idobj) + " and wrefPodmiot_wrt=TYPEID_N5KLIENT " +_
+             "and curWn > curMa and dDataWym < " + doc_.afc.convert.Date2Sql(oSprz.dDataWyst) + ""
+    dim oRS : set oRS = trans_.createadors(strSQL)
+    if not oRS.EOF then
+		  sprawdzNalezno = true
+      exit function
+	  end if
+  end function
+  
+  'sprawdz czy zalogowany jest Administrator
+  public function sprawdzUser : sprawdzUser = false
+    dim idAdminUser : idAdminUser = trans_.findobjid(TYPEID_N5UZYTKOWNIK, "strLogin='" + ADMIN_LOGIN + "'")
+    if idAdminUser = trans_.var(GVAR_USER) then
+      sprawdzUser = true
+    end if
+  end function
+ 
+  'funkcja zwraca IdObj dokumentu sprzedaży dla którego był już przyznany rabat w danym miesiącu
+  public function sprawdzPrzyRabat : sprawdzPrzyRabat = 0
+    dim oSprz: set oSprz = dok
+    'pobierz idobj klienta
+    dim pKlient : pKlient = oSprz.pKlient.IdObj
+    'pierwszy dzień miesiąca
+    dim strData : strData = CStr(year(trans_.var(GVAR_TODAY))) + "-" + CStr(month(trans_.var(GVAR_TODAY))) + "-01" 
+    'sprawdz czy był przydzielany rabat (strExtra2 <> '' dla pozycji dok sprzedazy)
+    dim strSQL : strSQL = "select top 1 's_idobj'=p_idobj from vlist_n5sprzedaz_listPozycje where " +_
+                          " p_prejestrdok not in (select idobj from n5rejestrdok where eTyp in (N5REJESTRDOK_DOSTAWA, N5REJESTRDOK_KOR_DOSTAWA)) and p_pklient = " + CStr(pKlient) +_
+                          " and c_strExtra2 <> '' and p_ddatawyst between " + doc_.afc.convert.Date2Sql(strData) + " and " +_ 
+                           doc_.afc.convert.Date2Sql(trans_.var(GVAR_TODAY))
+
+	  dim oRS : set oRS = trans_.createadors(strSQL)
+    do while not oRS.EOF
+		  sprawdzPrzyRabat = oRS("s_idobj")
+      exit function
+		  oRS.movenext
+	  loop
+    
+  end function
+ 
+ 'dynamiczne wykonanie skryptu dla wyrażenia PokazRabat
+  public function pokaz_rabat
+    dim pokazRabat:pokazRabat = m_oWyrazenie.strWyrPokazRabat 
+    dim strCode
+		strCode = "function wynik(byref pKontekst)" + vbCrLf + _
+		" with pKontekst"+ vbCrLf + _
+			pokazRabat + vbCrLf + _
+		" end with" + vbCrLf + _
+		"end function" + vbCrLf
+
+		on error resume next
+
+		execute strCode
+
+		if err.Number <> 0 then
+			trans_.message 6521, 1,  "Przygotowanie wyrażenia do obliczeń nieudane." + _
+				prepare_err_msg(strCode)
+			exit function
+		end if
+    
+		wynik Me
+
+		if err.Number <> 0 then
+			trans_.message 6522,1,  "Obliczenie wyrażenia nieudane." + _
+				prepare_err_msg(strCode)
+			exit function
+		end if
+
+		on error goto 0
+    
+  end function
+ 
+ 'dynamiczne wykonanie skryptu dla wyrażenia PrzydzielRabat
+  public function oblicz_rabat
+    'sprawdza czy nie przydzielano rabatu
+    dim idDokSprz : idDokSprz = sprawdzPrzyRabat
+    if idDokSprz <> 0 then
+      dim oSprzed : set oSprzed = trans_.getobj(TYPEID_N5SPRZEDAZ,idDokSprz)    
+      info("Bonus już przydzielano: " + CStr(oSprzed.dDataWyst) + ", " + oSprzed.strNrDok + "")
+      exit function
+    end if
+    'zapamiętanie i cofniecie rabatu    
+    dim oSprz: set oSprz = dok
+    set oSprz = dok
+    dim oPoz
+    for each oPoz in oSprz.listPozycje
+      zapamRabat(oPoz)
+      zapamKwote(oPoz)
+      cofnijRabat(oPoz)
+    next 
+    
+    dim przeRabat:przeRabat = m_oWyrazenie.strWyrObliczRabat 
+    dim strCode
+
+		strCode = "function wynik(byref pKontekst)" + vbCrLf + _
+		" with pKontekst"+ vbCrLf + _
+			przeRabat + vbCrLf + _
+		" end with" + vbCrLf + _
+		"end function" + vbCrLf
+
+		on error resume next
+
+		execute strCode
+
+		if err.Number <> 0 then
+			trans_.message 6521, 1,  "Przygotowanie wyrażenia do obliczeń nieudane." + _
+				prepare_err_msg(strCode)
+			exit function
+		end if
+    
+		wynik Me
+
+		if err.Number <> 0 then
+			trans_.message 6522,1,  "Obliczenie wyrażenia nieudane." + _
+				prepare_err_msg(strCode)
+			exit function
+		end if
+
+		on error goto 0
+
+  end function
+  
+  'ręczne cofnięcie rabatu
+  public function cofnij_rabat
+    dim oSprz: set oSprz = dok
+    dim oPoz, tab, iPos, iter
+    'cofnięcie rabatu dla pozycji
+    for each oPoz in oSprz.listPozycje  
+       'zamień pole strExtra2 na tablicę
+       tab = Split(oPoz.strExtra2, ";")
+       for iter = 0 to ubound(tab)
+         iPos = InStr(tab(iter), "rx:")
+         if iPos <> 0 then
+            'znajdz rabat
+            dim strRabat: strRabat = tab(iter)
+		        strRabat = Mid(strRabat, 4, Len(strRabat) - 3)
+            if oPoz.curRabat > CLng(strRabat) then
+              oPoz.curRabat = oPoz.curRabat - (oPoz.curRabat - CLng(strRabat))
+            else
+              oPoz.curRabat = oPoz.curRabat - CLng(strRabat)
+            end if
+            tab(iter) = ""
+            oPoz.strExtra2 = Join(tab, ";")
+            exit for
+         end if   
+       next 
+       'usuń zapamiętany rabat oraz kwotę
+       oPoz.strExtra2 = ""
+    next
+  end function
+  
+  'zaokrągla liczę do 2 miejsc po przecinku, obcinając końcówkę
+  public function conSum(byval kwota)
+    dim iPos: iPos = InStr(CStr(kwota), ",")
+    if iPos > 0 then
+      conSum = CCur(Left(kwota, iPos + 2))
+    else
+      conSum = CCur(kwota)
+    end if
+  end function
+  
+  'zaokrągla procent w dół
+  public function cutProc(byval proc)
+    cutProc = CCur(Left(CStr(proc),2))
+  end function
+
+end class
+
+sub pok_rabat(byref oWyrazenie, byval id_dok_sprz, byref pContainer)
+  dim pCOblRab : set pCOblRab = new cobliczrabat
+  pCOblRab.init oWyrazenie, id_dok_sprz, pContainer
+  pCOblRab.pokaz_rabat
+end sub
+
+sub przy_rabat(byref oWyrazenie, byval id_dok_sprz, byref pContainer)
+  dim pCOblRab : set pCOblRab = new cobliczrabat
+  pCOblRab.init oWyrazenie, id_dok_sprz, pContainer
+  pCOblRab.oblicz_rabat
+end sub
+
+sub cofn_rabat(byref oWyrazenie, byval id_dok_sprz, byref pContainer)
+  dim pCOblRab : set pCOblRab = new cobliczrabat
+  pCOblRab.init oWyrazenie, id_dok_sprz, pContainer
+  pCOblRab.cofnij_rabat
+end sub
+
+]]>
+</script>
+</config>
+<body></body>
+</page>

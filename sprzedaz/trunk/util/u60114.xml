@@ -1,0 +1,3198 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+
+<!--
+	OBSOLETE: check references and remove
+
+	Search page builder
+
+
+#include "h1000.h"
+#include "h1201.h"
+#include "h1001.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1240.h"
+
+
+#define TABS_CTRLS_FIRST_ID		4500
+
+
+-->
+
+
+<page>
+<config>
+<script>
+<![CDATA[
+
+
+#include "50100"
+#include "50207"
+#include "50122"
+#include "50126"
+
+' co wybrano
+const SEL_TEXT_ALL = 1 ' Wszystko
+const SEL_TEXT_EX  = 2 ' Dokładnie
+const SEL_TEXT_BEG = 3 ' Początek
+const SEL_TEXT_CON = 4 ' Zawiera
+const SEL_TEXT_RAN = 5 ' Zakres
+
+' zakres od...do
+const IDS_SCALE = 100 ' mnożnik identyfikatorów
+const OFFSET_EQUAL = 1 ' kontrolka "Dokladnie"
+const OFFSET_FROM = 2 ' kontrolka "Od"
+const OFFSET_BEGIN = 3 ' kontrolka "Początek"
+const OFFSET_TO = 4 ' kontrolka "Do"
+const OFFSET_DESC = 5 ' kontrolka z opisem
+const OFFSET_CONT = 6 ' kontrolka "Zawiera"
+const OFFSET_ENUM = 10 ' pozycja startowa checkboxów pola enum
+
+const OFFSET_TEXT_FROM = 1 ' tekst "Od"
+const OFFSET_TEXT_TO = 3 ' tekst "Do"
+
+
+' co wybrano
+const SEL_DATE_ALL   = 1 ' Dowolna data
+const SEL_DATE_YEAR  = 2 ' Bieżący rok
+const SEL_DATE_MONTH = 3 ' Bieżący miesiąc
+const SEL_DATE_TODAY = 4 ' Dzisiaj
+const SEL_DATE_EARLY   = 5 ' Zakres
+const SEL_DATE_LATER   = 6 ' Zakres
+const SEL_DATE_RAN   = 7 ' Zakres
+
+
+' co wybrano
+const SEL_CUR_ALL    = 1 ' Dowolna wartość
+const SEL_CUR_SUP    = 2 ' Powyżej
+const SEL_CUR_SUB    = 3 ' Poniżej
+const SEL_CUR_EQ     = 4 ' Równe
+const SEL_CUR_RAN    = 5 ' Zakres
+
+' co wybrano
+const SEL_TIME_ALL   = 1 ' Dowolna godzina
+const SEL_TIME_SUP   = 2 ' Powyżej
+const SEL_TIME_SUB   = 3 ' Poniżej
+const SEL_TIME_EQ    = 4 ' Równe
+const SEL_TIME_RAN   = 5 ' Zakres
+
+' co wybrano przy operacji z lista obiektow
+const SEL_LIST_NO    = 1 ' bez operacji z lista
+const SEL_LIST_IN    = 2 ' nalezy do listy
+const SEL_LIST_NOT_IN= 3 ' nie nalezy do listy
+const SEL_LIST_ID	 = 4 ' IdObj Listy
+const SEL_LIST_DISP	 = 5 ' Wyswietla nazwe listy
+const SEL_LIST_DISP2 = 6 ' Wyswietla nazwe listy 2
+
+dim pTabsIDS
+dim pDescrCtrlsIds
+dim lastID:lastID = TABS_CTRLS_FIRST_ID + 1
+
+
+function add_tabid(byval strName)	
+	pTabsIDS.add(lastID)
+	add_tabid = lastID
+	if bTabs then
+		addAdditionalFopenInstr("pGlobalTabMan.addtab TABS_CTRLS_FIRST_ID , "+ cstr(lastID) + ", """ + strName + """" + vbNewLine)
+	end if
+	lastID = lastID + 1
+end function
+
+
+function get_descrctrlids()
+	set get_descrctrlids = pDescrCtrlsIds
+end function
+
+function get_tabs()
+	set get_tabs = pTabsIDS
+end function
+
+
+dim bTabs:bTabs = true
+dim bSilent:bSilent = false
+
+function make_tabs(byval bMake )
+	bTabs = bMake
+end function
+
+function silent(byval value )
+	bSilent = value
+end function
+
+
+'--------------------------------------------------------------------------
+'metody prywatne
+'--------------------------------------------------------------------------
+
+'--------------------------------------------------------------------------
+'
+'  Funkcja tworzy pełny opis pola (również referencji)
+'
+'--------------------------------------------------------------------------
+function compose_name(byval strCP)
+	dim str
+	dim PathArray : PathArray = split(strCP,";")
+	dim iter
+	dim TypeId : TypeId = PathArray(ubound(PathArray)-1)
+	dim FldName : FldName = PathArray(ubound(PathArray))
+
+	with doc_.stdobjdef.getobjdef(TypeId)
+		str = .field(.getfieldindex(FldName)).HumanName	+ " (z " + .HumanName
+	end with
+
+	for iter = ubound(PathArray)-2 to 0 step -2
+		TypeId = PathArray(iter-1)
+		str = str + " w " + doc_.stdobjdef.getobjdef(TypeId).HumanName
+	next
+	compose_name = str + ")"
+end function
+
+
+'--------------------------------------------------------------------------
+'
+' czy wyświetlać okno dialogowe filtru (zwraca true lub false)
+'
+' Parametry:
+'	[in] pSTO - definicja wyszukiwania (obiekt typu TYPEID_SEARCHTYPE)
+'	[in] strButtons - definicja wyświetlanych klawiszy w formacie <text>;<text>;...,
+'
+'--------------------------------------------------------------------------
+function can_show_filter(byref pSTO, byval strButtons)
+	' klawisze dynamiczne
+	dim aBtnText:aBtnText = split(strButtons, ";", -1, 1)
+
+	if (not g_pAdditionalCtrl is nothing) then
+		if (g_pAdditionalCtrl.Count()>0) then
+			can_show_filter = true
+			exit function
+		end if
+	end if
+
+	if (g_strAdditionalPageScript<>"") then
+		can_show_filter = true
+		exit function
+	end if
+
+	' jeśli nie istnieje żadne kryterium wyszukiwania i jest jeden klawisz
+	if (not pSTO.listFilter.exists(1) and ubound(aBtnText)=0) then
+		can_show_filter = false
+	else
+		dim pSTOItem
+		dim bCanShow:bCanShow=false
+		for each pSTOItem in pSTO.listFilter
+			if pSTOItem.SearchTypeItem_getselectiontype()<>0 then
+				bCanShow=true
+			end if
+		next
+		can_show_filter = bCanShow
+	end if
+end function
+
+
+'--------------------------------------------------------------------------
+'
+'  Funkcja generuje skrypt/formularz filtrujący tekst
+'
+'--------------------------------------------------------------------------
+private function build_text_section(byref pSO,byref pSTO,byval nPos,byval bScript)
+
+	if bScript then
+
+		' opis wybranych rzeczy
+		pSO.write "function desc"+cstr(nPos*IDS_SCALE)+"(newValue)" + vbCrLf
+		pSO.write "  dim strName:strName=page_.ctrl("+cstr(nPos*1000)+").text" + vbCrLf
+		pSO.write "	 dim strDesc" + vbCrLf
+		pSO.write "	 dim strFrom:strFrom="""""""" + page_.ctrl("+cstr(nPos*IDS_SCALE+OFFSET_FROM)+").text + """"""""" + vbCrLf
+		pSO.write "	 dim strTo:strTo="""""""" + page_.ctrl("+cstr(nPos*IDS_SCALE+OFFSET_TO)+").text + """"""""" + vbCrLf
+		pSO.write "	 dim strEqual:strEqual="""""""" + page_.ctrl("+cstr(nPos*IDS_SCALE+OFFSET_EQUAL)+").text + """"""""" + vbCrLf
+		pSO.write "	 dim strCont:strCont="""""""" + page_.ctrl("+cstr(nPos*IDS_SCALE+OFFSET_CONT)+").text + """"""""" + vbCrLf
+		pSO.write "	 dim strBegin:strBegin="""""""" + page_.ctrl("+cstr(nPos*IDS_SCALE+OFFSET_BEGIN)+").text + """"""""" + vbCrLf
+		pSO.write "  if clng(newValue)=" + cstr(SEL_TEXT_ALL) + " then" + vbCrLf
+		pSO.write "    strDesc=""Dowolny napis""" + vbCrLf
+		pSO.write "  elseif clng(newValue)="+cstr(SEL_TEXT_EX)+" then" + vbCrLf
+		pSO.write "    strDesc=strName + "" równa się "" + strEqual  " + vbCrLf
+		pSO.write "  elseif clng(newValue)="+cstr(SEL_TEXT_CON)+ " then" + vbCrLf
+		pSO.write "    strDesc=strName + "" zawiera "" + strCont" + vbCrLf
+		pSO.write "  elseif clng(newValue)="+cstr(SEL_TEXT_BEG)+ " then" + vbCrLf
+		pSO.write "    strDesc=strName + "" rozpoczyna się od "" + strBegin" + vbCrLf
+		pSO.write "  elseif clng(newValue)=" + cstr(SEL_TEXT_RAN) + " then" + vbCrLf
+		pSO.write "    strDesc=strName +"" zawiera się pomiędzy "" + strFrom + "" i "" + strTo" + vbCrLf
+		pSO.write "  else" + vbCrLf
+		pSO.write "    strDesc=""hmm... cos nie tak..."" " + vbCrLf
+		pSO.write "  end if" + vbCrLf
+		pSO.write "  page_.ctrl("+cstr(nPos*IDS_SCALE+OFFSET_DESC)+").text=strDesc" + vbCrLf
+		pSO.write "end function" + vbCrLf
+
+		'edit od
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_FROM) + "_ondataentered(oCtrl, newValue)" + vbCrLf
+		pSO.write "end function" + vbCrLf + vbCrLf
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_FROM) + "_ongetdata(byref oCtrl)" + vbCrLf
+		pSO.write "  desc"+cstr(nPos*IDS_SCALE)+"(page_.ctrl("+cstr(nPos*IDS_SCALE)+").value)" + vbCrLf
+		pSO.write "  c" + cstr(nPos*IDS_SCALE+OFFSET_FROM) + "_ongetdata=true" + vbCrLf
+		pSO.write "end function" + vbCrLf
+
+		'edit do
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_TO) + "_ondataentered(oCtrl, newValue)" + vbCrLf
+		pSO.write "end function" + vbCrLf + vbCrLf
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_TO) + "_ongetdata(byref oCtrl)" + vbCrLf
+		pSO.write "  desc"+cstr(nPos*IDS_SCALE)+"(page_.ctrl("+cstr(nPos*IDS_SCALE)+").value)" + vbCrLf
+		pSO.write "  c" + cstr(nPos*IDS_SCALE+OFFSET_TO) + "_ongetdata=true" + vbCrLf
+		pSO.write "end function" + vbCrLf
+
+		'edit equal
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_EQUAL) + "_ondataentered(oCtrl, newValue)" + vbCrLf
+		pSO.write "end function" + vbCrLf + vbCrLf
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_EQUAL) + "_ongetdata(byref oCtrl)" + vbCrLf
+		pSO.write "  desc"+cstr(nPos*IDS_SCALE)+"(page_.ctrl("+cstr(nPos*IDS_SCALE)+").value)" + vbCrLf
+		pSO.write "  c" + cstr(nPos*IDS_SCALE+OFFSET_EQUAL) + "_ongetdata=true" + vbCrLf
+		pSO.write "end function" + vbCrLf
+
+		'edit begin
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_BEGIN) + "_ondataentered(oCtrl, newValue)" + vbCrLf
+		pSO.write "end function" + vbCrLf + vbCrLf
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_BEGIN) + "_ongetdata(byref oCtrl)" + vbCrLf
+		pSO.write "  desc"+cstr(nPos*IDS_SCALE)+"(page_.ctrl("+cstr(nPos*IDS_SCALE)+").value)" + vbCrLf
+		pSO.write "  c" + cstr(nPos*IDS_SCALE+OFFSET_BEGIN) + "_ongetdata=true" + vbCrLf
+		pSO.write "end function" + vbCrLf
+
+		'edit contain
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_CONT) + "_ondataentered(oCtrl, newValue)" + vbCrLf
+		pSO.write "end function" + vbCrLf + vbCrLf
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_CONT) + "_ongetdata(byref oCtrl)" + vbCrLf
+		pSO.write "  desc"+cstr(nPos*IDS_SCALE)+"(page_.ctrl("+cstr(nPos*IDS_SCALE)+").value)" + vbCrLf
+		pSO.write "  c" + cstr(nPos*IDS_SCALE+OFFSET_CONT) + "_ongetdata=true" + vbCrLf
+		pSO.write "end function" + vbCrLf
+
+
+		'radio
+		pSO.write "function c" + cstr(nPos*IDS_SCALE) + "_ondataentered(oCtrl, newValue)" + vbCrLf
+		pSO.write "  c" + cstr(nPos*IDS_SCALE) + "_ondataentered=true" + vbCrLf
+		pSO.write "  dim oTmp" + vbCrLf
+		pSO.write "  dim bEnableFrom:bEnableFrom=false" + vbCrLf
+		pSO.write "  dim bEnableTo:bEnableTo=false" + vbCrLf
+		pSO.write "  dim bEnableEqual:bEnableEqual=false" + vbCrLf
+		pSO.write "  dim bEnableBegin:bEnableBegin=false" + vbCrLf
+		pSO.write "  dim bEnableCont:bEnableCont=false" + vbCrLf
+		pSO.write "  if clng(newValue)=" + cstr(SEL_TEXT_ALL) + " then" + vbCrLf		
+		pSO.write "  elseif clng(newValue)="+cstr(SEL_TEXT_EX)+" then" + vbCrLf
+		pSO.write "    bEnableEqual=true" + vbCrLf
+		pSO.write "  elseif clng(newValue)="+cstr(SEL_TEXT_CON)+ " then" + vbCrLf
+		pSO.write "    bEnableCont=true" + vbCrLf
+		pSO.write "  elseif clng(newValue)="+cstr(SEL_TEXT_BEG)+ " then" + vbCrLf
+		pSO.write "    bEnableBegin=true" + vbCrLf
+		pSO.write "  elseif clng(newValue)=" + cstr(SEL_TEXT_RAN) + " then" + vbCrLf
+		pSO.write "    bEnableFrom=true" + vbCrLf
+		pSO.write "    bEnableTo=true" + vbCrLf
+		pSO.write "  else" + vbCrLf		
+		pSO.write "  end if" + vbCrLf
+		'show/hide controls
+
+		pSO.write "  page_.ctrl(" + cstr(nPos*IDS_SCALE+OFFSET_EQUAL) + ").disable=not bEnableEqual" + vbCrLf
+		pSO.write "  page_.ctrl(" + cstr(nPos*IDS_SCALE+OFFSET_FROM) + ").disable=not bEnableFrom" + vbCrLf
+		pSO.write "  page_.ctrl(" + cstr(nPos*IDS_SCALE+OFFSET_CONT) + ").disable=not bEnableCont" + vbCrLf
+		pSO.write "  page_.ctrl(" + cstr(nPos*IDS_SCALE+OFFSET_TO) + ").disable=not bEnableTo" + vbCrLf
+		pSO.write "  page_.ctrl(" + cstr(nPos*IDS_SCALE+OFFSET_BEGIN) + ").disable=not bEnableBegin" + vbCrLf
+		pSO.write "end function" + vbCrLf + vbCrLf
+		' _ongetdata
+		pSO.write "function c" + cstr(nPos*IDS_SCALE) + "_ongetdata(byref oCtrl)" + vbCrLf
+		pSO.write "  desc"+cstr(nPos*IDS_SCALE)+"(oCtrl.value)" + vbCrLf
+		pSO.write "  c" + cstr(nPos*IDS_SCALE) + "_ongetdata=true" + vbCrLf
+		pSO.write "end function" + vbCrLf
+	else
+		dim pSTOI : set pSTOI = pSTO.listFilter.get(nPos)
+		pSO.write vbCrLf + "<p name='"+cstr(add_tabid(pSTOI.SearchTypeItem_compose_name()))+"'><table><tbody><!--TODO-->" + vbCrLf
+		pSO.write "<tr style='STYLE_TABLE_HEADER' name='" + cstr(nPos*1000 + 1) + "'><td width='max'><t name='"+cstr(nPos*1000)+"'>" + vbCrLf
+		pDescrCtrlsIds.add(nPos*1000)
+		if not pSTOI is nothing then
+			pSO.write pSTOI.SearchTypeItem_compose_name()
+			pSO.write "</t></td></tr>" + vbCrLf
+			pSO.write "<tr style='STYLE_TABLE_BODY' name='" + cstr(nPos*1000 + 2) +"'><td width='max'>" + vbCrLf			
+			pSO.write "<radio border='0' name='r"+cstr(nPos*IDS_SCALE)+"' colspan='1'>" + vbCrLf			
+			pSO.write "<transfer mode='custom'/>" + vbCrLf
+			pSO.write "<table><tbody><tr><td keepline='true' width='min'><t size='10'>Wszystko</t></td></tr></tbody></table>" + vbCrLf
+			pSO.write "<table><tbody><tr><td keepline='true' width='min'><t size='10'>Dokladnie</t>   <edit disable='true' name='e" + cstr(nPos*IDS_SCALE+OFFSET_EQUAL) + "' size='12'><transfer mode='custom'/></edit></td></tr></tbody></table>" + vbCrLf
+			pSO.write "<table><tbody><tr><td keepline='true' width='min'><t size='10'>Początek</t>    <edit disable='true' name='e" + cstr(nPos*IDS_SCALE+OFFSET_BEGIN) + "' size='12'><transfer mode='custom'/></edit></td></tr></tbody></table>" + vbCrLf
+			pSO.write "<table><tbody><tr><td keepline='true' width='min'><t size='10'>Zawiera</t>     <edit disable='true' name='e" + cstr(nPos*IDS_SCALE+OFFSET_CONT) + "' size='12'><transfer mode='custom'/></edit></td></tr></tbody></table>" + vbCrLf
+			pSO.write "<table><tbody><tr><td keepline='true' width='min'><t size='10'>Zakres od </t>  <edit disable='true' name='e" + cstr(nPos*IDS_SCALE+OFFSET_FROM) + "' size='12'><transfer mode='custom'/></edit><t size='1'></t><t>do</t><t size='1'></t><edit name='e"+ cstr(nPos*IDS_SCALE+OFFSET_TO) + "' size='12' disable='true'><transfer mode='custom'/></edit></td></tr></tbody></table>" + vbCrLf
+			pSO.write "</radio>" + vbCrLf
+			pSO.write "<br/>" + vbCrLf
+			pSO.write "<t size='1'></t><br/>" + vbCrLf
+			pSO.write "<t size='1'></t><text bold='true' name='t"+ cstr(nPos*IDS_SCALE+OFFSET_DESC) +"'></text><br/>" + vbCrLf
+			pSO.write "<t></t><br/>" + vbCrLf
+			pSO.write "</td></tr>" + vbCrLf			
+			pSO.write "<tr><td><t></t></td></tr>" + vbCrLf
+			pSO.write "</tbody></table></p>" + vbCrLf		
+		end if
+	end if
+end function
+
+
+'--------------------------------------------------------------------------
+'
+'  Funkcja generuje skrypt/formularz filtrujący datę
+'  this year / this month / today / date range
+'
+'--------------------------------------------------------------------------
+private function build_date_section(byref pSO,byref pSTO,byval nPos,byval bScript)
+	if bScript then
+
+		' opis wbranych rzeczy
+		pSO.write "function desc"+cstr(nPos*IDS_SCALE)+"(newValue)" + vbCrLf
+		pSO.write "	 dim strDesc" + vbCrLf
+		pSO.write "	 dim strFrom:strFrom= cstr(page_.ctrl("+cstr(nPos*IDS_SCALE+OFFSET_FROM)+").value)" + vbCrLf
+		pSO.write "	 dim strTo:strTo= cstr(page_.ctrl("+cstr(nPos*IDS_SCALE+OFFSET_TO)+").value)" + vbCrLf
+		pSO.write "	 dim strEarly:strEarly= cstr(page_.ctrl("+cstr(nPos*IDS_SCALE+OFFSET_EQUAL)+").value)" + vbCrLf
+		pSO.write "	 dim strLater:strLater= cstr(page_.ctrl("+cstr(nPos*IDS_SCALE+OFFSET_CONT)+").value)" + vbCrLf
+		pSO.write "  if clng(newValue)=" + cstr(SEL_DATE_ALL) + " then" + vbCrLf
+		pSO.write "    strDesc=""Dowolna data""" + vbCrLf
+		pSO.write "  elseif clng(newValue)="+cstr(SEL_DATE_YEAR)+" then" + vbCrLf
+		pSO.write "    strDesc=""Bieżący rok""" + vbCrLf
+		pSO.write "  elseif clng(newValue)="+cstr(SEL_DATE_MONTH)+ " then" + vbCrLf
+		pSO.write "    strDesc=""Bieżący miesiąc""" + vbCrLf
+		pSO.write "  elseif clng(newValue)="+cstr(SEL_DATE_TODAY)+ " then" + vbCrLf
+		pSO.write "    strDesc=""Dzisiaj""" + vbCrLf
+		pSO.write "  elseif clng(newValue)=" + cstr(SEL_DATE_RAN) + " then" + vbCrLf
+		pSO.write "    strDesc=""Zawiera się pomiędzy "" + strFrom + "" i "" + strTo" + vbCrLf
+		pSO.write "  elseif clng(newValue)="+cstr(SEL_DATE_EARLY)+ " then" + vbCrLf
+		pSO.write "    strDesc=""Wcześniej niż "" + strEarly" + vbCrLf
+		pSO.write "  elseif clng(newValue)="+cstr(SEL_DATE_LATER)+ " then" + vbCrLf
+		pSO.write "    strDesc=""Poźniej niż "" + strLater" + vbCrLf
+		pSO.write "  else" + vbCrLf
+		pSO.write "    strDesc=""hmm... cos nie tak..."" " + vbCrLf
+		pSO.write "  end if" + vbCrLf
+		pSO.write "  page_.ctrl("+cstr(nPos*IDS_SCALE+OFFSET_DESC)+").text=strDesc" + vbCrLf
+		pSO.write "end function" + vbCrLf
+
+		'edit od
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_FROM) + "_ondataentered(oCtrl, newValue)" + vbCrLf
+		pSO.write "end function" + vbCrLf + vbCrLf
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_FROM) + "_ongetdata(byref oCtrl)" + vbCrLf
+		pSO.write "  desc"+cstr(nPos*IDS_SCALE)+"(page_.ctrl("+cstr(nPos*IDS_SCALE)+").value)" + vbCrLf
+		pSO.write "  c" + cstr(nPos*IDS_SCALE+OFFSET_FROM) + "_ongetdata=true" + vbCrLf
+		pSO.write "end function" + vbCrLf
+
+		'edit do
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_TO) + "_ondataentered(oCtrl, newValue)" + vbCrLf
+		pSO.write "end function" + vbCrLf + vbCrLf
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_TO) + "_ongetdata(byref oCtrl)" + vbCrLf
+		pSO.write "  desc"+cstr(nPos*IDS_SCALE)+"(page_.ctrl("+cstr(nPos*IDS_SCALE)+").value)" + vbCrLf
+		pSO.write "  c" + cstr(nPos*IDS_SCALE+OFFSET_TO) + "_ongetdata=true" + vbCrLf
+		pSO.write "end function" + vbCrLf
+
+		'edit wczesniej niz
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_EQUAL) + "_ondataentered(oCtrl, newValue)" + vbCrLf
+		pSO.write "end function" + vbCrLf + vbCrLf
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_EQUAL) + "_ongetdata(byref oCtrl)" + vbCrLf
+		pSO.write "  desc"+cstr(nPos*IDS_SCALE)+"(page_.ctrl("+cstr(nPos*IDS_SCALE)+").value)" + vbCrLf
+		pSO.write "  c" + cstr(nPos*IDS_SCALE+OFFSET_EQUAL) + "_ongetdata=true" + vbCrLf
+		pSO.write "end function" + vbCrLf
+
+		'edit pozniej niz
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_CONT) + "_ondataentered(oCtrl, newValue)" + vbCrLf
+		pSO.write "end function" + vbCrLf + vbCrLf
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_CONT) + "_ongetdata(byref oCtrl)" + vbCrLf
+		pSO.write "  desc"+cstr(nPos*IDS_SCALE)+"(page_.ctrl("+cstr(nPos*IDS_SCALE)+").value)" + vbCrLf
+		pSO.write "  c" + cstr(nPos*IDS_SCALE+OFFSET_CONT) + "_ongetdata=true" + vbCrLf
+		pSO.write "end function" + vbCrLf
+
+		pSO.write "function c" + cstr(nPos*IDS_SCALE) + "_ondataentered(oCtrl, newValue)" + vbCrLf
+		pSO.write "  c" + cstr(nPos*IDS_SCALE) + "_ondataentered=true" + vbCrLf
+		pSO.write "  dim oTmp" + vbCrLf
+		pSO.write "  dim bEnableFrom:bEnableFrom=false" + vbCrLf
+		pSO.write "  dim bEnableTo:bEnableTo=false" + vbCrLf
+		pSO.write "  dim bEnableEarly:bEnableEarly=false" + vbCrLf
+		pSO.write "  dim bEnableLater:bEnableLater=false" + vbCrLf
+		pSO.write "  if clng(newValue)=" + cstr(SEL_DATE_RAN) + " then" + vbCrLf
+		pSO.write "    bEnableFrom=true" + vbCrLf
+		pSO.write "    bEnableTo=true" + vbCrLf
+		pSO.write "  elseif clng(newValue)=" + cstr(SEL_DATE_EARLY) + " then" + vbCrLf
+		pSO.write "    bEnableEarly=true" + vbCrLf
+		pSO.write "  elseif clng(newValue)=" + cstr(SEL_DATE_LATER) + " then" + vbCrLf
+		pSO.write "    bEnableLater=true" + vbCrLf
+		pSO.write "  else" + vbCrLf
+		pSO.write "  end if" + vbCrLf
+		' show/hide controls
+		pSO.write "  page_.ctrl(" + cstr(nPos*IDS_SCALE+OFFSET_EQUAL) + ").disable=not bEnableEarly" + vbCrLf
+		pSO.write "  page_.ctrl(" + cstr(nPos*IDS_SCALE+OFFSET_FROM) + ").disable=not bEnableFrom" + vbCrLf
+		pSO.write "  page_.ctrl(" + cstr(nPos*IDS_SCALE+OFFSET_CONT) + ").disable=not bEnableLater" + vbCrLf
+		pSO.write "  page_.ctrl(" + cstr(nPos*IDS_SCALE+OFFSET_TO) + ").disable=not bEnableTo" + vbCrLf
+		pSO.write "end function" + vbCrLf + vbCrLf
+
+		' _ongetdata
+		pSO.write "function c" + cstr(nPos*IDS_SCALE) + "_ongetdata(byref oCtrl)" + vbCrLf
+		pSO.write "  desc"+cstr(nPos*IDS_SCALE)+"(oCtrl.value)" + vbCrLf
+		pSO.write "  c" + cstr(nPos*IDS_SCALE) + "_ongetdata=true" + vbCrLf
+		pSO.write "end function" + vbCrLf
+	else
+		dim pSTOI : set pSTOI = pSTO.listFilter.get(nPos)
+		if not pSTOI is nothing then
+			pSO.write vbCrLf + "<p name='"+cstr(add_tabid(pSTOI.SearchTypeItem_compose_name()))+"'><table><tbody><!--TODO-->" + vbCrLf
+			pSO.write "<tr style='STYLE_TABLE_HEADER'  name='" + cstr(nPos*1000 + 1) + "'><td width='max'><t name='"+cstr(nPos*1000)+"'>" + vbCrLf
+			pDescrCtrlsIds.add(nPos*1000)
+			pSO.write pSTOI.SearchTypeItem_compose_name()
+			pSO.write "</t></td></tr>" + vbCrLf
+			pSO.write "<tr style='STYLE_TABLE_BODY' name='" + cstr(nPos*1000 + 2) +"'><td width='max'>" + vbCrLf
+			pSO.write "<radio border='0' name='r"+cstr(nPos*IDS_SCALE)+"' colspan='1'>" + vbCrLf
+			pSO.write "<transfer mode='custom'/>" + vbCrLf
+			pSO.write "<table><tbody><tr><td><t size='14'>Dowolna</t></td></tr></tbody></table>" + vbCrLf
+			pSO.write "<table><tbody><tr><td><t size='14'>Bieżący rok</t></td></tr></tbody></table>" + vbCrLf
+			pSO.write "<table><tbody><tr><td><t size='14'>Bieżący miesiąc</t></td></tr></tbody></table>" + vbCrLf
+			pSO.write "<table><tbody><tr><td><t size='14'>Dzisiaj</t></td></tr></tbody></table>" + vbCrLf			
+			pSO.write "<table><tbody><tr><td><t size='14'>Wcześniej niż</t><date name='e" +cstr(nPos*IDS_SCALE+OFFSET_EQUAL) + "' disable='true'><transfer mode='custom'/></date></td></tr></tbody></table>" + vbCrLf
+			pSO.write "<table><tbody><tr><td><t size='14'>Póżniej niż</t><date name='e" +cstr(nPos*IDS_SCALE+OFFSET_CONT) + "' disable='true'><transfer mode='custom'/></date></td></tr></tbody></table>" + vbCrLf
+			pSO.write "<table><tbody><tr><td keepline='true'><t size='14'>Od - do</t><date name='e" +cstr(nPos*IDS_SCALE+OFFSET_FROM) + "' disable='true'><transfer mode='custom'/></date><t size='1'/><t name='t"+cstr(nPos*IDS_SCALE+OFFSET_TEXT_TO)+"'>do</t><t size='1'/><date name='e"+ cstr(nPos*IDS_SCALE+OFFSET_TO) + "' disable='true'><transfer mode='custom'/></date></td></tr></tbody></table>" + vbCrLf
+			pSO.write "</radio>" + vbCrLf
+			pSO.write "<br/>" + vbCrLf
+			pSO.write "<t></t><br/>" + vbCrLf
+			pSO.write "<t></t><br/>" + vbCrLf
+			pSO.write "<t size='1'></t><t bold='true' name='t"+ cstr(nPos*IDS_SCALE+OFFSET_DESC) +"'></t><br/>" + vbCrLf
+			pSO.write "<t></t><br/>" + vbCrLf
+			pSO.write "</td></tr>" + vbCrLf			
+			pSO.write "<tr><td><t></t></td></tr>" + vbCrLf
+			pSO.write "</tbody></table></p>" + vbCrLf
+
+		end if
+	end if
+end function
+
+
+'--------------------------------------------------------------------------
+'
+'  Funkcja generuje skrypt/formularz filtrujący wartości typu currency
+'
+'--------------------------------------------------------------------------
+private function build_currency_section(byref pSO,byref pSTO,byval nPos,byval bScript)
+	if bScript then
+
+		' opis wbranych rzeczy
+		pSO.write "function desc"+cstr(nPos*IDS_SCALE)+"(newValue)" + vbCrLf
+		pSO.write "	 dim strDesc" + vbCrLf
+		pSO.write "	 dim strFrom:strFrom="""""""" + cstr(page_.ctrl("+cstr(nPos*IDS_SCALE+OFFSET_FROM)+").value) + """"""""" + vbCrLf
+		pSO.write "	 dim strTo:strTo="""""""" + cstr(page_.ctrl("+cstr(nPos*IDS_SCALE+OFFSET_TO)+").value) + """"""""" + vbCrLf
+		pSO.write "	 dim strEqual:strEqual="""""""" + cstr(page_.ctrl("+cstr(nPos*IDS_SCALE+OFFSET_EQUAL)+").value) + """"""""" + vbCrLf
+		pSO.write "	 dim strCont:strCont="""""""" + cstr(page_.ctrl("+cstr(nPos*IDS_SCALE+OFFSET_CONT)+").value) + """"""""" + vbCrLf
+		pSO.write "	 dim strBegin:strBegin="""""""" + cstr(page_.ctrl("+cstr(nPos*IDS_SCALE+OFFSET_BEGIN)+").value) + """"""""" + vbCrLf
+		pSO.write "  if clng(newValue)=" + cstr(SEL_CUR_ALL) + " then" + vbCrLf
+		pSO.write "    strDesc=""Dowolna wartość""" + vbCrLf
+		pSO.write "  elseif clng(newValue)="+cstr(SEL_CUR_SUB)+" then" + vbCrLf
+		pSO.write "    strDesc=""Wartość większa niż "" + strBegin" + vbCrLf
+		pSO.write "  elseif clng(newValue)="+cstr(SEL_CUR_SUP)+ " then" + vbCrLf
+		pSO.write "    strDesc=""Wartość mniejsza niż "" + strCont" + vbCrLf
+		pSO.write "  elseif clng(newValue)="+cstr(SEL_CUR_EQ)+ " then" + vbCrLf
+		pSO.write "    strDesc=""WArtość równa "" + strEqual" + vbCrLf
+		pSO.write "  elseif clng(newValue)=" + cstr(SEL_CUR_RAN) + " then" + vbCrLf
+		pSO.write "    strDesc=""Wartość z zakresu "" + strFrom + "" i "" + strTo" + vbCrLf		
+		pSO.write "  else" + vbCrLf
+		pSO.write "    strDesc=""hmm... cos nie tak..."" " + vbCrLf
+		pSO.write "  end if" + vbCrLf
+		pSO.write "  page_.ctrl("+cstr(nPos*IDS_SCALE+OFFSET_DESC)+").text=strDesc" + vbCrLf
+		pSO.write "end function" + vbCrLf
+
+		'edit od
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_FROM) + "_ondataentered(oCtrl, newValue)" + vbCrLf
+		pSO.write "end function" + vbCrLf + vbCrLf
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_FROM) + "_ongetdata(byref oCtrl)" + vbCrLf
+		pSO.write "  desc"+cstr(nPos*IDS_SCALE)+"(page_.ctrl("+cstr(nPos*IDS_SCALE)+").value)" + vbCrLf
+		pSO.write "  c" + cstr(nPos*IDS_SCALE+OFFSET_FROM) + "_ongetdata=true" + vbCrLf
+		pSO.write "end function" + vbCrLf
+
+		'edit do
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_TO) + "_ondataentered(oCtrl, newValue)" + vbCrLf
+		pSO.write "end function" + vbCrLf + vbCrLf
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_TO) + "_ongetdata(byref oCtrl)" + vbCrLf
+		pSO.write "  desc"+cstr(nPos*IDS_SCALE)+"(page_.ctrl("+cstr(nPos*IDS_SCALE)+").value)" + vbCrLf
+		pSO.write "  c" + cstr(nPos*IDS_SCALE+OFFSET_TO) + "_ongetdata=true" + vbCrLf
+		pSO.write "end function" + vbCrLf
+
+		'edit equal
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_EQUAL) + "_ondataentered(oCtrl, newValue)" + vbCrLf
+		pSO.write "end function" + vbCrLf + vbCrLf
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_EQUAL) + "_ongetdata(byref oCtrl)" + vbCrLf
+		pSO.write "  desc"+cstr(nPos*IDS_SCALE)+"(page_.ctrl("+cstr(nPos*IDS_SCALE)+").value)" + vbCrLf
+		pSO.write "  c" + cstr(nPos*IDS_SCALE+OFFSET_EQUAL) + "_ongetdata=true" + vbCrLf
+		pSO.write "end function" + vbCrLf
+
+		'edit begin
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_BEGIN) + "_ondataentered(oCtrl, newValue)" + vbCrLf
+		pSO.write "end function" + vbCrLf + vbCrLf
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_BEGIN) + "_ongetdata(byref oCtrl)" + vbCrLf
+		pSO.write "  desc"+cstr(nPos*IDS_SCALE)+"(page_.ctrl("+cstr(nPos*IDS_SCALE)+").value)" + vbCrLf
+		pSO.write "  c" + cstr(nPos*IDS_SCALE+OFFSET_BEGIN) + "_ongetdata=true" + vbCrLf
+		pSO.write "end function" + vbCrLf
+
+		'edit contain
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_CONT) + "_ondataentered(oCtrl, newValue)" + vbCrLf
+		pSO.write "end function" + vbCrLf + vbCrLf
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_CONT) + "_ongetdata(byref oCtrl)" + vbCrLf
+		pSO.write "  desc"+cstr(nPos*IDS_SCALE)+"(page_.ctrl("+cstr(nPos*IDS_SCALE)+").value)" + vbCrLf
+		pSO.write "  c" + cstr(nPos*IDS_SCALE+OFFSET_CONT) + "_ongetdata=true" + vbCrLf
+		pSO.write "end function" + vbCrLf
+
+
+		'radio
+		pSO.write "function c" + cstr(nPos*IDS_SCALE) + "_ondataentered(oCtrl, newValue)" + vbCrLf
+		pSO.write "  c" + cstr(nPos*IDS_SCALE) + "_ondataentered=true" + vbCrLf
+		pSO.write "  dim oTmp" + vbCrLf
+		pSO.write "  dim bEnableFrom:bEnableFrom=false" + vbCrLf
+		pSO.write "  dim bEnableTo:bEnableTo=false" + vbCrLf
+		pSO.write "  dim bEnableEqual:bEnableEqual=false" + vbCrLf
+		pSO.write "  dim bEnableBegin:bEnableBegin=false" + vbCrLf
+		pSO.write "  dim bEnableCont:bEnableCont=false" + vbCrLf
+		pSO.write "  if clng(newValue)=" + cstr(SEL_CUR_ALL) + " then" + vbCrLf		
+		pSO.write "  elseif clng(newValue)="+cstr(SEL_CUR_EQ)+" then" + vbCrLf
+		pSO.write "    bEnableEqual=true" + vbCrLf
+		pSO.write "  elseif clng(newValue)="+cstr(SEL_CUR_SUP)+ " then" + vbCrLf
+		pSO.write "    bEnableCont=true" + vbCrLf
+		pSO.write "  elseif clng(newValue)="+cstr(SEL_CUR_SUB)+ " then" + vbCrLf
+		pSO.write "    bEnableBegin=true" + vbCrLf
+		pSO.write "  elseif clng(newValue)=" + cstr(SEL_CUR_RAN) + " then" + vbCrLf
+		pSO.write "    bEnableFrom=true" + vbCrLf
+		pSO.write "    bEnableTo=true" + vbCrLf
+		pSO.write "  else" + vbCrLf		
+		pSO.write "  end if" + vbCrLf
+		'show/hide controls
+
+		pSO.write "  page_.ctrl(" + cstr(nPos*IDS_SCALE+OFFSET_EQUAL) + ").disable=not bEnableEqual" + vbCrLf
+		pSO.write "  page_.ctrl(" + cstr(nPos*IDS_SCALE+OFFSET_FROM) + ").disable=not bEnableFrom" + vbCrLf
+		pSO.write "  page_.ctrl(" + cstr(nPos*IDS_SCALE+OFFSET_CONT) + ").disable=not bEnableCont" + vbCrLf
+		pSO.write "  page_.ctrl(" + cstr(nPos*IDS_SCALE+OFFSET_TO) + ").disable=not bEnableTo" + vbCrLf
+		pSO.write "  page_.ctrl(" + cstr(nPos*IDS_SCALE+OFFSET_BEGIN) + ").disable=not bEnableBegin" + vbCrLf
+		pSO.write "end function" + vbCrLf + vbCrLf
+
+		' _ongetdata
+		pSO.write "function c" + cstr(nPos*IDS_SCALE) + "_ongetdata(byref oCtrl)" + vbCrLf
+		pSO.write "  desc"+cstr(nPos*IDS_SCALE)+"(page_.ctrl("+cstr(nPos*IDS_SCALE)+").value)" + vbCrLf
+		pSO.write "  c" + cstr(nPos*IDS_SCALE) + "_ongetdata=true" + vbCrLf
+		pSO.write "end function" + vbCrLf
+
+	else
+		dim pSTOI : set pSTOI = pSTO.listFilter.get(nPos)
+		if not pSTOI is nothing then
+			pSO.write vbCrLf + "<p name='"+cstr(add_tabid(pSTOI.SearchTypeItem_compose_name()))+"'><table><tbody><!--TODO-->" + vbCrLf
+			pSO.write "<tr style='STYLE_TABLE_HEADER' name='" + cstr(nPos*1000 + 1) + "'><td width='max'><t name='"+cstr(nPos*1000)+"'>" + vbCrLf
+			pDescrCtrlsIds.add(nPos*1000)
+			pSO.write pSTOI.SearchTypeItem_compose_name()
+			pSO.write "</t></td></tr>" + vbCrLf
+			pSO.write "<tr style='STYLE_TABLE_BODY' name='" + cstr(nPos*1000 + 2) +"'><td width='max'>" + vbCrLf			
+			pSO.write "<radio border='0' name='r"+cstr(nPos*IDS_SCALE)+"' colspan='1'>" + vbCrLf			
+			pSO.write "<transfer mode='custom'/>" + vbCrLf
+			pSO.write "<table><tbody><tr><td keepline='true' width='min'><t size='10'>Dowolna wartość</t></td></tr></tbody></table>" + vbCrLf
+			pSO.write "<table><tbody><tr><td keepline='true' width='min'><t size='10'>Mniejsze</t>   <currency disable='true' name='e" + cstr(nPos*IDS_SCALE+OFFSET_CONT) + "' size='12'><transfer mode='custom'/></currency></td></tr></tbody></table>" + vbCrLf
+			pSO.write "<table><tbody><tr><td keepline='true' width='min'><t size='10'>Większe</t>    <currency disable='true' name='e" + cstr(nPos*IDS_SCALE+OFFSET_BEGIN) + "' size='12'><transfer mode='custom'/></currency></td></tr></tbody></table>" + vbCrLf
+			pSO.write "<table><tbody><tr><td keepline='true' width='min'><t size='10'>Równe</t>     <currency disable='true' name='e" + cstr(nPos*IDS_SCALE+OFFSET_EQUAL) + "' size='12'><transfer mode='custom'/></currency></td></tr></tbody></table>" + vbCrLf
+			pSO.write "<table><tbody><tr><td keepline='true' width='min'><t size='10'>Zakres od </t>  <currency disable='true' name='e" + cstr(nPos*IDS_SCALE+OFFSET_FROM) + "' size='12'><transfer mode='custom'/></currency><t size='1'></t><t>do</t><t size='1'></t><currency name='e"+ cstr(nPos*IDS_SCALE+OFFSET_TO) + "' size='12' disable='true'><transfer mode='custom'/></currency></td></tr></tbody></table>" + vbCrLf
+			pSO.write "</radio>" + vbCrLf
+			pSO.write "<br/>" + vbCrLf
+			pSO.write "<t size='1'></t><br/>" + vbCrLf
+			pSO.write "<t size='1'></t><t bold='true' name='t"+ cstr(nPos*IDS_SCALE+OFFSET_DESC) +"'></t><br/>" + vbCrLf
+			pSO.write "<t></t><br/>" + vbCrLf
+			pSO.write "</td></tr>" + vbCrLf			
+			pSO.write "<tr><td><t></t></td></tr>" + vbCrLf
+			pSO.write "</tbody></table></p>" + vbCrLf		
+
+		end if
+	end if
+end function
+
+
+
+'--------------------------------------------------------------------------
+'
+'  Funkcja generuje skrypt/formularz filtrujący wartości typu long
+'
+'--------------------------------------------------------------------------
+private function build_long_section(byref pSO,byref pSTO,byval nPos,byval bScript)
+	if bScript then
+
+		' opis wbranych rzeczy
+		pSO.write "function desc"+cstr(nPos*IDS_SCALE)+"(newValue)" + vbCrLf
+		pSO.write "	 dim strDesc" + vbCrLf
+		pSO.write "	 dim strFrom:strFrom="""""""" + cstr(page_.ctrl("+cstr(nPos*IDS_SCALE+OFFSET_FROM)+").value) + """"""""" + vbCrLf
+		pSO.write "	 dim strTo:strTo="""""""" + cstr(page_.ctrl("+cstr(nPos*IDS_SCALE+OFFSET_TO)+").value) + """"""""" + vbCrLf
+		pSO.write "	 dim strEqual:strEqual="""""""" + cstr(page_.ctrl("+cstr(nPos*IDS_SCALE+OFFSET_EQUAL)+").value) + """"""""" + vbCrLf
+		pSO.write "	 dim strCont:strCont="""""""" + cstr(page_.ctrl("+cstr(nPos*IDS_SCALE+OFFSET_CONT)+").value) + """"""""" + vbCrLf
+		pSO.write "	 dim strBegin:strBegin="""""""" + cstr(page_.ctrl("+cstr(nPos*IDS_SCALE+OFFSET_BEGIN)+").value) + """"""""" + vbCrLf
+		pSO.write "  if clng(newValue)=" + cstr(SEL_CUR_ALL) + " then" + vbCrLf
+		pSO.write "    strDesc=""Dowolna wartość""" + vbCrLf
+		pSO.write "  elseif clng(newValue)="+cstr(SEL_CUR_SUB)+" then" + vbCrLf
+		pSO.write "    strDesc=""Wartość większa niż "" + strBegin" + vbCrLf
+		pSO.write "  elseif clng(newValue)="+cstr(SEL_CUR_SUP)+ " then" + vbCrLf
+		pSO.write "    strDesc=""Wartość mniejsza niż "" + strCont" + vbCrLf
+		pSO.write "  elseif clng(newValue)="+cstr(SEL_CUR_EQ)+ " then" + vbCrLf
+		pSO.write "    strDesc=""WArtość równa "" + strEqual" + vbCrLf
+		pSO.write "  elseif clng(newValue)=" + cstr(SEL_CUR_RAN) + " then" + vbCrLf
+		pSO.write "    strDesc=""Wartość z zakresu "" + strFrom + "" i "" + strTo" + vbCrLf		
+		pSO.write "  else" + vbCrLf
+		pSO.write "    strDesc=""hmm... cos nie tak..."" " + vbCrLf
+		pSO.write "  end if" + vbCrLf
+		pSO.write "  page_.ctrl("+cstr(nPos*IDS_SCALE+OFFSET_DESC)+").text=strDesc" + vbCrLf
+		pSO.write "end function" + vbCrLf
+
+		'edit od
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_FROM) + "_ondataentered(oCtrl, newValue)" + vbCrLf
+		pSO.write "end function" + vbCrLf + vbCrLf
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_FROM) + "_ongetdata(byref oCtrl)" + vbCrLf
+		pSO.write "  desc"+cstr(nPos*IDS_SCALE)+"(page_.ctrl("+cstr(nPos*IDS_SCALE)+").value)" + vbCrLf
+		pSO.write "  c" + cstr(nPos*IDS_SCALE+OFFSET_FROM) + "_ongetdata=true" + vbCrLf
+		pSO.write "end function" + vbCrLf
+
+		'edit do
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_TO) + "_ondataentered(oCtrl, newValue)" + vbCrLf
+		pSO.write "end function" + vbCrLf + vbCrLf
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_TO) + "_ongetdata(byref oCtrl)" + vbCrLf
+		pSO.write "  desc"+cstr(nPos*IDS_SCALE)+"(page_.ctrl("+cstr(nPos*IDS_SCALE)+").value)" + vbCrLf
+		pSO.write "  c" + cstr(nPos*IDS_SCALE+OFFSET_TO) + "_ongetdata=true" + vbCrLf
+		pSO.write "end function" + vbCrLf
+
+		'edit equal
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_EQUAL) + "_ondataentered(oCtrl, newValue)" + vbCrLf
+		pSO.write "end function" + vbCrLf + vbCrLf
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_EQUAL) + "_ongetdata(byref oCtrl)" + vbCrLf
+		pSO.write "  desc"+cstr(nPos*IDS_SCALE)+"(page_.ctrl("+cstr(nPos*IDS_SCALE)+").value)" + vbCrLf
+		pSO.write "  c" + cstr(nPos*IDS_SCALE+OFFSET_EQUAL) + "_ongetdata=true" + vbCrLf
+		pSO.write "end function" + vbCrLf
+
+		'edit begin
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_BEGIN) + "_ondataentered(oCtrl, newValue)" + vbCrLf
+		pSO.write "end function" + vbCrLf + vbCrLf
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_BEGIN) + "_ongetdata(byref oCtrl)" + vbCrLf
+		pSO.write "  desc"+cstr(nPos*IDS_SCALE)+"(page_.ctrl("+cstr(nPos*IDS_SCALE)+").value)" + vbCrLf
+		pSO.write "  c" + cstr(nPos*IDS_SCALE+OFFSET_BEGIN) + "_ongetdata=true" + vbCrLf
+		pSO.write "end function" + vbCrLf
+
+		'edit contain
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_CONT) + "_ondataentered(oCtrl, newValue)" + vbCrLf
+		pSO.write "end function" + vbCrLf + vbCrLf
+		pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_CONT) + "_ongetdata(byref oCtrl)" + vbCrLf
+		pSO.write "  desc"+cstr(nPos*IDS_SCALE)+"(page_.ctrl("+cstr(nPos*IDS_SCALE)+").value)" + vbCrLf
+		pSO.write "  c" + cstr(nPos*IDS_SCALE+OFFSET_CONT) + "_ongetdata=true" + vbCrLf
+		pSO.write "end function" + vbCrLf
+
+
+		'radio
+		pSO.write "function c" + cstr(nPos*IDS_SCALE) + "_ondataentered(oCtrl, newValue)" + vbCrLf
+		pSO.write "  c" + cstr(nPos*IDS_SCALE) + "_ondataentered=true" + vbCrLf
+		pSO.write "  dim oTmp" + vbCrLf
+		pSO.write "  dim bEnableFrom:bEnableFrom=false" + vbCrLf
+		pSO.write "  dim bEnableTo:bEnableTo=false" + vbCrLf
+		pSO.write "  dim bEnableEqual:bEnableEqual=false" + vbCrLf
+		pSO.write "  dim bEnableBegin:bEnableBegin=false" + vbCrLf
+		pSO.write "  dim bEnableCont:bEnableCont=false" + vbCrLf
+		pSO.write "  if clng(newValue)=" + cstr(SEL_CUR_ALL) + " then" + vbCrLf		
+		pSO.write "  elseif clng(newValue)="+cstr(SEL_CUR_EQ)+" then" + vbCrLf
+		pSO.write "    bEnableEqual=true" + vbCrLf
+		pSO.write "  elseif clng(newValue)="+cstr(SEL_CUR_SUP)+ " then" + vbCrLf
+		pSO.write "    bEnableCont=true" + vbCrLf
+		pSO.write "  elseif clng(newValue)="+cstr(SEL_CUR_SUB)+ " then" + vbCrLf
+		pSO.write "    bEnableBegin=true" + vbCrLf
+		pSO.write "  elseif clng(newValue)=" + cstr(SEL_CUR_RAN) + " then" + vbCrLf
+		pSO.write "    bEnableFrom=true" + vbCrLf
+		pSO.write "    bEnableTo=true" + vbCrLf
+		pSO.write "  else" + vbCrLf		
+		pSO.write "  end if" + vbCrLf
+		'show/hide controls
+
+		pSO.write "  page_.ctrl(" + cstr(nPos*IDS_SCALE+OFFSET_EQUAL) + ").disable=not bEnableEqual" + vbCrLf
+		pSO.write "  page_.ctrl(" + cstr(nPos*IDS_SCALE+OFFSET_FROM) + ").disable=not bEnableFrom" + vbCrLf
+		pSO.write "  page_.ctrl(" + cstr(nPos*IDS_SCALE+OFFSET_CONT) + ").disable=not bEnableCont" + vbCrLf
+		pSO.write "  page_.ctrl(" + cstr(nPos*IDS_SCALE+OFFSET_TO) + ").disable=not bEnableTo" + vbCrLf
+		pSO.write "  page_.ctrl(" + cstr(nPos*IDS_SCALE+OFFSET_BEGIN) + ").disable=not bEnableBegin" + vbCrLf
+		pSO.write "end function" + vbCrLf + vbCrLf
+
+		' _ongetdata
+		pSO.write "function c" + cstr(nPos*IDS_SCALE) + "_ongetdata(byref oCtrl)" + vbCrLf
+		pSO.write "  desc"+cstr(nPos*IDS_SCALE)+"(page_.ctrl("+cstr(nPos*IDS_SCALE)+").value)" + vbCrLf
+		pSO.write "  c" + cstr(nPos*IDS_SCALE) + "_ongetdata=true" + vbCrLf
+		pSO.write "end function" + vbCrLf
+
+	else
+		dim pSTOI : set pSTOI = pSTO.listFilter.get(nPos)
+		if not pSTOI is nothing then
+			pSO.write vbCrLf + "<p name='"+cstr(add_tabid(pSTOI.SearchTypeItem_compose_name()))+"'><table><tbody><!--TODO-->" + vbCrLf
+			pSO.write "<tr style='STYLE_TABLE_HEADER' name='" + cstr(nPos*1000 + 1) + "'><td width='max'><t name='"+cstr(nPos*1000)+"'>" + vbCrLf
+			pDescrCtrlsIds.add(nPos*1000)
+			pSO.write pSTOI.SearchTypeItem_compose_name()
+			pSO.write "</t></td></tr>" + vbCrLf
+			pSO.write "<tr style='STYLE_TABLE_BODY' name='" + cstr(nPos*1000 + 2) +"'><td width='max'>" + vbCrLf			
+			pSO.write "<radio border='0' name='r"+cstr(nPos*IDS_SCALE)+"' colspan='1'>" + vbCrLf			
+			pSO.write "<transfer mode='custom'/>" + vbCrLf
+			pSO.write "<table><tbody><tr><td keepline='true' width='min'><t size='10'>Dowolna wartość</t></td></tr></tbody></table>" + vbCrLf
+			pSO.write "<table><tbody><tr><td keepline='true' width='min'><t size='10'>Mniejsze</t>   <intedit disable='true' name='e" + cstr(nPos*IDS_SCALE+OFFSET_CONT) + "' size='12'><transfer mode='custom'/></intedit></td></tr></tbody></table>" + vbCrLf
+			pSO.write "<table><tbody><tr><td keepline='true' width='min'><t size='10'>Większe</t>    <intedit disable='true' name='e" + cstr(nPos*IDS_SCALE+OFFSET_BEGIN) + "' size='12'><transfer mode='custom'/></intedit></td></tr></tbody></table>" + vbCrLf
+			pSO.write "<table><tbody><tr><td keepline='true' width='min'><t size='10'>Równe</t>     <intedit disable='true' name='e" + cstr(nPos*IDS_SCALE+OFFSET_EQUAL) + "' size='12'><transfer mode='custom'/></intedit></td></tr></tbody></table>" + vbCrLf
+			pSO.write "<table><tbody><tr><td keepline='true' width='min'><t size='10'>Zakres od </t>  <intedit disable='true' name='e" + cstr(nPos*IDS_SCALE+OFFSET_FROM) + "' size='12'><transfer mode='custom'/></intedit><t size='1'></t><t>do</t><t size='1'></t><intedit name='e"+ cstr(nPos*IDS_SCALE+OFFSET_TO) + "' size='12' disable='true'><transfer mode='custom'/></intedit></td></tr></tbody></table>" + vbCrLf
+			pSO.write "</radio>" + vbCrLf
+			pSO.write "<br/>" + vbCrLf
+			pSO.write "<t size='1'></t><br/>" + vbCrLf
+			pSO.write "<t size='1'></t><t bold='true' name='t"+ cstr(nPos*IDS_SCALE+OFFSET_DESC) +"'></t><br/>" + vbCrLf
+			pSO.write "<t></t><br/>" + vbCrLf
+			pSO.write "</td></tr>" + vbCrLf			
+			pSO.write "<tr><td><t></t></td></tr>" + vbCrLf
+			pSO.write "</tbody></table></p>" + vbCrLf		
+
+		end if
+	end if
+end function
+
+
+'--------------------------------------------------------------------------
+'
+'  Funkcja generuje skrypt/formularz filtrujący wartości typu time
+'
+'--------------------------------------------------------------------------
+private function build_time_section(byref pSO,byref pSTO,byval nPos,byval bScript)
+	if bScript then
+
+		' _ondataentered
+		pSO.write "function c" + cstr(nPos*IDS_SCALE) + "_ondataentered(oCtrl, newValue)" + vbCrLf
+		pSO.write "  c" + cstr(nPos*IDS_SCALE) + "_ondataentered=true" + vbCrLf
+		pSO.write "  dim oTmp" + vbCrLf
+		pSO.write "  dim bEnableFrom" + vbCrLf
+		pSO.write "  dim bEnableTo" + vbCrLf
+		pSO.write "  if clng(newValue)=" + cstr(SEL_TIME_ALL) + " then" + vbCrLf
+		pSO.write "    bEnableFrom=false" + vbCrLf
+		pSO.write "    bEnableTo=false" + vbCrLf
+		pSO.write "  elseif clng(newValue)=" + cstr(SEL_TIME_SUP) + " or clng(newValue)=" + cstr(SEL_TIME_SUB) +_
+					" or clng(newValue)=" + cstr(SEL_TIME_EQ) + " then" + vbCrLf
+		pSO.write "    bEnableFrom=true" + vbCrLf
+		pSO.write "    bEnableTo=false" + vbCrLf
+		pSO.write "  elseif clng(newValue)=" + cstr(SEL_TIME_RAN) + " then" + vbCrLf
+		pSO.write "    bEnableFrom=true" + vbCrLf
+		pSO.write "    bEnableTo=true" + vbCrLf
+		pSO.write "  else" + vbCrLf
+		pSO.write "    bEnableFrom=false" + vbCrLf
+		pSO.write "    bEnableTo=false" + vbCrLf
+		pSO.write "  end if" + vbCrLf
+		' show/hide controls
+		'pSO.write "  page_.ctrl(" + cstr(nPos*IDS_SCALE+OFFSET_TEXT_FROM) + ").disable=not bEnableFrom" + vbCrLf
+		pSO.write "  page_.ctrl(" + cstr(nPos*IDS_SCALE+OFFSET_FROM) + ").disable=not bEnableFrom" + vbCrLf
+		'pSO.write "  page_.ctrl(" + cstr(nPos*IDS_SCALE+OFFSET_TEXT_TO) + ").disable=not bEnableTo" + vbCrLf
+		pSO.write "  page_.ctrl(" + cstr(nPos*IDS_SCALE+OFFSET_TO) + ").disable=not bEnableTo" + vbCrLf
+		pSO.write "end function" + vbCrLf + vbCrLf
+
+		' _ongetdata
+		pSO.write "function c" + cstr(nPos*IDS_SCALE) + "_ongetdata(byref oCtrl)" + vbCrLf
+		pSO.write "  c" + cstr(nPos*IDS_SCALE) + "_ongetdata=true" + vbCrLf
+		pSO.write "end function" + vbCrLf
+
+	else
+		dim pSTOI : set pSTOI = pSTO.listFilter.get(nPos)
+		if not pSTOI is nothing then
+			pSO.write vbCrLf + "<p name='"+cstr(add_tabid(pSTOI.SearchTypeItem_compose_name()))+"'><table><tbody><!--TODO-->" + vbCrLf
+			pSO.write "<tr style='STYLE_TABLE_HEADER' name='" + cstr(nPos*1000 + 1) +  "'><td width='max'><t name='"+cstr(nPos*1000)+"'>" + vbCrLf
+			pDescrCtrlsIds.add(nPos*1000)
+			pSO.write pSTOI.SearchTypeItem_compose_name()			
+			pSO.write "</t></td></tr>" + vbCrLf
+			pSO.write "<tr style='STYLE_TABLE_BODY' name='" + cstr(nPos*1000 + 2) +"'><td width='max'>" + vbCrLf
+			pSO.write "<radio name='r"+cstr(nPos*IDS_SCALE)+"' colspan='4'>" + vbCrLf
+			pSO.write "<transfer mode='custom'/>" + vbCrLf
+			pSO.write "<t>Dowolna godzina</t>" + vbCrLf
+			pSO.write "<t>Od godziny</t>" + vbCrLf
+			pSO.write "<t>Do godziny</t>" + vbCrLf
+			pSO.write "<t>O godzinie</t>" + vbCrLf
+			pSO.write "<t>Zakres</t>" + vbCrLf
+			pSO.write "</radio>" + vbCrLf
+			pSO.write "<t name='t"+ cstr(nPos*IDS_SCALE+OFFSET_TEXT_FROM) + "'>Wzorzec</t><time name='e" +_
+				cstr(nPos*IDS_SCALE+OFFSET_FROM) + "' disable='true'/><t name='t"+cstr(nPos*IDS_SCALE+OFFSET_TEXT_TO)+"'>do</t>" +_
+				"<time name='e"+ cstr(nPos*IDS_SCALE+OFFSET_TO) + "' disable='true'/>" + vbCrLf
+			pSO.write "<br/><t/></td></tr>" + vbCrLf		
+			pSO.write "<tr><td><t></t></td></tr>" + vbCrLf
+			pSO.write "</tbody></table></p>" + vbCrLf
+		end if
+	end if
+end function
+
+
+'--------------------------------------------------------------------------
+'
+'  Funkcja generuje skrypt/formularz filtrujący wartości typu enum
+'
+'--------------------------------------------------------------------------
+private function build_enum_section(byref pSO,byref pSTO,byval nPos,byval bScript)
+	dim pSTOI : set pSTOI = pSTO.listFilter.get(nPos)
+	if pSTOI is nothing then
+		exit function
+	end if
+	dim aszPath: aszPath = split(pSTOI.ComposedPath,";")
+	dim nTypeId: nTypeId = aszPath(ubound(aszPath)-1)
+	dim szFldName: szFldName = aszPath(ubound(aszPath))
+	' tablica z naszym polem enum
+	dim oTwef: set oTwef = doc_.stdobjdef.getobjdef(nTypeId)
+	' pole enum
+	dim oField: set oField = oTwef.field(oTwef.getfieldindex(szFldName))
+	dim i
+	dim szName
+
+	dim bAllowEmpty: bAllowEmpty = oField.isrefopt
+
+	if bScript then
+		dim nBoxCount: nBoxCount=0 ' liczba checkboxow
+		while oField.enumvalue(nBoxCount)<>""
+			nBoxCount = nBoxCount + 1
+		wend
+
+		i = 0
+		szName = oField.enumvalue(i)
+		while szName<>""
+			' _ondataentered
+			' zabezpieczenie: musi być wybrany przynajmniej jeden CheckBox
+			pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_ENUM+i) + "_ondataentered(oCtrl, newValue)" + vbCrLf
+			pSO.write "  c" + cstr(nPos*IDS_SCALE+OFFSET_ENUM+i) + "_ondataentered=true" + vbCrLf
+			' odznaczono checkbox
+			pSO.write "  if clng(newValue)=""0"" then" + vbCrLf
+			pSO.write "    dim bChecked: bChecked = false" + vbCrLf
+			pSO.write "    dim i" + vbCrLf
+			pSO.write "    for i=0 to " + cstr(nBoxCount) + "-1" + vbCrLf
+			pSO.write "      if page_.ctrl(" + cstr(nPos*IDS_SCALE+OFFSET_ENUM) + " + i).value=""1"" then" + vbCrLf
+			pSO.write "        bChecked = true" + vbCrLf
+			pSO.write "      end if" + vbCrLf
+			pSO.write "    next" + vbCrLf
+			if bAllowEmpty then
+				pSO.write "if not bChecked then" + vbCrLf
+				' zaznacz kontrolke "nieznany"
+				pSO.write "  page_.ctrl(" + cstr(nPos*IDS_SCALE+OFFSET_ENUM+nBoxCount) + ").value=""1""" + vbCrLf
+				pSO.write "end if" + vbCrLf
+			else
+				pSO.write "if not bChecked then" + vbCrLf
+				pSO.write "  page_.ctrl(" + cstr(nPos*IDS_SCALE+OFFSET_ENUM+i) + ").value=""1""" + vbCrLf
+				pSO.write "end if" + vbCrLf
+			end if
+			' zaznaczono checkbox
+			if bAllowEmpty then
+				pSO.write "  else" + vbCrLf
+				' odznacz kontrolke "nieznany"
+				pSO.write "  page_.ctrl(" + cstr(nPos*IDS_SCALE+OFFSET_ENUM+nBoxCount) + ").value=""0""" + vbCrLf
+			end if
+
+			pSO.write "  end if" + vbCrLf
+			pSO.write "end function" + vbCrLf + vbCrLf
+
+			' _ongetdata
+			pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_ENUM+i) + "_ongetdata(byref oCtrl)" + vbCrLf
+			pSO.write "  c" + cstr(nPos*IDS_SCALE+OFFSET_ENUM+i) + "_ongetdata=true" + vbCrLf
+			pSO.write "end function" + vbCrLf
+
+			i = i + 1
+			szName = oField.enumvalue(i)
+		wend
+
+		' checkbox: "nieznany" dla pola enum, który może być pusty
+		if bAllowEmpty then
+			' _ondataentered
+			pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_ENUM+nBoxCount) + "_ondataentered(oCtrl, newValue)" + vbCrLf
+			pSO.write "  c" + cstr(nPos*IDS_SCALE+OFFSET_ENUM+nBoxCount) + "_ondataentered=true" + vbCrLf
+			pSO.write "  if clng(newValue)=""1"" then" + vbCrLf
+			pSO.write "    dim i" + vbCrLf
+			pSO.write "    for i=0 to " + cstr(nBoxCount) + "-1" + vbCrLf
+			pSO.write "      page_.ctrl(" + cstr(nPos*IDS_SCALE+OFFSET_ENUM) + " + i).value=""0""" + vbCrLf
+			pSO.write "    next" + vbCrLf
+			pSO.write "  else" + vbCrLf
+			pSO.write "    page_.ctrl(" + cstr(nPos*IDS_SCALE+OFFSET_ENUM+nBoxCount) + ").value=""1""" + vbCrLf
+			pSO.write "  end if" + vbCrLf + vbCrLf
+			pSO.write "end function" + vbCrLf + vbCrLf
+
+			' _ongetdata
+			pSO.write "function c" + cstr(nPos*IDS_SCALE+OFFSET_ENUM+nBoxCount) + "_ongetdata(byref oCtrl)" + vbCrLf
+			pSO.write "  c" + cstr(nPos*IDS_SCALE+OFFSET_ENUM+nBoxCount) + "_ongetdata=true" + vbCrLf
+			pSO.write "end function" + vbCrLf
+		end if
+
+	else
+		pSO.write vbCrLf + "<p name='"+cstr(add_tabid(pSTOI.SearchTypeItem_compose_name()))+"'><table><tbody><!--TODO-->" + vbCrLf
+		pSO.write "<tr style='STYLE_TABLE_HEADER' name='" + cstr(nPos*1000 + 1) + "'><td width='max'><t name='"+cstr(nPos*1000)+"'>" + vbCrLf
+		pDescrCtrlsIds.add(nPos*1000)
+		pSO.write pSTOI.SearchTypeItem_compose_name()
+		pSO.write "</t></td></tr>" + vbCrLf
+		pSO.write "<tr style='STYLE_TABLE_BODY' name='" + cstr(nPos*1000 + 2) +"'><td width='max'>" + vbCrLf
+
+		i = 0
+		szName = oField.enumvalue(i)
+		while szName<>""
+			pSO.write "<checkbox name='" + cstr(nPos*IDS_SCALE+OFFSET_ENUM+i) + "'>" + vbCrLf
+			pSO.write "<t>" + szName + "</t>" + vbCrLf
+			pSO.write "<transfer mode='custom'/>" + vbCrLf
+			pSO.write "</checkbox><br/>" + vbCrLf
+			i = i + 1
+			szName = oField.enumvalue(i)
+		wend
+
+		' dodanie checkboxu: "nieznany" dla pola enum, który może być pusty
+		if bAllowEmpty then
+			pSO.write "<checkbox name='" + cstr(nPos*IDS_SCALE+OFFSET_ENUM+i) + "'>" + vbCrLf
+			pSO.write "<t>Nieznany</t>" + vbCrLf
+			pSO.write "<transfer mode='custom'/>" + vbCrLf
+			pSO.write "</checkbox><br/>" + vbCrLf
+		end if
+
+		pSO.write "<t/></td></tr>" + vbCrLf		
+		pSO.write "<tr><td><t></t></td></tr>" + vbCrLf
+		pSO.write "</tbody></table></p>" + vbCrLf
+	end if
+end function
+
+
+'--------------------------------------------------------------------------
+'
+'  Funkcja generuje skrypt/formularz filtrujący wartości 
+'	odnoszące sie do listy wyboru
+'
+'--------------------------------------------------------------------------
+private function build_list_section(byref pSO,byref pSTO,byval nPos,byval bScript)
+	if bScript then
+		set pSTOI = pSTO.listFilter.get(nPos)
+		if pSTOI is nothing then
+			exit function
+		end if
+		dim PathArray : PathArray = split(pSTOI.ComposedPath,";")
+		dim TypeId : TypeId = PathArray(ubound(PathArray)-1)
+		dim Nazwa : Nazwa= doc_.stdobjdef.getobjdef(TypeId).Humanname
+
+		
+		' _ondataentered
+		
+		pSO.write "function c" + cstr(nPos*IDS_SCALE) + "_ondataentered(oCtrl, newValue)" + vbCrLf
+		pSO.write "  dim bHideCont:bHideCont=true" + vbCrLf
+		pSO.write "  dim bHideNCont:bHideNCont=true" + vbCrLf
+		pSO.write "  select case clng(newValue)" + vbCrLf
+		pSO.write "		case 1" + vbCrLf		
+		pSO.write "		case 2" + vbCrLf
+		pSO.write "			bHideCont=false" + vbCrLf
+		pSO.write "		case 3" + vbCrLf
+		pSO.write "			bHideNCont=false" + vbCrLf
+		pSO.write "  end select" + vbCrLf
+		pSO.write "  page_.ctrl("+cstr(nPos*IDS_SCALE + SEL_LIST_DISP)+").hide = bHideCont" + vbCrLf
+		pSO.write "  page_.ctrl("+cstr(nPos*IDS_SCALE + SEL_LIST_DISP2)+").hide = bHideNCont" + vbCrLf
+		pSO.write "  " + vbCrLf
+		pSO.write "  c" + cstr(nPos*IDS_SCALE) + "_ondataentered=true" + vbCrLf
+		pSO.write "end function" + vbCrLf + vbCrLf
+
+
+		
+		' _ongetdata
+		pSO.write "function c" + cstr(nPos*IDS_SCALE) + "_ongetdata(byref oCtrl)" + vbCrLf
+		pSO.write "  c" + cstr(nPos*IDS_SCALE) + "_ongetdata=true" + vbCrLf
+		pSO.write "end function" + vbCrLf
+
+		' list select click
+		pSO.write "function c" + cstr(nPos*IDS_SCALE) + "_select_click()" + vbCrLf		
+		pSO.write "dim strWhere:strWhere=""nTypeId=" + TypeId +" "" "+ vbCrLf
+		'AM - musi zostac  - bo nie mozna nic zaincludowac fire_choice_list		
+		pSO.write "dim choice : choice = doc_.getmodule(43001).do_choice_list(TYPEID_CHOICELIST,""Wybór listy : " + Nazwa +" "","""",strWhere, """", """", nothing)"+ vbCrLf
+		pSO.write "if choice <> 0 then"+ vbCrLf
+		pSO.write "			dim pLista:set pLista = trans_.getobj(TYPEID_CHOICELIST , choice)"+ vbCrLf
+		pSO.write "			if not pLista is nothing then "+ vbCrLf
+		pSO.write "			page_.ctrl("+ cstr(nPos*IDS_SCALE + SEL_LIST_DISP) +").text=pLista.strNazwa"+ vbCrLf
+		pSO.write "			page_.ctrl("+ cstr(nPos*IDS_SCALE + SEL_LIST_DISP2) +").text=pLista.strNazwa"+ vbCrLf
+		pSO.write "				if page_.ctrl("+ cstr(nPos*IDS_SCALE + SEL_LIST_ID) +").userprop is nothing then "+ vbCrLf
+		pSO.write "					dim pHli"+ vbCrLf
+		pSO.write "					set pHli = doc_.createhli()"+ vbCrLf
+		pSO.write "					set page_.ctrl("+ cstr(nPos*IDS_SCALE + SEL_LIST_ID) +").userprop = pHli"+ vbCrLf
+		pSO.write "				end if"+ vbCrLf
+		pSO.write "			page_.ctrl("+ cstr(nPos*IDS_SCALE + SEL_LIST_ID) +").userprop.prop(1)=CLng(choice)"+ vbCrLf
+		pSO.write "			end if "+ vbCrLf
+		pSO.write "end if"+ vbCrLf
+		pSO.write "end function" + vbCrLf
+
+	else
+
+		dim pSTOI : set pSTOI = pSTO.listFilter.get(nPos)
+		if pSTOI is nothing then
+			exit function
+		end if
+
+		pSO.write vbCrLf + "<p name='"+cstr(add_tabid(pSTOI.SearchTypeItem_compose_name()))+"'><table><tbody><!--TODO-->" + vbCrLf
+		pSO.write "<tr style='STYLE_TABLE_HEADER' name='" + cstr(nPos*1000 + 1) +"'><td width='max'><t name='"+cstr(nPos*1000)+"'>" + vbCrLf
+		pDescrCtrlsIds.add(nPos*1000)
+		pSO.write pSTOI.SearchTypeItem_compose_name()
+		pSO.write "</t></td></tr>" + vbCrLf
+		pSO.write "<tr style='STYLE_TABLE_BODY' name='" + cstr(nPos*1000 + 2) +"'><td width='max'>" + vbCrLf
+		pSO.write "<radio border='0' name='r"+cstr(nPos*IDS_SCALE)+"' colspan='1'>" + vbCrLf
+		pSO.write "		<transfer mode='custom'/>" + vbCrLf
+		pSO.write "		<table><tbody><tr><td keepline='true' width='min'><t size='20'>Obojętnie</t></td></tr></tbody></table>" + vbCrLf
+		pSO.write "		<table><tbody><tr><td keepline='true' width='min'><t size='20'>Należy do listy</t><picture href='varFunction=""c" + cstr(nPos*IDS_SCALE) + "_select_click""' image='PICTURE_CHOICE_N5CHOICELIST' width='250' height='250'/><t size='1'></t><t disable='true' name='t" + cstr(nPos*IDS_SCALE + SEL_LIST_DISP) + "'></t></td></tr></tbody></table>" + vbCrLf
+		pSO.write "		<table><tbody><tr><td keepline='true' width='min'><t size='20'>Nie należy do listy</t><picture href='varFunction=""c" + cstr(nPos*IDS_SCALE) + "_select_click""' image='PICTURE_CHOICE_N5CHOICELIST' width='250' height='250'/><t size='1'></t><t disable='true' name='t" + cstr(nPos*IDS_SCALE + SEL_LIST_DISP2) + "'></t></td></tr></tbody></table>" + vbCrLf
+		pSO.write "</radio>" + vbCrLf
+		pSO.write "<br/>" + vbCrLf
+		pSO.write "<t size='1'></t><br/>" + vbCrLf
+		pSO.write "<t size='1' name='t" + cstr(nPos*IDS_SCALE + SEL_LIST_ID) + "'></t>" + vbCrLf		
+		'pSO.write "<t size='1'></t>" + vbCrLf
+		'pSO.write "<picture href='varFunction=""c" + cstr(nPos*IDS_SCALE) + "_select_click""' image='PICTURE_CHOICE_N5CHOICELIST' width='SIZE_FOR_12PX' height='SIZE_FOR_12PX'/><t size='1'></t><t disable='true' name='t" + cstr(nPos*IDS_SCALE + SEL_LIST_DISP) + "'></t>" + vbCrLf		
+		pSO.write "</td></tr>" + vbCrLf		
+		pSO.write "<tr><td><t></t></td></tr>" + vbCrLf
+		pSO.write "</tbody></table></p>" + vbCrLf
+
+	end if
+end function
+
+'--------------------------------------------------------------------------
+'
+'  Funkcja generuje początek skryptu strony
+'
+'--------------------------------------------------------------------------
+private function write_starter(byref pSO,byref pSTO)
+	pSO.write "<?xml version=""1.0"" encoding=""windows-1250"" ?>" + vbCrLf
+	pSO.write "<page style='STYLE_PAGE'>" + vbCrLf + "<config>" + vbCrLf
+	pSO.write "<title>Filtr raportu """ + pSTO.Nazwa +"""</title>" + vbCrLf
+	pSO.write "<script><![CD"+"ATA[" + vbCrLf
+end function
+
+
+'--------------------------------------------------------------------------
+'
+' Funkcja zwraca kod funkcji handlera buttona
+'
+'  pSTO - definicja wyszukiwania (SearchTypeObj)
+'  nResult - rezultat zwracany przez stronę zawierającą ciało generowanej funkcji
+'
+'--------------------------------------------------------------------------
+private function get_query_implementation(byref pSTO, byval nResult)
+	get_query_implementation = "dim pm : set pm = doc_.getmodule(60114)" + vbCrLf +_
+		"dim nIdSTO : nIdSTO = " + cstr(clng(pSTO.IdObj)) + vbCrLf +_
+		"dim pSTO : set pSTO = trans_.getobj(TYPEID_SEARCHTYPE,nIdSTO)" + vbCrLf + _
+		"pm.setAdditionalWhereResults """ + Replace(g_strAdditionalWhereResults, """", """""") + """ " + vbCrLf + _
+		"if not pSTO is nothing then"  + vbCrLf +_
+		"if pm.generate_sql_parts(page_, pSTO, g_strColumns, g_strJoin, g_strWhere, g_strOrderBy, g_strGroupBy, g_strDescription, g_strIds) then" + vbCrLf +_
+		"  page_.result=" + cstr(nResult) + vbCrLf +_
+		"  page_.goback" + vbCrLf +_
+		"end if" + vbCrLf +_
+		"end if" + vbCrLf
+end function
+
+
+'--------------------------------------------------------------------------
+'
+'  Funkcja generuje funkcje VB skryptu
+'
+' Parametry:
+'	[out] pSO - stream object - tutaj wpisujemy kod generowanej strony
+'	[in] pSTO - definicja wyszukiwania (obiekt typu TYPEID_SEARCHTYPE)
+'	[in] strButtons - definicja wyświetlanych klawiszy w formacie <text>;<text>;...,
+'
+'--------------------------------------------------------------------------
+private function write_script(byref pSO,byref pSTO, byval strButtons)
+	' zmienne globalne, dostęp przez funkcję get_results()
+	pSO.write "dim g_strColumns" + vbCrLf
+	pSO.write "dim g_strJoin" + vbCrLf
+	pSO.write "dim g_strWhere" + vbCrLf
+	pSO.write "dim g_strOrderBy" + vbCrLf
+	pSO.write "dim g_strGroupBy" + vbCrLf
+	pSO.write "dim g_strDescription" + vbCrLf
+	pSO.write "dim g_strIds" + vbCrLf
+
+	if bTabs then
+		dim pPM
+		set pPM=doc_.getappfile(50620)
+		dim tmp_so:set tmp_so = doc_.createstreamobj()
+		tmp_so.attach pPM
+		pSO.write tmp_so.getstring
+	end if
+
+	' klawisze dynamiczne
+	dim aBtnText:aBtnText = split(strButtons, ";", -1, 1)
+
+	' czy wyświetlać okno dialogowe filtru
+	dim bShowFilter: bShowFilter = can_show_filter(pSTO, strButtons)
+
+	' funkcje obsługi klawiszy dynamicznych
+	dim str
+	dim i:i=1
+
+	if bShowFilter then
+		for each str in aBtnText
+			pSO.write "' Button: " + cstr(str) + vbCrLf
+			pSO.write "function on_button_click" + cstr(i) + "()" + vbCrLf
+			pSO.write get_query_implementation(pSTO, i)
+			pSO.write "end function" + vbCrLf + vbCrLf
+			i = i + 1
+		next
+	end if
+
+	pSO.write vbCrLf + "function silent()" + vbCrLf
+	pSO.write get_query_implementation(pSTO, 1)
+	pSO.write "end function" + vbCrLf
+
+	' just_cancel
+	pSO.write vbNewLine + "function just_cancel()" + vbCrLf
+	pSO.write "  page_.result=0" + vbCrLf
+	pSO.write "  page_.goback" + vbCrLf
+	pSO.write "end function" + vbCrLf + vbCrLf
+
+	' get_results
+	pSO.write "function get_results(byref strColumns, byref strJoin, byref strWhere, byref strOrderBy, byref strGroupBy, byref strDescription, byref strIds)" + vbCrLf
+	pSO.write "  strColumns = g_strColumns" + vbCrLf
+	pSO.write "  strJoin = g_strJoin" + vbCrLf
+	pSO.write "  strWhere = g_strWhere" + vbCrLf
+	pSO.write "  strOrderBy = g_strOrderBy" + vbCrLf
+	pSO.write "  strGroupBy = g_strGroupBy" + vbCrLf
+	pSO.write "  strDescription = g_strDescription" + vbCrLf
+	pSO.write "  strIds = g_strIds" + vbCrLf
+	pSO.write "end function" + vbCrLf + vbCrLf
+
+
+	if bTabs then
+		pSO.write "function get_tabs" + vbCrLf
+		pSO.write "	set get_tabs =  pGlobalTabMan.get_tabs" + vbCrLf
+		pSO.write "end function" + vbCrLf + vbCrLf
+	end if
+
+	
+	pSO.write "function get_bShowFilter()" + vbCrLf + vbCrLf
+	if bShowFilter then
+		pSO.write "get_bShowFilter =true" + vbCrLf + vbCrLf
+	else
+		pSO.write "get_bShowFilter =false" + vbCrLf + vbCrLf
+	end if
+	pSO.write "end function" + vbCrLf + vbCrLf
+
+	' fopen
+	pSO.write "function fopen()" + vbCrLf
+	pSO.write "  fopen=true" + vbCrLf
+
+	if bTabs then
+		pSO.write "pGlobalTabMan.init" + vbCrLf
+	end if
+	
+'	pSO.write g_strAdditinalFopenInstr + vbCrLf
+	pSO.write "%%FOPENINSTR%%" + vbCrLf
+
+	if bTabs then
+		pSO.write "pGlobalTabMan.addtaball TABS_CTRLS_FIRST_ID , ""Wszystko""" + vbCrLf
+		pSO.write "pGlobalTabMan.activate TABS_CTRLS_FIRST_ID+" + cstr(1) + vbCrLf
+	end if
+
+	pSO.write "  dim bWasFocus: bWasFocus=false" + vbCrLf
+	pSO.write "  dim nCurTime: nCurTime = clng(trans_.var(GVAR_SYSTIME))" + vbCrLf
+	dim pSTOItem
+	dim iter : iter = 1 ' licznik identyfikatorów kontrolek
+	for each pSTOItem in pSTO.listFilter
+		select case pSTOItem.SearchTypeItem_getselectiontype()
+		case 0 'co to? ...nic
+		case 1	'text
+			pSO.write "  page_.ctrl(" + cstr(iter*IDS_SCALE) + ").value=clng(" + cstr(SEL_TEXT_CON) + ")" + vbCrLf
+			pSO.write "  if not bWasFocus then" + vbCrLf
+			pSO.write "    page_.ctrl(" + cstr(iter*IDS_SCALE+OFFSET_CONT) + ").focus=true" + vbCrLf
+			pSO.write "    page_.ctrl(" + cstr(iter*IDS_SCALE+OFFSET_CONT) + ").disable=false" + vbCrLf
+			pSO.write "    bWasFocus = true" + vbCrLf
+			pSO.write "  end if" + vbCrLf
+		case 2	'data
+			pSO.write "  page_.ctrl(" + cstr(iter*IDS_SCALE) + ").value=clng(" + cstr(SEL_DATE_ALL) + ")" + vbCrLf
+			pSO.write "  page_.ctrl(" + cstr(iter*IDS_SCALE+OFFSET_FROM) + ").value=CDate(trans_.var(GVAR_SYSDATE))" + vbCrLf
+			pSO.write "  page_.ctrl(" + cstr(iter*IDS_SCALE+OFFSET_TO) + ").value=CDate(trans_.var(GVAR_SYSDATE))" + vbCrLf
+			pSO.write "  page_.ctrl(" + cstr(iter*IDS_SCALE+OFFSET_EQUAL) + ").value=CDate(trans_.var(GVAR_SYSDATE))" + vbCrLf
+			pSO.write "  page_.ctrl(" + cstr(iter*IDS_SCALE+OFFSET_CONT) + ").value=CDate(trans_.var(GVAR_SYSDATE))" + vbCrLf
+			pSO.write "  bWasFocus = true" + vbCrLf
+		case 3	'currency
+			pSO.write "  page_.ctrl(" + cstr(iter*IDS_SCALE) + ").value=clng(" + cstr(SEL_CUR_ALL) + ")" + vbCrLf
+			pSO.write "  page_.ctrl(" + cstr(iter*IDS_SCALE+OFFSET_FROM) + ").value=CCur(0)" + vbCrLf
+			pSO.write "  page_.ctrl(" + cstr(iter*IDS_SCALE+OFFSET_TO) + ").value=CCur(0)" + vbCrLf
+			pSO.write "  bWasFocus = true" + vbCrLf
+		case 6	'long
+			pSO.write "  page_.ctrl(" + cstr(iter*IDS_SCALE) + ").value=clng(" + cstr(SEL_CUR_ALL) + ")" + vbCrLf
+			pSO.write "  page_.ctrl(" + cstr(iter*IDS_SCALE+OFFSET_FROM) + ").value=clng(0)" + vbCrLf
+			pSO.write "  page_.ctrl(" + cstr(iter*IDS_SCALE+OFFSET_TO) + ").value=clng(0)" + vbCrLf
+			pSO.write "  bWasFocus = true" + vbCrLf
+		case 4	' enum field
+			' trzeba zaznaczyć wszystkie checkBoxy
+			dim aszPath: aszPath = split(pSTOItem.ComposedPath,";")
+			dim nTypeId: nTypeId = aszPath(ubound(aszPath)-1)
+			dim szFldName: szFldName = aszPath(ubound(aszPath))
+			' tablica z naszym polem enum
+			dim oTwef: set oTwef = doc_.stdobjdef.getobjdef(nTypeId)
+			' pole enum
+			dim oField: set oField = oTwef.field(oTwef.getfieldindex(szFldName))
+			i=0
+			' iterujemy się po kolejnych checkboxach
+			while oField.enumvalue(i)<>""
+				pSO.write "  page_.ctrl(" + cstr(iter*IDS_SCALE+OFFSET_ENUM+i) + ").value=""1""" + vbCrLf
+				i = i + 1
+			wend
+
+			if oField.enumvalue(0)<>"" then
+				pSO.write "  bWasFocus = true" + vbCrLf
+			end if
+		case 5	'time
+			pSO.write "  page_.ctrl(" + cstr(iter*IDS_SCALE) + ").value=clng(" + cstr(SEL_TIME_ALL) + ")" + vbCrLf
+			pSO.write "  page_.ctrl(" + cstr(iter*IDS_SCALE+OFFSET_FROM) + ").value=clng(nCurTime)" + vbCrLf
+			pSO.write "  page_.ctrl(" + cstr(iter*IDS_SCALE+OFFSET_TO) + ").value=clng(nCurTime)" + vbCrLf
+			pSO.write "  bWasFocus = true" + vbCrLf
+		case else
+			pSO.write "  page_.ctrl(" + cstr(iter*IDS_SCALE) + ").value=clng(" + cstr(SEL_LIST_IN) + ")" + vbCrLf
+			pSO.write "  bWasFocus = true" + vbCrLf
+		end select
+		iter = iter + 1
+	next
+
+	'czy zamknac okienko? (bo nie ma filtrow)
+	if not bShowFilter then
+		pSO.write get_query_implementation(pSTO, 2)'2- to jest filtruj 
+		'pSO.write "  page_.goback" + vbCrLf
+	end if
+
+
+	pSO.write "end function" + vbCrLf + vbCrLf
+
+	'Dopisz dodatkowy skrypt
+	pSO.write g_strAdditinalScript
+
+end function
+
+
+'--------------------------------------------------------------------------
+'
+'  Funkcja generuje co widać
+'
+' Parametry:
+'	[out] pSO - stream object - tutaj wpisujemy kod generowanej strony
+'	[in] pSTO - definicja wyszukiwania (obiekt typu TYPEID_SEARCHTYPE)
+'
+'--------------------------------------------------------------------------
+private function write_body(byref pSO,byref pSTO)
+	pSO.write "]"+"]></script>"+ vbCrLf
+	pSO.write "</config>" + vbCrLf
+	pSO.write "<header>" + vbCrLf
+	pSO.write "</header>" + vbCrLf
+	pSO.write "<body>" + vbCrLf
+	pSO.write "<t></t><br/>"
+	pSO.write "<table>" + vbCrLf
+	pSO.write "<tbody>" + vbCrLf
+	pSO.write "</tbody></table>" + vbCrLf
+	if bTabs then
+		pSO.write "<!--Przyciski aktywujące zakładki -->" + vbCrLf
+		pSO.write "<p name='p" + cstr(TABS_CTRLS_FIRST_ID) + "'></p><t></t><br/>" + vbCrLf
+	end if
+end function
+
+
+'--------------------------------------------------------------------------
+'
+'  Funkcja generuje stopkę strony
+'
+' Parametry:
+'	[in] strButtons - definicja wyświetlanych klawiszy w formacie <text>;<text>;...,
+'	[out] pSO - stream object - tutaj wpisujemy kod generowanej strony
+'
+'--------------------------------------------------------------------------
+private function write_footer(byref pSO, byref pSTO, byval strButtons)
+	pSO.write "<table><tbody>"
+	pSO.write "<tr style='STYLE_ROW_BTN'><td>"+ vbCrLf
+
+	' czy wyświetlać okno dialogowe filtru
+	if can_show_filter(pSTO, strButtons) then
+		' klawisze dynamiczne
+		dim aBtnText:aBtnText = split(strButtons, ";", -1, 1)
+		dim str
+		dim i:i=1
+		for each str in aBtnText
+			pSO.write "<button style='STYLE_BUTTON' skey='F5' href='varFunction=""on_button_click" + cstr(i) + """'>" + doc_.afc.convert.str2XML(cstr(str)) + "</button><t/>"+ vbCrLf
+			i = i + 1
+		next
+	end if
+
+	pSO.write "<button style='STYLE_BUTTON' href='varFunction=""just_cancel""'>Anuluj</button><t/>"+ vbCrLf
+	pSO.write "</td></tr>"+ vbCrLf
+	pSO.write "</tbody>" + vbCrLf
+	pSO.write "</table>" + vbCrLf
+end function
+
+
+'--------------------------------------------------------------------------
+'
+'	build_search_page
+'
+' Parametry:
+'	[in] pSearchTypeObj - definicja wyszukiwania (obiekt typu TYPEID_SEARCHTYPE)
+'	[in] strButtons - definicja wyświetlanych klawiszy w formacie <text>;<text>;...,
+'		gdzie <text> oznacza tekst wyświetlany na klawiszu.
+'		Kod zwracany przez funkcję domodalauto() wyświetlającą okno
+'		utworzone na podstawie wygenerowanego strumienia pSO wynosi odpowiednio 1, 2 itd.
+'		Jeśli naciśnięto klawisz "Anuluj", funkcja zwraca 0
+'	[out] pSO - stream object - tutaj wpisujemy kod generowanej strony
+'
+'	Generuje stronę do wprowadzenia parametrów wyszukiwania 
+'	a także tworzy części zapytania SQL (where,join,order by)
+'
+'	Uwaga! Funkcja jest wewnętrzna dla tego modułu i zależna od implementacji
+'	(cokolwiek to znaczy). Zamiast niej trzeba używać get_search_filter_result().
+'
+'--------------------------------------------------------------------------
+function build_search_page(byref pSearchTypeObj, byval strButtons, byref pSO)
+	write_starter pSO, pSearchTypeObj
+
+	write_script pSO, pSearchTypeObj, strButtons
+
+	dim pSTOItem
+
+	dim iter : iter = 1 ' licznik identyfikatorów kontrolek
+	'write script part
+	for each pSTOItem in pSearchTypeObj.listFilter
+		select case pSTOItem.SearchTypeItem_getselectiontype()
+		case 0 'co to? ...nic
+		case 1	'text
+			build_text_section pSO,pSearchTypeObj,iter,true
+		case 2	'data
+			build_date_section pSO,pSearchTypeObj,iter,true
+		case 3	'currency
+			build_currency_section pSO,pSearchTypeObj,iter,true
+		case 4	' enum field
+			build_enum_section pSO,pSearchTypeObj,iter,true
+		case 5	' time
+			build_time_section pSO,pSearchTypeObj,iter,true
+		case 6	'long
+			build_long_section pSO,pSearchTypeObj,iter,true
+		case else 
+			'----do list wyboru
+			build_list_section pSO,pSearchTypeObj,iter,true
+		end select
+		iter = iter + 1
+	next
+	write_body pSO,pSearchTypeObj
+
+	'write xml part
+	iter = 1
+	for each pSTOItem in pSearchTypeObj.listFilter
+		select case pSTOItem.SearchTypeItem_getselectiontype()
+		case 0 'co to? ...nic
+		case 1	'text
+			build_text_section pSO,pSearchTypeObj,iter,false
+		case 2	'data
+			build_date_section pSO,pSearchTypeObj,iter,false
+		case 3	'currency
+			build_currency_section pSO,pSearchTypeObj,iter,false
+		case 4	' enum field
+			build_enum_section pSO,pSearchTypeObj,iter,false
+		case 5	' time
+			build_time_section pSO,pSearchTypeObj,iter,false
+		case 6	'long
+			build_long_section pSO,pSearchTypeObj,iter,false
+		case else 
+			'----do list wyboru
+			build_list_section pSO,pSearchTypeObj,iter,false
+		end select
+		iter = iter + 1
+	next
+
+	if (not g_pAdditionalCtrl is nothing) then
+
+		dim i
+		for i=0 to g_pAdditionalCtrl.Count()-1
+		
+		pSO.write vbCrLf + "<p name='"+cstr(add_tabid(g_pAdditionalCtrl.value(i).Name))+"'><table><tbody><!--TODO-->" + vbCrLf
+		pSO.write "<tr style='STYLE_TABLE_HEADER'><td width='max'><t>" + vbCrLf
+		pSO.write g_pAdditionalCtrl.value(i).Name
+		pSO.write "</t></td></tr>" + vbCrLf
+
+		pSO.write "<tr style='STYLE_TABLE_BODY'><td width='max'>" + vbCrLf
+		pSO.write g_pAdditionalCtrl.value(i).XML
+		pSO.write "<br/><t/></td></tr>" + vbCrLf
+		pSO.write "<tr><td><t></t></td></tr>" + vbCrLf
+		pSO.write "</tbody></table></p>" + vbCrLf
+
+		next
+
+	end if
+
+	write_footer pSO, pSearchTypeObj, strButtons
+
+	pSO.write g_strAdditionalPageScript
+	
+	pSO.write "</body>" + vbCrLf
+	pSO.write "<footer>" + vbCrLf
+	pSO.write "</footer>" + vbCrLf
+	pSO.write "</page>" + vbCrLf 
+
+	dim strPage:strPage = pSO.getstring
+	strPage = replace(strPage , "%%FOPENINSTR%%" , g_strAdditinalFopenInstr )
+
+	set pSO = doc_.createstreamobj
+	pSO.write strPage
+
+
+
+
+#ifdef _DEBUG
+	pSO.save "c:\temp\60114_search.xml"
+#endif
+end function
+
+
+'--------------------------------------------------------------------------
+'
+' element kolekcji joinów
+' Ex: JOIN Kontrahent ON Kontrahent.IdObj = Faktura.pKontrahent
+' Ex z aliasami: JOIN Kontrahent f2 ON f2.IdObj = f1(lub Faktura).pKontrahent
+'
+'--------------------------------------------------------------------------
+class CInternalJoinInfo
+	public m_Obj        ' nazwa tabeli np. Faktura
+	public m_ObjId      ' TYPEID tabeli
+	public m_ObjAlias   ' alias nazwy tabeli np. f1
+	public m_Pointer    ' referencja wskazująca na tabelę m_PointedObj np. pKontrahent lub nazwa listy np. Pozycje
+	public m_PointedObj ' nazwa tabeli na którą wskazuje referencja m_Pointer np. Kontrahent
+	public m_Alias      ' alias nazwy tabeli m_Obj, tworzony automatycznie przy dodawaniu obiektu do mapy
+	public m_UseInSelect ' true jesli istnieje w sekcji SELECT - chyba nie będzie potrzebne
+	public m_UseInWhere ' true jesli istnieje w sekcji WHERE - chyba nie będzie potrzebne
+	public m_Path       ' ścieżka joina (separator=średnik) np. Faktura;Klient;Nazwisko
+	public m_Reverse	' czy join wsteczny 'Vt
+
+	public m_bCustomJoin ' czy join wsteczny dla kolumnu LP z collections
+	public m_strCustomJoin
+	
+	private sub class_initialize()
+		m_ObjId = clng(0)
+		m_UseInSelect = false
+		m_UseInWhere = false
+		m_Reverse = false
+		m_bCustomJoin = false
+		m_strCustomJoin = ""
+	end sub
+
+	' funkcja zwraca tekst joina wraz ze słowem kluczowym "JOIN"
+	public function GetJoin() : GetJoin = ""
+
+		if (not m_bCustomJoin) then
+
+			if m_Reverse=true then
+				'msgbox "TODO: Klasa CInternalJoinInfo dorobic Reverse "
+				'exit function
+			end if
+
+			dim szParentTable
+			dim szParentTableRawName
+			
+			' sprawdzam, czy istnieje zjoinowana tabela do tego joina i czy ma alias
+			if m_ObjAlias<>"" then
+				szParentTable = m_ObjAlias ' ma alias - użyj go
+			else
+				szParentTable = m_Obj ' nie ma aliasu
+			end if
+
+			'czysta nazwa - dla referencji zwrotnych 'Vt
+			szParentTableRawName = m_Obj
+
+			dim szAliasTableName
+			' sprawdzam, czy istnieje zjoinowana tabela do tego joina i czy ma alias
+			'tylko referencje zwrotne!!!!!!!!!!!
+			if m_ObjAlias<>"" then
+				szAliasTableName = m_ObjAlias
+			else
+				szAliasTableName = m_PointedObj
+			end if
+
+
+			dim strJoin:strJoin=""
+
+			dim oTable:set oTable = doc_.stdobjdef.getobjdef(clng(m_ObjId))
+			dim nFieldInx:nFieldInx = clng(oTable.getfieldindex(m_Pointer))
+			dim oField:set oField = oTable.field(nFieldInx)
+
+			dim strIdColl ' identyfikator kolekcji
+			strIdColl = cstr(m_ObjId)
+			dim i
+			for i=0 to 2-len(cstr(nFieldInx))
+				strIdColl = strIdColl + "0"
+			next
+			strIdColl = strIdColl + cstr(nFieldInx)
+			dim strCollAlias:
+			if m_Reverse=false then
+				select case oField.Type
+				case RELT_LIST
+					strCollAlias = m_Alias + "c"
+	
+					'nazwa tabeli
+					dim strObjectName
+					strObjectName = m_Obj
+
+					if (CStr(m_ObjAlias) <> "") then
+						'istnieje alias dla naszego obiektu
+						strObjectName = m_ObjAlias
+					end if
+
+					strJoin = " JOIN collections " + strCollAlias + " ON " + strObjectName + ".IdObj = " + strCollAlias + ".IdParent " +_
+						" JOIN " + m_PointedObj + " " + m_Alias + " ON " + m_Alias + ".IdObj = " + strCollAlias + ".IdObj" +_
+						" AND " + strCollAlias + ".IdCollection=" + strIdColl
+				case RELT_REF
+					' czy referencja jest opcjonalna
+					if oField.isrefopt then
+						strJoin = " LEFT OUTER JOIN "
+					else
+						strJoin = " JOIN "
+					end if
+					strJoin = strJoin  + m_PointedObj + " " + m_Alias + " ON " + m_Alias + ".IdObj = " + szParentTable + "." + m_Pointer
+				case RELT_WILDREF
+
+					strJoin = " LEFT OUTER JOIN "
+					strJoin = strJoin  + m_PointedObj + " " + m_Alias + " ON " + m_Alias + ".IdObj = " + szParentTable + "." + m_Pointer
+
+				end select
+			else
+				select case oField.Type
+				case RELT_REF,RELT_WILDREF
+					strJoin = " INNER JOIN "  + szParentTableRawName+ " " + m_Alias + _
+							  " ON " + m_Alias  + "." + m_Pointer + " = " + szAliasTableName  +  ".IdObj"
+
+				case RELT_LIST
+					strCollAlias = m_Alias + "c"
+					strJoin = " JOIN collections " + strCollAlias + " ON " + szAliasTableName + ".IdObj = " + strCollAlias + ".IdObj " +_
+							" JOIN " + szParentTableRawName + " " + m_Alias + _
+							" ON " + m_Alias + ".IdObj" + " = " + strCollAlias + ".IdParent" +_
+							" AND " + strCollAlias + ".IdCollection=" + strIdColl
+				end select
+			end if
+
+			GetJoin = strJoin
+
+		else
+			'custom join - po prostu go zwracamy
+			GetJoin = m_strCustomJoin
+		end if
+
+	end function
+
+	' funkcja zwraca nazwę tabeli na którą wskazuje referencja m_Pointer lub jej alias
+	public function GetPointedObjOrAlias() : GetPointedObjOrAlias = ""
+		' sprawdzam, czy istnieje alias tabeli
+		if m_Alias<>"" then
+			GetPointedObjOrAlias = m_Alias ' ma alias - użyj go
+		else
+			GetPointedObjOrAlias = m_PointedObj ' nie ma aliasu
+		end if
+	end function
+
+end class
+
+
+'--------------------------------------------------------------------------
+'
+' kolekcja joinów
+' zawiera listę obiektów CInternalJoinInfo
+'
+'--------------------------------------------------------------------------
+class CInternalJoinInfoMap
+	private m_array()
+	private m_LastAlias ' ostatnio utworzony numer aliasu tabeli
+
+	private sub class_initialize()
+		redim m_array(0)
+		m_LastAlias = 0
+	end sub
+
+	' funkcja tworzy nazwę nowego aliasu tabeli
+	private function GetNewAlias() : GetNewAlias = ""
+		m_LastAlias = m_LastAlias + 1
+		GetNewAlias = "f60114n" + cstr(m_LastAlias)
+		'GetNewAlias = "f" + cstr(m_LastAlias)
+	end function
+
+	' dodaje nowy element dla sekcji SELECT z zachowaniem unikalności składowych
+	' obiektu oItem: m_Obj, m_Pointer, m_PointedObj
+	' Zwraca ten sam odpowiednio zainicjowany obiekt lub istniejący już obiekt
+	public function addForSelect(byval oItem)
+		set addForSelect=add(oItem, 1)
+	end function
+
+	' dodaje nowy element dla sekcji WHERE z zachowaniem unikalności składowych
+	' obiektu oItem: m_Obj, m_Pointer, m_PointedObj
+	' Zwraca ten sam odpowiednio zainicjowany obiekt lub istniejący już obiekt
+	public function addForWhere(byval oItem)
+		set addForWhere=add(oItem, 2)
+	end function
+
+	public function addCustomJoin(byref oItem)
+		oItem.m_bCustomJoin = true
+
+		dim nSize:nSize = UBound(m_array)
+		set m_array(nSize)=oItem
+
+		' utwórz alias
+		m_array(nSize).m_Alias = GetNewAlias()
+
+		oItem.m_strCustomJoin=replace(oItem.m_strCustomJoin, "%alias%", m_array(nSize).m_Alias)
+
+		' zmień rozmiar tablicy
+		nSize = nSize + 1
+
+		redim preserve m_array(nSize)
+	end function
+
+	'dodaje nowy element dla różnych sekcji z zachowaniem unikalności składowych obiektu oItem: m_Obj, m_Pointer, m_PointedObj
+	private function add(oItem, byval nForWhat):set add=nothing
+		dim oFoundItem ' znaleziony item
+		if find(oItem, oFoundItem) then
+			select case nForWhat
+			case 1
+				oFoundItem.m_UseInSelect = true
+			case 2
+				oFoundItem.m_UseInWhere = true
+			end select
+			set add = oFoundItem
+		else
+			dim nSize:nSize = UBound(m_array)
+			set m_array(nSize)=oItem
+
+			' utwórz alias
+			m_array(nSize).m_Alias = GetNewAlias()
+
+			' ustaw alias parenta z którym robimy złączenie
+			'
+			dim oFoundItemPath ' znaleziony item
+			dim szParentPath:szParentPath = ""
+
+
+
+			' obcięcie ostatniego członu w ścieżce
+			dim aPath:aPath = split(oItem.m_Path, ";", -1, 1)
+			dim szPathItem
+			dim i:i=0
+			
+			for each szPathItem in aPath
+				if i<UBound(aPath) then
+					if szParentPath<>"" then szParentPath = szParentPath + ";"
+					szParentPath = szParentPath + szPathItem
+				end if
+				i = i+1
+			next
+			'w szParentPath jest cały oItem.m_Path bez ostatniego czlonu
+
+
+
+
+
+			dim PointedObj'obiekt na ktory wskazuje
+						  'potrzebne do ref zwrotnych
+			if m_array(nSize).m_Reverse=false then
+				PointedObj=m_array(nSize).m_Obj
+			else
+				PointedObj=m_array(nSize).m_PointedObj
+			end if
+			'jesli jest juz parent, i jest dolaczony przez identyczna sciezke
+			'to pobierz jego alias i wstaw do m_ObjAlias
+			if findItemOnPath(szParentPath, PointedObj , oFoundItemPath) then
+				m_array(nSize).m_ObjAlias = oFoundItemPath.m_Alias
+			end if
+
+			set add = m_array(nSize)
+
+			
+			'ustaw typ joina	
+			select case nForWhat
+			case 1
+				m_array(nSize).m_UseInSelect = true
+			case 2
+				m_array(nSize).m_UseInWhere = true
+			end select
+
+
+			' zmień rozmiar tablicy
+			nSize = nSize + 1
+
+
+			redim preserve m_array(nSize)
+		end if
+	end function
+
+	'sprawdza czy istnieje dany element
+	public function exists(oItem):exists=false
+		dim oFoundItem ' znaleziony item
+		if find(oItem, oFoundItem) then
+			exists = true
+		else
+			exists = false
+		end if
+	end function
+
+	'znajduje podobny obiekt
+	public function find(oItem, byref oFound):find=false
+		dim i
+		dim nSize
+		nSize = UBound(m_array)
+		set oFound = nothing
+		for i=0 to (nSize-1)
+			if m_array(i).m_Obj=oItem.m_Obj and _
+					m_array(i).m_Pointer=oItem.m_Pointer and _
+					m_array(i).m_PointedObj=oItem.m_PointedObj and _
+					m_array(i).m_Path=oItem.m_Path then
+				find=true
+				set oFound = m_array(i)
+				exit function
+			end if
+		next
+	end function
+
+	'znajduje obiekt o podanym m_Path
+	public function findItemOnPath(byval szPath, byval sz_PointedObj, byref oFound):findItemOnPath=false
+		dim i
+	dim nSize
+		nSize = UBound(m_array)
+		set oFound = nothing
+		for i=0 to (nSize-1)
+			if m_array(i).m_Reverse=false then
+				if m_array(i).m_Path=szPath and _
+					m_array(i).m_PointedObj=sz_PointedObj then
+					findItemOnPath=true
+					set oFound = m_array(i)
+					exit function
+				end if
+			else
+				if m_array(i).m_Path=szPath and _
+					m_array(i).m_Obj=sz_PointedObj then
+					findItemOnPath=true
+					set oFound = m_array(i)
+					exit function
+				end if
+			end if
+		next
+	end function
+
+	'zwraca ostatni index elementu
+	public function UpperIndex()
+		UpperIndex=UBound(m_array)-1
+	end function
+
+	'pobiera wartosc elementu z pozycji o indeksie - obiekt
+	public function GetValue(index)
+		set GetValue=m_array(index)
+	end function
+
+end class
+
+
+
+'--------------------------------------------------------------------------
+'
+'	getSplitterForWildReference
+'
+'	pobiera znak dzielnika stringu dzikiej referencji np: (1) lub (2)
+'
+'--------------------------------------------------------------------------
+function getSplitterForWildReference(byVal sAll,byRef sSplitter)
+	dim sElem
+	dim sChar
+	dim n1
+	dim arrY: arrY=Split(sAll,";")
+	dim arrYElem
+
+	sSplitter=""
+	getSplitterForWildReference=false
+
+	if (ubound(arrY)>0) then
+		sElem=arrY(ubound(arrY))
+		sChar=Right(sElem,1)
+		if sChar=")" then 
+			n1=InStrRev(sElem,"(",-1,1)
+			sSplitter="("+mid(sElem,n1+1,Len(sElem)-n1-1)+")"
+			getSplitterForWildReference=true
+		end if
+	end if
+
+end function
+
+
+
+
+'--------------------------------------------------------------------------
+'
+'	subWHERE(byVal parentPath,byRef oJoinMap)
+'
+'	procedura wywoływana rekurencyjnie w celu zalożenia odpowiednich
+'	JOINów w mapie oraz budowy odpowiedniego CASE dla dzikich referencji
+'
+'--------------------------------------------------------------------------
+
+function subWHERE(byVal parentPath,byRef oJoinMap, byRef oOR_WHERE,byVal deep):subWHERE=""
+	
+	dim bAllowEmpty
+	dim szJoinPath ' ścieżka służąca do przeszukiwania podobnych joinów
+	dim bReverse
+	dim firstChar: firstChar=" "
+	dim strSplitter
+	dim i, j
+	dim szTableName
+	dim szPrevTableName
+	dim nTableId
+	dim nPrevTableId
+	dim szPrevFieldName
+	dim aVal
+	dim szItem
+	dim oJoinMapItem
+	dim str:str=""
+
+		i = 0
+		szTableName = ""
+		szPrevTableName = ""
+		szPrevFieldName = ""
+		nTableId = clng(0)
+		nPrevTableId = clng(0)
+		szJoinPath = ""
+	
+	dim inPath:inPath=""
+	dim inColumn:inColumn=""
+
+
+	if getSplitterForWildReference(parentPath,strSplitter) then
+
+		
+		dim oTempObj: set oTempObj = new basic_string
+
+		dim strTemp_subWHERE:strTemp_subWHERE=""
+		dim strTempWHEN:strTempWHEN=""
+		
+		dim arrY:arrY=Split(parentPath,strSplitter)
+		
+		inPath=arrY(0)
+		inPath=Left(inPath,Len(inPath)-1)
+
+		inColumn = subWHERE(inPath,oJoinMap,oTempObj,deep+1)
+
+		dim strOR:strOR=CStr("")
+
+		dim strRefToTable
+
+
+		if deep=0 then
+			oOR_WHERE.clear
+		end if
+
+		for i=LBound(arrY)+2 to UBound(arrY)-1
+			strRefToTable=Split(arrY(i),";")(0)
+			strTemp_subWHERE = subWHERE(inPath+";"+arrY(i),oJoinMap,oTempObj,deep+1)
+			if strTemp_subWHERE<>"" then 
+				strTempWHEN = strTempWHEN + " WHEN " + strRefToTable + " THEN " + strTemp_subWHERE
+			else
+				oOR_WHERE.append inColumn + "_wrt=" + strRefToTable + " "
+
+			end if
+		next
+		
+		if strTempWHEN<>"" then 
+			if deep=0 then
+				strTempWHEN="%BEF%CASE " + inColumn +"_wrt "+ strTempWHEN + " END %AFT% "
+			else
+				strTempWHEN="CASE " + inColumn +"_wrt "+ strTempWHEN + " END  "
+			end if
+		end if
+		if deep=0 then
+			strOR=oOR_WHERE.c_str()
+		end if
+
+		if strTempWHEN<>"" AND strOR<>"" then
+			subWHERE = "(" + strTempWHEN + " OR " + strOR + ")"
+		else
+			if strTempWHEN="" AND strOR="" then
+				subWHERE=""
+			else
+			' albo jeden warunek albo drugi - wiec mozna je dodać bo sie wykluczają
+				subWHERE = "(" + strTempWHEN + strOR + ")"
+			end if
+		end if
+
+
+
+
+	else
+
+		aVal = split(parentPath, ";", -1, 1)
+
+
+		if Replace(aVal(UBound(aVal))," ","")="" then 'jesli to dowolny to zwróć ''
+			subWHERE="" 
+			exit function
+		end if
+
+		dim oColumnNameForWhere:oColumnNameForWhere = ""
+
+		
+		bReverse=false
+
+		for each szItem in aVal
+				if i mod 2 then
+						
+					firstChar = mid(szItem,1,1)
+					if (firstChar = "-" ) then
+						szItem=mid(szItem,2)
+					else
+						firstChar =" "
+					end if
+
+					' buduj ścieżkę
+					if szJoinPath<>"" then szJoinPath = szJoinPath + ";"
+					szJoinPath = szJoinPath + szPrevFieldName
+
+					' jeśli to następne pole (była referencja)
+					if szPrevTableName<>"" and szPrevFieldName<>"" then
+						' dodaj do kolekcji joinów
+						set oJoinMapItem = new CInternalJoinInfo
+
+						if (bReverse = true ) then
+							'msgbox "TODO wpisac do oJoinMapItem zwr`otna"
+							oJoinMapItem.m_Reverse = true
+
+							oJoinMapItem.m_Obj = szTableName
+							oJoinMapItem.m_ObjId = nTableId
+							oJoinMapItem.m_Pointer = szPrevFieldName
+							oJoinMapItem.m_PointedObj = szPrevTableName
+							oJoinMapItem.m_Path = szJoinPath
+						else
+
+							oJoinMapItem.m_Obj = szPrevTableName
+							oJoinMapItem.m_ObjId = nPrevTableId
+							oJoinMapItem.m_Pointer = szPrevFieldName
+							oJoinMapItem.m_PointedObj = szTableName
+							oJoinMapItem.m_Path = szJoinPath
+						end if
+
+						set oJoinMapItem = oJoinMap.addForWhere(oJoinMapItem)
+
+						if firstChar="-" then
+							oColumnNameForWhere =""
+						else
+							' zapamiętaj ostatnią nazwę pola dla sekcji WHERE
+							oColumnNameForWhere = oJoinMapItem.GetPointedObjOrAlias() + "." + szItem
+						end if
+					else ' jeśli pierwsze pole
+						' zapamiętaj ostatnią nazwę pola dla sekcji WHERE
+						if firstChar="-" then
+							oColumnNameForWhere =""
+						else
+							oColumnNameForWhere = szTableName + "." + szItem
+						end if
+					end if
+
+					' zapamiętaj poprzednią wartość pola - referencja na obiekt
+					szPrevFieldName = szItem
+				else
+					szPrevTableName = szTableName
+					szTableName = doc_.stdobjdef.getobjdef(clng(szItem)).TableName
+					nPrevTableId = nTableId
+					nTableId = clng(szItem)
+
+					if (firstChar = "-" ) then 
+						bReverse= true
+					else
+						bReverse = false
+					end if
+				end if
+				i = i+1
+		next
+
+		if deep=0 then
+			subWHERE="%BEF%"+oColumnNameForWhere+"%AFT%"
+		else
+			subWHERE=oColumnNameForWhere
+		end if
+    end if
+  
+
+
+end function
+
+
+'--------------------------------------------------------------------------
+'
+'   makeSection_WHERE()
+'
+'   Funkcja generuje sekcje WHERE
+'
+'--------------------------------------------------------------------------
+function makeSection_WHERE(byRef pSearchObj,byRef oJoinMap,ByRef pDlgPage,ByRef oWhere,ByRef oDescr, byRef oOR_WHERE)
+
+	dim pSTOItem
+	dim strReplaced:strReplaced=CStr("")
+
+	dim bAllowEmpty
+	dim i
+
+	dim nControlIter ' licznik identyfikatorów kontrolek
+	nControlIter = 1
+	
+	dim oColumnNameForWhere
+
+	'tworzenie sekcji WHERE
+	for each pSTOItem in pSearchObj.listFilter
+		'
+		' tworzenie mapy joinów
+		'
+		oColumnNameForWhere=subWHERE(pSTOItem.ComposedPath,oJoinMap,oOR_WHERE,0)
+		'
+		' tworzenie mapy where
+		'
+		dim oCtrlSelect
+		dim oCtrlFrom
+		dim oCtrlTo
+		dim oCtrlEqual
+		dim oCtrlCont
+		dim oCtrlBegin
+		dim oCtrlEarly
+		dim oCtrlLater
+
+		dim strCompName: strCompName = pSTOItem.SearchTypeItem_compose_name()
+
+		select case pSTOItem.SearchTypeItem_getselectiontype()
+		case 0 'co to? ...nic
+
+				oDescr.append strCompName
+		case 1	'text			
+			set oCtrlSelect = pDlgPage.ctrl(clng(nControlIter*IDS_SCALE)) ' co wybrano
+			set oCtrlFrom = pDlgPage.ctrl(clng(nControlIter*IDS_SCALE+OFFSET_FROM)) ' Wzorzec od
+			set oCtrlTo = pDlgPage.ctrl(clng(nControlIter*IDS_SCALE+OFFSET_TO)) ' Wzorzec do
+			set oCtrlEqual = pDlgPage.ctrl(clng(nControlIter*IDS_SCALE+OFFSET_EQUAL))
+			set oCtrlCont = pDlgPage.ctrl(clng(nControlIter*IDS_SCALE+OFFSET_CONT))
+			set oCtrlBegin = pDlgPage.ctrl(clng(nControlIter*IDS_SCALE+OFFSET_BEGIN))
+
+			dim strTextFrom
+			strTextFrom = doc_.afc.convert.str2SQL(cstr(oCtrlFrom.text))
+			dim strTextTo
+			strTextTo = doc_.afc.convert.str2SQL(cstr(oCtrlTo.text))
+			dim strTextEqual
+			strTextEqual = doc_.afc.convert.str2SQL(cstr(oCtrlEqual.text))
+			dim strTextCont
+			strTextCont = doc_.afc.convert.str2SQL(cstr(oCtrlCont.text))
+			dim strTextBegin
+			strTextBegin = doc_.afc.convert.str2SQL(cstr(oCtrlBegin.text))
+
+			select case oCtrlSelect.value
+			case SEL_TEXT_EX
+				if strTextEqual<>"" then
+					strReplaced=Replace(oColumnNameForWhere,"%BEF%"," ")
+					strReplaced=Replace(strReplaced,"%AFT%","='" + strTextEqual + "'")
+					oWhere.append strReplaced
+					oDescr.append strCompName + " równe """ + cstr(oCtrlEqual.text) + """"
+				end if
+			case SEL_TEXT_BEG
+				if strTextBegin<>"" then
+					strReplaced=Replace(oColumnNameForWhere,"%BEF%"," ")
+					strReplaced=Replace(strReplaced,"%AFT%"," like '" + strTextBegin + "%'")
+					oWhere.append strReplaced
+					oDescr.append strCompName + " od """ + cstr(oCtrlBegin.text) + """"
+				end if
+			case SEL_TEXT_CON
+				if strTextCont<>"" then
+					strReplaced=Replace(oColumnNameForWhere,"%BEF%"," ")
+					strReplaced=Replace(strReplaced,"%AFT%"," like '%" + strTextCont + "%'")
+					oWhere.append strReplaced
+					oDescr.append strCompName + " zawiera """ + cstr(oCtrlCont.text) + """"
+				end if
+			case SEL_TEXT_RAN
+				if strTextFrom<>"" and strTextTo="" then
+					strReplaced=Replace(oColumnNameForWhere,"%BEF%"," ")
+					strReplaced=Replace(strReplaced,"%AFT%",">='" + strTextFrom + "'")
+					oWhere.append strReplaced
+					'oWhere.append oColumnNameForWhere + ">='" + strTextFrom + "'"
+					oDescr.append strCompName + " od """ + cstr(oCtrlFrom.text) + """"
+				elseif strTextFrom="" and strTextTo<>"" then
+					strReplaced=Replace(oColumnNameForWhere,"%BEF%"," ")
+					strReplaced=Replace(strReplaced,"%AFT%","<='" + strTextTo + "'")
+					oWhere.append strReplaced
+					'oWhere.append oColumnNameForWhere + "<='" + strTextTo + "'"
+					oDescr.append strCompName + " do """ + cstr(oCtrlTo.text) + """"
+				elseif strTextFrom<>"" and strTextTo<>"" then
+					strReplaced=Replace(oColumnNameForWhere,"%BEF%"," ")
+					strReplaced=Replace(strReplaced,"%AFT%"," BETWEEN '" + strTextFrom + "' AND '" + strTextTo + "'")
+					oWhere.append strReplaced
+					'oWhere.append oColumnNameForWhere + " BETWEEN '" + strTextFrom + "' AND '" + strTextTo + "'"
+					oDescr.append strCompName + " pomiędzy """ + cstr(oCtrlFrom.text) + """ i """ + cstr(oCtrlTo.text) + """"
+				end if
+			' SEL_TEXT_ALL lub nic nie wybrano - brak WHERE
+			end select
+
+		case 2	'data
+			set oCtrlSelect = pDlgPage.ctrl(clng(nControlIter*IDS_SCALE)) ' co wybrano
+			set oCtrlFrom = pDlgPage.ctrl(clng(nControlIter*IDS_SCALE+OFFSET_FROM)) ' Wzorzec od
+			set oCtrlTo = pDlgPage.ctrl(clng(nControlIter*IDS_SCALE+OFFSET_TO)) ' Wzorzec do
+			set oCtrlEarly = pDlgPage.ctrl(clng(nControlIter*IDS_SCALE+OFFSET_EQUAL))
+			set oCtrlLater = pDlgPage.ctrl(clng(nControlIter*IDS_SCALE+OFFSET_CONT))
+
+			dim dCurDate:dCurDate = srvDate()
+
+			select case oCtrlSelect.value
+			case SEL_DATE_YEAR  ' Bieżący rok
+				strReplaced=Replace(oColumnNameForWhere,"%BEF%","year(")
+				strReplaced=Replace(strReplaced,"%AFT%",")=" + cstr(year(dCurDate)))
+				oWhere.append strReplaced
+				'Where.append "year(" + oColumnNameForWhere + ")=" + cstr(year(dCurDate))
+				oDescr.append strCompName + " z bieżącego roku"
+			case SEL_DATE_MONTH ' Bieżący miesiąc
+				strReplaced=Replace(oColumnNameForWhere,"%BEF%","year(")
+				strReplaced=Replace(strReplaced,"%AFT%",")=" + cstr(year(dCurDate)))
+				oWhere.append strReplaced
+				strReplaced=Replace(oColumnNameForWhere,"%BEF%","month(")
+				strReplaced=Replace(strReplaced,"%AFT%",")=" + cstr(month(dCurDate)))
+				oWhere.append strReplaced
+				'oWhere.append "year(" + oColumnNameForWhere + ")=" + cstr(year(dCurDate))
+				'oWhere.append "month(" + oColumnNameForWhere + ")=" + cstr(month(dCurDate))
+				oDescr.append strCompName + " z bieżącego miesiąca"
+			case SEL_DATE_TODAY ' Dzisiaj
+
+				strReplaced=Replace(oColumnNameForWhere,"%BEF%","year(")
+				strReplaced=Replace(strReplaced,"%AFT%",")=" + cstr(year(dCurDate)))
+				oWhere.append strReplaced
+
+				strReplaced=Replace(oColumnNameForWhere,"%BEF%","month(")
+				strReplaced=Replace(strReplaced,"%AFT%",")=" + cstr(month(dCurDate)))
+				oWhere.append strReplaced
+				
+				strReplaced=Replace(oColumnNameForWhere,"%BEF%","day(")
+				strReplaced=Replace(strReplaced,"%AFT%",")=" + cstr(day(dCurDate)))
+				oWhere.append strReplaced
+				
+				'oWhere.append "year(" + oColumnNameForWhere + ")=" + cstr(year(dCurDate))
+				'oWhere.append "month(" + oColumnNameForWhere + ")=" + cstr(month(dCurDate))
+				'oWhere.append "day(" + oColumnNameForWhere + ")=" + cstr(day(dCurDate))
+				oDescr.append strCompName + " z dzisiejszego dnia"
+
+			case SEL_DATE_EARLY ' Wczesniej niz
+				strReplaced=Replace(oColumnNameForWhere,"%BEF%","")
+				strReplaced=Replace(strReplaced,"%AFT%"," < " + doc_.afc.convert.date2SQL(oCtrlEarly.value))
+				oWhere.append strReplaced
+				oDescr.append strCompName + " wczesniejsza niż """ + cstr(oCtrlEarly.value) + """"
+
+			case SEL_DATE_LATER ' Pozniej niz
+				strReplaced=Replace(oColumnNameForWhere,"%BEF%","")
+				strReplaced=Replace(strReplaced,"%AFT%"," > " + doc_.afc.convert.date2SQL(oCtrlLater.value))
+				oWhere.append strReplaced
+				oDescr.append strCompName + " poźniejsza niż """ + cstr(oCtrlLater.value) + """"
+
+			case SEL_DATE_RAN   ' Zakres
+				dim d105DateFrom,d105DateTo
+				d105DateFrom	= oCtrlFrom.value
+				d105DateTo		= oCtrlTo.value
+				
+				doc_.afc.globals.nulldate()
+
+				if d105DateFrom <> doc_.afc.globals.nulldate() and d105DateTo = doc_.afc.globals.nulldate() then
+					' wybrano datę od
+				
+					strReplaced=Replace(oColumnNameForWhere,"%BEF%","")
+					strReplaced=Replace(strReplaced,"%AFT%",">= " + doc_.afc.convert.date2SQL(d105DateFrom))
+					oWhere.append strReplaced
+			
+					oDescr.append strCompName + " od """ + doc_.afc.display.fulldate(d105DateFrom) + """"
+				elseif d105DateFrom = doc_.afc.globals.nulldate() and d105DateFrom <> doc_.afc.globals.nulldate() then
+					' wybrano datę do
+					strReplaced=Replace(oColumnNameForWhere,"%BEF%","")
+					strReplaced=Replace(strReplaced,"%AFT%","<= " + doc_.afc.convert.date2SQL(d105DateTo))
+					oWhere.append strReplaced
+
+					oDescr.append strCompName + " do """ + doc_.afc.display.fulldate(d105DateTo) + """"
+				elseif d105DateFrom <> doc_.afc.globals.nulldate() and d105DateTo <> doc_.afc.globals.nulldate() then
+					' wybrano obie daty
+					if cdate(oCtrlFrom.value) > cdate(oCtrlTo.value) then
+						MessageBox "Podany zakres dat (" + doc_.afc.display.fulldate(d105DateFrom) + " ... " + doc_.afc.display.fulldate(d105DateTo) + ") " + _
+							" dla """ + strCompName + """ jest niepoprawny.", "Nieprawidłowy zakres", vbOkOnly, vbInformation
+						makeSection_WHERE = false	
+						exit function
+					else
+						strReplaced=Replace(oColumnNameForWhere,"%BEF%","")
+						strReplaced=Replace(strReplaced,"%AFT%","<= " + doc_.afc.convert.date2SQL(d105DateTo))
+						oWhere.append strReplaced
+
+						strReplaced=Replace(oColumnNameForWhere,"%BEF%","")
+						strReplaced=Replace(strReplaced,"%AFT%",">= " + doc_.afc.convert.date2SQL(d105DateFrom))
+						oWhere.append strReplaced
+
+						oDescr.append strCompName + " pomiędzy """ + doc_.afc.display.fulldate(d105DateFrom) + """ i """ + doc_.afc.display.fulldate(d105DateTo) + """"
+					end if
+				end if
+
+			'case SEL_DATE_ALL lub nic nie wybrano - brak WHERE
+			end select
+		case 3,6	'currency,long
+			set oCtrlSelect = pDlgPage.ctrl(clng(nControlIter*IDS_SCALE)) ' co wybrano
+			set oCtrlFrom = pDlgPage.ctrl(clng(nControlIter*IDS_SCALE+OFFSET_FROM)) ' Wzorzec od
+			set oCtrlTo = pDlgPage.ctrl(clng(nControlIter*IDS_SCALE+OFFSET_TO)) ' Wzorzec do
+			set oCtrlEqual = pDlgPage.ctrl(clng(nControlIter*IDS_SCALE+OFFSET_EQUAL))
+			set oCtrlCont = pDlgPage.ctrl(clng(nControlIter*IDS_SCALE+OFFSET_CONT))
+			set oCtrlBegin = pDlgPage.ctrl(clng(nControlIter*IDS_SCALE+OFFSET_BEGIN))
+
+			dim nCurrFrom
+			dim nCurrTo
+			dim nCurrEqual
+			dim nCurrSup 'cont
+			dim nCurrSub 'begin
+
+
+			if oCtrlFrom.value=null then
+				nCurrFrom = ccur(0)
+			else
+				nCurrFrom = ccur(oCtrlFrom.value)
+			end if
+
+			if oCtrlTo.value=null then
+				nCurrTo = ccur(0)
+			else
+				nCurrTo = ccur(oCtrlTo.value)
+			end if
+
+			if oCtrlEqual.value=null then
+				nCurrEqual = ccur(0)
+			else
+				nCurrEqual = ccur(oCtrlEqual.value)
+			end if
+
+			if oCtrlCont.value=null then
+				nCurrSup = ccur(0)
+			else
+				nCurrSup = ccur(oCtrlCont.value)
+			end if
+
+			if oCtrlBegin.value=null then
+				nCurrSub = ccur(0)
+			else
+				nCurrSub = ccur(oCtrlBegin.value)
+			end if
+
+
+			select case oCtrlSelect.value
+			case SEL_CUR_SUB ' Powyżej
+				strReplaced=Replace(oColumnNameForWhere,"%BEF%","")
+				strReplaced=Replace(strReplaced,"%AFT%",">=" + doc_.afc.convert.cur2sql(nCurrSub))
+				oWhere.append strReplaced
+				oDescr.append strCompName + " większe lub równe """ + trans_.afc.display.quantity(nCurrSub,"",2) + """"
+			case SEL_CUR_SUP ' Poniżej
+				strReplaced=Replace(oColumnNameForWhere,"%BEF%","")
+				strReplaced=Replace(strReplaced,"%AFT%","<=" + doc_.afc.convert.cur2sql(nCurrSup))
+				oWhere.append strReplaced
+				oDescr.append strCompName + " mniejsze lub równe """ + trans_.afc.display.quantity(nCurrSup,"",2) + """"
+			case SEL_CUR_EQ ' Równe
+				strReplaced=Replace(oColumnNameForWhere,"%BEF%","")
+				strReplaced=Replace(strReplaced,"%AFT%","=" + doc_.afc.convert.cur2sql(nCurrEqual))
+				oWhere.append strReplaced
+				oDescr.append strCompName + " równe """ + trans_.afc.display.quantity(nCurrEqual,"",2) + """"
+			case SEL_CUR_RAN ' Zakres
+				if nCurrFrom > nCurrTo then
+					MessageBox "Podany zakres liczb (" + trans_.afc.display.quantity(nCurrFrom,"",2) + " ... " + trans_.afc.display.quantity(nCurrTo,"",2) + ") " + _
+						" dla """ + strCompName + """ jest niepoprawny.", "Nieprawidłowy zakres", vbOkOnly, vbInformation
+					makeSection_WHERE = false
+					exit function
+				else
+					strReplaced=Replace(oColumnNameForWhere,"%BEF%","")
+					strReplaced=Replace(strReplaced,"%AFT%",">=" + doc_.afc.convert.cur2sql(nCurrFrom))
+					oWhere.append strReplaced
+
+					strReplaced=Replace(oColumnNameForWhere,"%BEF%","")
+					strReplaced=Replace(strReplaced,"%AFT%","<=" + doc_.afc.convert.cur2sql(nCurrTo))
+					oWhere.append strReplaced
+
+					'oWhere.append oColumnNameForWhere + ">=" + cstr(nCurrFrom)
+					'oWhere.append oColumnNameForWhere + "<=" + cstr(nCurrTo)
+					oDescr.append strCompName + " pomiędzy """ + trans_.afc.display.quantity(nCurrFrom,"",2) + """ i """ + trans_.afc.display.quantity(nCurrTo,"",2) + """"
+				end if
+			'SEL_CUR_ALL ' Dowolna wartość
+			end select
+		
+
+		case 4	' enum field
+			' trzeba sprawdzić wszystkie checkBoxy
+			dim aszPath: aszPath = split(pSTOItem.ComposedPath,";")
+			dim nTypeId: nTypeId = aszPath(ubound(aszPath)-1)
+			dim szFldName: szFldName = aszPath(ubound(aszPath))
+			' tablica z naszym polem enum
+			dim oTwef: set oTwef = doc_.stdobjdef.getobjdef(nTypeId)
+			' pole enum
+			dim oField: set oField = oTwef.field(oTwef.getfieldindex(szFldName))
+
+			bAllowEmpty = oField.isrefopt
+
+			' sprawdzam, czy wszystkie CheckBoxy sa zaznaczone
+			i=0
+			dim bUncheckedExists: bUncheckedExists = false
+			dim bCheckedExists: bCheckedExists = false
+			while oField.enumvalue(i)<>""
+				if pDlgPage.ctrl(clng(nControlIter*IDS_SCALE+OFFSET_ENUM+i)).value="0" then
+					bUncheckedExists = true
+				else
+					bCheckedExists = true
+				end if
+				i = i + 1
+			wend
+			if bUncheckedExists and bCheckedExists then
+				' przynajmniej jeden enumowaty nie jest zaznaczony - generujemy sekcję WHERE
+				i=0
+				dim strValList: strValList = ""
+				' iterujemy się po kolejnych checkboxach
+				while oField.enumvalue(i)<>""
+					if pDlgPage.ctrl(clng(nControlIter*IDS_SCALE+OFFSET_ENUM+i)).value="1" then
+						if  strValList<>"" then strValList = strValList + ", "
+						strValList = strValList + cstr(i+1) 'zaznaczona zerowa kontrolka, to wartość '1' w polu enum
+					end if
+					i = i + 1
+				wend
+				strReplaced=Replace(oColumnNameForWhere,"%BEF%","")
+				strReplaced=Replace(strReplaced,"%AFT%"," IN (" + strValList + ")")
+				oWhere.append strReplaced
+
+				'oWhere.append oColumnNameForWhere + " IN (" + strValList + ")"
+			elseif bAllowEmpty and not bCheckedExists then
+				strReplaced=Replace(oColumnNameForWhere,"%BEF%","")
+				strReplaced=Replace(strReplaced,"%AFT%","=0")
+				oWhere.append strReplaced
+
+				' wybrano: Nieznany
+				'oWhere.append oColumnNameForWhere + "=0"
+			end if
+
+		case 5	'time
+			set oCtrlSelect = pDlgPage.ctrl(clng(nControlIter*IDS_SCALE)) ' co wybrano
+			set oCtrlFrom = pDlgPage.ctrl(clng(nControlIter*IDS_SCALE+OFFSET_FROM)) ' Wzorzec od
+			set oCtrlTo = pDlgPage.ctrl(clng(nControlIter*IDS_SCALE+OFFSET_TO)) ' Wzorzec do
+
+			dim nTimeFrom: nTimeFrom = clng(oCtrlFrom.value)
+			dim nTimeTo: nTimeTo = clng(oCtrlTo.value)
+
+			select case oCtrlSelect.value
+			case SEL_TIME_SUP ' Powyżej
+				if nTimeFrom <> clng(doc_.afc.globals.nulltime()) then
+					strReplaced=Replace(oColumnNameForWhere,"%BEF%","")
+					strReplaced=Replace(strReplaced,"%AFT%",">=" + cstr(nTimeFrom))
+					oWhere.append strReplaced
+
+					'oWhere.append oColumnNameForWhere + ">=" + cstr(nTimeFrom)
+					oDescr.append strCompName + " od godziny " + trans_.afc.display.longtime(nTimeFrom)
+				end if
+			case SEL_TIME_SUB ' Poniżej
+				if nTimeFrom <> clng(doc_.afc.globals.nulltime()) then
+					strReplaced=Replace(oColumnNameForWhere,"%BEF%","")
+					strReplaced=Replace(strReplaced,"%AFT%","<=" + cstr(nTimeFrom))
+					oWhere.append strReplaced
+
+					'oWhere.append oColumnNameForWhere + "<=" + cstr(nTimeFrom)
+					oDescr.append strCompName + " do godziny " + trans_.afc.display.longtime(nTimeFrom)
+				end if
+			case SEL_TIME_EQ ' Równe
+				' tutaj dopuszczam puste godziny
+				strReplaced=Replace(oColumnNameForWhere,"%BEF%","")
+				strReplaced=Replace(strReplaced,"%AFT%","=" + cstr(nTimeFrom))
+				oWhere.append strReplaced
+
+				'oWhere.append oColumnNameForWhere + "=" + cstr(nTimeFrom)
+				if nTimeFrom <> clng(doc_.afc.globals.nulltime()) then
+					oDescr.append strCompName + " o godzinie " + trans_.afc.display.longtime(nTimeFrom)
+				else
+					oDescr.append strCompName + " o godzinie nieokreślonej"
+				end if
+			case SEL_TIME_RAN ' Zakres
+				if nTimeFrom=doc_.afc.globals.nulltime() or nTimeTo=doc_.afc.globals.nulltime() or nTimeFrom > nTimeTo then
+					MessageBox "Podany zakres godzin (" + ltime2string_wnc(nTimeFrom, "(brak)") + " ... " + ltime2string_wnc(nTimeTo, "(brak)") + ") " + _
+						" dla """ + strCompName + """ jest niepoprawny.", "Nieprawidłowy zakres", vbOkOnly, vbInformation
+					makeSection_WHERE = false
+					exit function
+				else
+					strReplaced=Replace(oColumnNameForWhere,"%BEF%","")
+					strReplaced=Replace(strReplaced,"%AFT%",">=" + cstr(nTimeFrom))
+					oWhere.append strReplaced
+
+					strReplaced=Replace(oColumnNameForWhere,"%BEF%","")
+					strReplaced=Replace(strReplaced,"%AFT%","<=" + cstr(nTimeTo))
+					oWhere.append strReplaced
+
+					'oWhere.append oColumnNameForWhere + ">=" + cstr(nTimeFrom)
+					'oWhere.append oColumnNameForWhere + "<=" + cstr(nTimeTo)
+					oDescr.append strCompName + " pomiędzy " + trans_.afc.display.longtime(nTimeFrom) + " a " + trans_.afc.display.longtime(nTimeTo)
+				end if
+			'SEL_TIME_ALL ' Dowolna wartość
+			end select
+		case else 
+			'case = idObj ->  wskazanie na obiekt
+
+			set oCtrlSelect = pDlgPage.ctrl(clng(nControlIter*IDS_SCALE)) ' co wybrano
+			set oCtrlTo		= pDlgPage.ctrl(clng(nControlIter*IDS_SCALE+SEL_LIST_ID)) ' jaka lista
+			
+			dim tmpListId 
+
+			if not oCtrlTo.userprop is nothing then
+				tmpListId = oCtrlTo.userprop.prop(1)
+				dim tmpList:set tmpList = trans_.getobj(TYPEID_CHOICELIST , CLng(tmpListId))
+				dim tmpListElement
+				dim tmpstr: tmpstr=""
+
+				dim PathArray : PathArray = split(pSTOItem.ComposedPath,";")
+				dim TypeId : TypeId = PathArray(ubound(PathArray)-1)
+				dim Nazwa : Nazwa= doc_.stdobjdef.getobjdef(TypeId).Humanname
+
+				for each tmpListElement in tmpList.listElement
+					if tmpstr<>"" then tmpstr=tmpstr+","
+					tmpstr=tmpstr+CStr(tmpListElement.IdElement)
+				next
+
+				select case oCtrlSelect.value
+				case SEL_LIST_IN
+						strReplaced=Replace(oColumnNameForWhere,"%BEF%","")
+
+						tmpstr=Replace(tmpstr," ","")
+						if tmpstr<>"" then tmpstr=","+tmpstr
+
+						strReplaced=Replace(strReplaced,"%AFT%"," IN (0" + tmpstr+ ")")
+						tmpstr=strReplaced
+
+						'tmpstr=oColumnNameForWhere+" IN (0," + tmpstr+ ")"
+						oDescr.append "Obiekt "+ Nazwa + " należy do listy """ + cstr(tmpList.strNazwa)  + """"
+						oWhere.append tmpstr
+
+				case SEL_LIST_NOT_IN
+						strReplaced=Replace(oColumnNameForWhere,"%BEF%","")
+
+						tmpstr=Replace(tmpstr," ","")
+						if tmpstr<>"" then tmpstr=","+tmpstr
+
+						strReplaced=Replace(strReplaced,"%AFT%"," NOT IN (0" + tmpstr+ ")")
+						tmpstr=strReplaced
+						'tmpstr=oColumnNameForWhere+" NOT IN (0," + tmpstr+ ")"
+						oDescr.append "Obiekt " + Nazwa + " nie należy do listy """ + cstr(tmpList.strNazwa) + """"
+						oWhere.append tmpstr
+
+				case else 'SEL_LIST_NO
+						tmpstr = ""
+				end select
+			else
+				tmpstr = ""
+			end if
+
+		end select
+		nControlIter = nControlIter + 1
+	next
+
+	makeSection_WHERE = true
+end function
+
+
+
+'--------------------------------------------------------------------------
+'
+'	subSELECT(...)
+'
+'	procedura wywoływana rekurencyjnie w celu zalożenia odpowiednich
+'	JOINów w mapie oraz budowy odpowiedniego 
+'	CASE dla dzikich referencji
+'	oraz IDs
+'
+'--------------------------------------------------------------------------
+
+function subSELECT(byVal parentPath,byRef oJoinMap, byRef pSTOItem, byRef strOUTForId, byRef strOUTForSelect):subSELECT=""
+	dim bAllowEmpty
+	dim szJoinPath ' ścieżka służąca do przeszukiwania podobnych joinów
+	dim bReverse
+	dim firstChar: firstChar=" "
+	dim strSplitter
+	dim i, j
+	dim szTableName
+	dim szPrevTableName
+	dim nTableId
+	dim nPrevTableId
+	dim szPrevFieldName
+	dim aVal
+	dim szItem
+	dim oJoinMapItem
+	dim str
+
+	dim szColumnNameForId
+	dim szColumnNameForSelect
+
+	dim strColumnsForId:strColumnsForId=""
+	dim strColumnsForSelect:strColumnsForSelect=""
+
+		i = 0
+		szTableName = ""
+		szPrevTableName = ""
+		szPrevFieldName = ""
+		nTableId = clng(0)
+		nPrevTableId = clng(0)
+		szJoinPath = ""
+	
+	dim inPath:inPath=""
+	dim inColumn:inColumn=""
+
+
+	if getSplitterForWildReference(parentPath,strSplitter) then
+
+		dim arrY:arrY=Split(parentPath,strSplitter)
+
+		inPath=arrY(0)
+		inPath=Left(inPath,Len(inPath)-1)
+
+		strColumnsForSelect	="" 
+		strColumnsForId		=""
+
+		subSELECT inPath,oJoinMap,pSTOItem, strColumnsForId,strColumnsForSelect
+
+		strColumnsForId		=" CASE " + strColumnsForSelect  +"_wrt "
+		strColumnsForSelect	=" CASE " + strColumnsForSelect  +"_wrt "
+
+		dim strRefToTable
+		dim ColumnsForId
+		dim ColumnsForSelect
+
+		for i=LBound(arrY)+2 to UBound(arrY)-1
+			strRefToTable=Split(arrY(i),";")(0)
+			subSELECT inPath+";"+arrY(i),oJoinMap,pSTOItem, ColumnsForId,ColumnsForSelect
+
+			strColumnsForSelect	=strColumnsForSelect+" WHEN " + strRefToTable + " THEN " + ColumnsForSelect
+			strColumnsForId		=strColumnsForId	+" WHEN " + strRefToTable + " THEN CAST(" +strRefToTable + " as varchar(10))+';'+CAST(" + ColumnsForId + " as varchar(10))"
+
+		next
+		strOUTForId		=strColumnsForId	+ " ELSE '' END "
+		strOUTForSelect	=strColumnsForSelect+ " ELSE '' END "
+	else
+
+		'
+		' tworzenie mapy joinów na podstawie definicji kolumn
+		'
+		aVal = split(parentPath, ";", -1, 1)
+
+		szColumnNameForSelect = ""
+		szColumnNameForId = ""
+
+		i=0
+		szTableName = ""
+		szPrevTableName = ""
+		szPrevFieldName = ""
+		nTableId = clng(0)
+		nPrevTableId = clng(0)
+		szJoinPath = ""
+		dim oTmpTable
+		dim oTmpField
+
+		for each szItem in aVal
+			if i mod 2 then
+			
+				firstChar = mid(szItem,1,1)
+				if (firstChar = "-" ) then
+					szItem=mid(szItem,2)
+				else
+					firstChar =" "
+				end if
+
+				if szJoinPath<>"" then szJoinPath = szJoinPath + ";"
+				szJoinPath = szJoinPath + szPrevFieldName
+
+				' jeśli to następne pole (była referencja)
+				if szPrevTableName<>"" and szPrevFieldName<>"" then
+					' dodaj do kolekcji joinów
+					set oJoinMapItem = new CInternalJoinInfo
+
+					if (bReverse = true ) then
+						oJoinMapItem.m_Reverse = true
+
+						oJoinMapItem.m_Obj = szTableName
+						oJoinMapItem.m_ObjId = nTableId
+						oJoinMapItem.m_Pointer = szPrevFieldName
+						oJoinMapItem.m_PointedObj = szPrevTableName
+						oJoinMapItem.m_Path = szJoinPath
+					else
+
+						oJoinMapItem.m_Obj = szPrevTableName
+						oJoinMapItem.m_ObjId = nPrevTableId
+						oJoinMapItem.m_Pointer = szPrevFieldName
+						oJoinMapItem.m_PointedObj = szTableName
+						oJoinMapItem.m_Path = szJoinPath
+					end if
+
+					set oJoinMapItem = oJoinMap.addForSelect(oJoinMapItem)
+					if firstChar="-" then
+						szColumnNameForSelect = ""
+						szColumnNameForId = ""
+					else
+						' zapamiętaj ostatnią nazwę pola dla sekcji SELECT
+
+						if (mid(szItem,1,3)="#LP") then
+							
+							if (bReverse) then
+								dim pJoinInfo
+								set pJoinInfo=trans_.afc.new_navoarray()
+
+								pJoinInfo.Separate szItem, "~"
+								
+								dim nIdCollection
+								nIdCollection=CLng( CLng(pJoinInfo.Value(1))*1000+CLng(pJoinInfo.Value(2)) )
+
+								dim oJoinForLPItem
+								set oJoinForLPItem = new CInternalJoinInfo
+
+								oJoinForLPItem.m_ObjId = CLng(pJoinInfo.Value(1))
+								oJoinForLPItem.m_Path = "IdObj"
+								oJoinForLPItem.m_Reverse = true
+
+								'te membery wyznaczaja potem unikalnosc
+								'przy dodawaniu i wyszukiwaniu do join'a my
+								'robimy specjalnego join'a - custom joina
+								oJoinForLPItem.m_Obj = doc_.stdobjdef.getobjdef( CLng(pJoinInfo.Value(1)) ).TableName
+								oJoinForLPItem.m_Pointer = "IdObj"
+								oJoinForLPItem.m_PointedObj = "Collections"
+
+								oJoinForLPItem.m_strCustomJoin=" JOIN Collections as %alias% on %alias%.idobj = " + oJoinMapItem.GetPointedObjOrAlias() + ".IdObj and %alias%.IdCollection = " + CStr(nIdCollection)
+								oJoinMap.addCustomJoin oJoinForLPItem
+								
+								szColumnNameForSelect = oJoinForLPItem.GetPointedObjOrAlias() + ".LP"
+							else
+								szColumnNameForSelect = oJoinMapItem.GetPointedObjOrAlias() + "c.LP"
+							end if
+
+						else
+							szColumnNameForSelect = oJoinMapItem.GetPointedObjOrAlias() + "." + szItem
+						end if
+
+						' zapamiętaj ostatni IdObj
+						szColumnNameForId = oJoinMapItem.GetPointedObjOrAlias() + ".IdObj"
+
+					end if
+				else ' jeśli pierwsze pole
+					if firstChar="-" then
+						szColumnNameForSelect = "" 
+						szColumnNameForId = ""
+					else
+
+						' zapamiętaj ostatnią nazwę pola dla sekcji SELECT
+						szColumnNameForSelect = szTableName + "." + szItem
+
+						' zapamiętaj ostatni IdObj
+						szColumnNameForId = szTableName + ".IdObj"
+					end if
+				end if
+
+				if (mid(szItem,1,3)="#LP") then
+				else
+
+					if not firstChar="-" then
+						
+						' enumy - zamieniam numery zaznaczenia na nazwę np 1 na 'Aktywny', 2 na 'Nieaktywny'
+						set oTmpTable = doc_.stdobjdef.getobjdef(clng(nTableId))
+						set oTmpField = oTmpTable.field(clng(oTmpTable.getfieldindex(szItem)))
+						if oTmpField.Type=RELT_ENUM then
+							bAllowEmpty = oTmpField.isrefopt
+							szColumnNameForSelect = "case " + szColumnNameForSelect
+							j = 0
+							str = oTmpField.enumvalue(j)
+							while str<>""
+								szColumnNameForSelect = szColumnNameForSelect + " when " + cstr(j+1) + " then '" + str + "'"
+								j = j + 1
+								str = oTmpField.enumvalue(j)
+							wend
+							szColumnNameForSelect = szColumnNameForSelect + " else 'Nieznany' end"
+						elseif pSTOItem.SearchTypeItem_getselectiontype()=5 then
+					
+							' time - przekonwertuj longa na stringa z czasem
+							dim strColTime: strColTime = szColumnNameForSelect
+
+							'AM - to niepotrzebne jak uzywamy kontrolki TIME
+							'szColumnNameForSelect = "case "+strColTime+" when "+cstr(doc_.afc.globals.nulltime())+" then '' else str("+strColTime+"/100)+':'+str("+strColTime+"%100) end"
+
+							'//@TODO-dorobić wypełnianie zerami liczb <=9
+						end if
+
+					end if
+
+					' zapamiętaj poprzednią wartość pola - referencja na obiekt
+					szPrevFieldName = szItem
+
+				end if
+
+			else
+				' identyfikator pola
+				szPrevTableName = szTableName
+				szTableName = doc_.stdobjdef.getobjdef(clng(szItem)).TableName
+				nPrevTableId = nTableId
+				nTableId = clng(szItem)
+
+				if (firstChar = "-" ) then 
+					bReverse= true
+				else
+					bReverse = false
+				end if
+
+			end if
+			i = i+1
+		next
+		strOUTForId		=szColumnNameForId
+		strOUTForSelect	=szColumnNameForSelect
+	end if
+
+end function
+
+'--------------------------------------------------------------------------
+'
+'   makeSection_SELECT()
+'
+'   Funkcja generuje sekcje SELECT
+'
+'--------------------------------------------------------------------------
+function makeSection_SELECT(byRef pSearchObj,byRef oJoinMap,byRef strColumns,byRef strIds):makeSection_SELECT=false
+		dim szJoinPath ' ścieżka służąca do przeszukiwania podobnych joinów
+	dim bReverse
+	dim firstChar: firstChar=" "
+	dim strSplitter
+
+	dim pSTOItem
+	dim i, j
+	dim szTableName
+	dim szPrevTableName
+	dim nTableId
+	dim nPrevTableId
+	dim szPrevFieldName
+	dim aVal
+	dim szItem
+	dim oJoinMapItem
+	dim str
+
+	dim szColumnNameForId
+	dim szColumnNameForSelect
+
+	' tworzenie sekcji SELECT
+	for each pSTOItem in pSearchObj.listColumn
+		
+		szColumnNameForId=""
+		szColumnNameForSelect=""
+
+		subSELECT pSTOItem.ComposedPath, oJoinMap, pSTOItem, szColumnNameForId, szColumnNameForSelect
+
+		if strColumns<>"" and szColumnNameForSelect<>"" then strColumns = strColumns + ", "
+		strColumns = strColumns + szColumnNameForSelect
+
+		if strIds<>"" and szColumnNameForId<>"" then strIds = strIds + ", "
+		strIds = strIds + szColumnNameForId
+	next
+
+	makeSection_SELECT = true
+end function
+
+
+
+'--------------------------------------------------------------------------
+'
+'	subORDERBY(byVal parentPath,byRef oJoinMap)
+'
+'	procedura wywoływana rekurencyjnie w celu zalożenia odpowiednich
+'	JOINów w mapie oraz budowy odpowiedniego CASE dla dzikich referencji
+'
+'--------------------------------------------------------------------------
+
+function subORDERBY(byVal parentPath,byRef oJoinMap):subORDERBY=""
+	
+	dim szJoinPath ' ścieżka służąca do przeszukiwania podobnych joinów
+	dim bReverse
+	dim firstChar: firstChar=" "
+	dim strSplitter
+	dim i, j
+	dim szTableName
+	dim szPrevTableName
+	dim nTableId
+	dim nPrevTableId
+	dim szPrevFieldName
+	dim aVal
+	dim szItem
+	dim oJoinMapItem
+	dim str:str=""
+
+		i = 0
+		szTableName = ""
+		szPrevTableName = ""
+		szPrevFieldName = ""
+		nTableId = clng(0)
+		nPrevTableId = clng(0)
+		szJoinPath = ""
+	
+	dim inPath:inPath=""
+	dim inColumn:inColumn=""
+
+
+	if getSplitterForWildReference(parentPath,strSplitter) then
+
+		dim arrY:arrY=Split(parentPath,strSplitter)
+
+		inPath=arrY(0)
+		inPath=Left(inPath,Len(inPath)-1)
+
+		inColumn = subORDERBY(inPath,oJoinMap)
+
+		str=" CASE " + inColumn +"_wrt "
+		dim strRefToTable
+		for i=LBound(arrY)+2 to UBound(arrY)-1
+			strRefToTable=Split(arrY(i),";")(0)
+			str = str + " WHEN " + strRefToTable + " THEN " + subORDERBY(inPath+";"+arrY(i),oJoinMap)
+		next
+		subORDERBY = str + " ELSE '' END "
+	else
+
+		aVal = split(parentPath, ";", -1, 1)
+
+		dim oColumnNameForOrderBy:oColumnNameForOrderBy= ""
+
+		
+		nTableId = clng(0)
+		bReverse=false
+		dim oTmpTable
+		dim oTmpField
+
+		for each szItem in aVal
+
+			if i mod 2 then
+
+				firstChar = mid(szItem,1,1)
+				if (firstChar = "-" ) then
+					szItem=mid(szItem,2)
+				else
+					firstChar =" "
+				end if
+
+				if szJoinPath<>"" then szJoinPath = szJoinPath + ";"
+				szJoinPath = szJoinPath + szPrevFieldName
+
+				' jeśli to następne pole (była referencja)
+				if szPrevTableName<>"" and szPrevFieldName<>"" then
+					' dodaj do kolekcji joinów
+					set oJoinMapItem = new CInternalJoinInfo
+
+					if (bReverse = true ) then
+						oJoinMapItem.m_Reverse = true
+
+						oJoinMapItem.m_Obj = szTableName
+						oJoinMapItem.m_ObjId = nTableId
+						oJoinMapItem.m_Pointer = szPrevFieldName
+						oJoinMapItem.m_PointedObj = szPrevTableName
+						oJoinMapItem.m_Path = szJoinPath
+					else
+
+						oJoinMapItem.m_Obj = szPrevTableName
+						oJoinMapItem.m_ObjId = nPrevTableId
+						oJoinMapItem.m_Pointer = szPrevFieldName
+						oJoinMapItem.m_PointedObj = szTableName
+						oJoinMapItem.m_Path = szJoinPath
+					end if
+
+					set oJoinMapItem = oJoinMap.addForSelect(oJoinMapItem)
+
+					if firstChar="-" then
+						oColumnNameForOrderBy = ""
+					else
+						' zapamiętaj ostatnią nazwę pola dla sekcji ORDER BY
+						oColumnNameForOrderBy = oJoinMapItem.GetPointedObjOrAlias() + "." + szItem
+					end if
+				else ' jeśli pierwsze pole
+
+					if firstChar="-" then
+						oColumnNameForOrderBy = ""
+					else
+						' zapamiętaj ostatnią nazwę pola dla sekcji ORDER BY
+						oColumnNameForOrderBy = szTableName + "." + szItem
+					end if
+				end if
+
+
+				if not firstChar="-" then
+					' enumy - zamieniam numery zaznaczenia na nazwę np 1 na 'Aktywny', 2 na 'Nieaktywny'
+					set oTmpTable = doc_.stdobjdef.getobjdef(clng(nTableId))
+					set oTmpField = oTmpTable.field(clng(oTmpTable.getfieldindex(szItem)))
+					if oTmpField.Type=RELT_ENUM then
+						oColumnNameForOrderBy = "case " + oColumnNameForOrderBy
+						j = 0
+						str = oTmpField.enumvalue(j)
+						while str<>""
+							oColumnNameForOrderBy = oColumnNameForOrderBy + " when " + cstr(j+1) + " then '" + str + "'"
+							j = j + 1
+							str = oTmpField.enumvalue(j)
+						wend
+						oColumnNameForOrderBy = oColumnNameForOrderBy + " else 'Nieznany' end"
+					end if
+				end if
+
+				' zapamiętaj poprzednią wartość pola - referencja na obiekt
+				szPrevFieldName = szItem
+			else
+				' identyfikator pola
+				szPrevTableName = szTableName
+				szTableName = doc_.stdobjdef.getobjdef(clng(szItem)).TableName
+				nPrevTableId = nTableId
+				nTableId = clng(szItem)
+
+				if (firstChar = "-" ) then 
+					bReverse= true
+				else
+					bReverse = false
+				end if
+			end if
+			i = i+1
+		next
+
+		subORDERBY=oColumnNameForOrderBy
+    end if
+  
+
+
+end function
+
+'--------------------------------------------------------------------------
+'
+'   makeSection_ORDERBY()
+'
+'   Funkcja generuje sekcje ORDER BY
+'
+'--------------------------------------------------------------------------
+function makeSection_ORDERBY(byRef pSearchObj,byRef oJoinMap,byRef strOrderBy,byRef strGroupBy)
+	
+	dim szJoinPath ' ścieżka służąca do przeszukiwania podobnych joinów
+	dim bReverse
+	dim firstChar: firstChar=" "
+	dim strSplitter
+
+	dim pSTOItem
+	dim i, j
+	dim szTableName
+	dim szPrevTableName
+	dim nTableId
+	dim nPrevTableId
+	dim szPrevFieldName
+	dim aVal
+	dim szItem
+	dim oJoinMapItem
+	dim str
+
+	dim oColumnNameForOrderBy
+
+	' tworzenie sekcji ORDER BY
+	for each pSTOItem in pSearchObj.listOrder
+		oColumnNameForOrderBy=subORDERBY(pSTOItem.ComposedPath,oJoinMap)
+
+		'czy kolumna pusta?
+		if oColumnNameForOrderBy<>"" then
+			if strOrderBy<>"" then strOrderBy = strOrderBy + ", "
+			strOrderBy = strOrderBy + oColumnNameForOrderBy
+	
+			if pSTOItem.cDesc="1" then strOrderBy = strOrderBy + " DESC"
+
+			if pSTOItem.cGroup="1" then
+				if strGroupBy<>"" then strGroupBy = strGroupBy + ", "
+				strGroupBy = strGroupBy + oColumnNameForOrderBy
+			end if
+		end if
+		'EO czy kolumna pusta?
+
+	next
+	makeSection_ORDERBY = true
+end function
+
+
+'--------------------------------------------------------------------------
+'
+'   generate_sql_parts
+'
+'   Funkcja generuje zapytanie SQL na podstawie zdefiniowanych kryteriów wyszukiwania
+'
+'   [in] pDlgPage    - strona filru generowana dynamicznie na podstawie obiektu pSearchObj
+'   [in] pSearchObj  - obiekt typu TYPEID_SEARCHTYPE (tabela SearchType) określający
+'                      regułę szukania. Na podstawie tego samego obiektu tworzony jest
+'                      formularz wskazywany przez pDlgPage.
+'   [out] strColumns - selekcjonowane kolumny - sekcja SELECT (bez słowa kluczowego SELECT)
+'   [out] strJoin    - zwracana sekcja JOIN.
+'   [out] strWhere   - zwracana sekcja WHERE. String nie zawiera słowa kluczowego WHERE
+'   [out] strOrderBy - zwracana sekcja ORDER BY. String nie zawiera słowa kluczowego ORDER BY
+'   [out] strGroupBy - zwracana sekcja GROUP BY. String nie zawiera słowa kluczowego GROUP BY
+'   [out] strDescription - zwracany opis kryteriów zapytania.
+'   [out] strIds     - selekcjonowane IdObj kolumn - kopia sekcji SELECT (bez słowa kluczowego SELECT)
+'
+'--------------------------------------------------------------------------
+function generate_sql_parts(byref pDlgPage, byref pSearchObj, byref strColumns, byref strJoin, byref strWhere, byref strOrderBy, byref strGroupBy, byref strDescription, byref strIds)
+	dim i	
+
+	generate_sql_parts = true
+	strColumns = ""
+	strJoin = ""
+	strWhere = ""
+	strOrderBy = ""
+	strGroupBy = ""
+	strDescription = ""
+	strIds = ""
+
+	dim oJoinMap
+	set oJoinMap = new CInternalJoinInfoMap
+
+
+	dim oDescr: set oDescr = new basic_string
+	oDescr.set_separator ", "
+
+	dim oWhere: set oWhere = new basic_string
+	oWhere.set_separator " AND "
+
+	
+
+	dim oOR_WHERE: set oOR_WHERE = new basic_string
+	oOR_WHERE.set_separator " OR "
+
+	if not ( makeSection_WHERE(pSearchObj,oJoinMap,pDlgPage,oWhere,oDescr,oOR_WHERE) and _ 
+			 makeSection_SELECT(pSearchObj,oJoinMap,strColumns,strIds) and _
+			 makeSection_ORDERBY(pSearchObj,oJoinMap,strOrderBy,strGroupBy) ) then
+
+			strColumns = ""
+			strJoin = ""
+			strOrderBy = ""
+			strIds = ""
+			generate_sql_parts = false
+			exit function
+	end if
+
+	for i=0 to oJoinMap.UpperIndex()
+		dim oItem:set oItem = oJoinMap.GetValue(i)
+		strJoin = strJoin + oItem.GetJoin()' + vbCrLf
+	next
+
+	strDescription = oDescr.c_str()
+	strWhere = oWhere.c_str() 
+
+	'Dodajemy dodatkowy where
+	if (len(g_strAdditionalWhereResults)>0) then
+		if (len(trim(strWhere))>0) then
+			strWhere = "(" + strWhere + ") AND"
+		end if
+
+		strWhere = strWhere + " (" + g_strAdditionalWhereResults + ")"
+	end if
+
+	generate_sql_parts = true
+
+#ifdef _DEBUG
+	dim strTmpQuery
+	strTmpQuery = "SELECT DISTINCT " + strColumns + vbCrLf +_
+		"FROM " + doc_.stdobjdef.getobjdef(clng(pSearchObj.ResultTypeId)).TableName +_
+		vbCrLf + strJoin
+
+	if strWhere<>"" then strTmpQuery = strTmpQuery + vbCrLf + " WHERE " + strWhere
+	if strOrderBy<>"" then strTmpQuery = strTmpQuery + vbCrLf + " ORDER BY " + strOrderBy
+
+	strTmpQuery = strTmpQuery + vbCrLf + "-- " + strIds
+
+	dim fso, hFile
+	set fso = CreateObject("Scripting.FileSystemObject")
+	set hFile = fso.CreateTextFile("c:\temp\60114search.sql", true)
+	hFile.WriteLine("use navo2002")
+	hFile.WriteLine("")
+	hFile.WriteLine(strTmpQuery)
+	hFile.Close
+
+	'MessageBox strTmpQuery, "QUERY", vbOkOnly, vbInformation
+#endif
+
+end function
+
+dim pSearchPage
+
+function getSearchPage()
+	set getSearchPage=pSearchPage
+end function
+
+function preparePage(byref pSearchTypeObj, byval strButtons): set preparePage=nothing
+	dim oPerf: set oPerf = doc_.performing("Tworzenie formularza filtru...")
+
+	dim pSO : set pSO = doc_.createstreamobj
+	build_search_page pSearchTypeObj, strButtons, pSO
+
+#ifdef _DEBUG
+	pSO.save "c:\test.xml"
+#endif
+
+	' wyświetlenie okna wyboru kryterium
+	dim hli : set hli = doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE")
+	set hli.prop(GVAR_DESTPAGE) = pSO.getstream
+	set pSO = nothing
+	set pSearchPage = doc_.getpagehli(hli)
+	set oPerf = nothing
+
+	set preparePage = pSearchPage
+end function
+
+'--------------------------------------------------------------------------
+'
+'   get_search_filter_result
+'
+'   Funkcja zwraca części zapytania SQL na podstawie zdefiniowanych kryteriów wyszukiwania
+'	oraz wskazanych przez użytkownika. Jeśli zachodzi taka potrzeba (istnieją jakieś kryteria
+'	selecta) wyświetlane jest odpowiednie okno dialogowe z filtrem.
+'
+'	[in] pSearchTypeObj - definicja wyszukiwania (obiekt typu TYPEID_SEARCHTYPE)
+'	[in] strButtons - definicja wyświetlanych klawiszy w formacie <text>;<text>;...,
+'		gdzie <text> oznacza tekst wyświetlany na klawiszu.
+'		Kod zwracany przez funkcję wynosi odpowiednio 1, 2 itd.
+'		Jeśli naciśnięto klawisz "Anuluj", funkcja zwraca 0
+'   [out] strColumns - selekcjonowane kolumny - sekcja SELECT (bez słowa kluczowego SELECT)
+'   [out] strJoin    - zwracana sekcja JOIN.
+'   [out] strWhere   - zwracana sekcja WHERE. String nie zawiera słowa kluczowego WHERE
+'   [out] strOrderBy - zwracana sekcja ORDER BY. String nie zawiera słowa kluczowego ORDER BY
+'   [out] strGroupBy - zwracana sekcja GROUP BY. String nie zawiera słowa kluczowego GROUP BY
+'   [out] strDescription - zwracany opis kryteriów zapytania.
+'   [out] strIds     - selekcjonowane IdObj kolumn - kopia sekcji SELECT (bez słowa kluczowego SELECT)
+'
+'--------------------------------------------------------------------------
+function get_search_filter_result(byref pSearchTypeObj, byval strButtons, byref strColumns, byref strJoin, byref strWhere, byref strOrderBy, byref strGroupBy, byref strDescription, byref strIds)
+	get_search_filter_result = clng(0)
+
+	if can_show_filter(pSearchTypeObj, strButtons) then
+		' wyświetlamy formularz z filtrem
+		'
+
+		dim pPreparedPage
+		set pPreparedPage=preparePage(pSearchTypeObj, strButtons)
+	
+		dim nRes: nRes = pPreparedPage.domodalauto()
+		' pobierz kryteria wyszukiwania
+		pSearchPage.get_results strColumns, strJoin, strWhere, strOrderBy, strGroupBy, strDescription, strIds
+		' zwróć numer naciśniętego klawisza
+		get_search_filter_result = clng(nRes)
+	else
+		' zwracamy tylko zapytanie
+		' pierwszy parametr jest nothing, bo nie ma sekcji where i nie jest używane
+		if generate_sql_parts(nothing, pSearchTypeObj, strColumns, strJoin, strWhere, strOrderBy, strGroupBy, strDescription, strIds) then
+			get_search_filter_result = clng(1)
+		end if
+	end if
+
+end function
+
+
+dim g_strAdditinalFopenInstr	'dodatkowe instrukcje fopen
+dim g_strAdditinalScript		'dodatkowy skrypt
+dim g_strAdditionalPageScript	'dodatkowy fragment strony
+dim g_pAdditionalCtrl			'tablica dodatkowych kontrolek
+dim g_strAdditionalWhereResults 'dodatkowa czesc where do wyswietlania wynikow "Pokaz" itd.
+
+function fopen()
+	g_strAdditinalFopenInstr = ""
+	g_strAdditinalScript = ""
+	g_strAdditionalPageScript = ""
+	g_strAdditionalWhereResults = ""
+
+	set g_pAdditionalCtrl=nothing
+	set pSearchPage=nothing
+
+	set pTabsIDS = doc_.afc.new_navoarray()
+	set pDescrCtrlsIds = doc_.afc.new_navoarray()
+
+	fopen=true
+end function
+
+function addAdditionalFopenInstr(byval strNewFopenLine)
+	g_strAdditinalFopenInstr = g_strAdditinalFopenInstr + strNewFopenLine
+end function
+
+function setAdditionalFopenInstr(byval strNewFopenScript)
+	g_strAdditinalFopenInstr = strNewFopenScript
+end function
+
+function setAdditionalScript(byval strNewScript)
+	g_strAdditinalScript = strNewScript
+end function
+
+function setAdditionalPageScript(byval strNewPageScr)
+	g_strAdditionalPageScript = strNewPageScr
+end function
+
+function setAdditionalWhereResults(byval strNewAdditionalWhere)
+	g_strAdditionalWhereResults = strNewAdditionalWhere
+end function
+
+function setAdditionalCtrl(byref pCtrls)
+	set g_pAdditionalCtrl=pCtrls
+end function
+
+
+]]>
+</script>
+</config>
+	<body>
+		<t>Search page builder</t>
+	</body>
+</page>

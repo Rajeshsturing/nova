@@ -1,0 +1,55 @@
+
+
+'zwraca kursor z transakcjami pogrupowanymi po walucie dla danego podmiotu
+' pola: winien, ma , waluta (id)
+private function get_rs_trans_by_currency_nierozl(byval pPodmiot)
+
+	dim query:query = doc_.afc.convert.formatter( _
+	" select sum(curWn) as winien,sum(curMa) as ma ,pWaluta as waluta " + _
+	" from n5transakcja " + _
+	" where wrefPodmiot_wrt = %1 and wrefPodmiot = %2 " + _
+	" group by pWaluta having sum(curWn) <> sum(curMa) ") _
+	.add(cstr(pPodmiot.type)) _
+	.add(cstr(pPodmiot.idobj)) _
+	.done()
+
+	set get_rs_trans_by_currency_nierozl = trans_.createadors(query)
+
+end function
+
+function get_zadluzenie_in_currency(byval pPodmiot , byval pWaluta , byval dData)
+	dim rs:set rs = get_rs_trans_by_currency_nierozl(pPodmiot)
+
+	dim curSumaWn:curSumaWn = 0
+	dim curSumaMa:curSumaMa = 0
+
+	do while not rs.EOF		
+
+		dim curValue
+		dim pWalutaIn : set pWalutaIn = trans_.getobj(TYPEID_N5JEDNOSTKA , clng(rs.fields("waluta").value))
+
+		if kantor( ccur(rs.fields("winien").value) , pWalutaIn , pWaluta , dData , N5KURSWALUT_SPRZEDAZY , curValue ) then
+			curSumaWn = curSumaWn + curValue
+		else
+			nx_.trace.warning "WSP007", "Obliczanie zad³u¿enia - nie znaleziono kursu z " + pWalutaIn.text + " na " + pWaluta.text + ". Przyjmujê kurs 1.0000"
+			curSumaWn = curSumaWn + ccur(rs.fields("winien").value)
+		end if
+
+		if kantor( ccur(rs.fields("ma").value) , pWalutaIn , pWaluta , dData , N5KURSWALUT_SPRZEDAZY , curValue ) then
+			curSumaMa = curSumaMa + curValue
+		else
+			nx_.trace.warning "WSP007", "Obliczanie zad³u¿enia - nie znaleziono kursu z " + pWalutaIn.text + " na " + pWaluta.text + ". Przyjmujê kurs 1.0000"
+			curSumaMa = curSumaMa + ccur(rs.fields("ma").value)
+		end if
+
+		rs.movenext
+
+	loop
+
+	get_zadluzenie_in_currency = ccur(curSumaWn - curSumaMa)
+
+end function
+
+
+
+

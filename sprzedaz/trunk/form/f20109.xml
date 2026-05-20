@@ -1,0 +1,461 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1203.h"
+#include "h1001.h"
+#include "h1201.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1222.h"
+#include "h1200.h"
+#include "h1232.h"
+
+
+
+#define FORM_SPAN		2
+#define RCELL_SPAN		1
+
+#define ZDJECIE_WIDTH		3000
+#define ZDJECIE_HEIGHT		4500
+
+#define SECID_ZDJECIE		1010
+#ifdef ENABLE_DB11_C
+#ifdef _HJORT
+#define SECID_BADANIA		1011
+#endif
+#define CTRLID_KOD_ZAWODU		201
+#endif
+
+#define CTRLID_ZDJECIE		199
+
+#ifdef _HJORT
+#define CTRLID_NR_PRAC		    200
+#define CTRLID_IDENT_PROD_NR  202
+#endif
+
+#macro QXR_LABEL_REQ(_txt_,_colspan_) \
+  <tr>  \
+    QXC_LABEL_REQ(_txt_,_colspan_)  \
+  </tr>
+
+#macro QXC_BADANIA_HK(_txt1_,_field1_,_txt2_,_field2_)  \
+<tr>  \
+  <td colspan='FORM_SPAN'>  \
+    <table>                 \
+      <tbody>               \
+        <tr>                \
+          <td width='2500'>             \
+            QXE_LABEL(_txt1_)           \
+          </td>                         \
+          QXC_DATE_FIELD(-1,_field1_,1) \
+          <td width='max' />            \
+          <td width='3700'>             \
+            QXE_LABEL(_txt2_)           \
+          </td>                         \
+          QXC_DATE_FIELD(-1,_field2_,1) \            
+        </tr>   \                       
+      </tbody>  \
+    </table>    \
+  </td>         \
+</tr> 
+
+-->
+
+<page style='STYLE_PAGE'>
+<!--
+Pracownik
+-->
+<config>
+	<title>
+	Pracownik 
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+<typeid>TYPEID_N5PRACOWNIK</typeid>
+<script>
+  <![CDATA[
+
+#include "50101"
+#include "50122"
+#include "50200"
+#include "50222"
+#include "50102"
+#include "50518"
+
+'create_address
+#include "50111"
+
+'qxr_choose_picture
+
+#include "50619"
+
+function fopen(): fopen = false
+	if not std_fopen() then
+		exit function
+	end if	
+
+	section_fopen THIS_FILE
+	fopen = true
+end function
+
+function fsave()
+	dim bNew
+
+	if page_.root.isnew then
+		bNew=true
+	end if
+
+	dim bSave: bSave=std_fsave()
+	if not bSave then
+		section_fsave THIS_FILE
+	end if
+
+	if (bSave and bNew) then
+		if MessageBoxAndForget("Dodano nowego pracownika. Chcesz by ten pracownik stał się również uzytkownikiem programu?", "Zapisano dane", vbYesNo, vbQuestion , USERPROF_MSGBOX_PRACSAVE)=vbYes then
+
+			dim strNazwa:strNazwa = page_.root.strNazwisko + " " + page_.root.strImie
+
+			dim pST : set pST = trans_.createsubtran()
+
+			dim pUser
+			set pUser=trans_.newobj(TYPEID_N5UZYTKOWNIK)
+			
+			pUser.strNazwa=Mid(strNazwa, 1, 64)
+			pUser.strLogin=Mid(pUser.strNazwa, 1, 20)			
+
+			dim pHli
+			'to po to, aby zablokowac toolbar tak samo jak przy "moich danych"
+			trans_.var(APPVAR_BLOCK_TOOLBAR) = clng(1)
+			doc_.getmodule(60129).form_domodal TYPEID_N5UZYTKOWNIK , pUser.IdObj , USAGE_EDIT			
+
+			set pST = nothing
+
+		end if		
+	end if
+
+	if (bSave) then
+		if trans_.isvar(APPVAR_ADD_SENDER) then
+			if (CLng( trans_.var(APPVAR_ADD_SENDER) )=1) then
+				page_.goback
+			end if
+		end if
+	end if
+	
+	fsave=bSave
+end function
+
+function fclose()
+	section_fclose THIS_FILE
+end function
+
+QVE_SHOW_PICTURE(CTRLID_ZDJECIE,fZdjecie)
+
+#ifdef _HJORT
+function c##CTRLID_NR_PRAC##_ongetdata(byref oCtrl): c##CTRLID_NR_PRAC##_ongetdata = true
+	dim strText: strText = "Ostatni nr pracownika: "
+	dim strSQL: strSQL = "select max(cast(strFax as integer)) from n5pracownik"
+	dim oRS: set oRS = trans_.createadors(strSQL)
+	if not isNull(oRS(0).value) then
+		strText = strText + CStr(oRS(0).value)
+	end if
+	oCtrl.text = strText
+end function
+
+function on_add_to_choice_list
+  dim oHLI : set oHLI = doc_.createhlistr("vs100='TYPEID_N5PRACOWNIK' vs101='" + CStr(page_.rootidobj)+"'")
+  add_to_choicelist oHLI
+end function
+
+function on_remove_from_choice_list
+  dim oHLI : set oHLI = doc_.createhlistr("vs100='0' vs101='0' vs102='TYPEID_N5PRACOWNIK'")
+  delete_from_choicelist_hli oHLI
+end function
+
+'wydruk identyfikatora pracownika
+dim g_iIlosc: g_iIlosc = ccur(1)
+
+function print_ident
+  if page_.root.isnew() then
+    trans_.message 1002 , 0 , "Formularz musi być najpierw zapisany"
+    exit function
+  end if
+  
+  dim idDPC : idDPC = trans_.findobjid(TYPEID_N5DPC,"ePubType=N5DPC_PUBTYPE_INNY and strNazwa = 'Identyfikator produkcyjny'")
+  if idDPC > clng(0) then
+    'ilość sztuk
+    trans_.var(500) = clng(g_iIlosc)
+    realize_publication idDPC,page_.root,true,nothing
+  else
+    trans_.message 7000, 0, "Brak publikacji o nazwie: 'Identyfikator produkcyjny' i typie 'Inny'"
+  end if
+
+	trans_.var(500) = clng(0)
+end function
+
+function c##CTRLID_IDENT_PROD_NR##_ongetdata(byref oCtrl) : c##CTRLID_IDENT_PROD_NR##_ongetdata = true
+  oCtrl.value = ccur(g_iIlosc)
+end function
+
+function c##CTRLID_IDENT_PROD_NR##_ondataentered(byref oCtrl, byval newValue) : c##CTRLID_IDENT_PROD_NR##_ondataentered = true
+  g_iIlosc = ccur(newValue)
+end function
+#endif
+
+#ifdef ENABLE_DB11_C
+function c##CTRLID_KOD_ZAWODU##_ongetdata(byref oCtrl): c##CTRLID_KOD_ZAWODU##_ongetdata = true
+  oCtrl.value = page_.root.prac_strKodZawodu
+end function
+
+function c##CTRLID_KOD_ZAWODU##_ondataentered(byref oCtrl, byval newValue): c##CTRLID_KOD_ZAWODU##_ondataentered = true
+  page_.root.prac_strKodZawodu = newValue
+  if Len(page_.root.prac_strKodZawodu) > 6 then
+    page_.root.prac_strKodZawodu = Left(page_.root.prac_strKodZawodu,6)
+  end if
+end function
+#endif
+
+#ifdef APPCONFIG_ADDRESSES_BY_ZIP
+QXR_GET_ADDRESSES_BY_ZIP()
+#endif
+
+
+]]></script>
+</config>
+<header>
+</header>
+<body>
+
+XFBEGIN
+
+XFBLOCK_IMIENAZWISKO
+
+	QXR_EDIT_FIELD_REQ(Indeks pracownika,-1,20,prac_strIndeks,1)
+
+#ifdef _HJORT
+	<tr>
+		QXC_LABEL(Identyfikator produkcyjny,1)
+		<td width='min' colspan='1'>
+			QXE_EDIT_FIELD(-1,20,strFax)
+			<t>&nbsp;&nbsp;</t>
+			QXE_LABEL_CUSTOM(CTRLID_NR_PRAC,1)
+		</td>    
+	</tr>
+  <tr>
+    QXC_LABEL(Liczba etykiet dla pracownika,1)
+    <td width='min' colspan='FORM_SPAN'>
+      QXE_CURRENCY_CUSTOM(CTRLID_IDENT_PROD_NR,5,0,)
+      <t>&nbsp;&nbsp;</t>
+      QXE_BUTTON(-1,10,Wydruk identyfikatora,varFunction="print_ident")
+    </td>
+  </tr>  
+  #endif
+
+  #ifdef _KOMPOZYTY
+  QXR_EDIT_REF_REQ(Jednostka org./wydział,-1,40,PICTURE_CHOICE_N5JEDN_ORG,pJednostkaOrg,strNazwa,CRSR_DEFAULT,1)
+  #else
+  QXR_EDIT_REF_REQ(Jednostka org.,-1,40,PICTURE_CHOICE_N5JEDN_ORG,pJednostkaOrg,strNazwa,CRSR_DEFAULT,1)
+  #endif
+
+  #ifdef _HJORT
+  <tr>
+    <td width='min' colspan='FORM_SPAN'>
+      QXE_BUTTON(-1,10,Dodaj do listy wyboru,varFunction="on_add_to_choice_list")
+      QXE_BUTTON(-1,10,Usuń z listy wyboru,varFunction="on_remove_from_choice_list")
+    </td>
+  </tr>
+  #endif
+  
+  QXX_ADRES(6,,Adres)
+  QXX_ADRES_B(26,,Adres zameldowania,prac_,_zameld)
+  QXX_ADRES_B(36,,Adres korespondencji,prac_,_koresp)
+
+  XFREQSECBEG(13,Dane osobowe,2)
+  XFDATEFIELD(Data urodzenia,dDataUr)
+  XFOPTEDITFIELD(Miejsce urodzenia, 40 , strMiejsceUr)
+
+  XFOPTEDITFIELD(Nazwisko rodowe, 40 , strprac_Nazwisko_rod)
+  XFOPTEDITFIELD(Nazwisko rodowe matki, 40 , strprac_Nazwisko_rod_mat)
+  XFOPTEDITFIELD(Imię ojca, 30 , strprac_Imie_ojca)
+  XFOPTEDITFIELD(Imię matki, 30 , strprac_Imie_matki)
+
+  <tr>
+	XFOPTHUMANNAMECELL(Płeć)
+	<td>
+		<radio name='e16' colspan='2'>
+			<transfer mode='edit_field'>
+				<field>ePlec</field>
+			</transfer>
+			
+			<t>Kobieta</t>
+			<t>Mężczyzna</t>
+		</radio>
+	</td>
+</tr>
+
+<tr>
+	XFOPTHUMANNAMECELL(Typ dokumentu tożsamości)
+	<td>
+		<radio name='e17'>
+			<transfer mode='edit_field'>
+				<field>eTypDT</field>
+			</transfer>
+			
+			<t>Dowód osobisty</t>
+			<t>Paszport</t>
+			<t>Inny</t>
+		</radio>
+	</td>
+</tr>
+
+XFOPTEDITFIELD(Obywatelstwo, 20 , strprac_Obywatelstwo)
+XFOPTEDITFIELD(Organ wydający dok. tożsamości, 20 , strprac_Organ_wyd_dok_toz)
+
+XFOPTNUMDOKTOZ
+XFOPTPESEL
+
+QXR_EDIT_FIELD_REQ(NIP,-1,20,strNip,1)
+
+XFOPTREF_CRSR(Urząd Skarbowy,PICTURE_CHOICE_N5INSTYTUCJA,40,pUrzadSkarbowy,strNazwa,CURSOR_PO_URZEDACH_SKARBOWYCH)
+
+XFOPTEDITFIELD(Numer rachunku,40,strRachunek1)
+XFBANK1
+
+<tr>
+	XFOPTHUMANNAMECELL(Oddział NFZ)
+	<td>
+		<radio name='-1' colspan='3'>
+			<transfer mode='edit_field'>
+				<field>eprac_Oddzial_NFZ</field>
+			</transfer>
+			
+		<t>dolnośląski</t>
+		<t>lubelski</t>
+		<t>lubuski</t>
+		<t>łódzki</t>
+		<t>kujawsko-pomorski</t>
+		<t>małopolski</t>
+		<t>mazowiecki</t>
+		<t>opolski</t>
+		<t>podkarpacki</t>
+		<t>podlaski</t>
+		<t>pomorski</t>
+		<t>śląski</t>
+		<t>świętokrzyski</t>
+		<t>warmińsko-mazurski</t>
+		<t>wielkopolski</t>
+		<t>zachodniopomorski</t>
+		<t>nieznany</t>
+		</radio>
+	</td>
+</tr>
+
+	QXR_EDIT_FIELD(Kod wykształcenia,-1,7,prac_strKodWyksztalcenia,1)
+#ifdef ENABLE_DB11_C
+  <tr>
+    QXC_LABEL(Kod zawodu,1)
+    QXC_EDIT_CUSTOM(CTRLID_KOD_ZAWODU,7,1)  
+  </tr>
+#else
+	QXR_EDIT_FIELD(Kod zawodu,-1,3,prac_strKodZawodu,1)
+#endif  
+	<tr>
+		<td colspan='FORM_SPAN'>
+			QXE_LABEL(Kod tytułu ubezpieczenia (ustalone prawo do emerytury)&nbsp;&nbsp;)
+			QXE_EDIT_FIELD(-1,3,prac_strKodTytUbezEmeryt)
+		</td>
+	</tr>
+
+	<tr>
+		<td colspan='FORM_SPAN'>
+			QXE_LABEL(Kod tytułu ubezpieczenia (stopień niepełnosprawności)&nbsp;&nbsp;&nbsp;)
+			QXE_EDIT_FIELD(-1,3,prac_strKodTytUbezNiepel)
+		</td>
+	</tr>
+
+XFSECEND
+
+
+
+XFOPTSECBEG(24,Zatrudnienie,2)
+XFOPTSTANOWISKO
+
+<tr>
+	XFOPTHUMANNAMECELL(Status)
+	<td>
+		<radio name='e28' colspan='2'>
+			<transfer mode='edit_field'>
+				<field>eAktywny</field>
+			</transfer>
+			
+			<t>Aktywny</t>
+			<t>Nieaktywny</t>
+#ifdef _IOW
+			<t>Umowa - zlecenie</t>
+#else
+			<t>Kandydat</t>
+#endif      
+			<t>Praktykant</t>
+		</radio>
+	</td>
+</tr>
+
+
+	QXR_EDIT_FIELD(Numer akt osobowych,-1,20,prac_strNrAkt,1)
+
+#ifdef ENABLE_DB11
+	<tr>
+		QXC_LABEL(Ilość dni urlopu,1)
+		<td>
+			QXE_CURRENCY_FIELD(-1,5,2,,prac_curIloscDniUrlopu,)
+		</td>
+	</tr>
+#endif
+
+XFSECEND
+
+#ifdef _HJORT
+	QXS_BEGIN_OPT(30,NAPIS_ATF,2)
+		XFOPTEDITFIELD(Telefon służbowy, 20 , strTel1)
+		XFOPTEDITFIELD(Telefon słuzbowy komórkowy, 20 , strTel2)
+		XFOPTEDITFIELD(Telefon prywatny, 20 , strTel3)
+		XFOPTEDITFIELD(Telefon prywatny komórkowy, 20 , strTel4)
+		XFOPTEMAIL(E-mail służbowy,strEmail)
+		XFOPTEMAIL(E-mail prywatny,strEmail2)
+		XFOPTWWW(Strona WWW,strWWW)
+	XFSECEND
+#else
+XFBLOCK_EMAILTELOSOBA(30)
+#endif
+
+QXS_BEGIN_OPT(SECID_ZDJECIE,Zdjęcie,FORM_SPAN)
+QXR_CHOOSE_PICTURE(Zdjęcie,CTRLID_ZDJECIE,ZDJECIE_WIDTH,ZDJECIE_HEIGHT,fZdjecie,"*.bmp|*.gif|*.jpg|*.pic|*.wmf","Zdjęcie o wymiarach 3,5 cm x 4,5 cm",RCELL_SPAN)
+QXS_END_OPT(FORM_SPAN)
+
+#ifdef ENABLE_DB11_C
+#ifdef _HJORT
+QXS_BEGIN_OPT(SECID_BADANIA,Badania i szkolenia - informacje,FORM_SPAN)
+  QXR_LABEL_REQ(Okresowe badania lekarskie,FORM_SPAN)
+  QXC_BADANIA_HK(Data badania,prac_dDataOkres,Data następnego badania,prac_dDataOkresNast)
+  
+  QXR_LABEL_REQ(Inne badania lekarskie,FORM_SPAN)
+  QXC_BADANIA_HK(Data badania,prac_dDataInne,Data następnego badania,prac_dDataInneNast) 
+  
+  QXR_LABEL_REQ(Szkolenia kierownicze BHP,FORM_SPAN)
+  QXC_BADANIA_HK(Data szkolenia,prac_dDataBHP,Data następnego szkolenia,prac_dDataBHPNast)   
+   
+  QXR_LABEL_REQ(Szkolenia pracownicze BHP,FORM_SPAN)
+  QXC_BADANIA_HK(Data szkolenia,prac_dDataBHPPrac,Data następnego szkolenia,prac_dDataBHPPracNast)
+QXS_END_OPT(FORM_SPAN)
+#endif
+#endif
+
+XFEND
+
+</body>
+<footer>
+</footer>
+</page>
+

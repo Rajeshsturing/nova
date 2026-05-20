@@ -1,0 +1,277 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+
+TODO_CHECK !!!!!!
+
+#include "h1000.h"
+#include "h1004.h"
+#include "h1200.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1240.h"
+
+
+#define PAGE_FORM_WIZZARD_PUBLICATION_STEP0		20536
+#define PAGE_FORM_WIZZARD_PUBLICATION_STEP1		20530
+#define PAGE_FORM_WIZZARD_PUBLICATION_STEP2		20531
+#define PAGE_FORM_WIZZARD_PUBLICATION_STEP3		20532
+#define PAGE_FORM_WIZZARD_PUBLICATION_STEP5		20535
+#define PAGE_FORM_WIZZARD_PUBLICATION_STEP4		20533
+#define PAGE_FORM_WIZZARD_PUBLICATION_STEP6		20534
+
+
+#define TEMPLATE_NAVO		1
+#define TEMPLATE_USER		2
+
+-->
+<page>
+<config>
+<title>Kreator publikacji
+#ifdef _DEBUG
+ by AM :-) [THIS_FILE]
+#endif
+</title>
+<script>
+<!--
+-->
+<![CDATA[
+
+
+'CWizzard
+#include "50209"
+
+
+'harui
+#include "50101"
+
+
+'choose_publication_type
+#include "50112"
+
+
+'fire_choice_list
+#include "50200"
+
+
+class CPublicationWizzard
+	
+	'nie ma odpowienika w obiekcie
+	private m_eTemplate ' rodzaj szablonu - stadardowy albo uzytkownika
+	public m_pDocConfig
+
+
+
+
+' ************************************************
+' property 
+' ************************************************	
+
+	'm_eTemplate
+	Public Property Let eTemplate(ByVal nTemplate)
+		m_eTemplate = nTemplate
+	End Property
+	Public Property Get eTemplate()
+		eTemplate = m_eTemplate
+	End Property
+
+
+' ************************************************
+	public function is_template_standard()
+		is_template_standard = eTemplate = TEMPLATE_NAVO
+	end function
+
+		'opis co robimy - czy edytujemy czy tworzymy nowy
+	public function get_oper_desc(byval pRoot)
+		if not pRoot.isnew then
+			get_oper_desc = "edycja publikacji '" + pRoot.old_strNazwa + "'"
+		else
+			get_oper_desc = "tworzenie nowej publikacji"
+		end if
+	end function
+
+
+
+
+' ************************************************
+' obsluga strony z wyborem szablonu
+' ************************************************
+	public function choose_template(byref pRoot)
+		dim idTemplate:idTemplate = fire_choice_list( TYPEID_N5DOKUMENT,"Wybierz szablon","strTematDokum","","","")
+		if idTemplate <> 0 then
+			set pRoot.pDocTemplate = trans_.getobj(TYPEID_N5DOKUMENT , idTemplate)
+			eTemplate = TEMPLATE_USER
+		else
+			set pRoot.pDocTemplate = nothing
+			eTemplate = TEMPLATE_NAVO
+		end if
+	end function
+
+	public function show_template(pTemplate)
+		if not pTemplate is nothing then 
+			doc_.postcommand ("OPEN_FORM_PROXY_HLI(TYPEID_N5DOKUMENT,"+ cstr(pTemplate.idobj)+")" )
+		end if
+	end function
+
+	public function show_preview(pTemplate)
+		UnderConstruction
+	end function
+
+	public function is_template_empty(pTemplate)
+		is_template_empty = (eTemplate = TEMPLATE_USER) and (pTemplate is nothing)
+	end function
+' ************************************************
+
+
+' ************************************************
+' oblsuga strony z ustawieniami urzadzenia
+' ************************************************
+
+	public function change_config(byref pRoot)
+
+		
+		' kopiuje wartosci bo getpagehli to nowa transakcja
+		dim strConfig:strConfig = pRoot.strConfig
+		dim strDevice:strDevice = pRoot.strDevice
+
+		dim page:set page = doc_.getpagehli("varCmd=CMD_OPEN_RECORD_PAGE varDestPage=20600")
+
+ 		page.LoadFromDocConfig m_pDocConfig,strDevice
+ 		dim res:res = page.domodalauto()
+		if res = 0 then
+			strConfig = m_pDocConfig.tostring
+			strDevice = page.GetSelectionMode()
+
+			'wracam do poprzedniej transakcji
+			set page = nothing
+
+			pRoot.strConfig = strConfig
+			pRoot.strDevice = strDevice
+			m_pDocConfig.fromstring strConfig
+
+		end if
+
+
+
+
+	end function
+
+end class
+
+' ************************************************
+
+dim pPublication
+
+function fopen()	
+	if HARUI(UAR_CMDID(CMDID_WIZZARD_PUBLIKACJE)) then
+		run_this	'uruchom modul automatycznie
+	end if
+	fopen=false
+end function
+
+function run_this()
+
+	' inicjacja wizzarda
+	dim pWizzard
+	set pPublication = new CPublicationWizzard
+	set pWizzard=CWizzard(true)
+	pWizzard.add_container pPublication
+
+
+	'sprawdzamy czy uruchamiamy z obiektem
+	' - kreator bedize sluzyl tez do edycji utworzonych wczesniej publikacji
+	dim isObj:isObj = trans_.isvar(GVAR_OBJECT)
+	if isObj then
+		' dodatkowe sprawdzenie - moze byc 0 a wtedy tez nie ma obiektu
+		isObj = trans_.var(GVAR_OBJECT) <> 0
+	end if
+	if not isObj then	
+	'uruchamiamy bez obiektu
+		if trans_.isvar(APPVAR_PUBLICATION_TYPE) then
+			'znamy typ publikacji
+			pPublication.eType = clng(trans_.var(APPVAR_PUBLICATION_TYPE))
+		else
+			'nie znamy typu publikacji i trzeba go wybrać
+			trans_.var(APPVAR_PUBLICATION_TYPE) = choose_publication_type()			
+			'jezeli nic nie wybrano to spadamy
+			if trans_.var(APPVAR_PUBLICATION_TYPE) = 0 then
+				exit function
+			end if
+
+			if trans_.var(APPVAR_PUBLICATION_TYPE) = N5DPC_PUBTYPE_INNY then
+				trans_.var(APPVAR_PUBLICATION_TYPE_OTHER) = choose_publication_type_other()
+				if trans_.var(APPVAR_PUBLICATION_TYPE_OTHER) = 0 then
+					DEBUG_MESSAGE("Inny typ publikacji: " + cstr(trans_.var(APPVAR_PUBLICATION_TYPE_OTHER)))	
+					exit function
+				end if
+			end if
+			
+
+		end if
+	else
+	'uruchamiamy z obiektem	
+		pWizzard. set_objectID trans_.var(GVAR_OBJECT)
+		pWizzard.add_step PAGE_FORM_WIZZARD_PUBLICATION_STEP0
+	end if
+
+
+	pWizzard.add_step PAGE_FORM_WIZZARD_PUBLICATION_STEP1
+	pWizzard.add_step PAGE_FORM_WIZZARD_PUBLICATION_STEP2
+	pWizzard.add_step PAGE_FORM_WIZZARD_PUBLICATION_STEP3
+	pWizzard.add_step PAGE_FORM_WIZZARD_PUBLICATION_STEP4
+	pWizzard.add_step PAGE_FORM_WIZZARD_PUBLICATION_STEP5
+	pWizzard.add_step PAGE_FORM_WIZZARD_PUBLICATION_STEP6
+
+	pWizzard.run
+end function
+
+
+
+function onPageExit(pWizzardPage)
+
+	dim pRoot
+	set pRoot=pWizzardPage.m_pPage.root
+
+	onPageExit = PAGE_DEFAULT
+	select case ( pWizzardPage.m_nPage )
+		case PAGE_FORM_WIZZARD_PUBLICATION_STEP3:
+			'jezeli nie drukujemy to nie wyswietlamy strony do konfiguracji drukarki
+			if pRoot.eChannel <> N5DPC_CHANNEL_WYDRUK then
+				' tylko przechodzimy od razu do podsumowania
+				onPageExit = PAGE_FORM_WIZZARD_PUBLICATION_STEP5
+			else
+				'jezeli drukujemy to ustawiamy zmienna docconfig
+				Dim oPrinting : set oPrinting = doc_.system.activex("navoperif.printing")
+				set pPublication.m_pDocConfig = oPrinting.docconfig
+				pPublication.m_pDocConfig.fromstring pRoot.strConfig				
+			end if
+			'jzezeli dane nniekompletne to nie wypuszczamy :-)
+			if pPublication.is_template_empty(pRoot.pDocTemplate) then
+				trans_.message 7000 , 0 , "Dane są niekompletne - jeśli wybrałeś opcję ""Szablon użytkownika"" to musisz również wskazać dokument."
+				onPageExit = PAGE_DONOTEXIT
+			end if
+	end select
+end function
+
+function onPageInit(pWizzardPage)
+end function
+
+
+function onWizzardComplete(pWizzardPage)
+
+	onWizzardComplete = false
+	
+	if trans_.saveobjects() then
+		trans_.message 7000 , 0 , "Działanie kreatora zakończyło się powodzeniem"
+		onWizzardComplete = true
+	else
+		trans_.message 7000 , 0 , "Działanie kreatora zakończyło się niepowodzeniem"
+	end if
+	
+end function
+
+
+]]>
+</script>
+</config>
+<body></body>
+</page>

@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+
+#include "h1000.h"
+#include "h1203_appconfig.h"
+#include "h1003.h"
+#include "h1200.h"
+#include "h1201.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+
+#comment NAVO ECWS Level 4.0
+
+-->
+<page>
+  <config>
+    <script>
+      <![CDATA[
+      
+#include "L50203"
+#include "L50217"
+
+'return current transaction
+function navo_client_get_trans()
+  dim oTrans : set oTrans = trans_.get_this()
+  set navo_client_get_trans = oTrans
+end function
+
+'initialize client session (perform unattended login)
+function navo_client_init(byval strUser, byval strPassword)
+  navo_client_init = doc_.getmodule(60121).remote_system_init(strUser, strPassword)
+end function
+
+function navo_client_create_aspator(oInputStream, oOutputStream)
+
+  dim oAspator
+  set oAspator = doc_.system.activex("navocomutil.aspator")
+	
+  oAspator.init oInputStream, oOutputStream, trans_.get_this(), true
+
+  set navo_client_create_aspator = oAspator
+  
+end function
+
+function navo_client_make_pdf(iType, idObj, idPubType)
+  dim oDocument : set oDocument = trans_.getobj(iType, idObj)
+  
+  if idPubType = 0 then
+    dim eTypRej : eTypRej = clng(0)
+    select case iType
+      case TYPEID_N5SPRZEDAZ, TYPEID_N5ZAMOWIENIE
+        eTypRej = oDocument.pRejestrDok.eTyp
+    end select
+  
+    if eTypRej <> 0 then
+		  dim strPubType : strPubType = get_where_for_pub_by_rejtyp(eTypRej)
+	  
+      dim arrParts: arrParts = split(strPubType, PUB_TYPES_SEPARATOR)
+      if ubound(arrParts) > -1 then
+        strPubType = arrParts(0)
+        'once again split
+        arrParts = split(strPubType,",")
+        strPubType = arrParts(0)
+      else
+        strPubType = "-1"
+      end if
+  
+    end if
+    else
+    strPubType  = cstr(idPubType)
+  end if
+  
+  dim idPub: idPub = trans_.findobjid(TYPEID_N5DPC," pDocTemplate = 0 and eChannel = 1 and ePubType=" + strPubType)
+  
+  if idPub <= 0 then
+    navo_client_make_pdf = ":bad publication id"
+    exit function
+  end if
+  dim pM60170 : set pM60170 = doc_.getmodule(60170)
+  
+  navo_client_make_pdf =  pM60170.generate_to_pdf_by_iddpc(oDocument, idPub, "PDF_" + cstr(oDocument.type) + "_" + cstr(oDocument.IdObj)+ "_" + cstr(idPub))
+  'navo_client_make_pdf =  pM60170.generate_to_pdf_by_iddpc(oDocument, idPub)
+  
+end function
+
+'2022-10-26
+
+function navo_client_recalc_store()
+    navo_client_recalc_store = false
+	dim pNAVOGMSrvr : set pNAVOGMSrvr = trans_.CreateServerExtension("navogm.n5gmsvr") 
+	dim varLog 'ma być pusty jeśli nie chcemy logować
+	
+	if pNAVOGMSrvr.validate(varLog) then
+		setglobprofile GLOBPROF_GM_BORDER,clng(GM_BORDER_ALL_RIGHT)
+		if trans_.saveobjects() then
+			trans_.message 0, 0, "navo_client_recalc_store OK"
+	        navo_client_recalc_store = true
+			exit function
+		end if
+	end if
+	
+	trans_.message 0, 0, "navo_client_recalc_store error"
+end function
+
+
+]]>
+    </script>
+  </config>
+</page>

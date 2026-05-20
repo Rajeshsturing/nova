@@ -1,0 +1,220 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!-- 17.07.2004 filtr na grupe nie jako checkbox-->
+<!--
+RAPTEMPLATE_STAN_MAG_ILOSC
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1250.h"
+
+#define RAPORT_TITLE Stany ilościowe
+
+#ifdef APPCONFIG_RAPORT_BY_PROD_INX
+#define C_FIELD_FIRST_EXPR		max(t_prod.strIndeks)
+#define C_FIELD_SECOND_EXPR		max(t_prod.strNazwa)
+#define C_FIELD_FIRST_HUMANNAME Indeks
+#define C_FIELD_SECOND_HUMANNAME Nazwa
+#else
+#define C_FIELD_FIRST_EXPR		max(t_prod.strNazwa)
+#define C_FIELD_SECOND_EXPR		max(t_prod.strIndeks)
+#define C_FIELD_FIRST_HUMANNAME		Nazwa
+#define C_FIELD_SECOND_HUMANNAME	Indeks
+#endif
+
+-->
+<page style='36'>
+<config>
+<title>RAPORT_TITLE</title>
+<script>
+<![CDATA[
+<%
+
+function query()
+query = "select 'c_mag' = max(t_mag.strNazwa),'c_field_second' = C_FIELD_SECOND_EXPR,'c_field_first'= C_FIELD_FIRST_EXPR, " +_
+		"'c_ilosc_opak'=isnull((select sum(gmo_curilosc) from n5gmop t_0 where t_0.gmo_pmag = t_mag.idobj and t_0.gmo_pprod=t_prod.idobj and NUMOPBORDER),0), " +_
+		"'c_wartosc'=isnull((select sum(gmo_curwartosc) from n5gmop t_0 where t_0.gmo_pmag = t_mag.idobj and t_0.gmo_pprod=t_prod.idobj and NUMOPBORDER),0), " +_
+		"'c_prod_idobj'=t_prod.idobj,'c_jedn_opak'=max(t_jedn.strSkrot),'c_prec_opak' = max(t_jedn.nDokladnosc) " +_
+		" from n5magazyn t_mag cross join n5produkt t_prod " +_
+		" inner join n5jednostka as t_jedn on t_prod.pJednostkaEwid = t_jedn.IdObj " +_
+		" inner join n5GrupaProduktow as t_grupy on t_prod.pGrupaProd = t_grupy.idobj " + _
+		" where %1 and %3 and %4 and %5 " +_
+		" group by t_mag.idobj,t_prod.idobj " +_
+		" order by c_field_first,c_field_second,c_mag"
+end function
+%>
+<%
+
+dim g_ModuleRapCustom:set g_ModuleRapCustom = doc_.getmodule(43025)
+dim g_ParamCustom
+dim g_pParamMag
+dim pRaportMomentParam
+dim g_nLP : g_nLP = clng(1)
+
+function default_param()
+
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+
+	set g_pParamMag = doc_.getmodule(43025).new_filtr_magazyn("t_mag.idobj","N5TYPMAG_PODSTAWOWY,N5TYPMAG_PRODUKCJAWTOKU,N5TYPMAG_REZERWACJE")
+	pParamArray.add g_pParamMag 
+
+	set pRaportMomentParam = doc_.afc.rap.param.new_date("Analizowany moment").bindexpr("")
+	pParamArray.add pRaportMomentParam
+
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwa produktu").bindexpr("t_prod.strNazwa")
+	pParamArray.add doc_.afc.rap.param.new_text("Indeks produktu").bindexpr("t_prod.strIndeks")
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwa grupy").bindexpr("t_grupy.strNazwa")
+
+'	set g_ParamCustom = g_ModuleRapCustom.new_custom("Stany magazynowe").bindexpr("isnull(sum(t_0.gms_curIlosc),0)").BindExprRight("t_2")
+'	pParamArray.add g_ParamCustom
+
+	set default_param = pParamArray
+end function
+%>
+<%
+function write_actual_param(byref pActualParam)
+dim iter
+dim bAnyWritten : bAnyWritten = false
+if not pActualParam is nothing then
+for iter = 0 to pActualParam.upperIndex
+if pActualParam.value(iter).get_desc() <> "" then 
+bAnyWritten = true
+	so.write "<t size='5' /><text fontsize='4'><![CD"+"ATA[" + pActualParam.value(iter).get_desc() + "]"+"]></text><br/>"
+end if
+next
+end if
+if not bAnyWritten then 
+	so.write "<t fontsize='4'>brak</t><br/>"
+end if
+	so.write "<br/>"
+end function
+%>
+<%
+dim g_idLastProd : g_idLastProd = clng(0)
+function body_row(byref pSection,byref pRec)
+	
+	dim idProd : idProd = clng(pRec("c_prod_idobj"))
+	if idProd <> g_idLastProd then
+		finish_body_row
+		g_idLastProd = idProd
+		begin_body_row pRec
+	end if
+%>
+<td align='right'>
+	RXE_QUANTITY_VVV_NON0(ccur(pRec("c_ilosc_opak")),pRec("c_jedn_opak"),pRec("c_prec_opak"))
+</td>
+<%
+end function
+
+sub begin_body_row(byref pRec)
+	
+if g_nLP mod 2 = 0 then
+%>
+<tr bordercolor='white'>
+<%
+else
+%>
+<tr bordercolor='white' style='37'>
+<%
+end if
+%>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+	<td align='right'><t><%so.write cstr(g_nLP)%></t></td>
+	<td>
+		RXE_TEXT_LINK_FORM_VCC(TYPEID_N5PRODUKT,c_prod_idobj,c_field_first)
+	</td>
+	<td>
+		RXE_AUTO_TEXT(c_field_second)
+	</td>
+<%
+end sub
+sub finish_body_row
+	so.write "</tr>" + vbCrLf
+	g_nLP = g_nLP + 1
+end sub
+
+%>
+<%
+function body_header(byref pSection,byref pRec)
+'so.write "<p backcolor='yellow'><text><![CD"+"ATA["+pRapExec.get_final_query() + "]"+"]></text></p><br/>" 
+%>
+<table border='1'>
+<thead>
+<tr style='21'>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+	<td width='min'><t>LP</t></td>
+	<td width='max'>
+		<text><![CDATA[C_FIELD_FIRST_HUMANNAME]]></text>
+	</td>
+	<td width='max'>
+		<text><![CDATA[C_FIELD_SECOND_HUMANNAME]]></text>
+	</td>
+<%
+	dim strMagWhere : strMagWhere = g_pParamMag.get_where_part(trans_)
+	dim oCrsr : set oCrsr = trans_.createadors("select strNazwa from n5magazyn t_mag where " + strMagWhere + " order by strNazwa")
+	do while not oCrsr.EOF
+	%>
+		<td width='min'>
+			<text><![CDATA[<%so.write oCrsr("strNazwa")%>]]></text>
+		</td>
+	<%
+		oCrsr.MoveNext
+	loop
+%>
+</tr>
+</thead>
+<tbody>
+<%
+	dim idProd : idProd = clng(pRec("c_prod_idobj"))
+	g_idLastProd = idProd
+	begin_body_row pRec
+end function
+%>
+<%
+function body_footer(byref pSection)
+	finish_body_row
+%>
+</tbody>
+</table>
+<%
+end function
+%>
+
+]]>
+</script>
+</config>
+<header>
+</header>
+<body>
+<p><text fontsize='7'><![CDATA[RAPORT_TITLE]]></text></p><br/><br/>
+<t fontsize='5' bold='true'>Kryteria selekcji:</t><br/>
+<%
+dim pRapExec : set pRapExec = rapeng_.new_engine()
+with pRapExec
+	.add_body_ex getref("body_header"),getref("body_footer"),getref("body_row")
+	if .prepare("RAPORT_TITLE",default_param(),rapeng_.get_raport_param(),"DUMMY") then
+		write_actual_param rapeng_.get_raport_param()
+
+		if false and pRaportMomentParam.first_value = trans_.var(GVAR_TODAY) then
+			.ReplaceQueryParam "DUMMY",rapeng_.query_apply_actual_param(query_current(), rapeng_.get_raport_param())
+		else
+			.ReplaceQueryParam "DUMMY",rapeng_.query_apply_actual_param(query(), rapeng_.get_raport_param())
+
+			dim nDummy
+			.ReplaceQueryParam "NUMOPBORDER", _
+				"t_0.gmo_nNumOp " + doc_.getmodule(43025).rap_param_date_2_gm_num_oper_where(pRaportMomentParam,nDummy)
+		end if
+
+		if not .perform then
+			so.write "<p style='21'><t>Brak danych spełniających podane kryteria</t></p>"
+		end if
+	end if
+end with
+%>
+</body>
+<footer>
+</footer>
+</page>

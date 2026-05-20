@@ -1,0 +1,1459 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200.h"
+#include "h1201.h"
+#include "h1220.h"
+#include "h1222.h"
+#include "h1240.h"
+#include "h1231.h"
+
+#define CTRLID_STATUS           101
+#define CTRLID_DATA_OPERACJI    102
+#define CTRLID_KWOTA_PODM       103
+#define CTRLID_WALUTA           104
+#define CTRLID_KWOTA_EWID       105
+#define CTRLID_KURS_EWID        106
+#define CTRLID_KURSEWID_INFO    107
+#define CTRLID_EDIT_PODMIOT     108
+#define CTRLID_TRAN_RECZ        109
+#define CTRLID_STUB_TRANSAKCJA  110 
+#define CTRLID_OPIS             111
+#define CTRLID_REDIRECT_CHKBOX	112
+#define CTRLID_WART_EWID        113
+#define CTRLID_SALDO_EWID       114
+#define CTRLID_WART_EWID_GR     115
+#define CTRLID_SALDO_EWID_GR    116
+
+#define PROP_DOK_IDOBJ		   201
+#define PROP_TYP_TRANS		   202
+#define PROP_WART_EWID       203
+#define PROP_SALDO_EWID      204
+#define PROP_NR_DOK          205
+
+#define ID_TITLE             501
+#define ID_HEADER            502
+#define ID_TAB_TRANS         503
+#define ID_TAB_BUTTONS       504
+#define ID_TAB_INNA_PLAT     505
+#define ID_TAB_SEP           506
+
+#define SECID_OPIS           1001
+
+-->
+<page width='9000' style='STYLE_PAGE'>
+<config>
+<script>
+<!--
+	Raport potwierdzenia wykonania kreatora płatności
+-->
+<![CDATA[
+
+'currentFirma
+#include "50203"
+
+'fire_choice_list
+#include "50200"
+
+'multiline_rollup
+#include "50222"
+
+'aktualna data i rejestr na których pracujemy
+dim dDataOper : dDataOper = trans_.var(GVAR_TODAY)
+dim strRejestrDok : strRejestrDok = ""
+dim pKolZob : set pKolZob = doc_.afc.new_navoarray()
+dim pIdobjZob : set pIdobjZob = doc_.afc.new_navoarray()
+dim pRowsZob : set pRowsZob = doc_.afc.new_navoarray()
+dim pKolNal : set pKolNal = doc_.afc.new_navoarray()
+dim pIdobjNal : set pIdobjNal = doc_.afc.new_navoarray()
+dim pRowsNal : set pRowsNal = doc_.afc.new_navoarray()
+dim pReczTrZob : set pReczTrZob = doc_.afc.new_navoarray()
+dim pReczTrKolZob : set pReczTrKolZob = doc_.afc.new_navoarray()
+dim pReczTrNal : set pReczTrNal = doc_.afc.new_navoarray()
+dim pReczTrKolNal : set pReczTrKolNal = doc_.afc.new_navoarray()
+
+dim pKolZobPom : set pKolZobPom = doc_.afc.new_navoarray()
+dim pIdobjZobPom : set pIdobjZobPom = doc_.afc.new_navoarray()
+dim pRowsZobPom : set pRowsZobPom = doc_.afc.new_navoarray()
+dim pKolNalPom : set pKolNalPom = doc_.afc.new_navoarray()
+dim pIdobjNalPom : set pIdobjNalPom = doc_.afc.new_navoarray()
+dim pRowsNalPom : set pRowsNalPom = doc_.afc.new_navoarray()
+dim pReczTrZobPom : set pReczTrZobPom = doc_.afc.new_navoarray()
+dim pReczTrKolZobPom : set pReczTrKolZobPom = doc_.afc.new_navoarray()
+dim pReczTrNalPom : set pReczTrNalPom = doc_.afc.new_navoarray()
+dim pReczTrKolNalPom : set pReczTrKolNalPom = doc_.afc.new_navoarray()
+
+dim iNrP : iNrP = clng(0)
+
+dim curSumAllWart : curSumAllWart = ccur(0)
+dim curSumAllSaldo : curSumAllSaldo = ccur(0)
+
+'tabele do przechowywania wartości podsumowania grupy
+dim pSumGrWart : set pSumGrWart = doc_.afc.new_navoarray()
+dim pSumGrSaldo : set pSumGrSaldo = doc_.afc.new_navoarray()
+
+'inna płatność
+dim m_curKwotaPodm : m_curKwotaPodm = CCur(0)
+dim m_curKwotaEwid : m_curKwotaEwid = CCur(0)
+dim m_wrefPodmiot : set m_wrefPodmiot = nothing
+dim m_pTransakcja : set m_pTransakcja = nothing
+dim m_pWalutaPodm : set m_pWalutaPodm = nothing
+dim m_curKursEwid : m_curKursEwid = CCur(1)
+dim m_strOpis : m_strOpis = ""
+
+
+'-----------------------------------
+'-----  otwórz/zamknij stronę  -----
+'-----------------------------------
+function fopen()
+	fopen=true
+end function
+
+function fback()
+	page_.result = vbCancel
+	page_.goback()
+	fback = true
+end function
+
+'------------------------------------------
+'-----  ustawia tytul strony raportu  -----
+'------------------------------------------
+sub page_title(byval bTytul)
+	dim pTitle
+	set pTitle = page_.ctrl(ID_TITLE)
+	pTitle.text = ""
+  pTitle.fontsize = 5
+  if bTytul then
+	  page_.topelement.title = "Kreator płatności"
+  else
+    page_.topelement.title = "Inna płatność"
+  end if
+end sub
+
+'------------------------------
+'-----  nagłówek raportu  -----
+'------------------------------
+sub page_header(byval strRejestrDok)
+  dim tab : set tab = doc_.afc.new_tb(page_).attach(page_.ctrl(ID_HEADER)).removeall
+  tab.newrow
+  tab.row.styleitem = STYLE_TABLE_INFO
+  tab.newcell.addtext("Rejestr dokumentów:  ").element.bold = true
+  tab.addctrl(CTRL_TYPE_STATIC,-1).element.text = strRejestrDok
+  tab.cell.colspan = 3
+  tab.newrow
+  tab.row.styleitem = STYLE_TABLE_INFO
+  tab.newcell.addtext("Data operacji: ").element.bold = true
+  tab.cell.width = clng(3350)
+	tab.newcell
+  tab.cell.width = MINIMIZE_SIZE
+	with tab.addctrl(CTRL_TYPE_DATE,-1).element
+    .customredirect = clng(CTRLID_DATA_OPERACJI)
+    .transfer = page_.createtransfer("custom")
+  end with
+  tab.newcell
+  tab.cell.width = clng(3350)
+  tab.newrow.newcell.addtext " "
+  tab.cell.colspan = 3
+  
+end sub
+
+'------------------------------------------------------------------
+'-----  wypisz transakcje powiązane z dokumentami handlowymi  -----
+'------------------------------------------------------------------
+sub transDokHandl(byval tab, byval pSelectedIdobjPlat, byref curSumAllWart, byref curSumAllSaldo, byref iLiczDok, byval typeID)
+  
+  dim iter, pCheckBox
+  dim iLiczTrans : iLiczTrans = clng(0)
+  dim curSumGrWart : curSumGrWart = ccur(0)
+  dim curSumGrSaldo : curSumGrSaldo = ccur(0)
+  
+  for iter = 0 to pSelectedIdobjPlat.upperIndex
+    dim bNextKlient, bPrevKlient
+    dim idDok : idDok = pSelectedIdobjPlat.value(iter)
+    if idDok > 0 then
+      dim pDokHandl
+      if typeID = TYPEID_N5SPRZEDAZ then
+        set pDokHandl = trans_.getobj(TYPEID_N5SPRZEDAZ,idDok)
+      else
+        set pDokHandl = trans_.getobj(TYPEID_N5ZAKUP,idDok)
+      end if
+      dim strSkrotWal : strSkrotWal = pDokHandl.pWaluta.strSkrot
+    end if
+    bNextKlient = false
+    bPrevKlient = false
+    'sprawdz klienta na poprzednim dokumencie
+    if iter > 0 then
+      dim idDokPrev : idDokPrev = pSelectedIdobjPlat.value(iter - 1)
+      if typeID = TYPEID_N5SPRZEDAZ then
+        bPrevKlient = sprawdzKlient(idDok,idDokPrev,N5TRANSAKCJA_NALEZNOSC)
+      else
+        bPrevKlient = sprawdzKlient(idDok,idDokPrev,N5TRANSAKCJA_ZOBOWIAZANIE)
+      end if  
+      bPoczDok = false
+    else
+      'gdy początek raportu wyświetl nazwę klienta
+      dim bPoczDok : bPoczDok = true
+    end if
+    'sprawdz klienta na następnym dokumencie
+    if iter < pSelectedIdobjPlat.upperIndex then
+      dim idDokNext : idDokNext = pSelectedIdobjPlat.value(iter + 1)
+      if typeID = TYPEID_N5SPRZEDAZ then
+        bNextKlient = sprawdzKlient(idDok,idDokNext,N5TRANSAKCJA_NALEZNOSC)
+      else      
+        bNextKlient = sprawdzKlient(idDok,idDokNext,N5TRANSAKCJA_ZOBOWIAZANIE)
+      end if  
+    else
+      'gdy koniec raportu
+      dim bKoniecDok : bKoniecDok = true
+    end if
+    
+    if not pDokHandl.pTransakcja is nothing then
+      'kwota aktualnego wiersza
+      dim curWartTrans : curWartTrans = pDokHandl.pTransakcja.curWn
+      dim curSaldoTrans : curSaldoTrans = (pDokHandl.pTransakcja.curWn - pDokHandl.pTransakcja.curMa)
+      dim curWartEwid : curWartEwid = pDokHandl.pTransakcja.curWnEwid
+      dim curSaldoEwid : curSaldoEwid = (pDokHandl.pTransakcja.curWnEwid - pDokHandl.pTransakcja.curMaEwid)      
+      if bPrevKlient or bPoczDok or iLiczTrans = 0 then
+        if iLiczTrans = 0 then
+          'wypisz klienta
+          tab.newrow
+          tab.row.styleitem = STYLE_GROUP_HEADER
+          tab.row.fontsize = 4
+          if typeID = TYPEID_N5SPRZEDAZ then
+            tab.newcell.addtext cstr(iLiczDok) + "  " + pDokHandl.pKlient.strNazwa
+          else
+            tab.newcell.addtext cstr(iLiczDok) + "  " + pDokHandl.pDostawca.strNazwa
+          end if
+          tab.cell.colspan = 6
+          tab.element.fontname = "Verdana"
+          tab.element.forecolor = RGB(0,0,0)            
+          'wypisz transakcje
+          tab.newrow
+          if (iLiczTrans + 1) mod 2 = 0 then
+            tab.row.styleitem = STYLE_ROW_EVEN
+          end if
+          
+          'checkbox
+          tab.newcell
+          tab.addctrl CTRL_TYPE_CHECKBOX,-1
+	        set pCheckBox = tab.element
+	        with pCheckBox
+		        .customredirect = clng(CTRLID_REDIRECT_CHKBOX)
+		        .transfer = page_.createtransfer("custom")
+		        .border = 0
+	        end with
+          tab.element.addnew CTRL_TYPE_STATIC,-1
+          pCheckBox.value = "1"
+          set tab.row.userprop = doc_.createhli()
+	        tab.row.userprop.prop(PROP_DOK_IDOBJ) = CLng(pDokHandl.IdObj)
+          tab.row.userprop.prop(PROP_TYP_TRANS) = CLng(pDokHandl.pTransakcja.eTyp)
+          tab.row.userprop.prop(PROP_WART_EWID) = CCur(curWartEwid)
+          tab.row.userprop.prop(PROP_SALDO_EWID) = CCur(curSaldoEwid)
+          tab.row.userprop.prop(PROP_NR_DOK) = clng(iLiczDok)
+      
+          tab.newcell.addtext " " + pDokHandl.pTransakcja.strSymTrans
+          tab.element.fontsize = 3
+          tab.element.fontname = "Verdana"
+          tab.element.forecolor = RGB(0,0,0)          
+          tab.newcell.addtext(doc_.afc.display.money(curWartTrans,strSkrotWal)).cell.align=ALIGN_RIGHT
+          tab.element.fontsize = 3
+          tab.element.fontname = "Verdana"
+          tab.element.forecolor = RGB(0,0,0)
+          tab.newcell.addtext(doc_.afc.display.money(curSaldoTrans,strSkrotWal)).cell.align=ALIGN_RIGHT
+          tab.element.fontsize = 3
+          tab.element.fontname = "Verdana"
+          tab.element.forecolor = RGB(0,0,0)
+          tab.newcell.addtext(doc_.afc.display.money(curWartEwid,"")).cell.align=ALIGN_RIGHT
+          tab.element.fontsize = 3
+          tab.element.fontname = "Verdana"
+          tab.element.forecolor = RGB(0,0,0)
+          tab.newcell.addtext(doc_.afc.display.money(curSaldoEwid,"")).cell.align=ALIGN_RIGHT
+          tab.element.fontsize = 3
+          tab.element.fontname = "Verdana"
+          tab.element.forecolor = RGB(0,0,0)
+          
+          curSumGrWart = curSumGrWart + curWartEwid
+          curSumGrSaldo = curSumGrSaldo + curSaldoEwid
+          iLiczTrans = iLiczTrans + 1
+        end if
+      else
+          'wypisz transakcje
+          tab.newrow
+          if (iLiczTrans + 1) mod 2 = 0 then
+            tab.row.styleitem = STYLE_ROW_EVEN
+          end if   
+          
+          'checkbox
+          tab.newcell
+          tab.addctrl CTRL_TYPE_CHECKBOX,-1
+	        set pCheckBox = tab.element
+	        with pCheckBox
+		        .customredirect = clng(CTRLID_REDIRECT_CHKBOX)
+		        .transfer = page_.createtransfer("custom")          
+		        .border = 0
+	        end with
+          tab.element.addnew CTRL_TYPE_STATIC,-1
+          pCheckBox.value = "1"
+          set tab.row.userprop = doc_.createhli()
+	        tab.row.userprop.prop(PROP_DOK_IDOBJ) = CLng(pDokHandl.IdObj)
+          tab.row.userprop.prop(PROP_TYP_TRANS) = CLng(pDokHandl.pTransakcja.eTyp)
+          tab.row.userprop.prop(PROP_WART_EWID) = CCur(curWartEwid)
+          tab.row.userprop.prop(PROP_SALDO_EWID) = CCur(curSaldoEwid)
+          tab.row.userprop.prop(PROP_NR_DOK) = clng(iLiczDok)
+          
+          tab.newcell.addtext " " + pDokHandl.pTransakcja.strSymTrans
+          tab.element.fontsize = 3
+          tab.element.fontname = "Verdana"
+          tab.element.forecolor = RGB(0,0,0)          
+          tab.newcell.addtext(doc_.afc.display.money(curWartTrans,strSkrotWal)).cell.align=ALIGN_RIGHT
+          tab.element.fontsize = 3
+          tab.element.fontname = "Verdana"
+          tab.element.forecolor = RGB(0,0,0)
+          tab.newcell.addtext(doc_.afc.display.money(curSaldoTrans,strSkrotWal)).cell.align=ALIGN_RIGHT
+          tab.element.fontsize = 3
+          tab.element.fontname = "Verdana"
+          tab.element.forecolor = RGB(0,0,0)
+          tab.newcell.addtext(doc_.afc.display.money(curWartEwid,"")).cell.align=ALIGN_RIGHT
+          tab.element.fontsize = 3
+          tab.element.fontname = "Verdana"
+          tab.element.forecolor = RGB(0,0,0)
+          tab.newcell.addtext(doc_.afc.display.money(curSaldoEwid,"")).cell.align=ALIGN_RIGHT
+          tab.element.fontsize = 3
+          tab.element.fontname = "Verdana"
+          tab.element.forecolor = RGB(0,0,0)
+                  
+          curSumGrWart = curSumGrWart + curWartEwid
+          curSumGrSaldo = curSumGrSaldo + curSaldoEwid           
+          iLiczTrans = iLiczTrans + 1
+      end if
+      
+      'jeśli klient na następnym dok jest inny, koniec dok
+      'lub gdy liczba transakcji na 1 płatności 4 pozycje
+      if bNextKlient or bKoniecDok or iLiczTrans = 4 then
+        'podsumowanie grupy
+        tab.newrow
+        tab.row.styleitem = STYLE_GROUP_HEADER
+        tab.row.fontsize = 3
+        tab.newcell
+        tab.cell.colspan = 4
+        tab.newcell.cell.align=ALIGN_RIGHT
+        tab.addctrl CTRL_TYPE_CURRENCY,-1
+        with tab.element
+          .disable = true
+          .bold = true
+          .size = 10
+          .precision = 2
+          .unit = ""
+          .border = 0
+          set .userprop = doc_.createhli()
+          .customredirect = clng(CTRLID_WART_EWID_GR)
+          .transfer = page_.createtransfer("custom")
+        end with
+        tab.newcell.cell.align=ALIGN_RIGHT
+        tab.addctrl CTRL_TYPE_CURRENCY,-1
+        with tab.element
+          .disable = true
+          .bold = true
+          .size = 10
+          .precision = 2
+          .unit = ""
+          .border = 0
+          set .userprop = doc_.createhli()
+          .customredirect = clng(CTRLID_SALDO_EWID_GR)
+          .transfer = page_.createtransfer("custom")
+        end with        
+        set tab.row.userprop = doc_.createhli()
+        tab.row.userprop.prop(PROP_NR_DOK) = clng(iLiczDok)
+        
+        'zapamiętaj sumę dla grupy iLiczDok
+        pSumGrWart.add curSumGrWart
+        pSumGrSaldo.add curSumGrSaldo
+        
+        iLiczTrans = 0
+        curSumGrWart = ccur(0)
+        curSumGrSaldo = ccur(0)
+        iLiczDok = iLiczDok + 1
+      end if  
+    end if
+    curSumAllWart = curSumAllWart + curWartEwid
+    curSumAllSaldo = curSumAllSaldo + curSaldoEwid      
+  next  
+end sub
+
+'--------------------------------------
+'-----  wypisz transakcję ręczną  -----
+'--------------------------------------
+sub transRecz(byval tab, byval pReczTrZob, byref curSumAllWart, byref curSumAllSaldo, byref iLiczDok)
+  
+  dim pCheckBox
+  dim iLiczTrans : iLiczTrans = 0
+  dim curSumGrWart : curSumGrWart = ccur(0)
+  dim curSumGrSaldo : curSumGrSaldo = ccur(0)
+  
+  'ustawienie nazwy podmiotu transakcji
+  dim strPodmiot : strPodmiot = ""
+  if pReczTrZob.p_wrefPodmiot.type = clng(TYPEID_N5PRACOWNIK) then
+		strPodmiot = pReczTrZob.p_wrefPodmiot.strNazwisko
+  else
+    strPodmiot = pReczTrZob.p_wrefPodmiot.strNazwa
+  end if
+  
+  if pReczTrZob.p_pTransakcja.idobj > 0 then
+    'pobierz transakcję
+    dim oTrans : set oTrans = trans_.getobj(TYPEID_N5TRANSAKCJA,clng(pReczTrZob.p_pTransakcja.idobj))
+    'kwota aktualnego wiersza
+    dim curWartTrans : curWartTrans = oTrans.curWn
+    dim curSaldoTrans : curSaldoTrans = (oTrans.curWn - oTrans.curMa)
+    dim curWartEwid : curWartEwid = oTrans.curWnEwid
+    dim curSaldoEwid : curSaldoEwid = (oTrans.curWnEwid - oTrans.curMaEwid)    
+    
+    'wypisz klienta
+    tab.newrow
+    tab.row.styleitem = STYLE_GROUP_HEADER
+    tab.row.fontsize = 4
+    tab.newcell.addtext cstr(iLiczDok) + "  " + strPodmiot
+    tab.cell.colspan = 6
+    tab.element.fontname = "Verdana"
+    tab.element.forecolor = RGB(0,0,0)            
+    'wypisz transakcje
+    tab.newrow
+    if (iLiczTrans + 1) mod 2 = 0 then
+      tab.row.styleitem = STYLE_ROW_EVEN
+    end if
+    
+    'checkbox
+    tab.newcell
+    tab.addctrl CTRL_TYPE_CHECKBOX,-1
+    set pCheckBox = tab.element
+    with pCheckBox
+      .customredirect = clng(CTRLID_REDIRECT_CHKBOX)
+      .transfer = page_.createtransfer("custom")           
+      .border = 0
+    end with
+    tab.element.addnew CTRL_TYPE_STATIC,-1
+    pCheckBox.value = "1"
+    set tab.row.userprop = doc_.createhli()
+    tab.row.userprop.prop(PROP_DOK_IDOBJ) = clng(pReczTrZob.p_pTransakcja.idobj)
+    tab.row.userprop.prop(PROP_TYP_TRANS) = oTrans.eTyp
+    tab.row.userprop.prop(PROP_WART_EWID) = CCur(curWartEwid)
+    tab.row.userprop.prop(PROP_SALDO_EWID) = CCur(curSaldoEwid)  
+    tab.row.userprop.prop(PROP_NR_DOK) = clng(iLiczDok)
+    
+    tab.newcell.addtext " " + oTrans.strSymTrans
+    tab.element.fontsize = 3
+    tab.element.fontname = "Verdana"
+    tab.element.forecolor = RGB(0,0,0)          
+    tab.newcell.addtext(doc_.afc.display.money(curWartTrans,pReczTrZob.p_pWalutaPodm.strSkrot)).cell.align=ALIGN_RIGHT
+    tab.element.fontsize = 3
+    tab.element.fontname = "Verdana"
+    tab.element.forecolor = RGB(0,0,0)
+    tab.newcell.addtext(doc_.afc.display.money(curSaldoTrans,pReczTrZob.p_pWalutaPodm.strSkrot)).cell.align=ALIGN_RIGHT
+    tab.element.fontsize = 3
+    tab.element.fontname = "Verdana"
+    tab.element.forecolor = RGB(0,0,0)
+    tab.newcell.addtext(doc_.afc.display.money(curWartEwid,"")).cell.align=ALIGN_RIGHT
+    tab.element.fontsize = 3
+    tab.element.fontname = "Verdana"
+    tab.element.forecolor = RGB(0,0,0)
+    tab.newcell.addtext(doc_.afc.display.money(curSaldoEwid,"")).cell.align=ALIGN_RIGHT
+    tab.element.fontsize = 3
+    tab.element.fontname = "Verdana"
+    tab.element.forecolor = RGB(0,0,0)
+    
+    curSumGrWart = curSumGrWart + curWartEwid
+    curSumGrSaldo = curSumGrSaldo + curSaldoEwid
+    
+    'podsumowanie grupy
+    tab.newrow
+    tab.row.styleitem = STYLE_GROUP_HEADER
+    tab.row.fontsize = 3
+    tab.newcell
+    tab.cell.colspan = 4
+    tab.newcell.cell.align=ALIGN_RIGHT
+    tab.addctrl CTRL_TYPE_CURRENCY,-1
+    with tab.element
+      .disable = true
+      .bold = true
+      .size = 10
+      .precision = 2
+      .unit = ""
+      .border = 0
+      set .userprop = doc_.createhli()
+      .customredirect = clng(CTRLID_WART_EWID_GR)
+      .transfer = page_.createtransfer("custom")
+    end with
+    tab.newcell.cell.align=ALIGN_RIGHT
+    tab.addctrl CTRL_TYPE_CURRENCY,-1
+    with tab.element
+      .disable = true
+      .bold = true
+      .size = 10
+      .precision = 2
+      .unit = ""
+      .border = 0
+      set .userprop = doc_.createhli()
+      .customredirect = clng(CTRLID_SALDO_EWID_GR)
+      .transfer = page_.createtransfer("custom")
+    end with
+    set tab.row.userprop = doc_.createhli()
+    tab.row.userprop.prop(PROP_NR_DOK) = clng(iLiczDok)
+    
+    'zapamiętaj sumę dla grupy iLiczDok
+    pSumGrWart.add curSumGrWart
+    pSumGrSaldo.add curSumGrSaldo
+    
+  end if
+  curSumAllWart = curSumAllWart + curWartEwid
+  curSumAllSaldo = curSumAllSaldo + curSaldoEwid       
+  iLiczDok = iLiczDok + 1 
+end sub
+
+'-------------------------------
+'-----  wypisz transakcje  -----
+'-------------------------------
+sub page_transakcje(byval pKolZob, byval pIdobjZob, byval pKolNal, byval pIdobjNal, byval pReczTrZob, byval pReczTrKolZob, byval pReczTrNal, byval pReczTrKolNal, byval iNrP)
+  dim tab : set tab = doc_.afc.new_tb(page_).attach(page_.ctrl(ID_TAB_TRANS)).removeall
+    
+  tab.newrow
+  tab.row.styleitem = STYLE_TABLE_HEADER
+  tab.newcell
+  tab.cell.rowspan = 2
+  tab.newcell.addtext "Transakcja"
+  tab.cell.rowspan = 2
+  tab.cell.width = clng(4800)
+  tab.newcell.addtext "W walucie transakcji"
+  tab.cell.width = CLng(3800)
+  tab.cell.rowspan = 1
+  tab.cell.colspan = 2
+  tab.cell.align = ALIGN_CENTER
+  tab.newcell.addtext "W walucie ewidencji"
+  tab.cell.width = CLng(3800)
+  tab.cell.rowspan = 1
+  tab.cell.colspan = 2
+  tab.cell.align = ALIGN_CENTER  
+  tab.newrow
+  tab.row.styleitem = STYLE_TABLE_HEADER
+  tab.newcell.addtext "Wartość"
+  tab.cell.width = CLng(1900)
+  tab.cell.rowspan = 1 
+  tab.newcell.addtext "Saldo"
+  tab.cell.width = CLng(1900)
+  tab.cell.rowspan = 1 
+  tab.newcell.addtext "Wartość"
+  tab.cell.width = CLng(1900)
+  tab.cell.rowspan = 1
+  tab.newcell.addtext "Saldo"
+  tab.cell.width = CLng(1900)
+  tab.cell.rowspan = 1
+
+  'zlicza liczbę transakcji na płatności (max 4 dla tego samego klienta)
+  dim iLiczDok : iLiczDok = 1
+  
+  dim i : i = 1
+  dim j
+  dim pSelectedIdobjPlatZob : set pSelectedIdobjPlatZob = doc_.afc.new_navoarray()
+  dim pSelectedIdobjPlatNal : set pSelectedIdobjPlatNal = doc_.afc.new_navoarray()
+  dim bZob : bZob = false
+  dim bNal : bNal = false
+  
+  while i < iNrP
+    'przeglądanie zobowiązań
+    for j = 0 to pKolZob.upperIndex
+      if pKolZob.value(j) = i then
+        'dodaj pozycję
+        pSelectedIdobjPlatZob.Add pIdobjZob.value(j)
+        bZob = true
+        'wypisz rozpoczęte
+        if bNal then
+          transDokHandl tab,pSelectedIdobjPlatNal,curSumAllWart,curSumAllSaldo,iLiczDok,TYPEID_N5SPRZEDAZ
+          pSelectedIdobjPlatNal.removeall
+          bNal = false
+        end if          
+      end if
+    next
+    'przeglądanie należności
+    for j = 0 to pKolNal.upperIndex
+      if pKolNal.value(j) = i then
+        'dodaj pozycję
+        pSelectedIdobjPlatNal.Add pIdobjNal.value(j)
+        bNal = true
+        'wypisz rozpoczęte
+        if bZob then
+          transDokHandl tab,pSelectedIdobjPlatZob,curSumAllWart,curSumAllSaldo,iLiczDok,TYPEID_N5ZAKUP
+          pSelectedIdobjPlatZob.removeall
+          bZob = false
+        end if          
+      end if
+    next
+    'zobowiązania ręczne
+    for j = 0 to pReczTrKolZob.upperIndex
+      if pReczTrKolZob.value(j) = i then
+        'wypisz rozpoczęte
+        if bZob then
+          transDokHandl tab,pSelectedIdobjPlatZob,curSumAllWart,curSumAllSaldo,iLiczDok,TYPEID_N5ZAKUP
+          pSelectedIdobjPlatZob.removeall
+          bZob = false
+        end if          
+        if bNal then
+          transDokHandl tab,pSelectedIdobjPlatNal,curSumAllWart,curSumAllSaldo,iLiczDok,TYPEID_N5SPRZEDAZ
+          pSelectedIdobjPlatNal.removeall
+          bNal = false
+        end if
+        'wypisz zob ręczne
+        transRecz tab,pReczTrZob.value(j),curSumAllWart,curSumAllSaldo,iLiczDok
+      end if
+    next      
+    'należności ręczne
+    for j = 0 to pReczTrKolNal.upperIndex
+      if pReczTrKolNal.value(j) = i then
+        'wypisz rozpoczęte
+        if bZob then
+          transDokHandl tab,pSelectedIdobjPlatZob,curSumAllWart,curSumAllSaldo,iLiczDok,TYPEID_N5ZAKUP
+          pSelectedIdobjPlatZob.removeall
+          bZob = false
+        end if          
+        if bNal then
+          transDokHandl tab,pSelectedIdobjPlatNal,curSumAllWart,curSumAllSaldo,iLiczDok,TYPEID_N5SPRZEDAZ
+          pSelectedIdobjPlatNal.removeall
+          bNal = false
+        end if
+        'wypisz nal ręczne
+        transRecz tab,pReczTrNal.value(j),curSumAllWart,curSumAllSaldo,iLiczDok
+      end if
+    next
+      i = i + 1
+  wend
+  'po wyjściu wypisz pozostałe
+  if bZob then
+    transDokHandl tab,pSelectedIdobjPlatZob,curSumAllWart,curSumAllSaldo,iLiczDok,TYPEID_N5ZAKUP
+    pSelectedIdobjPlatZob.removeall
+    bZob = false
+  end if          
+  if bNal then
+    transDokHandl tab,pSelectedIdobjPlatNal,curSumAllWart,curSumAllSaldo,iLiczDok,TYPEID_N5SPRZEDAZ
+    pSelectedIdobjPlatNal.removeall
+    bNal = false
+  end if
+  
+  'podsumowanie tabeli
+  tab.newrow
+  tab.row.styleitem = STYLE_GROUP_HEADER
+  tab.row.fontsize = 3
+  tab.newcell
+  tab.cell.colspan = 4
+  tab.newcell.cell.align=ALIGN_RIGHT
+  tab.addctrl CTRL_TYPE_CURRENCY,-1
+  with tab.element
+    .disable = true
+    .bold = true
+    .size = 10
+    .precision = 2
+    .unit = ""
+    .border = 0
+    set .userprop = doc_.createhli()
+    .customredirect = clng(CTRLID_WART_EWID)
+    .transfer = page_.createtransfer("custom")
+  end with
+  tab.newcell.cell.align=ALIGN_RIGHT
+  tab.addctrl CTRL_TYPE_CURRENCY,-1
+  with tab.element
+    .disable = true
+    .bold = true
+    .size = 10
+    .precision = 2
+    .unit = ""
+    .border = 0
+    set .userprop = doc_.createhli()
+    .customredirect = clng(CTRLID_SALDO_EWID)
+    .transfer = page_.createtransfer("custom")
+  end with
+end sub
+
+'----------------------------------------------------
+'-----  dodaje odpowiednie przyciski na strone  -----
+'----------------------------------------------------
+sub page_buttons
+	dim tab : set tab = doc_.afc.new_tb(page_).attach(page_.ctrl(ID_TAB_BUTTONS)).removeall
+	tab.newrow
+	page_add_button tab, "OK", vbOK
+	page_add_button tab, "Anuluj", vbCancel
+end sub
+
+sub page_add_button(byref tab, byval strName, byval nOption)
+	dim pNewHli
+	set pNewHli = doc_.createhli()
+	pNewHli.prop(GVAR_FUNCTIONHLI) = "page_click"
+	pNewHli.prop(GVAR_MODALRES) = CLng(nOption)
+
+	tab.newcell.addctrl CTRL_TYPE_BUTTON,-1
+	tab.cell.keepline = true
+  tab.cell.align = ALIGN_CENTER
+	set tab.element.hli = pNewHli
+	with tab.element
+    .text = strName
+	  .size = 12
+	  .styleitem = STYLE_BUTTON
+  end with
+end sub
+
+sub page_add_button_inna(byref tab, byval strName, byval nOption)
+	dim pNewHli
+	set pNewHli = doc_.createhli()
+	pNewHli.prop(GVAR_FUNCTIONHLI) = "innaPlat"
+	pNewHli.prop(GVAR_MODALRES) = CLng(nOption)
+
+	tab.newcell.addctrl CTRL_TYPE_BUTTON,-1
+	tab.cell.keepline = true
+  tab.cell.align = ALIGN_CENTER
+	set tab.element.hli = pNewHli
+	with tab.element
+    .text = strName
+	  .size = 12
+	  .styleitem = STYLE_BUTTON
+  end with
+end sub
+
+'------------------------------------
+'-----  naciśnięcie na klawisz  -----
+'------------------------------------
+sub page_click(byref pHli)
+	page_.result=pHli.prop(GVAR_MODALRES)
+	page_.goback
+end sub
+
+'naciśnięcie na klawisze 'Dodaj'/'Anuluj' - inna płatność
+sub innaPlat(byref pHLI)
+  page_.result = pHli.prop(GVAR_MODALRES)
+  if page_.result = 2 then
+    'Anuluj
+    page_.goback
+  else
+    'sprawdz poprawność danych na formularzu
+    'gdy kwota wpłaty/wypłaty = 0
+    if m_curKwotaPodm = CCur(0) then
+      trans_.message 7000, 0, "Kwota wpłaty/wypłaty musi być różna od 0" 
+      exit sub
+    end if
+    'gdy brak podmiotu
+    if m_wrefPodmiot is nothing then
+      trans_.message 7000, 0, "Brak podmiotu operacji" 
+      exit sub
+    end if
+    'gdy brak transakcji
+    if m_pTransakcja is nothing then
+      trans_.message 7000, 0, "Brak transakcji operacji" 
+      exit sub
+    end if
+    'gdy wszystko wypełnione poprawnie pozwól na opuszczenie formularza
+    page_.goback
+  end if
+end sub
+
+'---------------------------------
+'-----  buduj potwierdzenie  -----
+'---------------------------------
+function buildPotw(byval strRejDok, byref dDataOp, byref pKolejnoscZob, byref pSelectedIdobjZob, byref pSelectedRowsZob, byref pKolejnoscNal, byref pSelectedIdobjNal, byref pSelectedRowsNal, byref pReczTransZob, byref pReczTransKolZob, byref pReczTransNal, byref pReczTransKolNal, byval iNrPoz)
+  'nagłówek potwierdzenia
+  page_title true
+  
+  'rejestr dokumentów oraz data
+  dDataOper = dDataOp
+  strRejestrDok = strRejDok
+  
+  page_header(strRejestrDok)
+  
+  'kopie oryginalnych tablic
+  dim i
+  for i = 0 to pSelectedIdobjZob.upperIndex
+    pKolZob.add pKolejnoscZob.value(i)
+    pIdobjZob.add pSelectedIdobjZob.value(i)
+    pRowsZob.add pSelectedRowsZob.value(i)
+    pKolZobPom.add pKolejnoscZob.value(i)
+    pIdobjZobPom.add pSelectedIdobjZob.value(i)
+    pRowsZobPom.add pSelectedRowsZob.value(i)    
+  next
+  for i = 0 to pSelectedIdobjNal.upperIndex
+    pKolNal.add pKolejnoscNal.value(i)
+    pIdobjNal.add pSelectedIdobjNal.value(i)
+    pRowsNal.add pSelectedRowsNal.value(i)
+    pKolNalPom.add pKolejnoscNal.value(i)
+    pIdobjNalPom.add pSelectedIdobjNal.value(i)
+    pRowsNalPom.add pSelectedRowsNal.value(i)    
+  next
+  for i = 0 to pReczTransZob.upperIndex
+    pReczTrZob.add pReczTransZob.value(i)
+    pReczTrKolZob.add pReczTransKolZob.value(i)
+    pReczTrZobPom.add pReczTransZob.value(i)
+    pReczTrKolZobPom.add pReczTransKolZob.value(i)    
+  next
+  for i = 0 to pReczTransNal.upperIndex
+    pReczTrNal.add pReczTransNal.value(i)
+    pReczTrKolNal.add pReczTransKolNal.value(i)
+    pReczTrNalPom.add pReczTransNal.value(i)
+    pReczTrKolNalPom.add pReczTransKolNal.value(i)    
+  next
+  iNrP = iNrPoz 
+
+  page_transakcje pKolZob, pIdobjZob, pKolNal, pIdobjNal, pReczTrZob, pReczTrKolZob, pReczTrNal,  pReczTrKolNal, iNrP
+	
+  page_buttons
+  'nie pokazuj operacji ręcznej
+  dim tab : set tab = doc_.afc.new_tb(page_).attach(page_.ctrl(ID_TAB_INNA_PLAT)).removeall
+	buildPotw = page_.domodalauto()
+
+  'gdy potwierdzenie wykonania OK => modyfikuj oryginalne tablice
+  if buildPotw = 1 then
+    set pKolejnoscZob = pKolZob
+    set pSelectedIdobjZob = pIdobjZob
+    set pSelectedRowsZob = pRowsZob
+    set pKolejnoscNal = pKolNal
+    set pSelectedIdobjNal = pIdobjNal
+    set pSelectedRowsNal = pRowsNal
+    set pReczTransZob = pReczTrZob
+    set pReczTransKolZob = pReczTrKolZob
+    set pReczTransNal = pReczTrNal
+    set pReczTransKolNal = pReczTrKolNal
+    dDataOp = dDataOper
+  end if
+  
+end function
+
+'-----------------------------------------------------------
+'-----  zaznacza transakcję na podstawie id dokumentu  -----
+'-----------------------------------------------------------
+sub zaznaczTrans(byval iIdDok, byval eTypTrans)
+  dim iter
+  if eTypTrans = clng(1) then
+    for iter = 0 to pIdobjZob.upperIndex
+      if iIdDok = pIdobjZob.value(iter) then
+        pKolZob.value(iter) = pKolZobPom.value(iter)
+        pRowsZob.value(iter) = pRowsZobPom.value(iter)
+        exit for
+      end if
+    next
+    for iter = 0 to pReczTrZobPom.upperIndex
+      if iIdDok = pReczTrZobPom.value(iter).p_pTransakcja.idobj then
+        pReczTrZob.add pReczTrZobPom.value(iter)
+        pReczTrKolZob.add pReczTrKolZobPom.value(iter)
+      end if
+    next
+  else
+    for iter = 0 to pIdobjNal.upperIndex
+      if iIdDok = pIdobjNal.value(iter) then
+        pKolNal.value(iter) = pKolNalPom.value(iter)
+        pRowsNal.value(iter) = pRowsNalPom.value(iter)
+        exit for
+      end if
+    next
+    for iter = 0 to pReczTrNalPom.upperIndex
+      if iIdDok = pReczTrNalPom.value(iter).p_pTransakcja.idobj then
+        pReczTrNal.add pReczTrNalPom.value(iter)
+        pReczTrKolNal.add pReczTrKolNalPom.value(iter)
+      end if
+    next    
+  end if  
+end sub
+
+'-----------------------------------------------------------
+'-----  odznacza transakcję na podstawie id dokumentu  -----
+'-----------------------------------------------------------
+sub odznaczTrans(byval iIdDok, byval eTypTrans)
+  dim iter
+  if eTypTrans = clng(1) then
+    for iter = 0 to pIdobjZob.upperIndex
+      if iIdDok = pIdobjZob.value(iter) then
+        pKolZob.value(iter) = 0
+        pRowsZob.value(iter) = 0
+        exit for
+      end if
+    next
+    for iter = 0 to pReczTrZob.upperIndex
+      if iIdDok = pReczTrZob.value(iter).p_pTransakcja.idobj then
+        pReczTrZob.remove iter
+        pReczTrKolZob.remove iter
+      end if
+    next
+  else
+    for iter = 0 to pIdobjNal.upperIndex
+      if iIdDok = pIdobjNal.value(iter) then
+        pKolNal.value(iter) = 0
+        pRowsNal.value(iter) = 0
+        exit for
+      end if
+    next
+    for iter = 0 to pReczTrNal.upperIndex
+      if iIdDok = pReczTrNal.value(iter).p_pTransakcja.idobj then
+        pReczTrNal.remove iter
+        pReczTrKolNal.remove iter
+      end if
+    next    
+  end if
+end sub
+
+'---------------------------------------------------------------------------------------
+'-----  w zależności od nr dokumentu dodaje/odejmuje kwoty podsumowania dla grupy  -----
+'---------------------------------------------------------------------------------------
+sub updateGrupa(byval iNrDok, byval curEwid, byval curSaldo, byval strZnak)
+  dim i
+  for i = 0 to pSumGrWart.upperIndex
+    if iNrDok = (i + 1) then
+      if strZnak = "+" then
+        pSumGrWart.value(i) = pSumGrWart.value(i) + curEwid
+        pSumGrSaldo.value(i) = pSumGrSaldo.value(i) + curSaldo
+      else
+        pSumGrWart.value(i) = pSumGrWart.value(i) - curEwid
+        pSumGrSaldo.value(i) = pSumGrSaldo.value(i) - curSaldo      
+      end if
+    end if
+  next
+end sub
+
+'------------------------------------
+'-----  kontrolki dla checkbox  -----
+'------------------------------------
+function c##CTRLID_REDIRECT_CHKBOX##_ongetdata(byref oCtrl)
+	c##CTRLID_REDIRECT_CHKBOX##_ongetdata = true
+end function
+
+function c##CTRLID_REDIRECT_CHKBOX##_ondataentered(byref oCtrl, byval newValue)
+	c##CTRLID_REDIRECT_CHKBOX##_ondataentered = true  
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+			if oRow.userprop.exists(PROP_DOK_IDOBJ) and oRow.userprop.exists(PROP_TYP_TRANS) then
+         'ustaw w tabeli pSelectedRowsZob/pSelectedRowsNal wartość 0 lub 1 w zależności od newValue
+         dim iter
+         dim iDokId : iDokId = oRow.userprop.prop(PROP_DOK_IDOBJ)
+         dim eTypTrans : eTypTrans = oRow.userprop.prop(PROP_TYP_TRANS)
+         dim curWartEwid : curWartEwid = oRow.userprop.prop(PROP_WART_EWID)
+         dim curSaldoEwid : curSaldoEwid = oRow.userprop.prop(PROP_SALDO_EWID)
+         dim iNrDok : iNrDok = oRow.userprop.prop(PROP_NR_DOK)
+         if clng(newValue) = 1 then
+           zaznaczTrans iDokId, eTypTrans
+           updateGrupa iNrDok, curWartEwid, curSaldoEwid, "+"
+           curSumAllWart = curSumAllWart + curWartEwid
+           curSumAllSaldo = curSumAllSaldo + curSaldoEwid           
+         else
+           odznaczTrans iDokId, eTypTrans
+           updateGrupa iNrDok, curWartEwid, curSaldoEwid, "-"
+           curSumAllWart = curSumAllWart - curWartEwid
+           curSumAllSaldo = curSumAllSaldo - curSaldoEwid           
+         end if 
+      end if
+  end if    
+end function
+
+'-----------------------------------------------------------------------------
+'-----  sprawdza czy dokument poprzedni/następny ma tego samego klienta  -----
+'-----------------------------------------------------------------------------
+function sprawdzKlient(byval idDok, byval idDokNext, byval eTypPlat) : sprawdzKlient = false
+  dim pDok, pDokNext
+  if idDok > 0 and idDokNext > 0 then
+    if eTypPlat = 1 then
+      set pDok = trans_.getobj(TYPEID_N5ZAKUP,idDok)
+      set pDokNext = trans_.getobj(TYPEID_N5ZAKUP,idDokNext)
+      if not pDok is nothing then
+        if not pDokNext is nothing then 
+          if (not pDok.pDostawca is nothing) and (not pDokNext.pDostawca is nothing) then
+            if pDok.pDostawca.idobj <> pDokNext.pDostawca.idobj then
+              sprawdzKlient = true
+            end if
+          end if
+        end if
+      end if
+    else
+      set pDok = trans_.getobj(TYPEID_N5SPRZEDAZ,idDok)
+      set pDokNext = trans_.getobj(TYPEID_N5SPRZEDAZ,idDokNext)
+      if not pDok is nothing then
+        if not pDokNext is nothing then      
+          if (not pDok.pKlient is nothing) and (not pDokNext.pKlient is nothing) then
+            if pDok.pKlient.idobj <> pDokNext.pKlient.idobj then
+              sprawdzKlient = true
+            end if
+          end if
+        end if
+      end if  
+    end if 
+  end if
+end function
+
+'---------------------------
+'-----  Inna płatność  -----
+'---------------------------
+function innaPlatnosc(byref oInnaPlat)
+  'nagłówek operacji ręcznej
+  page_title false
+  
+  'pamiętaj domyślna walutę z rejestru
+  set m_pWalutaPodm = oInnaPlat.p_pWalutaPodm
+  
+  'usuń separatory
+  dim sep1 : set sep1 = doc_.afc.new_tb(page_).attach(page_.ctrl(ID_TAB_SEP)).removeall
+  dim tab : set tab = doc_.afc.new_tb(page_).attach(page_.ctrl(ID_TAB_INNA_PLAT))
+  
+  'przyciski
+  dim tab_but : set tab_but = doc_.afc.new_tb(page_).attach(page_.ctrl(ID_TAB_BUTTONS)).removeall
+	tab_but.newrow
+	page_add_button_inna tab_but, "Dodaj", vbOK
+	page_add_button_inna tab_but, "Anuluj", vbCancel
+	
+  innaPlatnosc = page_.domodalauto()
+
+  'gdy 2 - Anuluj
+  if innaPlatnosc = 2 then
+    exit function
+  else
+    'przekopiuj dane do obiektu oInnaPlat
+    with oInnaPlat
+      .p_curKwotaPodm = m_curKwotaPodm
+      .p_curKwotaEwid = m_curKwotaEwid
+      set .p_wrefPodmiot = m_wrefPodmiot
+      set .p_pTransakcja = m_pTransakcja
+      set .p_pWalutaPodm = m_pWalutaPodm
+      .p_curKursEwid = m_curKursEwid
+      .p_strOpis = m_strOpis
+    end with
+  end if
+  
+end function
+
+'------------------------------------------------------------
+'-----  kontrolka dla paska statusu (aktulany rejestr)  -----
+'------------------------------------------------------------
+function c##CTRLID_STATUS##_ongetdata(byref oCtrl): c##CTRLID_STATUS##_ongetdata = true
+	dim strText : strText = strRejestrDok
+	oCtrl.text = strText
+end function
+
+'-----------------------------------------
+'-----  kontrolki dla daty operacji  -----
+'-----------------------------------------
+function c##CTRLID_DATA_OPERACJI##_ongetdata(byref oCtrl) : c##CTRLID_DATA_OPERACJI##_ongetdata = true
+  oCtrl.value = cdate(dDataOper)
+end function
+
+function c##CTRLID_DATA_OPERACJI##_ondataentered(byref oCtrl, byval newValue) : c##CTRLID_DATA_OPERACJI##_ondataentered = true
+  dDataOper = newValue
+end function
+
+'---------------------------------------------------
+'-----  kontrolki dla edit suma kwoty raportu  -----
+'---------------------------------------------------
+function c##CTRLID_WART_EWID##_ongetdata(byref oCtrl)
+	c##CTRLID_WART_EWID##_ongetdata = true
+  oCtrl.Value = curSumAllWart
+end function
+
+function c##CTRLID_WART_EWID##_ondataentered(byref oCtrl, byval newValue)
+	c##CTRLID_WART_EWID##_ondataentered = true
+end function
+
+function c##CTRLID_SALDO_EWID##_ongetdata(byref oCtrl)
+	c##CTRLID_SALDO_EWID##_ongetdata = true 
+  oCtrl.Value = curSumAllSaldo
+end function
+
+function c##CTRLID_SALDO_EWID##_ondataentered(byref oCtrl, byval newValue)
+	c##CTRLID_SALDO_EWID##_ondataentered = true
+end function
+
+'---------------------------------------------------
+
+function c##CTRLID_WART_EWID_GR##_ongetdata(byref oCtrl)
+	c##CTRLID_WART_EWID_GR##_ongetdata = true
+  dim i
+  dim oRow : set oRow = oCtrl.parent.parent
+  dim iNrDok : iNrDok = oRow.userprop.prop(PROP_NR_DOK)
+  for i = 0 to pSumGrWart.upperIndex
+    if iNrDok = (i + 1) then 
+      oCtrl.value = pSumGrWart.value(i)
+    end if
+  next
+end function
+
+function c##CTRLID_WART_EWID_GR##_ondataentered(byref oCtrl, byval newValue)
+	c##CTRLID_WART_EWID_GR##_ondataentered = true
+end function
+
+function c##CTRLID_SALDO_EWID_GR##_ongetdata(byref oCtrl)
+	c##CTRLID_SALDO_EWID_GR##_ongetdata = true 
+  dim i
+  dim oRow : set oRow = oCtrl.parent.parent
+  dim iNrDok : iNrDok = oRow.userprop.prop(PROP_NR_DOK)
+  for i = 0 to pSumGrSaldo.upperIndex
+    if iNrDok = (i + 1) then 
+      oCtrl.value = pSumGrSaldo.value(i)
+    end if
+  next
+end function
+
+function c##CTRLID_SALDO_EWID_GR##_ondataentered(byref oCtrl, byval newValue)
+	c##CTRLID_SALDO_EWID_GR##_ondataentered = true
+end function
+
+'============================  Inna płatność  ============================
+
+'---------------------------------------------------------------------
+'-----  funkcje do wyboru podmiotu transakcji (Opcje dodatkowe)  -----
+'---------------------------------------------------------------------
+function std_choice_wildref_hli(hli)
+	dim strOrders : strOrders =cstr(hli.prop(1))
+	dim strWheres : strWheres =cstr(hli.prop(2))
+
+  dim nTypeID : nTypeID = 0
+	dim nObjectId : nObjectId = wildref_choose(strOrders, strWheres, nTypeID)
+  
+  'ustaw obiekt
+  if nObjectId > 0 and nTypeID > 0 then
+    set m_wrefPodmiot = trans_.getobj(nTypeID,nObjectId)
+  end if
+  
+end function
+
+function wildref_choose(byval strFields, byval strWheres, byref nTypeID) : wildref_choose = 0
+
+  'tabela z typami podmiotów
+  dim pWildrefTypeId : set pWildrefTypeId = trans_.afc.new_navoarray()
+  pWildrefTypeId.Separate "TYPEID_N5KLIENT;TYPEID_N5PRACOWNIK;TYPEID_N5INSTYTUCJA;TYPEID_N5BANK;TYPEID_N5FIRMA", ";"
+
+  'tabela z nazwami pól
+	dim pFieldsArray : set pFieldsArray = trans_.afc.new_navoarray()	
+	pFieldsArray.Separate strFields, ";"
+
+  'dodatkowe parametry
+	dim pWhereArray : set pWhereArray = trans_.afc.new_navoarray()
+	pWhereArray.Separate strWheres, ";"
+	
+	dim pM43009 : set pM43009 = doc_.getmodule(43009)
+	dim pTranslate : set pTranslate = doc_.getmodule(60130)
+
+	dim i: i = 0
+	while (pWildrefTypeId.Value(i) > 0)
+
+		dim strWhere: strWhere = ""
+		if (i <= pWhereArray.UpperIndex()) then
+			strWhere = pWhereArray.Value(i)
+		end if
+
+		dim strField: strField = ""
+		if (i <= pFieldsArray.UpperIndex()) then
+			strField = pFieldsArray.Value(i)
+		end if
+
+		dim strTitle : strTitle = pTranslate.TypeId2ChoiceObj(pWildrefTypeId.Value(i))
+		pM43009.prepare_automatic pWildrefTypeId.Value(i), strTitle, strWhere, ""
+		pM43009.set_options true,false
+		i = i + 1
+	wend
+
+	pM43009.switch_current_context 0
+	wildref_choose = pM43009.run_browser()
+	
+  nTypeID =  pM43009.result_typeid()
+	
+end function
+
+'------------------------------------------
+'-----  funkcja do wyboru transakcji  -----
+'------------------------------------------
+function std_choice_trans_list
+  std_choice_trans_list = 0
+	if not m_wrefPodmiot is nothing then
+		dim strWhere : strWhere = ""
+    dim strWhereTransType
+	  
+	  if m_curKwotaPodm > ccur(0.0) then
+		  trans_.var(APPVAR_TRANSAKCJA_KWOTA_WN) = m_curKwotaPodm
+	  else
+		  trans_.var(APPVAR_TRANSAKCJA_KWOTA_MA) = - m_curKwotaPodm
+	  end if
+
+		select case m_wrefPodmiot.type
+		case TYPEID_N5KLIENT
+			trans_.var(GVAR_CURRENT_CUSTOMER) = clng(m_wrefPodmiot.idobj)
+		case TYPEID_N5PRACOWNIK
+			trans_.var(GVAR_CURRENT_EMPLOYEE) = clng(m_wrefPodmiot.idobj)
+		case TYPEID_N5BANK
+			trans_.var(GVAR_CURRENT_BANK) = clng(m_wrefPodmiot.idobj)
+		case TYPEID_N5INSTYTUCJA
+			trans_.var(GVAR_CURRENT_INSTYTUCJA) = clng(m_wrefPodmiot.idobj)
+		end select
+    
+    'budowanie where
+    if m_curKwotaPodm < 0 then
+		  strWhereTransType = "(eTyp= 1)"
+	  elseif m_curKwotaPodm > 0 then
+		  strWhereTransType = "(eTyp= 2)"
+	  else
+		  strWhereTransType = "(1=1)"
+	  end if
+
+	  if strWhere <> "" then
+		  strWhere = strWhere + " and " + strWhereTransType
+	  else
+		  strWhere = strWhereTransType
+	  end if
+
+	  if not m_wrefPodmiot is nothing then
+		  if strWhere <> "" then
+			  strWhere = strWhere + " and "
+		  end if
+
+		  dim strWarunek
+  	  'strWarunek =  "(curWn <> curMa) and "
+      strWarunek =  "(1 = 1) and "
+
+	    strWhere = strWhere + doc_.afc.convert.Formatter(strWarunek + " (wrefPodmiot_wrt=%1) and (wrefPodmiot=%2) ") _
+			  .add(cstr(m_wrefPodmiot.type)).add(cstr(m_wrefPodmiot.idobj)).done()
+	  end if
+    
+    dim pM43009 : set pM43009 = doc_.getmodule(43009)
+	  pM43009.prepare_single_selection TYPEID_N5TRANSAKCJA, "Wybór transakcji", strWhere, "strSymTrans"
+	  dim idTrans : idTrans = pM43009.run_browser()
+    if idTrans > 0 then
+      set m_pTransakcja = trans_.getobj(TYPEID_N5TRANSAKCJA, idTrans) 
+    end if
+    trans_.var(GVAR_CURRENT_CUSTOMER) = clng(0)
+		trans_.var(GVAR_CURRENT_EMPLOYEE) = clng(0)
+		trans_.var(GVAR_CURRENT_BANK) = clng(0)
+		trans_.var(GVAR_CURRENT_INSTYTUCJA) = clng(0)
+	  trans_.var(APPVAR_TRANSAKCJA_KWOTA_WN) = ccur(0.0)
+	  trans_.var(APPVAR_TRANSAKCJA_KWOTA_MA) = ccur(0.0)    
+	end if
+  
+end function
+
+'--------------------------------------
+'-----  funkcja do wyboru waluty  -----
+'--------------------------------------
+function std_choice_waluta_hli(pHLI)
+  dim strOrder : strOrder =cstr(pHLI.prop(1))
+  dim strWhere : strWhere = cstr(pHLI.prop(2))
+	dim idChoice : idChoice = fire_choice_list(TYPEID_N5JEDNOSTKA,"Wybór jednostki","",strWhere,strOrder,"")
+  if idChoice > 0 then
+    set m_pWalutaPodm = trans_.getobj(TYPEID_N5JEDNOSTKA,idChoice)
+  end if  
+end function
+
+
+'-----------------------------------------
+'-----  kontrolki kwoty operacji  -----
+'-----------------------------------------
+function c##CTRLID_KWOTA_PODM##_ongetdata(byref oCtrl) : c##CTRLID_KWOTA_PODM##_ongetdata = true
+  'pobierz skrót waluty
+  dim strSkrot : strSkrot = ""
+  if not m_pWalutaPodm is nothing then
+    strSkrot = m_pWalutaPodm.strSkrot
+  end if
+  oCtrl.value = m_curKwotaPodm
+  oCtrl.unit = strSkrot
+end function
+
+function c##CTRLID_KWOTA_PODM##_ondataentered(byref oCtrl, byval newValue) : c##CTRLID_KWOTA_PODM##_ondataentered = true
+  m_curKwotaPodm = newValue
+end function
+
+'---------------------------------------------------------------
+'-----  kontrolki kwoty zarachowania oraz waluty rejestru  -----
+'---------------------------------------------------------------
+function c##CTRLID_KWOTA_EWID##_ongetdata(byref oCtrl) : c##CTRLID_KWOTA_EWID##_ongetdata = true
+  'skrót kwoty zarachowania (zawsze PLN)  
+  m_curKwotaEwid = m_curKwotaPodm * m_curKursEwid
+  oCtrl.value = m_curKwotaEwid 
+  oCtrl.unit = "PLN"
+end function
+
+function c##CTRLID_KWOTA_EWID##_ondataentered(byref oCtrl, byval newValue) : c##CTRLID_KWOTA_EWID##_ondataentered = true
+  m_curKwotaEwid = newValue
+end function
+
+'------------------------------------------
+'-----  kontrolki kursu zarachowania  -----
+'------------------------------------------
+function c##CTRLID_KURS_EWID##_ongetdata(byref oCtrl) : c##CTRLID_KURS_EWID##_ongetdata = true
+  oCtrl.value = m_curKursEwid
+end function
+
+function c##CTRLID_KURS_EWID##_ondataentered(byref oCtrl, byval newValue) : c##CTRLID_KURS_EWID##_ondataentered = true
+  m_curKursEwid = newValue
+end function
+
+'----------------------------------
+'-----  kontrolki info kursu  -----
+'----------------------------------
+function c##CTRLID_KURSEWID_INFO##_ongetdata(byref oCtrl) : c##CTRLID_KURSEWID_INFO##_ongetdata = true
+  if m_pWalutaPodm is getCurrentFirma.pWaluta then
+		oCtrl.value = ""
+    page_.ctrl(CTRLID_KURS_EWID).disable = true
+	else
+    if not m_pWalutaPodm is nothing then
+		  oCtrl.value = m_pWalutaPodm.strSkrot + "/" + getCurrentFirma.pWaluta.strSkrot
+      page_.ctrl(CTRLID_KURS_EWID).disable = false
+    end if  
+	end if
+end function
+
+function c##CTRLID_KURSEWID_INFO##_ondataentered(byref oCtrl, byval newValue) : c##CTRLID_KURSEWID_INFO##_ondataentered = true
+end function
+
+'-----------------------------------------
+'-----  kontrolki podmiotu operacji  -----
+'-----------------------------------------
+function c##CTRLID_EDIT_PODMIOT##_ongetdata(byref oCtrl) : c##CTRLID_EDIT_PODMIOT##_ongetdata = true
+  if not m_wrefPodmiot is nothing then
+    if m_wrefPodmiot.type = TYPEID_N5PRACOWNIK then
+      oCtrl.value = m_wrefPodmiot.strNazwisko
+    else
+      oCtrl.value = m_wrefPodmiot.strNazwa
+    end if  
+  else
+    oCtrl.value = ""
+  end if
+end function
+
+function c##CTRLID_EDIT_PODMIOT##_ondataentered(byref oCtrl, byval newValue) : c##CTRLID_EDIT_PODMIOT##_ondataentered = true
+end function
+
+'-------------------------------------------
+'-----  kontrolki transakcji operacji  -----
+'-------------------------------------------
+function c##CTRLID_STUB_TRANSAKCJA##_ongetdata(byref oCtrl) : c##CTRLID_STUB_TRANSAKCJA##_ongetdata = true
+  if not m_pTransakcja is nothing then
+    oCtrl.value = m_pTransakcja.strSymTrans
+  else
+    oCtrl.value = ""
+  end if
+end function
+
+function c##CTRLID_STUB_TRANSAKCJA##_ondataentered(byref oCtrl, byval newValue) : c##CTRLID_STUB_TRANSAKCJA##_ondataentered = true
+end function
+
+'--------------------------------------
+'-----  kontrolki opisu operacji  -----
+'--------------------------------------
+function c##CTRLID_OPIS##_ongetdata(byref oCtrl) : c##CTRLID_OPIS##_ongetdata = true
+   oCtrl.value = m_strOpis
+end function
+
+function c##CTRLID_OPIS##_ondataentered(byref oCtrl, byval newValue) : c##CTRLID_OPIS##_ondataentered = true
+  m_strOpis = newValue
+end function
+
+'--------------------------------------------
+'-----  kontrolka to edycji transakcji  -----
+'--------------------------------------------
+function c##CTRLID_TRAN_RECZ##_ongetdata(byref pCtrl): c##CTRLID_TRAN_RECZ##_ongetdata = true
+  with page_.ctrl(CTRLID_TRAN_RECZ)
+		if m_pTransakcja is nothing then
+			set .hli = nothing
+			.tip=""
+		else
+			set .hli = doc_.createhlistr("varFunction='std_openform_field'")
+			.tip="Pokaż szczegóły"
+		end if
+	end with
+end function
+
+function std_openform_field
+	doc_.postcommand doc_.afc.convert.formatter(" OPEN_FORM_PROXY_HLI_USAGE(%1,%2,USAGE_VIEW) ") _
+		.add(cstr(m_pTransakcja.type)).add(cstr(m_pTransakcja.idobj)).done()
+end function 
+
+]]>
+</script>
+
+</config>
+	<body>
+		<text width='max' name='t##ID_TITLE'></text>
+    <br/><br/>
+    
+    <!-- Potwierdzenie wykonania operacji -->
+    <table name='t##ID_HEADER'>
+      <tbody> 
+      </tbody>
+      <tfoot>
+      </tfoot>
+    </table>
+
+    <table name='t##ID_TAB_TRANS' border='1' style='STYLE_TABLE_BODY_RAPORT'>
+			<tbody>
+			</tbody>      
+		</table>
+    
+    <table name='t##ID_TAB_SEP'>
+			<tbody>
+		    <tr><td><t></t></td></tr>
+			</tbody>
+		</table>   
+
+    <!-- Płatność dodatkowa -->
+    <table name='t##ID_TAB_INNA_PLAT'>
+      <tbody>
+        <tr>																			
+	        QXC_LABEL(Kwota wpłaty/wypłaty,1)					
+	        <td colspan='5'>
+            QXE_CURRENCY_CUSTOM(CTRLID_KWOTA_PODM,15,2,)
+            <picture tip='Wybór z listy' name='CTRLID_WALUTA' image='PICTURE_CHOICE_N5WALUTA' width='WIDTH_FOR_12PX' height='HEIGHT_FOR_12PX' href='varFunctionHLI="std_choice_waluta_hli" vs1="strNazwa;strSkrot" vs2="eTyp=2"' />          
+          </td>
+        </tr>
+        <tr>
+          QXC_LABEL(Kwota zarachowania,1)
+	        <td width='min'>
+            QXE_CURRENCY_CUSTOM(CTRLID_KWOTA_EWID,15,2,)
+          </td>
+          <td colspan='4'>
+            <t size='2'></t>
+		        <t>Kurs</t>
+            <t size='1'></t>
+            QXE_CURRENCY_CUSTOM(CTRLID_KURS_EWID,8,4,)
+            <t size='1'></t>                
+            <t size='7' name='CTRLID_KURSEWID_INFO'>
+			        <transfer mode='custom'></transfer>
+		        </t>
+	        </td>
+        </tr>
+        <tr>
+          <td width='min'>	
+	          <t>Podmiot</t>
+          </td>
+          <td width='min' keepline='true' colspan='5'>
+	          <edit name='CTRLID_EDIT_PODMIOT' clearonly='true' size='50' style='STYLE_CTRL'>
+		          <transfer mode='custom' />
+	          </edit>
+            <picture tip='Wybór z listy' name='-1' image='PICTURE_WYBOR' width='WIDTH_FOR_12PX' height='HEIGHT_FOR_12PX' href='varFunctionHLI="std_choice_wildref_hli" vs1="strNazwa;strNazwisko;strNazwa" vs2="eAktywny=1;eAktywny=1"' />
+          </td>
+        </tr>
+        <tr>
+          <td width='min'>
+           <t tabstop='false' ignoresysdisable='true' name='CTRLID_TRAN_RECZ'>
+		         <transfer mode='custom' />
+             Transakcja
+	         </t>
+          </td>          
+          <td width='max' keepline='true' colspan='5'>
+            <edit name='CTRLID_STUB_TRANSAKCJA' size='25' style='STYLE_CTRL'>
+              <transfer mode='custom' />
+            </edit>            
+            <picture tip='Wszystkie transakcje' name='-1' image='PICTURE_CHOICE_N5TRANSAKCJA' width='HEIGHT_FOR_12PX' height='HEIGHT_FOR_12PX' href='varFunction="std_choice_trans_list"' />
+          </td>
+        </tr>
+        QXS_BEGIN_MULTILINE(SECID_OPIS,Opis,6,CTRLID_OPIS)
+        QXS_END_MULTILINE(6)
+        <tr>
+          <td width='min' colspan='6'>
+            QXE_MULTILINE_CUSTOM(CTRLID_OPIS,max,HEIGHT_FOR_MULTILINE_ONE_LINE)
+          </td>
+        </tr>
+        <tr><td><t></t></td></tr>
+      </tbody>
+    </table> 
+    
+    <table name='t##ID_TAB_BUTTONS' style='STYLE_ROW_BTN'>
+			<tbody>
+			</tbody>
+		</table>
+
+	</body>
+</page>
+

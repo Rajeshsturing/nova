@@ -1,0 +1,478 @@
+'//////////////////////////////////////////////////////////////////////
+' 
+' Liczenie not odsetkowych
+'
+'/////////////////////////////////////////////////////////////////////
+
+'tablica z rozbiciem
+dim pZaleglosci
+dim pPozycje
+
+
+'reprezentacja jednego rozbicia transakcji
+class CZaleglosc
+	public m_dDataWplaty
+	public m_curKwotaWplaty
+	public m_curStawka
+	public m_nRodzaj        'rodzaj stawki 1 - odsetki ustawowe (ODUST), 2 - odsetki podatkowe (ODPOD)
+end class
+
+
+'pozycje dla jednej transakcji - alternatywa dla tworzenia nowej noty (n5notaods)
+class CNotaPozycja
+	public curStawka
+	public nLiczbaDni
+	public curKwotaZal
+	public curKwotaOds
+	public dDataZaplaty
+	
+	public function wylicz_curKwotaOds
+		curKwotaOds = ccur((curStawka * nLiczbaDni * curKwotaZal) / 365 / 100)
+	end function
+
+end class
+
+
+'wyliczenie noty dla pojedynczej transakcji pTran - wynik wrzucany jako pozycje pNotaOds albo do navoarray
+'wtedy pNotaOds = nothing a poz_array to navoarray
+'	- pTran - tranaskcja dla ktorej wyliczamy notê
+'	- pNotaOds - nota, do ktorej wstawiamy wynik (nothing jesli chcemy to wstawiæ do navoarray)
+'	- poz_array - tablica obiektow CNotaPozycja - alterantywa dla wypelniania obiektu n5notaods - nothing jesli nie chcemy
+' - nWyliczSym - parametr decyduj¹cy czy naliczaæ notê czy przeprowadziæ symulacjê (odpowiednio 0 lub 1)
+function nota_ods_process_transaction(byref pTran , byref pNotaOds , byref poz_array, byval nWyliczSym):nota_ods_process_transaction = false
+
+	if not init_array(pTran) then
+		exit function
+	end if
+
+	'szukamy takich p³atnoœci, na ktorych liœcie pozycji widnieje 
+	'analizowana transakcja	
+
+	'sprawdŸ czy w ekstra2 nie zapamiêtano IdObj pozycji p³atnoœci
+	dim strSQL: strSQL = doc_.afc.convert.Formatter(_
+		"select p_strextra2 from vlist_n5notaods_listPozycje where c_ptransakcja = %1 and p_strextra2 <> ''") _
+		.add(cstr(pTran.idobj)).done()
+	dim stsPozId: stsPozId = pNotaOds.strExtra2
+	if stsPozId <> "" then
+		stsPozId = stsPozId + ","
+	end if
+	dim stsWherePozId: stsWherePozId = ""
+	dim oRS: set oRS = trans_.createadors(strSQL)
+	do while not oRS.EOF
+		stsPozId = oRS("p_strextra2").value + ","
+		oRS.movenext
+	loop
+	if Right(stsPozId,1) = "," then
+		stsWherePozId =  " and c_idobj not in (" + Left(stsPozId,Len(stsPozId)-1) + ") "
+	end if
+
+	dim query:query = doc_.afc.convert.Formatter( _
+	" select " + _
+	" c_idobj,p_dDataOper as data_wplaty, " + _
+	" c_curPozKwotaPodm as wplata " + _
+	" from vlist_n5platnosc_listpozycje as t_plat " + _
+	" where p_eStatus=N5PLATNOSC_ZREALIZOWANA and c_pTransakcja = %1 " + _
+	stsWherePozId +_
+	" order by p_dDataOper ") _
+	.add(cstr(pTran.idobj)).done()
+	dim rs_plat:set rs_plat = trans_.createadors(query)
+	while not rs_plat.eof
+		stsPozId = stsPozId + cstr(rs_plat.fields("c_idobj").value) + ","
+		'analiza jednej wplaty
+		if process_wplata(rs_plat.fields("data_wplaty").value , rs_plat.fields("wplata").value , pTran) then
+			rs_plat.movenext
+		else
+			nota_ods_process_transaction = false			
+			exit function
+		end if
+	wend
+		if Right(stsPozId,1) = "," then
+			stsPozId = Left(stsPozId,Len(stsPozId)-1)
+		end if
+		pNotaOds.strExtra2 = stsPozId
+  
+  'iloœæ dni spóŸnienia po której nastêpuje zmiana stawki (GLOBPROF_NOTA_ODSET_LICZ_DNI)
+  dim nLiczDni
+  dim idGlobFile : idGlobFile = trans_.findobjid(TYPEID_GLOBPROFILE,"Indeks = " + CStr(GLOBPROF_NOTA_ODSET_LICZ_DNI))
+  if idGlobFile > clng(0) then
+    nLiczDni = clng(trans_.getobj(TYPEID_GLOBPROFILE,idGlobfile).wartosc)
+  else
+    trans_.message 7000, 0, "Nie podano liczby dni po up³ywie których nastêpuje zmiana stawki" + vbNewLine + "Ustawiono domyœlnie 15 dni"
+    nLiczDni = clng(15)
+  end if
+  
+	'gdy iloœæ dni spóŸnienia > nLiczDni => rozbicie na 2 transakcje
+	dim iter
+	for iter = 1 to pZaleglosci.UpperIndex()
+		process_rozbicie pTran, pZaleglosci.value(iter), nLiczDni
+	next
+	'posortuj po dacie
+	set pZaleglosci.Operations = new Array_Operations
+	pZaleglosci.Sort
+  
+	'jezeli odsetki ustawowe to sprawdzamy czy byla zmiana stawki
+	if pTran.eTypOdset = N5TRANSAKCJA_ODSETKI_USTAWOWE then
+    dim upperIndex : upperIndex = pZaleglosci.UpperIndex()
+    for iter = 1 to upperIndex
+#ifdef _AMPLUS
+      process_stawka getOrgDate(pTran), pZaleglosci.value(iter), nLiczDni
+#else
+      process_stawka pTran.dDataWym , pZaleglosci.value(iter), nLiczDni
+#endif      
+    next
+  end if
+  
+  set pZaleglosci.Operations = new Array_Operations
+  pZaleglosci.Sort
+
+	'w tym momencie mamy tablicê z rozbiciem tranaskcji na poszczegolne wplaty
+	' i z ewentualnymi datami zmian stawek
+	'ustawin¹ wedlug roznacych dat wplat i zmian stawek
+
+	'wypelniamy note
+	fill_nota pTran , pNotaOds , poz_array, nWyliczSym, nLiczDni
+
+	nota_ods_process_transaction = true
+end function
+
+sub process_rozbicie(byval pTran , byref pZal, byval nLiczDni)
+#ifdef _AMPLUS
+  dim dDataOd : dDataOd = getOrgDate(pTran)
+#else
+  dim dDataOd : dDataOd = pTran.dDataWym
+#endif  
+  dim dDataDo : dDataDo = pZal.m_dDataWplaty
+  dim nLiczbaDni : nLiczbaDni = clng(dDataDo - dDataOd)
+  if nLiczbaDni > nLiczDni then
+    'tworzymy nowy obiekt reprezentuj¹cy rozbicie w stawce ODUST
+    dim pZaleglosc : set pZaleglosc = new CZaleglosc
+    pZaleglosc.m_dDataWplaty = DateAdd("d",nLiczDni,dDataOd)
+    pZaleglosc.m_curKwotaWplaty = pZal.m_curKwotaWplaty
+    pZaleglosc.m_nRodzaj = clng(1)
+    pZaleglosc.m_curStawka = get_stawka(pTran , dDataOd, pZaleglosc.m_nRodzaj)
+    pZaleglosci.add pZaleglosc
+    'zmiana rodzaju stawki powy¿ej 15 dni na ODPOD
+    pZal.m_nRodzaj = clng(2)
+    'zmiana stawki
+    pZal.m_curStawka = get_stawka(pTran , dDataOd, pZal.m_nRodzaj)    
+  end if
+end sub
+
+function fill_nota(byref pTran , byref pNotaOds , byref poz_array, byval nWyliczSym, byval nLiczDni)
+	'algorytm tworzenia pozycji noty odsetkowej
+	'kwota zap³acona
+	dim curZapKwota : curZapKwota = pTran.curMa
+	'zapamiêtaj pocz¹tkowa kwotê (dla symulacji odsetek)
+	dim curPoczKwota : curPoczKwota = pTran.curWn
+	'data od ktorej zaczynamy
+#ifdef _AMPLUS
+  dim dPrevData : dPrevData = getOrgDate(pTran)
+#else
+	dim dPrevData : dPrevData = pTran.dDataWym
+#endif  
+	'zapamiêtaj datê wymagalnoœci (dla symulajci odsetek)
+	dim dDataWymag : dDataWymag = dPrevData
+ 
+	if not pNotaOds is nothing then
+		'ustawiamy note w tranaskcji
+		set pTran.pNotaOds = pNotaOds
+	end if
+	  
+  'pobierz liczbê pozycji dodanych przy przeliczaniu poprzednich transakcji
+  dim iloscPoz: iloscPoz = pNotaOds.listPozycje.count()
+  
+	'iterujemy siê od drugiej komórki
+	dim iter,pPozycja,iter_pozycja
+	iter_pozycja = 0
+	for iter = 1 to pZaleglosci.upperIndex()
+
+		'Jesli tworzymy n5notaods to 
+		if not pNotaOds is nothing then
+			'dodajemy pozycje do listy
+			set pPozycja = pNotaOds.listPozycje.addnew()
+			'dodajemy iterator pozycji - zeby wiedziec jakby co gdzie usunac
+			iter_pozycja = iter_pozycja + 1
+			'ustawiamy transakcje w pozycji
+			set pPozycja.pTransakcja = pTran
+		else
+			'zamiast tworzenia noty tworzymy pozycje tablicy
+			set pPozycja = new CNotaPozycja
+		end if
+		
+		dim curCurrentKwota : curCurrentKwota = pZaleglosci.value(iter).m_curKwotaWplaty
+		dim curEfektStawka : curEfektStawka = pZaleglosci.value(iter).m_curStawka
+
+		'*****************************************
+		'wlasciwe operacje - wype³nienie obiektu
+		'ile dni miala miejsce dana zaleg³oœæ
+		'jeœli data wp³aty jest wczeœniejsza od daty wymagalnoœci => data wp³aty = data wymagalnosci
+		if pZaleglosci.value(iter).m_dDataWplaty < dPrevData then
+		  pZaleglosci.value(iter).m_dDataWplaty = dPrevData
+		end if
+		pPozycja.nLiczbaDni = clng(pZaleglosci.value(iter).m_dDataWplaty - dPrevData) 
+		'jeœli dana kwota ju¿ wys¹pi³a w innej stawce => zmniejsz o dan¹ liczbê dni
+		dim i
+		for i = 1 to iter - 1
+			if ccur(pZaleglosci.value(i).m_curKwotaWplaty) = ccur(pZaleglosci.value(iter).m_curKwotaWplaty) and clng(pZaleglosci.value(i).m_nRodzaj) = clng(pZaleglosci.value(iter).m_nRodzaj) and clng(pZaleglosci.value(i).m_curStawka) <> clng(pZaleglosci.value(iter).m_curStawka) then
+				pPozycja.nLiczbaDni = pPozycja.nLiczbaDni - clng(pZaleglosci.value(i).m_dDataWplaty - dPrevData)
+				exit for
+			end if
+		next
+		'jeœli liczba dni > nLiczDni zmniejszamy liczbê dni o nLiczDni
+		if pPozycja.nLiczbaDni > clng(nLiczDni) then
+			pPozycja.nLiczbaDni = pPozycja.nLiczbaDni - nLiczDni
+		end if
+    
+		'kwota zaleg³oœci
+		pPozycja.curKwotaZal = ccur(curCurrentKwota)
+		'stawka 
+		pPozycja.curStawka = ccur(curEfektStawka)
+		'wstawiamy odpowiednia date
+		pPozycja.dDataZaplaty = cdate(pZaleglosci.value(iter).m_dDataWplaty)
+
+		'jezeli daty siê pokrywaj¹ to mo¿e wyjsc 0 - sprawdzamy i ewentualnie nie dodajemy (usuwamy) pozycje
+
+		'jezeli tworzymy note odsetkowa to spraewdzamy, czy przypadkiem nie wysz³o 0
+		'moze sie dziac tak gdy daty siê pokrywaja
+		if not pNotaOds is nothing then
+			'jezeli tak jest to usuwamy wstawiony wiersz
+			if pPozycja.curKwotaOds = 0 then
+			    'zmienna iloscPoz uwzglêdnia pozycje dodane z innych transakcji
+				pNotaOds.listPozycje.delete(iter_pozycja + iloscPoz)
+				'i odejmujemy iterator pozycji listy
+				iter_pozycja = iter_pozycja - 1
+				trans_.message 7000 , 0 , "Daty pokrywaj¹ siê - wyliczona kwota odsetek dla jednego z przedzia³ow równa jest 0 - pomijam tê pozycjê "
+			end if
+		end if
+
+		'jesli nie chcemy tworzyc noty to mozemy wypelnic tablice
+		if not poz_array is nothing then
+			pPozycja.wylicz_curKwotaOds
+			'sprawdzamy czy nie wyszlo 0
+			if pPozycja.curKwotaOds <> ccur(0) then
+				poz_array.add pPozycja
+			else
+				trans_.message 7000 , 0 , "Daty pokrywaj¹ siê - wyliczona kwota odsetek dla jednego z przedzia³ow równa jest 0 - pomijam tê pozycjê "
+			end if
+		end if
+		
+	next
+	
+	'symulacja noty odsetkowej
+	if nWyliczSym <> 0 then
+		if curPoczKwota <> curZapKwota then
+		'Jesli tworzymy n5notaods to 
+		if not pNotaOds is nothing then
+		  'dodajemy pozycje do listy
+		  set pPozycja = pNotaOds.listPozycje.addnew()
+		  iter_pozycja = iter_pozycja + 1
+		  set pPozycja.pTransakcja = pTran
+		else
+		  'zamiast tworzenia noty tworzymy pozycje tablicy
+		  set pPozycja = new CNotaPozycja
+		end if
+			
+		'*****************************************
+		'ile dni miala miejsce dana zaleg³oœæ
+		'jeœli data wp³aty (w symulatorze jest dat¹ wystawienia noty) jest wczeœniejsza od daty wymagalnoœci => data wp³aty = data wymagalnosci
+		if pNotaOds.dDataWyst < dPrevData then
+		  pNotaOds.dDataWyst = dPrevData
+		end if 		
+		pPozycja.nLiczbaDni = clng(pNotaOds.dDataWyst - dDataWymag)
+		'jeœli liczba dni > nLiczDni => rozbicie na 2 pozycje
+		if pPozycja.nLiczbaDni > nLiczDni then
+		  dim nLiczbaDni : nLiczbaDni = pPozycja.nLiczbaDni - clng(nLiczDni)
+		  'pierwsza pozycja
+		  pPozycja.nLiczbaDni = pPozycja.nLiczbaDni - nLiczbaDni
+		  'kwota zaleg³oœci
+		  pPozycja.curKwotaZal = ccur(curPoczKwota - curZapKwota)  
+		  'stawka 
+		  pPozycja.curStawka = get_stawka(pTran,dDataWymag,1)   
+		  'wstawiamy odpowiednia date
+		  pPozycja.dDataZaplaty = DateAdd("d",-nLiczbaDni,pNotaOds.dDataWyst)
+		  'druga pozycja
+		  set pPozycja = pNotaOds.listPozycje.addnew()
+		  iter_pozycja = iter_pozycja + 1
+		  set pPozycja.pTransakcja = pTran
+		  pPozycja.nLiczbaDni = nLiczbaDni
+		  pPozycja.curKwotaZal = ccur(curPoczKwota - curZapKwota)  
+		  pPozycja.curStawka = get_stawka(pTran,dDataWymag,2)
+		  pPozycja.dDataZaplaty = pNotaOds.dDataWyst
+		else
+		  'kwota zaleg³oœci
+		  pPozycja.curKwotaZal = ccur(curPoczKwota - curZapKwota)  
+		  'stawka 
+		  pPozycja.curStawka = get_stawka(pTran,dDataWymag,1)   
+		  'wstawiamy odpowiednia date
+		  pPozycja.dDataZaplaty = pNotaOds.dDataWyst
+		end if
+
+			'jezeli tworzymy note odsetkowa to spraewdzamy, czy przypadkiem nie wysz³o 0
+			'moze sie dziac tak gdy daty siê pokrywaja
+			if not pNotaOds is nothing then
+				'jezeli tak jest to usuwamy wstawiony wiersz
+				if pPozycja.curKwotaOds = 0 then
+					'zmienna iloscPoz uwzglêdnia pozycje dodane z innych transakcji
+					pNotaOds.listPozycje.delete(iter_pozycja + iloscPoz)
+					'i odejmujemy iterator pozycji listy
+					iter_pozycja = iter_pozycja - 1
+					trans_.message 7000 , 0 , "Daty pokrywaj¹ siê - wyliczona kwota odsetek dla jednego z przedzia³ow równa jest 0 - pomijam tê pozycjê "
+				end if
+			end if		
+		end if
+	end if
+	
+end function
+
+'analiza jednej wplaty
+function process_wplata(byval dDataWplaty , byval dKwotaWplaty , byval pTran):process_wplata = true
+	dim pZaleglosc:set pZaleglosc = new CZaleglosc		
+	'data wplaty
+	pZaleglosc.m_dDataWplaty = dDataWplaty
+	'kwota wplaty
+	pZaleglosc.m_curKwotaWplaty = dKwotaWplaty
+	'przy wplacie stawkê ustawiamy na 0 (wtedy odsetki zostana obliczone dla stawki takiej jak przy poprzedniej wplacie)
+	pZaleglosc.m_nRodzaj = clng(1)
+#ifdef _AMPLUS
+  pZaleglosc.m_curStawka = get_stawka(pTran , getOrgDate(pTran), pZaleglosc.m_nRodzaj)
+#else
+  pZaleglosc.m_curStawka = get_stawka(pTran , pTran.dDataWym, pZaleglosc.m_nRodzaj)
+#endif  
+	pZaleglosci.add pZaleglosc
+end function
+
+
+'analizowanie stawki - jesli byly zmiany w analizowanym okresie
+function process_stawka(byval dDataOd , byref pZal, byval nLiczDni):process_stawka = false
+  'gdy zmiana na podatkow¹ => przesuñ datê o nLiczDni
+  if pZal.m_nRodzaj = clng(2) then
+    dDataOd = DateAdd("d", nLiczDni, dDataOd)
+  end if
+
+  dim dDataDo : dDataDo = pZal.m_dDataWplaty
+	dim where_for_dates:where_for_dates = doc_.afc.convert.Formatter( _
+	"( dDataOd between %1 and %2 )" ) _
+	.add(trans_.afc.convert.date2SQL(dDataOd)) _
+	.add(trans_.afc.convert.date2SQL(dDataDo)) _
+	.done()
+	dim crsr_stawki
+  if pZal.m_nRodzaj = clng(1) then
+    set crsr_stawki = trans_.createrawcursor(TYPEID_N5PLSTAWKA,"strKod like 'ODUST' and " + where_for_dates , "dDataOd" , "")
+  else
+    set crsr_stawki = trans_.createrawcursor(TYPEID_N5PLSTAWKA,"strKod like 'ODPOD' and " + where_for_dates , "dDataOd" , "")  
+  end if
+	dim elem
+	dim pZaleglosc
+	'dla wszystkich pasuj¹cych do kryterium stawek
+	for each elem in crsr_stawki
+		process_stawka = true
+		'tworzymy nowy obiekt repreentuj¹cy rozbicie
+		set pZaleglosc = new CZaleglosc
+		'data wplaty to data od ktorej obowiazuje stawka
+		pZaleglosc.m_dDataWplaty = elem.dDataOd
+		pZaleglosc.m_curStawka = elem.curWartosc
+		pZaleglosc.m_curKwotaWplaty = ccur(pZal.m_curKwotaWplaty)
+		if pZal.m_nRodzaj = clng(1) then
+			pZaleglosc.m_nRodzaj = clng(1)
+		else
+			pZaleglosc.m_nRodzaj = clng(2)
+		end if  
+		'zamieñ stawki
+		dim curStawka : curStawka = pZaleglosc.m_curStawka
+		pZaleglosc.m_curStawka = pZal.m_curStawka
+		pZal.m_curStawka = curStawka
+		pZaleglosci.add pZaleglosc		
+	next
+
+end function
+
+
+
+
+
+function init_array(byval pTran):init_array = true
+	'pierwsza komorka zawiera stawkê odsetek
+	set pZaleglosci = trans_.afc.new_navoarray()
+	dim pZaleglosc:set pZaleglosc = new CZaleglosc
+#ifdef _AMPLUS
+	pZaleglosc.m_curStawka = get_stawka(pTran, getOrgDate(pTran), clng(1))
+#else
+	pZaleglosc.m_curStawka = get_stawka(pTran, pTran.dDataWym, clng(1))
+#endif  
+	pZaleglosc.m_dDataWplaty = trans_.afc.globals.nulldate()
+	pZaleglosc.m_nRodzaj = clng(1)   'domyœlnie ustawowe
+  
+	if pZaleglosc.m_curStawka < 0 then
+		init_array = false
+	end if
+
+	pZaleglosci.add pZaleglosc
+end function
+
+
+function get_stawka(byval pTran , byval dDataWplaty, byval nRodzaj)
+
+	if pTran.eTypOdset = N5TRANSAKCJA_ODSETKI_USTAWOWE then
+    dim crsr_stawki
+    if nRodzaj = clng(1) then
+      set crsr_stawki = trans_.createrawcursor(TYPEID_N5PLSTAWKA,"strKod like 'ODUST' and dDataOd<" + trans_.afc.convert.date2SQL(dDataWplaty) , "dDataOd desc" , "")
+    else
+      set crsr_stawki = trans_.createrawcursor(TYPEID_N5PLSTAWKA,"strKod like 'ODPOD' and dDataOd<" + trans_.afc.convert.date2SQL(dDataWplaty) , "dDataOd desc" , "")
+    end if
+		if crsr_stawki.exists(1) then
+			get_stawka = crsr_stawki.get(1).curWartosc
+		else
+      if nRodzaj = clng(1) then
+			  trans_.message 1002 , 0 , "Nie uda³o sie obliczyæ stawki odsetek. Kod stawki: ODUST"
+      else
+        trans_.message 1002 , 0 , "Nie uda³o sie obliczyæ stawki odsetek. Kod stawki: ODPOD"
+      end if
+			get_stawka = ccur(-1)
+		end if
+	else
+		get_stawka = pTran.curOdsetkiUmowne
+	end if
+end function
+
+'zwraca termin p³atnoœci z oryginalnego dokumentu
+function getOrgDate(byval pTrans)
+  if not pTrans is nothing then
+    dim idDok : idDok = trans_.findobjid(TYPEID_N5SPRZEDAZ,"pTransakcja = " + cstr(pTrans.idobj) + " and pPopSprzed = 0")
+    if idDok > 0 then
+      dim pSprz : set pSprz = trans_.getobj(TYPEID_N5SPRZEDAZ,idDok)
+      getOrgDate = pSprz.dDataPlat
+    else
+      getOrgDate = pTrans.dDataWym
+    end if
+  end if
+end function
+
+
+'operatory s³u¿¹ce do posortowania
+class Array_Operations
+
+	'-----------------------------------------------------------------------
+	' Zamieñ dwa elementy ze sob¹
+	'-----------------------------------------------------------------------
+	Public Function SwapElements(ByRef pNavoArray, ByRef nIndexElem1, ByRef nIndexElem2)    
+		Dim varElem    	
+		Set varElem = pNavoArray.Value(nIndexElem1)
+		Set pNavoArray.Value(nIndexElem1) = pNavoArray.Value(nIndexElem2)
+		Set pNavoArray.Value(nIndexElem2) = varElem		
+	End Function
+
+
+	Public Function Less(ByVal elem1 , ByVal elem2 )		
+		Less = (elem1.m_dDataWplaty - elem2.m_dDataWplaty) < 0
+	End Function
+
+	Public Function More(ByVal elem1, ByVal elem2)
+		More = (elem1.m_dDataWplaty - elem2.m_dDataWplaty) > 0
+	End Function
+
+	Public Function Equal(ByVal elem1, ByVal elem2)
+		Equal = (elem1.m_dDataWplaty - elem2.m_dDataWplaty) = 0
+	End Function
+
+	
+end class

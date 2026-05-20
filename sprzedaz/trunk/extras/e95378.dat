@@ -1,0 +1,943 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+RAPTEMPLATE_POTWIERDZ_SALD_NAL_ZOB
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1250.h"
+#define RAPORT_TITLE Potwierdzenie sald wg należności i zobowiązań
+
+#macro RXE_MONEY_VAR_UNIT(_var_,_unit_val_)						<t><%so.write doc_.afc.display.money(_var_,_unit_val_)%></t>
+#macro RXE_MONEY_VAR_BOLD(_var_)		<t bold='true'><%so.write rapeng_.process_number(doc_.afc.display.money(_var_,""))%></t>
+
+#define SYMBOL_KONTA			<% so.write cstr(pRec("c_symbol")) %>
+#define NAZWA_KONTA			<% so.write (pRec("c_konto_nazwa")) %>
+
+#define C_FIELD_KL_FIRST_EXPR		t_klient.strNazwa
+#define C_FIELD_KL_SECOND_EXPR		t_klient.strIndeks
+
+	
+-->
+<page style='36' margins='700,700,700,700'>
+<config>
+<title>RAPORT_TITLE</title>
+<script>
+<![CDATA[
+
+VB_PRINT_PORTRAIT_GRAYSCALE
+VB_PRINTPREV_PORTRAIT_GRAYSCALE
+
+<%
+function query()
+query = "select distinct 'c_field_first'= CASE max(t_trans.wrefPodmiot_wrt)  WHEN TYPEID_N5KLIENT THEN max(t_klient.strNazwa)  WHEN TYPEID_N5PRACOWNIK THEN max(t_prac.strNazwisko) + ' ' + max(t_prac.strImie) " +_  
+"WHEN TYPEID_N5INSTYTUCJA THEN max(t_inst.strNazwa)  WHEN TYPEID_N5BANK THEN max(t_bank.strNazwa)  WHEN TYPEID_N5FIRMA THEN max(t_firma.strSkrot)  ELSE '' END, " +_
+"'c_podmiot_type'=max(t_trans.wrefPodmiot_wrt),'c_podmiot_idobj'=t_trans.wrefPodmiot " +_
+"from n5transakcja_operacja as t_trop " +_
+"inner join n5transakcja as t_trans on t_trop.trop_pTransakcja = t_trans.idobj " +_
+"left outer join n5klient as t_klient on t_trans.wrefPodmiot = t_klient.IdObj AND t_trans.wrefPodmiot_wrt = TYPEID_N5KLIENT " +_
+"left outer join n5grupaklient as t_gr_klient on t_klient.pGrupaKlient = t_gr_klient.IdObj AND t_trans.wrefPodmiot_wrt = TYPEID_N5KLIENT " +_
+"left outer join n5pracownik as t_prac on t_trans.wrefPodmiot = t_prac.IdObj AND t_trans.wrefPodmiot_wrt = TYPEID_N5PRACOWNIK " +_
+"left outer join n5instytucja as t_inst on t_trans.wrefPodmiot = t_inst.IdObj AND t_trans.wrefPodmiot_wrt = TYPEID_N5INSTYTUCJA " +_
+"left outer join n5bank as t_bank on t_trans.wrefPodmiot = t_bank.IdObj AND t_trans.wrefPodmiot_wrt = TYPEID_N5BANK " +_
+"left outer join n5firma as t_firma on t_trans.wrefPodmiot = t_firma.IdObj AND t_trans.wrefPodmiot_wrt = TYPEID_N5FIRMA " +_
+"inner join n5jednostka as t_waluta on t_trans.pWaluta = t_waluta.IdObj " +_
+"left outer join n5pracownik as t_handlowiec on t_trans.trn_pHandlowiec = t_handlowiec.idobj " +_
+"left join n5sprzedaz as t_sprz on t_sprz.pTransakcja = t_trans.idobj and t_sprz.idobj in (select isnull(min(idobj),0) from n5sprzedaz where pTransakcja = t_trans.idobj) " +_
+"left join n5kwalifikator as t_kwal on t_kwal.idobj = t_sprz.pKwalifikatorEx " +_
+"where %2 and %3 and %4 and %5 and %6 and %7 and %8 and %9 and %10 and %11 and NALZOBOW " +_
+"and ((t_trans.eTyp=2 and t_klient.idobj in (select wrefpodmiotrozrach from n5konto where wrefpodmiotrozrach_wrt=TYPEID_N5KLIENT " +_
+"and (strsymbol like '201%' or strSymbol like '203%'))) or (t_trans.eTyp=1 and t_klient.idobj in (select wrefpodmiotrozrach  " +_
+"from n5konto where wrefpodmiotrozrach_wrt=TYPEID_N5KLIENT and (strsymbol like '204%' or strSymbol like '202%')))) " +_
+" and t_trans.IdObj not in (select pTransakcja from n5sprzedaz where pRejestrDok in (select IdObj from n5rejestrdok where eTyp in (61,62))) " +_
+"group by t_trans.wrefPodmiot " +_
+"having STANROZ " +_
+"order by c_field_first "
+
+query = replace(query,"NALZOBOW","((t_trans.eTyp = 2) or (t_trans.eTyp = 1))")
+query = replace(query,"STANROZ","sum(t_trop.trop_curWn - t_trop.trop_curMa) <> 0")
+
+end function
+%>
+<%
+dim pRaportMomentParam
+
+dim pParamArray
+
+function default_param()
+	set pParamArray = doc_.afc.new_navoarray()
+  dim pParamWersja : set pParamWersja = doc_.afc.rap.param.new_choice("Wersja")
+  with pParamWersja
+	  .multiple = false
+    .names.add "PL"
+    .values.add 1
+    .selected.add true
+    .names.add "EN"
+    .values.add 2
+    .selected.add false    
+  end with  
+  pParamArray.add pParamWersja    
+  pParamArray.add doc_.afc.rap.param.new_date_range("Data wymagalności").bindexpr("t_trans.dDataWym ")   'data wymagalnosci
+  pParamArray.add doc_.afc.rap.param.new_currency("Dni spóźnienia").bindexpr("DATEDIFF(day, t_trans.dDataWym, GETDATE ( ) )")    'Dni spoznienia
+  pParamArray.add doc_.afc.rap.param.new_text("Indeks klienta").bindexpr("t_klient.strIndeks")       'indeks klienta
+  pParamArray.add doc_.afc.rap.param.new_text("Nazwa klienta").bindexpr("t_klient.strNazwa")         'nazwa klienta
+  pParamArray.add doc_.afc.rap.param.new_text("Grupa klientów").bindexpr("t_gr_klient.strNazwa")      'Grupa klientow
+  pParamArray.add doc_.afc.rap.param.new_currency("Kwota").bindexpr("t_trans.curWnEwid")    'kwota
+  
+  dim pParamFactory2: set pParamFactory2= doc_.afc.rap.param
+  dim pParam2: Set pParam2= pParamFactory2.new_choice("Oznaczenie dokumentu").bindexpr("isnull(t_kwal.idobj,0)")
+  doc_.afc.rap.param.init_on_query pParam2, trans_ ,_
+	  "select strNazwa , idobj , 0 from n5kwalifikator union select '<brak>' , 0 , 1 order by 3 , 1 "
+  pParamArray.add pParam2 
+  
+  pParamArray.add doc_.afc.rap.param.new_date("Saldo na dzień").bindexpr("t_trop.trop_dDataOp")
+  pParamArray.add doc_.afc.rap.param.new_text("Handlowiec").bindexpr("isnull(t_handlowiec.strNazwisko,'')")     'handlowiec 
+  pParamArray.add doc_.afc.rap.param.new_text("Kod pocztowy").bindexpr("isnull(t_klient.strKod,'')")    'kod pocztowy  
+
+	set default_param = pParamArray
+end function
+
+function IndeksStart2or3(): IndeksStart2or3 = false
+  dim strIndeks: strIndeks = pParamArray.value(3).first_value
+  if Len(strIndeks) >=1 then
+    IndeksStart2or3 = (Mid(strIndeks,1,1) = "2") or (Mid(strIndeks,1,1) = "3")
+  end if
+end function
+%>
+
+
+<%
+function write_actual_param(byref pActualParam)
+dim iter
+dim bAnyWritten : bAnyWritten = false
+if not pActualParam is nothing then
+for iter = 0 to pActualParam.upperIndex
+if pActualParam.value(iter).get_desc() <> "" then 
+bAnyWritten = true
+	so.write "<t size='5' /><text fontsize='4'><![CD"+"ATA[" + pActualParam.value(iter).get_desc() + "]"+"]></text><br/>"
+end if
+next
+end if
+if not bAnyWritten then 
+	so.write "<t fontsize='4'>brak</t><br/>"
+end if
+	so.write "<br/>"
+so.write "<t fontsize='4'>Uwaga! Pominięto klientów, którzy nie posiadają kont rozrachunkowych (należności:201,203; zobowiązania:202,204)</t><br/>"
+end function
+%>
+
+<%
+dim curSuma : curSuma = ccur(0)
+
+dim klient_nazwa
+dim klient_ulica
+dim klient_nrdomu
+dim klient_nrlokalu
+dim klient_kod
+dim klient_poczta
+dim klient_miejscowosc
+
+
+
+dim iter
+
+
+function section_header_1(byref pSection,byref pRec)
+if pRec.Absoluteposition <> 1 then
+%>
+<ff/>
+<%
+end if
+	dim oRecordset
+	dim klient_ulica_nr
+	dim klient_kod_poczta, klient_kod_miasto
+	dim klient_nr
+  dim data: data = pParamArray.value(8).first_value
+  dim nWersja: nWersja =  pParamArray.value(0).first_selected
+  
+  dim nIdPodmiot: nIdPodmiot = clng(pRec("c_podmiot_idobj").value)
+  dim nIdPodmiotType: nIdPodmiotType = clng(pRec("c_podmiot_type").value)
+  
+  dim strSQLQuery
+  strSQLQuery = "select distinct 'c_field_first'= CASE max(t_trans.wrefPodmiot_wrt) " +_
+  " WHEN TYPEID_N5KLIENT THEN max(C_FIELD_KL_FIRST_EXPR) " +_ 
+  " WHEN TYPEID_N5PRACOWNIK THEN max(t_prac.strNazwisko) " +_ 
+  " WHEN TYPEID_N5INSTYTUCJA THEN max(t_inst.strNazwa) " +_
+  " WHEN TYPEID_N5BANK THEN max(t_bank.strNazwa) " +_
+  " WHEN TYPEID_N5FIRMA THEN max(t_firma.strSkrot) " +_
+  " ELSE '' END , " +_
+  "'c_field_second'= CASE max(t_trans.wrefPodmiot_wrt) " +_
+  " WHEN TYPEID_N5KLIENT THEN max(C_FIELD_KL_SECOND_EXPR) " +_ 
+  " WHEN TYPEID_N5PRACOWNIK THEN max(t_prac.strNazwisko) " +_ 
+  " WHEN TYPEID_N5INSTYTUCJA THEN max(t_inst.strNazwa) " +_
+  " WHEN TYPEID_N5BANK THEN max(t_bank.strNazwa) " +_
+  " WHEN TYPEID_N5FIRMA THEN max(t_firma.strSkrot) " +_
+  " ELSE '' END , " +_
+  " 'idTrans'=t_trop.trop_pTransakcja, " +_
+  "'c_datarozp'=max(t_trans.dDataRozp),'c_datawym'=max(t_trans.dDataWym), " +_
+  "'c_podmiot_type'=max(t_trans.wrefPodmiot_wrt),'c_podmiot_idobj'=max(t_trans.wrefPodmiot), " +_
+  "'c_symb'=max(t_trans.strSymTrans),'c_trans_idobj'=max(t_trans.IdObj), " +_
+  "'c_waluta'=max(t_waluta.strSkrot),'c_prec'=3,'c_typ'=max(t_trans.eTyp), " +_
+  "'c_wntrans'=sum(t_trop.trop_curWn),'c_matrans'= sum(t_trop.trop_curMa),'c_saldotrans'=sum(t_trop.trop_curWn-t_trop.trop_curMa), " +_
+  "'c_wnewid'=sum(t_trop.trop_curWnEwid),'c_maewid'=sum(t_trop.trop_curMaEwid),'c_saldoewid'=sum(t_trop.trop_curWnEwid-t_trop.trop_curMaEwid),'id_waluta'=max(t_waluta.IdObj) " +_
+  "from n5transakcja_operacja as t_trop " +_
+  "inner join n5transakcja as t_trans on t_trop.trop_pTransakcja = t_trans.idobj " +_
+  "left outer join n5klient as t_klient on t_trans.wrefPodmiot = t_klient.IdObj AND t_trans.wrefPodmiot_wrt = TYPEID_N5KLIENT " +_
+  "left outer join n5grupaklient as t_gr_klient on t_klient.pGrupaKlient = t_gr_klient.IdObj AND t_trans.wrefPodmiot_wrt = TYPEID_N5KLIENT "+_
+  "left outer join n5pracownik as t_prac on t_trans.wrefPodmiot = t_prac.IdObj AND t_trans.wrefPodmiot_wrt = TYPEID_N5PRACOWNIK " +_
+  "left outer join n5instytucja as t_inst on t_trans.wrefPodmiot = t_inst.IdObj AND t_trans.wrefPodmiot_wrt = TYPEID_N5INSTYTUCJA " +_
+  "left outer join n5bank as t_bank on t_trans.wrefPodmiot = t_bank.IdObj AND t_trans.wrefPodmiot_wrt = TYPEID_N5BANK " +_
+  "left outer join n5firma as t_firma on t_trans.wrefPodmiot = t_firma.IdObj AND t_trans.wrefPodmiot_wrt = TYPEID_N5FIRMA " +_
+  "inner join n5jednostka as t_waluta on t_trans.pWaluta = t_waluta.IdObj " +_
+  "left outer join n5pracownik as t_handlowiec on t_trans.trn_pHandlowiec = t_handlowiec.idobj " +_
+  "left join n5sprzedaz as t_sprz on t_sprz.pTransakcja = t_trans.idobj and t_sprz.idobj in (select isnull(min(idobj),0) from n5sprzedaz where pTransakcja = t_trans.idobj) " +_
+  "left join n5kwalifikator as t_kwal on t_kwal.idobj = t_sprz.pKwalifikatorEx " +_
+  "where %2 and %3 and %4 and %5 and %6 and %7 and %8 and %9 and %10 and %11 and NALZOBOW " +_
+  "and ((t_trans.eTyp=2 and t_klient.idobj in (select wrefpodmiotrozrach from n5konto where wrefpodmiotrozrach_wrt=TYPEID_N5KLIENT " +_
+  "and (strsymbol like '201%' or strSymbol like '203%'))) or (t_trans.eTyp=1 and t_klient.idobj in (select wrefpodmiotrozrach  " +_
+  "from n5konto where wrefpodmiotrozrach_wrt=TYPEID_N5KLIENT and (strsymbol like '204%' or strSymbol like '202%')))) " +_
+  "and t_trans.IdObj not in (select pTransakcja from n5sprzedaz where pRejestrDok in (select IdObj from n5rejestrdok where eTyp in (61,62))) " +_
+  "and t_trans.wrefPodmiot = " + CStr(nIdPodmiot) + " and t_trans.wrefPodmiot_wrt = " + CStr(nIdPodmiotType) + " " +_  
+  "group by t_trop.trop_ptransakcja " +_
+  "having STANROZ " +_
+  "order by c_field_first,id_waluta,c_datarozp "    
+  
+  strSQLQuery = replace(strSQLQuery,"NALZOBOW","((t_trans.eTyp = 2) or (t_trans.eTyp = 1))")
+  strSQLQuery = replace(strSQLQuery,"STANROZ","sum(t_trop.trop_curWn - t_trop.trop_curMa) <> 0")
+    
+  strSQLQuery = rapeng_.query_apply_actual_param(strSQLQuery, pParamArray)
+  
+  strSQLQuery = replace(strSQLQuery,"t_trop.trop_dDataOp =","t_trop.trop_dDataOp <="  )
+    
+	set oRecordset=trans_.createadors(strSQLQuery)
+  
+  dim nIdWalutaPop: nIdWalutaPop = clng(0)
+  
+	klient_nazwa = pRec("c_field_first")
+  
+  if nIdPodmiotType = TYPEID_N5KLIENT then
+    dim oKlient: set oKlient = trans_.getobj(TYPEID_N5KLIENT,nIdPodmiot)
+    klient_ulica = oKlient.strUlica
+    klient_nrdomu = oKlient.strNrDomu
+    klient_nrlokalu = oKlient.strNrLokalu
+    klient_kod = oKlient.strKod
+    klient_poczta = oKlient.strPoczta
+    klient_miejscowosc = oKlient.pMiejscowosc.strNazwa
+  elseif nIdPodmiotType = TYPEID_N5PRACOWNIK then
+    dim oPracownik: set oPracownik = trans_.getobj(TYPEID_N5PRACOWNIK,nIdPodmiot)
+    klient_ulica = oPracownik.strUlica
+    klient_nrdomu = oPracownik.strNrDomu
+    klient_nrlokalu = oPracownik.strNrLokalu
+    klient_kod = oPracownik.strKod
+    klient_poczta = oPracownik.strPoczta
+    klient_miejscowosc = oPracownik.pMiejscowosc.strNazwa  
+  elseif nIdPodmiotType = TYPEID_N5INSTYTUCJA then
+    dim oInstytucja: set oInstytucja = trans_.getobj(TYPEID_N5INSTYTUCJA,nIdPodmiot)
+    klient_ulica = oInstytucja.strUlica
+    klient_nrdomu = oInstytucja.strNrDomu
+    klient_nrlokalu = oInstytucja.strNrLokalu
+    klient_kod = oInstytucja.strKod
+    klient_poczta = oInstytucja.strPoczta
+    klient_miejscowosc = oInstytucja.pMiejscowosc.strNazwa    
+  elseif nIdPodmiotType = TYPEID_N5BANK then
+    dim oBank: set oBank = trans_.getobj(TYPEID_N5BANK,nIdPodmiot)
+    klient_ulica = oBank.strUlica
+    klient_nrdomu = oBank.strNrDomu
+    klient_nrlokalu = oBank.strNrLokalu
+    klient_kod = oBank.strKod
+    klient_poczta = oBank.strPoczta
+    klient_miejscowosc = oBank.pMiejscowosc.strNazwa      
+  elseif nIdPodmiotType = TYPEID_N5FIRMA then
+    dim oFirma: set oFirma = trans_.getobj(TYPEID_N5FIRMA,nIdPodmiot)
+    klient_ulica = oFirma.strUlica
+    klient_nrdomu = oFirma.strNrDomu
+    klient_nrlokalu = oFirma.strNrLokalu
+    klient_kod = oFirma.strKod
+    klient_poczta = oFirma.strPoczta
+    klient_miejscowosc = oFirma.pMiejscowosc.strNazwa     
+  else
+    klient_ulica = ""
+    klient_nrdomu = ""
+    klient_nrlokalu = ""
+    klient_kod = ""
+    klient_poczta = ""
+    klient_miejscowosc = ""
+  end if
+	
+	if klient_nrlokalu <> "" then 
+	 	klient_nr = klient_nrdomu + "/" + klient_nrlokalu
+	else
+		klient_nr = klient_nrdomu
+	end if
+	
+	if klient_ulica <> "" then
+		klient_ulica_nr = klient_ulica + " " + klient_nr
+	else
+		if klient_miejscowosc <> "" then
+		klient_ulica_nr = klient_miejscowosc + " " +klient_nr	
+		else
+		klient_ulica_nr = klient_poczta +" " + klient_nr	
+		end if
+	end if
+	
+	klient_kod_poczta = klient_kod + " " + klient_poczta
+	klient_kod_miasto = klient_kod + " " + klient_miejscowosc
+%>
+
+<table width='max' border='0'>
+<tbody>
+<tr>
+	<td colspan='5'>
+		 RAPORT_HEADER(3,0)
+	</td>
+</tr>
+
+
+<tr fontsize='3'>
+	<td colspan='5'>
+		<t></t>
+	</td>
+</tr>
+<tr  fontsize='3'>
+	<td colspan='3' width='10000'></td>
+	<td colspan='2' align='left'>
+	
+	<table>
+		<tbody>
+						<tr>	
+							<td width='8000'><text bold='true' ><![CDATA[<%so.write klient_nazwa%>]]></text></td>	
+						</tr>	
+						<tr>	
+							<td><t bold='true'><![CDATA[<%so.write klient_ulica_nr%>]]></t></td>	
+
+						</tr>	
+						<% if klient_poczta="" or klient_miejscowosc=klient_poczta then %>	
+						<tr>	
+							<td><t bold='true'><![CDATA[<%so.write klient_kod_miasto%>]]></t></td>
+
+						</tr>	
+						<% else if klient_poczta<>klient_miejscowosc then	
+							if klient_ulica <> "" then %>	
+						<tr>	
+							<td><t bold='true'><![CDATA[<%so.write klient_miejscowosc%>]]></t></td>	
+
+						</tr>
+							<%end if%> 
+						<tr>	
+							<td><t bold='true'><![CDATA[<%so.write klient_kod_poczta%>]]></t></td>
+
+						</tr>	
+						<%	end if 	
+						end if
+						%>						
+			</tbody>
+	</table>
+	</td>
+</tr>
+
+<tr fontsize='3'>
+	<td colspan='5'>
+		<t></t>
+	</td>
+</tr>
+<tr>
+  <% if nWersja = 0 then %>
+	<td colspan='5' align='center'><t>Odcinek A</t></td>
+  <% else %>
+	<td colspan='5' align='center'><t>Section A</t></td>    
+  <% end if %>
+</tr>
+<tr height='1'>
+	<td colspan='5' align='center' border='0' backcolor='#000000'></td>
+</tr>
+<tr fontsize='3'>
+	<td colspan='5'>
+		<t></t>
+	</td>
+</tr>
+
+
+<tr fontsize='5'>
+	<td colspan='5'>
+    <% if nWersja = 0 then %>
+		  <text><![CDATA[<% so.write "Na podstawie art. 26 ustawy o rachunkowości z 29 września 1994 r. (Dz.U. Nr 121 poz 591) prosimy o potwierdzenie w terminie 7 dni na odcinku B zgodności następujących sald figurujących w naszych księgach na dzień" %>]]></text>
+      <t>&nbsp;</t>
+      <text bold='true'><![CDATA[<% so.write cstr(data) %>]]></text><t>.</t>
+      <br />
+      <text><![CDATA[<% so.write "W przypadku niezgodności wskazanego przez nas salda z zapisami Waszych ksiąg rachunkowych, prosimy o przesłanie specyfikacji tych różnic." %>]]></text>
+      <br/>
+      <text><![CDATA[<% so.write "Zgodnie z przepisami Ustawy o rachunkowości, do potwierdzenia salda nie można stosować tzw. 'akceptu milczącego'. Niniejszy dokument nie jest wezwaniem do zapłaty."%>]]></text>
+   <% else %>
+      <text><![CDATA[<% so.write "We are in the process of reconciling our records with our account for audit of our financial statements. In connection therewith, kindly confirm the balance due to you on account as at Date "+  cstr(data)+"."%>]]></text>
+    <% end if %>
+	</td>
+</tr>
+<% if nWersja = 0 then %>
+<tr fontsize='3'><td colspan='5'><t></t></td></tr>  
+<tr fontsize='5'>
+	<td colspan='5'>
+		<text><![CDATA[Na saldo składają się następujące kwoty:]]></text>
+	</td>
+</tr>
+<% end if %>
+<tr fontsize='3'>
+	<td colspan='5'>
+		<t></t>
+	</td>
+</tr>
+  
+<tr>
+  <td colspan='5'>
+    <table border='1'>
+      <tbody>
+<%
+  dim nIdWaluta, curSaldo, strSkrot
+	iter = 1
+	curSuma = ccur(0)   
+
+	while not oRecordset.eof
+    nIdWaluta = clng(oRecordset("id_waluta").value)  
+    if nIdWalutaPop <> nIdWaluta then
+      if nIdWalutaPop <> 0 then
+        'dodaj podsumowanie %>
+        <tr fontsize='4' style='21'>
+	        <td></td>
+	        <td colspan='2'>
+		        <t bold='true'>Razem:</t>
+	        </td>
+	        <td align='right'>
+		        RXE_MONEY_VAR_BOLD(curSuma)	
+	        </td>
+	        <td align='left'>
+            <t bold='true'><% so.write strSkrot %></t>
+          </td>
+        </tr>        
+        <tr fontsize='3' bordercolor='transparent'><td colspan='5'><t></t></td></tr>
+        <tr fontsize='3' bordercolor='transparent'><td colspan='5'><t></t></td></tr>
+        <tr fontsize='3' bordercolor='transparent'><td colspan='5'><t></t></td></tr>
+<%      
+        iter = 1
+	      curSuma = ccur(0)   
+      end if
+%>
+<tr style='21' fontsize='3'>
+	<td width='100' bold='true' align='center'><t>LP</t></td>
+	<td align='center' width='5000'>
+		<t bold='true'><![CDATA[Numer faktury]]></t>
+	</td>
+	<td width='3000' align='center'>
+		<t  bold='true'><![CDATA[Data wystawienia]]></t>
+	</td>
+	<td align='center' width='3000'>
+		<t bold='true'><![CDATA[Kwota]]></t>
+	</td>
+	<td align='center' width='2000'>
+		<t bold='true'><![CDATA[Waluta]]></t>
+	</td>
+</tr>  
+<%  
+     nIdWalutaPop = nIdWaluta
+   end if 
+  
+  if iter mod 2 = 0 then
+  %>
+<tr fontsize='3' style='37' bordercolor='#AAAAAA'>
+ <%
+  else
+ %>
+ <tr fontsize='3' bordercolor='#AAAAAA'>
+ <%
+  end if
+ %>
+	<td align='left'><t><% so.write cstr(iter)%></t></td>
+	<td align='center'>
+		<t><% so.write cstr(oRecordset("c_symb").value) %></t>
+	</td>
+	<td align='center'>
+		<t><% if doc_.afc.display.fulldate(oRecordset("c_datarozp").value)="1900-01-01" then so.write "brak" else so.write doc_.afc.display.fulldate(oRecordset("c_datarozp").value) end if %></t>	
+	</td>
+	<td align='right'>
+	<%
+		curSaldo = ccur(oRecordset("c_saldotrans").value)
+	%>
+#ifdef _IOW
+		RXE_MONEY_VAR(curSaldo)
+#else
+		RXE_MONEY_VAR(abs(curSaldo))
+#endif    
+	<%
+	%>
+	</td>
+	<td align='left'>
+    <t><% so.write cstr(oRecordset("c_waluta").value) %></t>
+	</td>
+</tr>
+<%
+		curSuma = curSuma + curSaldo
+		iter = iter + 1
+    strSkrot = cstr(oRecordset("c_waluta").value)
+		oRecordset.movenext
+	wend
+
+%>
+  <tr fontsize='4' style='21'>
+	  <td></td>
+	  <td colspan='2'>
+		  <t bold='true'>Razem:</t>
+	  </td>
+	  <td align='right'>
+		  RXE_MONEY_VAR_BOLD(curSuma)	
+	  </td>
+	  <td align='left'>
+      <t bold='true'><% so.write strSkrot %></t>
+    </td>
+  </tr> 
+      </tbody>
+    </table>
+  </td>
+</tr>  
+  
+  <tr fontsize='3'><td colspan='5'><t></t></td></tr>
+  <tr fontsize='3'><td colspan='5'><t></t></td></tr>
+
+<tr fontsize='5'>
+	<td colspan='5'>
+    <% if nWersja = 0 then %>
+		  <text><![CDATA[W przypadku stwierdzenia niezgodności powyższego salda z zapisami w Państwa księgach prosimy o przesłanie niezbędnych wyjaśnień.]]></text>
+	  <% else %>
+      <text><![CDATA[Please state in the space below whether or not this is in agreement with your records as the above date. Please furnish the information you may have that will assist us in reconciling the differences.]]></text>
+    <% end if %>
+  </td>
+</tr>
+
+<tr fontsize='3'>
+	<td colspan='5'>
+		<t></t>
+	</td>
+</tr>
+  <% if nWersja = 1 then %>
+<tr fontsize='5'>
+	<td colspan='5'>
+		<text><![CDATA[An early response shall be highly appreciated.]]></text>
+	</td>
+</tr>    
+  <% end if %>
+<tr fontsize='3'>
+	<td colspan='5'>
+		<t></t>
+	</td>
+</tr>
+<tr>
+	<td></td>
+	<td colspan='3'  >
+		
+	</td>
+	<td align='right'  >
+		<t>	</t>
+	</td>
+</tr>
+
+<tr>
+	<td colspan='5'>
+	<table>
+		<tbody>
+			<tr>
+				
+				<td align='center'>
+				<t><![CDATA[<% so.write util_.Uzytkownik_Nazwa %>]]></t>
+				</td>	
+				<td width='max'/>	
+			</tr>
+
+			<tr>
+				
+				<td align='center'>
+				<t>....................................................................................</t>
+				</td>	
+				<td width='max'/>	
+			</tr>
+			<tr>
+				
+				<td align='center'>
+				<t>Podpis wystawiającego</t>
+				</td>	
+				<td width='max'/>	
+			</tr>
+
+		</tbody>
+	</table>	
+	</td>
+</tr>
+    
+<tr fontsize='3'>
+	<td colspan='5'>
+		<t></t><br/><br/>
+	</td>
+</tr>
+<tr fontsize='3'>
+	<td colspan='5'>
+		<t></t>
+	</td>
+</tr>
+<tr fontsize='3'>
+	<td colspan='5'>
+		<t></t>
+	</td>
+</tr>
+</tbody>
+</table>
+
+<t>&nbsp;</t><br/><ff/>
+
+<table border='0'>
+
+<tbody>
+
+<tr  fontsize='3'>
+	<td colspan='5' width='max' align='left'>
+	
+	<table>
+		<tbody>
+						<tr>	
+							<td ><text bold='true' ><![CDATA[<%so.write klient_nazwa%>]]></text></td>	
+						</tr>	
+						<tr>	
+							<td><t bold='true'><![CDATA[<%so.write klient_ulica_nr%>]]></t></td>	
+
+						</tr>	
+						<% if klient_poczta="" or klient_miejscowosc=klient_poczta then %>	
+						<tr>	
+							<td><t bold='true'><![CDATA[<%so.write klient_kod_miasto %>]]></t></td>
+
+						</tr>	
+						<% else if klient_poczta<>klient_miejscowosc then	
+							if klient_ulica <> "" then %>	
+						<tr>	
+							<td><t bold='true'><![CDATA[<%so.write klient_miejscowosc%>]]></t></td>	
+
+						</tr>
+							<%end if%> 
+						<tr>	
+							<td><t bold='true'><![CDATA[<%so.write klient_kod_poczta%>]]></t></td>
+
+						</tr>	
+						<%	end if 	
+						end if
+						%>						
+			</tbody>
+	</table>
+	
+	</td>
+</tr>
+<!-- czarna dziura -->
+
+<tr fontsize='3'>
+	<td colspan='5'>
+		<t></t>
+	</td>
+</tr>
+
+<tr  fontsize='3'>
+	<td colspan='3' align='right' width='10000' />
+	<td colspan='2' align='left'>
+		 	<table fontsize='3'>	
+		<tbody >	
+			<tr>	
+				<td ><text bold='true' ><![CDATA[H_FIRMA_NAZWA]]></text></td>	
+				
+			</tr>	
+			<tr>	
+				<td><t bold='true'><![CDATA[H_FIRMA_ULICA_NUMER]]></t></td>	
+				<td/>	
+			</tr>	
+			<% if util_.Firma.strPoczta="" or util_.Firma.pMiejscowosc.strNazwa=util_.Firma.strPoczta then %>	
+			<tr>	
+				<td><t bold='true'><![CDATA[H_FIRMA_KOD_MIASTO]]></t></td>	
+				<td/>	
+			</tr>	
+			<% else if util_.Firma.strPoczta<>util_.Firma.pMiejscowosc.strNazwa then	
+				if util_.Firma.strUlica <> "" then %>	
+			<tr>	
+				<td><t bold='true'><![CDATA[H_FIRMA_MIASTO]]></t></td>	
+				<td/>	
+			</tr>	
+				<%end if%> 	
+			<tr>	
+				<td><t bold='true'><![CDATA[H_FIRMA_KOD_POCZTA]]></t></td>	
+				<td/>	
+			</tr>	
+			<%	end if 
+			end if
+			%>	
+		</tbody>	
+	</table>
+
+	</td>
+</tr>
+
+
+<tr fontsize='3'>
+	<td colspan='5'>
+		<t></t>
+	</td>
+</tr>
+<tr>
+  <% if nWersja = 0 then %>
+	<td colspan='5' align='center'><t>Odcinek B</t></td>
+  <% else %>
+	<td colspan='5' align='center'><t>Section B</t></td>    
+  <% end if %>
+</tr>
+<tr height='1'>
+	<td colspan='5' align='center' border='0' backcolor='#000000'></td>
+</tr>
+<tr fontsize='3'>
+	<td colspan='5'>
+		<t></t>
+	</td>
+</tr>
+<% if nWersja = 0 then %>
+<tr fontsize='3'>
+	<td colspan='5'>
+		<text><![CDATA[<% so.write "Potwierdzamy zgodność niżej wymienionych sald na dzień " +_
+    trans_.afc.display.fulldate(data) +"."%> ]]></text>
+	</td>
+</tr>
+<% end if %>
+
+<tr fontsize='3'>
+	<td colspan='5'>
+		<t></t>
+	</td>
+</tr>
+
+<tr>
+  <td colspan='5'>
+    <table border='1'>
+      <tbody>
+<%
+	iter = 1
+	curSuma = ccur(0)   
+  nIdWalutaPop = clng(0)
+  oRecordset.movefirst
+
+	while not oRecordset.eof
+    nIdWaluta = clng(oRecordset("id_waluta").value)  
+    if nIdWalutaPop <> nIdWaluta then
+      if nIdWalutaPop <> 0 then
+        'dodaj podsumowanie %>
+        <tr fontsize='4' style='21'>
+	        <td></td>
+	        <td colspan='2'>
+		        <t bold='true'>Razem:</t>
+	        </td>
+	        <td align='right'>
+		        RXE_MONEY_VAR_BOLD(curSuma)	
+	        </td>
+	        <td align='left'>
+            <t bold='true'><% so.write strSkrot %></t>
+          </td>
+        </tr>        
+        <tr fontsize='3' bordercolor='transparent'><td colspan='5'><t></t></td></tr>
+        <tr fontsize='3' bordercolor='transparent'><td colspan='5'><t></t></td></tr>
+        <tr fontsize='3' bordercolor='transparent'><td colspan='5'><t></t></td></tr>        
+<%
+        iter = 1
+	      curSuma = ccur(0)   
+      end if
+%>
+<tr style='21' fontsize='3'>
+	<td width='100' bold='true' align='center'><t>LP</t></td>
+	<td align='center' width='5000'>
+		<t bold='true'><![CDATA[Numer faktury]]></t>
+	</td>
+	<td width='3000'>
+		<t  bold='true'><![CDATA[Data wystawienia]]></t>
+	</td>
+	<td width='3000' align='center'>
+		<t bold='true'><![CDATA[Kwota]]></t>
+	</td>
+	<td width='2000' align='center'>
+		<t bold='true'><![CDATA[Waluta]]></t>
+	</td>
+</tr>  
+<%  
+     nIdWalutaPop = nIdWaluta
+   end if
+  if iter mod 2 = 0 then
+  %>
+<tr fontsize='3' style='37' bordercolor='#AAAAAA'>
+ <%
+  else
+ %>
+ <tr fontsize='3' bordercolor='#AAAAAA'>
+ <%
+  end if
+ %>
+	<td align='left'><t><% so.write cstr(iter)%></t></td>
+	<td align='center'>
+		<t><% so.write cstr(oRecordset("c_symb").value) %></t>
+	</td>
+	<td align='center'>
+		<t><% if doc_.afc.display.fulldate(oRecordset("c_datarozp").value)="1900-01-01" then so.write "brak" else so.write doc_.afc.display.fulldate(oRecordset("c_datarozp").value) end if %></t>	
+	</td>
+	<td align='right'>
+	<%
+		curSaldo = ccur(oRecordset("c_saldotrans").value)
+	%>
+#ifdef _IOW
+		RXE_MONEY_VAR(curSaldo)
+#else  
+		RXE_MONEY_VAR(abs(curSaldo))
+#endif    
+	<%
+	%>
+	</td>
+	<td align='left'>
+    <t><% so.write cstr(oRecordset("c_waluta").value) %></t>
+	</td>
+</tr>
+<%
+		curSuma = curSuma + curSaldo
+		iter = iter + 1
+    strSkrot = cstr(oRecordset("c_waluta").value)
+		oRecordset.movenext
+	wend
+
+%>
+  <tr fontsize='4' style='21'>
+	  <td></td>
+	  <td colspan='2'>
+		  <t bold='true'>Razem:</t>
+	  </td>
+	  <td align='right'>
+		  RXE_MONEY_VAR_BOLD(curSuma)	
+	  </td>
+	  <td align='left'>
+      <t bold='true'><% so.write strSkrot %></t>
+    </td>
+  </tr> 
+      </tbody>
+    </table>
+  </td>
+</tr>
+  
+  <tr fontsize='3'><td colspan='5'><t></t></td></tr>
+  <tr fontsize='3'><td colspan='5'><t></t></td></tr>
+  
+<tr fontsize='3'>
+	<td colspan='5'>
+		<t></t>
+	</td>
+</tr>
+<tr fontsize='3'>
+	<td colspan='5'>
+		<t></t>
+	</td>
+</tr>
+
+<tr>
+	<td colspan='5'>
+	<table>
+		<tbody>
+			<tr>
+				<td width='max'/>	
+				<td align='center'>
+				<t>....................................................................................</t>
+				</td>	
+			</tr>
+			<tr>
+				<td width='max'/>	
+				<td align='center'>
+				<t>Data, pieczęć i podpis</t>
+				</td>	
+			</tr>
+
+		</tbody>
+	</table>	
+	</td>
+</tr>    
+
+<%
+nSectionPicCounter=nSectionPicCounter+1
+end function
+%>
+<%
+function section_footer_1(byref pSection)
+%>
+<tr fontsize='3'>
+	<td colspan='5'>
+		<t></t>
+ 	</td>
+</tr>
+</tbody>
+<tfoot>
+</tfoot>
+</table>
+<t>&nbsp;</t><br/>
+
+<%
+end function
+%>
+
+
+
+<%
+function body_row(byref pSection,byref pRec)
+end function
+%>
+<%
+function body_header(byref pSection,byref pRec)
+%>
+
+<%
+end function
+%>
+<%
+function body_footer(byref pSection)
+%>
+<%
+end function
+%>
+<%dim nSectionPicCounter : nSectionPicCounter = 10000%>
+function section_hideshow_hli(byref pHLI)
+doc_.afc.formsection.section_hideshow page_, pHLI.prop(100)
+end function
+
+
+]]>
+</script>
+</config>
+<header>
+</header>
+<body>
+
+
+
+<%
+dim pRapExec : set pRapExec = rapeng_.new_engine()
+with pRapExec
+	.add_body_ex getref("body_header"),getref("body_footer"),getref("body_row")
+	.add_group_section 0,getref("section_header_1"),getref("section_footer_1")
+
+if .prepare("RAPORT_TITLE",default_param(),rapeng_.get_raport_param(),query()) then
+%>
+<%
+    .ReplaceQueryParam "t_trop.trop_dDataOp =","t_trop.trop_dDataOp <="
+
+    if not .perform then
+    so.write "<p style='21'><t>Brak danych spełniających podane kryteria</t></p>"
+	end if
+	
+%>
+<%
+end if
+end with
+%>
+</body>
+<footer>
+</footer>
+</page>

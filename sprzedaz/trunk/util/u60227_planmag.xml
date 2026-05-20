@@ -1,0 +1,688 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1200.h"
+#include "h1231.h"
+#include "h1203.h"
+-->
+<page>
+<config>
+<script>
+<!--
+	Wsparcie dla planowania zapasów magazynowych
+-->
+<![CDATA[
+
+#include "L50509"
+
+#comment '------------------------------------------------------------------------------------
+' + OpakStan  - stan magazynów (wszystkich lub wybranych)
+' + OpakZamWl - zamówienia własne
+' + OpakZProd - wyroby z produkcji własnej
+' - OpakNaProd- surowce na produkcję własną
+' - OpakZamOb - zamówienia obce
+' - OpakHistSp- prognoza sprzedaży
+' = OpakAktBil- aktualny bilans		= OpakStan - OpakNaProd - OpakZamOb
+' = OpakProBil1 - prognozowany bilans	= OpakStan - OpakNaProd + OpakZamWl + OpakZProd - OpakProgSp
+'				  na podstawie prognozy sprzedaży
+' = OpakProBil2 - prognozowany bilans	= OpakStan - OpakNaProd + OpakZamWl + OpakZProd - OpakZamOb
+'				  na podstawie zamówień obcych
+#define TMP_PLANMAG_TABLE_NAME #tmp_planmag
+
+class CPlanMagHelper
+  private bDisposed
+
+  private sub class_initialize()
+    bDisposed = false
+  
+		dim strSQL
+		strSQL = "create table TMP_PLANMAG_TABLE_NAME " + vbCrLf +_
+		"(" + vbCrLf +_
+		"tpm_pProdukt integer not null," + vbCrLf +_
+		"tpm_pOpak integer not null," + vbCrLf +_
+		"tpm_curIloscOpakStan	decimal(14,4) not null," + vbCrLf +_
+#ifdef _KOMPOZYTY    
+		"tpm_curIloscOpakStanWyr decimal(14,4) not null," + vbCrLf +_
+#endif    
+		"tpm_curIloscOpakZamWl	decimal(14,4) not null," + vbCrLf +_
+		"tpm_curIloscOpakZProd	decimal(14,4) not null," + vbCrLf +_
+		"tpm_curIloscOpakNaProd decimal(14,4) not null," + vbCrLf +_
+		"tpm_curIloscOpakZamOb	decimal(14,4) not null," + vbCrLf +_
+		"tpm_curIloscOpakHistSp	decimal(14,4) not null," + vbCrLf +_
+		"tpm_curIloscOpakSprzed	decimal(14,4) not null," + vbCrLf +_		
+		"tpm_curIloscOpakAktBil	decimal(14,4) not null," + vbCrLf +_
+		"tpm_curIloscOpakProgBil1	decimal(14,4) not null," + vbCrLf +_
+		"tpm_curIloscOpakProgBil2	decimal(14,4) not null," + vbCrLf +_
+		")" + vbCrLf
+		trans_.execsql strSQL
+	end sub
+
+  public sub manual_done()
+    if not bDisposed then
+      bDisposed = true
+    
+      dim strSQL
+      strSQL =  "drop table TMP_PLANMAG_TABLE_NAME" + vbCrLf
+      trans_.execsql strSQL
+
+    end if
+  end sub
+
+  private sub class_terminate() 'OK
+    manual_done()
+  end sub
+
+	public sub prefill(byval strProdFilter)
+		dim strSQL
+		'prefill table
+		strSQL = "insert into TMP_PLANMAG_TABLE_NAME select distinct p_idobj, c_idobj," +_
+#ifdef _KOMPOZYTY    
+		"0,0,0,0,0,0,0,0,0,0,0 from vlist_n5produkt_listOpakowania where p_idobj in " +_
+#else
+		"0,0,0,0,0,0,0,0,0,0 from vlist_n5produkt_listOpakowania where p_idobj in " +_
+#endif
+		"(select idobj from n5produkt t_prod where " + strProdFilter + ")"
+		trans_.execsql strSQL
+	end sub
+
+	public function get_mag_filter_param()
+		dim pParamMagazyn:set pParamMagazyn =  doc_.afc.rap.param.new_choice("Magazyn").bindexpr("gms_pMag")
+		doc_.afc.rap.param.init_on_query pParamMagazyn , trans_ , _
+			"select strNazwa , idobj from n5magazyn where eTyp in (N5TYPMAG_PODSTAWOWY,N5TYPMAG_PRODUKCJAWTOKU,N5TYPMAG_REZERWACJE) order by strNazwa "
+		set get_mag_filter_param = pParamMagazyn
+	end function
+
+	public function get_termin_konc_param()
+		dim pParamTermin : set pParamTermin = doc_.afc.rap.param.new_date_range("Termin realizacji").bindexpr("p_dDataReal")
+		set get_termin_konc_param = pParamTermin
+	end function
+	public function get_okres_sprz_param()
+		dim pParamOkres : set pParamOkres = doc_.afc.rap.param.new_date_range("Historia sprzedaży").bindexpr("p_ddataWyst")
+		set get_okres_sprz_param = pParamOkres
+	end function
+
+	public sub update_stan(byref pParamMagazyn)
+		dim strSQL
+		strSQL = "update TMP_PLANMAG_TABLE_NAME set " + vbCrLf +_
+		"tpm_curIloscOpakStan = isnull((select sum(gms_curIlosc) " + vbCrLf +_
+		"from n5gmstan where gms_pProd=tpm_pProdukt and gms_pOpak=tpm_pOpak " + vbCrLf +_
+		"and " + pParamMagazyn.get_where_part(trans_) + "),0)"
+		trans_.execsql strSQL
+	end sub
+  
+  '------------------------------------------------------------------
+  'Wylicza stan magazynowy surowca w oparciu o krotność tego surowca 
+  'na receturze wyrobu, a także o dostępność tego wyrobu na magazynie
+  '------------------------------------------------------------------
+  public sub update_stan_wyrob(byref pParamMagazyn)
+    dim strSQL    
+   
+    strSQL = "if exists (select * from sysobjects where name='stan_mag_wyrobu') " + vbCrLf +_
+	           "drop function stan_mag_wyrobu"
+    trans_.execsql strSQL   
+    
+    strSQL =  "create function dbo.stan_mag_wyrobu(@idProdukt int, @idOpak int) " + vbCrLf +_ 
+              "returns decimal(14,4) " + vbCrLf +_
+              "with encryption " + vbCrLf +_
+              "as " + vbCrLf +_
+              "begin " + vbCrLf +_
+	            "  declare @stanMag decimal(14,4) " + vbCrLf +_
+	            "  declare @sub_cur cursor " + vbCrLf +_
+	            "  set @sub_cur = cursor for " + vbCrLf +_
+              "                (select (vrw.c_curIloscOpak * vrs.c_curIloscOpak)* " + vbCrLf +_ 
+				      "                isnull((select sum(gms_curIlosc) from n5gmstan where gms_pProd = vrw.c_pprodukt and " + vbCrLf +_ 
+				      "                gms_pOpak = vrw.c_popak and " + pParamMagazyn.get_where_part(trans_) + "),0) " + vbCrLf +_
+				      "                from vlist_n5recepta_listWyrob vrw " + vbCrLf +_
+				      "                inner join vlist_n5recepta_listSurowce as vrs on vrs.p_idobj = vrw.p_idobj " + vbCrLf +_ 
+				      "                inner join n5produkt as t_surow on vrs.c_pprodukt = t_surow.IdObj " + vbCrLf +_ 
+				      "                inner join n5opakowanie_produktu as t_opak_sur on vrs.c_pOpak = t_opak_sur.IdObj " + vbCrLf +_
+				      "                where vrw.p_rcpt_eaktywny = N5RECEPTA_AKTYWNA and vrs.c_pprodukt = @idProdukt and vrs.c_pOpak = @idOpak) " + vbCrLf + vbCrLf +_
+	            "  open @sub_cur " + vbCrLf +_
+              "  fetch next from @sub_cur into @stanMag " + vbCrLf +_
+	            "  declare @sumStanMag decimal(14,4) " + vbCrLf +_
+	            "  set @sumStanMag = 0 " + vbCrLf +_
+	            "  while @@fetch_status = 0 " + vbCrLf +_
+	            "  begin " + vbCrLf +_
+		          "    set @sumStanMag = @sumStanMag + @stanMag " + vbCrLf +_
+		          "    fetch next from @sub_cur into @stanMag " + vbCrLf +_
+	            "  end " + vbCrLf +_
+	            "  close @sub_cur " + vbCrLf +_
+	            "  deallocate @sub_cur " + vbCrLf +_
+	            "  return @sumStanMag " + vbCrLf +_
+              "end"
+    trans_.execsql strSQL
+    
+    strSQL = "update TMP_PLANMAG_TABLE_NAME set tpm_curIloscOpakStanWyr = dbo.stan_mag_wyrobu(tpm_pProdukt,tpm_pOpak)"
+    trans_.execsql strSQL
+    
+    strSQL = "if exists (select * from sysobjects where name='stan_mag_wyrobu') " + vbCrLf +_
+	           "drop function stan_mag_wyrobu"
+    trans_.execsql strSQL
+  end sub  
+  
+	public sub update_zam_wl(byref pParamTermin)
+		update_zam_wl_ex pParamTermin, nothing
+	end sub
+  
+	public sub update_zam_wl_ex(byref pParamTermin, byref pParamRok)  
+    dim strWhere: strWhere = ""
+    if not pParamRok is nothing then
+      strWhere = " and " + pParamRok.get_where_part(trans_)
+    end if  
+		dim strSQL
+		strSQL = "update TMP_PLANMAG_TABLE_NAME set " + vbCrLf +_
+		"tpm_curIloscOpakZamWl = isnull((select sum(c_curIloscOpakPoz) from vlist_n5zamowienie_listpozycje " + vbCrLf +_
+		"where p_pRejestrDok in (select idobj from n5rejestrdok where eTyp=N5REJESTRDOK__ZAM_WLASNE) " + vbCrLf +_
+		"and c_pProdukt=tpm_pProdukt and c_pOpak=tpm_pOpak and " + pParamTermin.get_where_part(trans_) + strWhere + "),0) "
+#ifdef _ABAKUS
+		strSQL = replace(strSQL,"p_dDataReal","c_pzam_dDataReal")
+#endif    
+		trans_.execsql strSQL
+	end sub  
+	
+	public sub update_zam_ob(byref pParamTermin,byref dDateFirst,byref dDateLast)
+		update_zam_ob_ex pParamTermin,dDateFirst,dDateLast,"eTyp=N5REJESTRDOK__ZAM_OBCE"
+	end sub
+
+	public sub update_zam_ob_ex(byref pParamTermin,byref dDateFirst,byref dDateLast,strRejestrZamCondition)
+    update_zam_ob_ex_2 pParamTermin, dDateFirst, dDateLast, strRejestrZamCondition, nothing
+  end sub
+
+	public sub update_zam_ob_ex_2(byref pParamTermin,byref dDateFirst,byref dDateLast,strRejestrZamCondition, byref pParamRok)
+    dim strWhere: strWhere = ""
+    if not pParamRok is nothing then
+      strWhere = " and " + pParamRok.get_where_part(trans_)
+    end if   
+		dim strSQL
+		strSQL = "update TMP_PLANMAG_TABLE_NAME set " + vbCrLf +_
+		"tpm_curIloscOpakZamOb = isnull((select sum(c_curIloscOpakPoz) from vlist_n5zamowienie_listpozycje " + vbCrLf +_
+		"where p_pRejestrDok in (select idobj from n5rejestrdok where " + strRejestrZamCondition + ") " + vbCrLf +_
+		"and c_pProdukt=tpm_pProdukt and c_pOpak=tpm_pOpak and " + pParamTermin.get_where_part(trans_) + strWhere + "),0) "
+#ifdef _KOMPOZYTY
+		strSQL = replace(strSQL,"p_dDataReal","c_pzam_dDataReal")
+#endif
+		trans_.execsql strSQL
+#ifdef _KOMPOZYTY
+		strSQL = "update TMP_PLANMAG_TABLE_NAME set " + vbCrLf +_ 
+		"tpm_curIloscOpakZamOb = tpm_curIloscOpakZamOb + isnull(( " + vbCrLf +_
+		"select sum(rou##nd(vzam.c_curIloscOpakPoz / vrw.c_curIloscOpak * vrs.c_curIloscOpak,t_jedn.nDokladnosc-1)) " + vbCrLf +_ 
+		"from vlist_n5zamowienie_listPozycje as vzam " + vbCrLf +_ 
+			"inner join vlist_n5recepta_listWyrob as vrw on vzam.c_pprodukt = vrw.c_pprodukt and vzam.c_popak = vrw.c_popak " + vbCrLf +_
+			"inner join vlist_n5recepta_listSurowce as vrs on vrs.p_idobj = vrw.p_idobj " + vbCrLf +_ 
+			"inner join n5produkt as t_surow on vrs.c_pprodukt = t_surow.IdObj " + vbCrLf +_ 
+			"inner join n5opakowanie_produktu as t_opak_sur on vrs.c_pOpak = t_opak_sur.IdObj " + vbCrLf +_ 
+			"inner join n5jednostka as t_jedn on t_opak_sur.pJednOpak = t_jedn.IdObj " + vbCrLf +_  
+		"where vrs.c_pprodukt = tpm_pProdukt and vrs.c_pOpak = tpm_pOpak and " + pParamTermin.get_where_part(trans_) + "),0) "
+		strSQL = replace(strSQL,"p_dDataReal","c_pzam_dDataReal")
+		trans_.execsql strSQL
+#endif
+		'-1 = datenull
+		'-2 = datenull - 1
+		dim pCursor : set pCursor = trans_.createadors(_
+			"select 'mindate'=isnull(min(p_dDataReal),-1),'maxdate'=isnull(max(p_dDataReal),-2) from vlist_n5zamowienie_listpozycje " +_
+			"where p_pRejestrDok in (select idobj from n5rejestrdok where eTyp=N5REJESTRDOK__ZAM_OBCE) and " +_
+			pParamTermin.get_where_part(trans_))
+		dDateFirst = cdate(pCursor("mindate"))
+		dDateLast = cdate(pCursor("maxdate"))
+	end sub
+
+	public sub update_z_prod(byref pParamTermin)
+		dim strSQL
+		strSQL = "update TMP_PLANMAG_TABLE_NAME set " + vbCrLf +_
+		"tpm_curIloscOpakZProd = isnull((select sum(c_curIloscOpakPoz) from vlist_n5zlecprod_listpozycje " + vbCrLf +_
+		"where c_pProdukt=tpm_pProdukt and c_pOpak=tpm_pOpak and " + pParamTermin.get_where_part(trans_) + "),0)"
+		trans_.execsql strSQL
+	end sub
+	public sub update_na_prod(byref pParamTermin)
+		dim strSQL
+		strSQL = "update TMP_PLANMAG_TABLE_NAME set " + vbCrLf +_
+		"tpm_curIloscOpakNaProd= isnull((select sum(rou##nd(vzp.c_curIloscOpakPoz / vrw.c_curIloscOpak * vrs.c_curIloscOpak,t_jedn.nDokladnosc-1)) " + vbCrLf +_
+		"from vlist_n5zlecprod_listpozycje as vzp inner join vlist_n5recepta_listWyrob as vrw on vzp.c_pProdukt = vrw.c_pprodukt and vzp.c_pRecepta=vrw.p_idobj " + vbCrLf +_
+		"inner join vlist_n5recepta_listSurowce as vrs on vrs.p_idobj = vrw.p_idobj " + vbCrLf +_
+		"inner join n5produkt as t_surow on vrs.c_pprodukt = t_surow.IdObj " + vbCrLf +_
+		"inner join n5opakowanie_produktu as t_opak_sur on vrs.c_pOpak = t_opak_sur.IdObj " + vbCrLf +_
+		"inner join n5jednostka as t_jedn on t_opak_sur.pJednOpak = t_jedn.IdObj " + vbCrLf +_
+		"where vrs.c_pprodukt = tpm_pProdukt and vrs.c_pOpak = tpm_pOpak and " + pParamTermin.get_where_part(trans_) + "),0)"
+		trans_.execsql strSQL
+	end sub
+	public sub update_prog_sprz_ex(byref pParamOkres,byref dDateFirst,byref dDateLast, byref pParamRok)
+    dim strWhere: strWhere = ""
+    if not pParamRok is nothing then
+      strWhere = " and " + pParamRok.get_where_part(trans_)
+      strWhere = Replace(strWhere,"p_dDataReal","p_ddataWyst")
+    end if
+		dim strSQL
+		strSQL = "update TMP_PLANMAG_TABLE_NAME set " + vbCrLf +_
+		"tpm_curIloscOpakHistSp = isnull((select sum(c_curIloscOpak) from vlist_n5sprzedaz_listpozycje " + vbCrLf +_
+		"where c_pProdukt=tpm_pProdukt and c_pOpak=tpm_pOpak and p_pRozlVAT<>0 and p_idobj not in (select pPopSprzed from n5sprzedaz) and " + vbCrLf +_
+		pParamOkres.get_where_part(trans_) + strWhere + "),0)"
+		trans_.execsql strSQL
+		'-1 = datenull
+		'-2 = datenull - 1
+		dim pCursor : set pCursor = trans_.createadors(_
+			"select 'mindate'=isnull(min(p_ddataWyst),-1),'maxdate'=isnull(max(p_ddataWyst),-2) from vlist_n5sprzedaz_listpozycje " +_
+			"where p_pRozlVAT<>0 and p_idobj not in (select pPopSprzed from n5sprzedaz) and " +_
+			pParamOkres.get_where_part(trans_))
+		dDateFirst = cdate(pCursor("mindate"))
+		dDateLast = cdate(pCursor("maxdate"))
+	end sub
+  
+  public sub update_prog_sprz(byref pParamOkres,byref dDateFirst,byref dDateLast)
+    update_prog_sprz_ex pParamOkres, dDateFirst, dDateLast, nothing
+  end sub
+
+	public sub postprocess(byval curFactor)
+		dim strSQL
+		strSQL = "update TMP_PLANMAG_TABLE_NAME set tpm_curIloscOpakSprzed=tpm_curIloscOpakHistSp"
+		trans_.execsql strSQL
+
+		strSQL = "update TMP_PLANMAG_TABLE_NAME set " + vbCrLf +_
+#ifdef _KOMPOZYTY
+		"tpm_curIloscOpakAktBil = tpm_curIloscOpakStan + tpm_curIloscOpakStanWyr + tpm_curIloscOpakNaProd - tpm_curIloscOpakZamOb," + vbCrLf +_
+		"tpm_curIloscOpakProgBil1=tpm_curIloscOpakStan + tpm_curIloscOpakStanWyr + tpm_curIloscOpakNaProd + tpm_curIloscOpakZamWl " + vbCrLf +_
+			"+ tpm_curIloscOpakZProd - (" + trans_.afc.convert.cur2sql(curFactor) + " * tpm_curIloscOpakHistSp)," + vbCrLf +_
+		"tpm_curIloscOpakProgBil2=tpm_curIloscOpakStan + tpm_curIloscOpakStanWyr + tpm_curIloscOpakNaProd + tpm_curIloscOpakZamWl " + vbCrLf +_
+			"+ tpm_curIloscOpakZProd - tpm_curIloscOpakZamOb,"  + vbCrLf +_
+#else
+		"tpm_curIloscOpakAktBil = tpm_curIloscOpakStan - tpm_curIloscOpakNaProd - tpm_curIloscOpakZamOb," + vbCrLf +_
+		"tpm_curIloscOpakProgBil1=tpm_curIloscOpakStan - tpm_curIloscOpakNaProd + tpm_curIloscOpakZamWl " + vbCrLf +_
+			"+ tpm_curIloscOpakZProd - (" + trans_.afc.convert.cur2sql(curFactor) + " * tpm_curIloscOpakHistSp)," + vbCrLf +_
+		"tpm_curIloscOpakProgBil2=tpm_curIloscOpakStan - tpm_curIloscOpakNaProd + tpm_curIloscOpakZamWl " + vbCrLf +_
+			"+ tpm_curIloscOpakZProd - tpm_curIloscOpakZamOb,"  + vbCrLf +_
+#endif		
+    "tpm_curIloscOpakHistSp=tpm_curIloscOpakHistSp * " + trans_.afc.convert.cur2sql(curFactor)
+		trans_.execsql strSQL
+	end sub
+end class
+
+function new_plan_mag_helper
+	set new_plan_mag_helper = new CPlanMagHelper
+end function
+
+'---------------------------------------------------------------------------------
+' Resource Request Item Detail
+'---------------------------------------------------------------------------------
+class CResReqItemDetail
+	private sub class_initialize()
+		m_curAllocQty = ccur(0.0)
+		m_curPendingQty = ccur(0.0)
+		m_curOrderQty = ccur(0.0)
+		m_nLP = clng(0)
+	end sub
+
+	public m_nLP			'LP in parent object list
+	public m_curOrderQty	'ordered quantity
+	public m_curPendingQty	'pending quantity
+	public m_curAllocQty	'allocated quantity
+end class
+
+'---------------------------------------------------------------------------------
+' Resource Request Item 
+'---------------------------------------------------------------------------------
+class CResReqItem
+	private sub class_initialize()
+		set m_oDetailArray = doc_.afc.new_navoarray()
+	end sub
+
+	private sub class_terminate()   'OK 
+		set m_oDetailArray = nothing
+	end sub
+
+	public sub init(byval idType,byval idObj)
+		m_nTypeId = idType
+		m_idObj = idObj
+
+		dim oOrderObj : set oOrderObj = trans_.getobj(m_nTypeId,m_idObj)
+		m_nTotalCount = oOrderObj.listPozycje.count
+		m_nPendingCount = clng(0)
+	end sub
+	
+	public m_oDetailArray
+	public m_nTypeId
+	public m_idObj
+
+	public m_nTotalCount
+	public m_nPendingCount
+	public m_dDataWyst
+end class
+
+'---------------------------------------------------------------------------------
+' Stock Info
+'---------------------------------------------------------------------------------
+class CStockInfo
+	private sub class_initialize()
+		m_curUsedQty = ccur(0.0)
+		m_curStockQty = ccur(0.0)
+		m_curReservQty = ccur(0.0)
+	end sub
+
+	public sub init(byval idProd,byval idOpak,byref pMagazynParam,byval idMagRezerw)
+		dim idMag : idMag = pMagazynParam.values.Value(pMagazynParam.first_selected)
+		m_curStockQty = get_stan_mag_for_prod_opak_mag(idMag,idProd,idOpak)
+	
+		if idMagRezerw > 0 then
+			m_curReservQty = get_stan_mag_for_prod_opak_mag(idMagRezerw,idProd,idOpak) 
+		end if
+	
+	end sub
+
+	public function get_avail_qty()
+		get_avail_qty = m_curStockQty - m_curUsedQty
+	end function
+
+	public function get_reserv_qty()
+		get_reserv_qty = m_curReservQty
+	end function
+
+	private m_curStockQty
+	private m_curReservQty
+	public m_curUsedQty
+end class
+
+'---------------------------------------------------------------------------------
+' Resource Request [Block]
+'---------------------------------------------------------------------------------
+class CResRequest
+	private sub class_initialize()
+#ifdef _ABAKUS
+		set m_oItemArrayData = doc_.afc.new_navoarray()
+#endif  
+		set m_oItemArray = doc_.afc.new_navoarray()
+		set m_oStockDict = doc_.system.activex("scripting.dictionary")
+		set m_pMagazynParam = nothing
+		m_idMagReserv = clng(0)
+	end sub
+
+	private sub class_terminate() 'OK
+		set m_oItemArray = nothing
+		set m_oStockDict = nothing
+		set m_pMagazynParam = nothing
+	end sub
+
+	public sub init(byval idMagReserv)
+		m_idMagReserv = idMagReserv
+	end sub
+
+	public function get_stock_info(byval idProd,byval idOpak)
+		dim strKey: strKey = cstr(idProd) + ";" + cstr(idOpak)
+
+		if not m_oStockDict.exists(strKey) then
+			dim oStockInfo : set oStockInfo = new CStockInfo
+			'magazyny - wybrane w qry pParamMagazyn
+			oStockInfo.init idProd,idOpak,m_pMagazynParam,m_idMagReserv
+			m_oStockDict.Add strKey,oStockInfo
+		end if
+
+		set get_stock_info = m_oStockDict(strKey)
+	end function
+
+	'---------- query building part --------------------------
+	public function get_termin_real_param()
+		dim pParamTermin : set pParamTermin = doc_.afc.rap.param.new_date_range("Termin realizacji").bindexpr("vlist.p_dDataReal")
+		set get_termin_real_param = pParamTermin
+	end function
+
+	public function get_rejestr_param()
+		dim pParamRejestr:set pParamRejestr =  doc_.afc.rap.param.new_choice("Rejestr").bindexpr("vlist.p_pRejestrDok")
+		doc_.afc.rap.param.init_on_query pParamRejestr , trans_ , _
+			"select strNazwa , idobj from n5rejestrdok where eTyp in (N5REJESTRDOK__ZAM_OBCE) order by strNazwa "
+		set get_rejestr_param = pParamRejestr
+	end function
+
+	public function get_magazyn_param()
+		set m_pMagazynParam = _
+			doc_.getmodule(43025).new_filtr_magazyn("mag.idobj","N5TYPMAG_PODSTAWOWY,N5TYPMAG_REZERWACJE")
+			m_pMagazynParam.multiple = false
+		set get_magazyn_param = m_pMagazynParam
+	end function
+
+	public function get_klient_nazwa_param()
+		set get_klient_nazwa_param = doc_.afc.rap.param.new_text("Nazwa klienta").bindexpr("t_klient.strNazwa")
+	end function
+
+	public function get_klient_indeks_param()
+		set get_klient_indeks_param = doc_.afc.rap.param.new_text("Indeks klienta").bindexpr("t_klient.strIndeks")
+	end function
+
+	public function get_grupa_klient_param()
+		set get_grupa_klient_param = doc_.afc.rap.param.new_text("Grupa klienta").bindexpr("t_grklient.strNazwa")
+	end function
+
+	public function get_query(byref pParamTerminReal,byref pParamRejestr,byref pParamKlientNazwa,byref pParamKlientIndeks,byref pParamKlientGrupa)
+		dim strSQL
+		strSQL = "select 'klient_idobj'=t_klient.idobj,'c_typeid'=TYPEID_N5ZAMOWIENIE,'c_idobj'=vlist.p_idobj,'c_datawyst'=vlist.p_ddatawyst,'c_lp'=vlist.coll_lp, " +_
+		"'c_ilzam'=vlist.c_curiloscopak,'c_ilpoz'=vlist.c_curiloscopakpoz " +_
+		" from vlist_n5zamowienie_listPozycje as vlist join n5klient t_klient on vlist.p_pKlient=t_klient.idobj " +_
+		" join n5grupaklient as t_grklient on t_klient.pGrupaKlient = t_grklient.idobj " +_
+		" where vlist.c_curIloscOpakPoz <> 0 and " + pParamTerminReal.get_where_part(trans_) + " and " +_
+			pParamRejestr.get_where_part(trans_) + " and " + pParamKlientNazwa.get_where_part(trans_)  +_
+			" and " + pParamKlientIndeks.get_where_part(trans_) + " and " + pParamKlientGrupa.get_where_part(trans_) +_
+#ifdef _ABAKUS
+		" order by c_datawyst,vlist.p_strnrdok,t_klient.strNazwa,c_idobj,vlist.coll_lp"
+#else
+		" order by t_klient.strNazwa,c_datawyst,c_idobj,vlist.coll_lp"
+#endif    
+		get_query = strSQL
+	end function
+
+	'----------
+	public function allocate_qty_detail(byval nItem,byval nDetail)
+		allocate_qty_detail_value nItem,nDetail, _
+			m_oItemArray.Value(nItem).m_oDetailArray.Value(nDetail).m_curPendingQty
+	end function
+
+	public function allocate_qty_detail_value(byval nItem,byval nDetail,byval curQty)
+		dim oRRI : set oRRI = m_oItemArray.Value(nItem)
+		dim oRRID : set oRRID = oRRI.m_oDetailArray.Value(nDetail)
+		dim oOrderObj : set oOrderObj = trans_.getobj(oRRI.m_nTypeId,oRRI.m_idObj)
+		dim oDetailObj : set oDetailObj = oOrderObj.listPozycje.get(oRRID.m_nLP)
+		dim oStockInfo : set oStockInfo = get_stock_info(oDetailObj.pProdukt.idobj,oDetailObj.pOpak.idobj)
+
+		'-- release old value
+		oStockInfo.m_curUsedQty = oStockInfo.m_curUsedQty - oRRID.m_curAllocQty
+'		oRRID.m_curAllocQty = ccur(0.0)
+		
+		if oStockInfo.get_avail_qty() < curQty then
+			curQty = oStockInfo.get_avail_qty()
+		end if
+		if oRRID.m_curPendingQty < curQty then
+			curQty = oRRID.m_curPendingQty
+		end if
+
+		oStockInfo.m_curUsedQty = oStockInfo.m_curUsedQty + curQty
+		
+		if oRRID.m_curAllocQty <> curQty then
+			if oRRID.m_curAllocQty = oRRID.m_curPendingQty then
+				oRRI.m_nPendingCount = oRRI.m_nPendingCount + 1
+			end if
+			oRRID.m_curAllocQty = curQty
+			if oRRID.m_curAllocQty = oRRID.m_curPendingQty then
+				oRRI.m_nPendingCount = oRRI.m_nPendingCount - 1
+			end if
+		end if
+
+		allocate_qty_detail_value = true
+	end function
+
+	public function allocate_qty_item(byval nItem)
+		dim iter2
+		for iter2 = 0 to m_oItemArray.Value(nItem).m_oDetailArray.UpperIndex
+			allocate_qty_detail nItem,iter2
+		next
+	end function
+
+	public function allocate_qty()
+		dim iter
+		for iter = 0 to m_oItemArray.UpperIndex
+			allocate_qty_item iter
+		next
+	end function
+
+	public function release_qty()
+		dim iter
+		for iter = 0 to m_oItemArray.UpperIndex
+			release_qty_item iter
+		next
+	end function
+
+	public function release_qty_item(byval nItem)
+		dim iter2
+		for iter2 = 0 to m_oItemArray.Value(nItem).m_oDetailArray.UpperIndex
+			allocate_qty_detail_value nItem,iter2,ccur(0.0)
+		next
+	end function
+	'----------
+	public function fill_from_query(byref pCursor)
+		dim idLast : idLast = clng(0)
+		dim oRRI : set oRRI = nothing
+#ifdef _ABAKUS
+		dim dDataWystLast
+		if not pCursor.EOF then
+			dDataWystLast = CDate(pCursor("c_datawyst"))
+		end if
+		dim iter: iter = clng(0)
+#endif      
+
+		do while not pCursor.EOF
+			dim idObj : idObj = clng(pCursor("c_idobj"))
+			
+			if idObj <> idLast then
+				set oRRI = new CResReqItem
+				m_oItemArray.Add oRRI
+				oRRI.init clng(pCursor("c_typeid")), idObj
+				idLast = idObj
+#ifdef _ABAKUS
+				oRRI.m_dDataWyst = CDate(pCursor("c_datawyst"))
+				if oRRI.m_dDataWyst <> dDataWystLast then
+					m_oItemArrayData.Add iter
+					dDataWystLast = oRRI.m_dDataWyst
+					iter = 0
+				end if
+				iter = iter + 1
+#endif
+			end if
+      
+			dim oRRID : set oRRID = new CResReqItemDetail
+			with oRRID
+				.m_nLP = clng(pCursor("c_lp"))
+				.m_curOrderQty = ccur(pCursor("c_ilzam"))
+				.m_curPendingQty = ccur(pCursor("c_ilpoz"))
+				
+				'--- tu jest zliczanie (gdyby zmieniło się zapytanie i pokazywało także inne) --
+				if .m_curPendingQty <> ccur(0.0) then
+					oRRI.m_nPendingCount = oRRI.m_nPendingCount + 1
+				end if
+			end with
+			oRRI.m_oDetailArray.Add oRRID
+
+			pCursor.MoveNext
+		loop
+	end function
+
+
+	public property get magazyn():set magazyn = nothing
+		set magazyn = trans_.getobj(TYPEID_N5MAGAZYN , clng(m_pMagazynParam.values.Value(m_pMagazynParam.first_selected)))
+	end property
+
+
+
+#ifdef _ABAKUS
+	public m_oItemArrayData
+#endif
+	public m_oItemArray		'processed orders or production requests
+	private m_oStockDict	'in-memory stock dictionary
+	private m_pMagazynParam
+	private m_idMagReserv
+end class
+'---------------------------------------------------------------------------------
+function new_resource_request_alloc_tool
+	set new_resource_request_alloc_tool = new CResRequest
+end function
+
+#comment '---------------------------------------------------------------------------------
+#comment ' tworzy tablice prod-requestow z zamowienia
+#comment '---------------------------------------------------------------------------------
+function nx_zamowienie_2_prod_request(byref oZamowienie)
+	dim oPRS : set oPRS = nx_.slot0.new_prod_request_set(oZamowienie.type,oZamowienie.idobj,0)
+
+	dim oPozycja
+	dim iter 
+	for iter = 1 to oZamowienie.listPozycje.count
+		set oPozycja = oZamowienie.listPozycje.get(iter)
+		if oPozycja.curIloscOpakPoz > 0 and oPozycja.pProdukt.eRodzaj<>N5PRODUKT_USLUGA then
+			with oPozycja
+				oPRS.add_entry .pProdukt.idobj,.pOpak.idobj,.curIloscOpakPoz,iter
+			end with
+		end if
+	next
+
+	set nx_zamowienie_2_prod_request = oPRS
+end function
+
+#comment '---------------------------------------------------------------------------------
+#comment ' wypelnia prod. balancer stanem magazynowym, dla produktow z tablicy prod-req
+#comment '---------------------------------------------------------------------------------
+function nx_fill_prod_balancer_for_prod_request_array(byval idMag,byref oPRS)
+	dim oPB : set oPB = nx_.slot0.new_product_balancer()
+	dim oPRE
+	dim iter 
+	for iter = 0 to oPRS.count - 1
+		set oPRE = oPRS.get_entry(iter)
+		if not oPB.is_product(oPRE.id_produkt,oPRE.id_opakowanie) then
+			oPB.add_quantity oPRE.id_produkt,oPRE.id_opakowanie, _
+				get_stan_mag_for_prod_opak_mag(idMag,oPRE.id_produkt,oPRE.id_opakowanie)			
+		end if
+	next
+
+	set nx_fill_prod_balancer_for_prod_request_array = oPB
+end function
+
+#comment '---------------------------------------------------------------------------------
+#comment ' tworzy prod-req-set z mozliwa realizacja dla podanego magazynu
+#comment '---------------------------------------------------------------------------------
+function nx_prod_request_realize(byref oInputPRS,byval idMag)
+	dim oPB : set oPB = nx_fill_prod_balancer_for_prod_request_array(idMag,oInputPRS)
+	dim oMagPRS : set oMagPRS = oInputPRS.realize(oPB,idMag)
+	oInputPRS.remove_void_entries
+	set nx_prod_request_realize = oMagPRS
+end function
+
+#comment '---------------------------------------------------------------------------------
+#comment ' wypelnia pozycje dokument magazynowego z podanego prod-req-set'a
+#comment ' iMode = 1  -> zastap
+#comment ' iMode = 2  -> dopisz
+#comment ' iMode = 3  -> dopisz, probujac laczyc pozycje
+#comment '---------------------------------------------------------------------------------
+function nx_prod_request_2_dokmag(byref oDokMag,byref oPRS,byval iMode)
+	if iMode = 1 then
+		oDokMag.listPozycje.deleteall
+	end if
+	dim oPRE
+	dim iter 
+	for iter = 0 to oPRS.count - 1
+		set oPRE = oPRS.get_entry(iter)
+		dim oProdukt : set oProdukt = trans_.getobj(TYPEID_N5PRODUKT,oPRE.id_produkt)
+		dim oOpak : set oOpak = oProdukt.listOpakowania.get(oProdukt.listOpakowania.findonid(oPRE.id_opakowanie))
+
+		dim oPozDokMag
+		if iMode = 3 then
+			set oPozDokMag = oDokMag.n5dokmag_smart_supply_pos(oProdukt,oOpak)
+		else
+			set oPozDokMag = oDokMag.listPozycje.addnew()
+			with oPozDokMag
+				set .pProdukt = oProdukt
+				set .pOpak = oOpak
+				.curIloscOpak = ccur(0.0)
+			end with
+		end if
+		oPozDokMag.curIloscOpak = oPozDokMag.curIloscOpak + oPRE.quantity
+	next
+end function
+#comment '---------------------------------------------------------------------------------
+
+]]>
+</script>
+</config>
+	<body>
+	</body>
+</page>

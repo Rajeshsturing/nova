@@ -1,0 +1,220 @@
+'//////////////////////////////////////////////////////////////////////
+' (c)2001 NAVO
+' Spikowski Piotr
+' Dynamiczna podmiana stron dla zadañ na podstawie where itd.
+'/////////////////////////////////////////////////////////////////////
+
+#ifndef _DYNAMIC_PAGE_EXCHANGE
+#define _DYNAMIC_PAGE_EXCHANGE
+
+function taks_dynamic_cursor(byval idObj, byval strWhere, byval strOrderBy, byval strJoin)
+
+	'wszystko dziala w nowej tranzakcji
+	dim pSubTran
+	set pSubTran=trans_.createsubtran()
+
+	'otwieramy kursor, ktory bedzie wirtualnym kursorem strony
+	dim pCrsr
+	set pCrsr=trans_.createrawcursor(TYPEID_N5ZADANIE, strWhere, strOrderBy, strJoin)
+	pCrsr.forwardonly=false
+
+	'tworzymy iterator kursora - dla gofirst, last, next itd
+	dim pIter
+	set pIter=pCrsr.createiterator
+
+	
+	'wska¿nik na aktualnie aktynwy obiekt
+	dim pObj: set pObj=nothing
+	dim nObj: nObj=0
+
+	if (idObj>0) then
+		set pObj=trans_.getobj(TYPEID_N5ZADANIE, idObj)
+		nObj=pObj.idobj
+
+		'pozycjonujemy siê w kursorze
+		if (pIter.gofirst()) then
+			
+			dim bMoveNext:bMoveNext=true
+			while (pIter.get().IdObj<>nObj) and (bMoveNext)
+				bMoveNext=pIter.gonext()
+			wend
+
+		end if
+	end if
+	
+	'jezeli nie ma obiektu to go robimy
+	if (pObj is nothing) then
+		set pObj=trans_.newobj(TYPEID_N5ZADANIE)
+		nObj=pObj.idobj
+	end if
+
+	dim pfnEvent
+
+	with doc_.getmodule(60129)
+
+		'aktualnie otwarta strona
+		dim pPage: set pPage=nothing
+		'numer aktywnej strony
+		dim nPage: nPage=-1
+
+		do
+
+		dim nResult:nResult=0
+
+			'hli dla otwarcia strony w zale¿nosci od
+			'dostarczonego obiektu w pObj
+			dim pHli
+			set pHli=.prepare_form_open_command(TYPEID_N5ZADANIE, pObj.idobj , USAGE_EDIT)
+			
+			'otwieramy strone
+			if (not pHli is nothing) then
+
+				'jezeli zmienila sie strona to przeladuj
+				'AM teraz powinien zapisywac ale bedzie migac
+				if (nPage<>pHli.prop(GVAR_DESTPAGE)) then
+				'if 1=1 then
+
+					dim pOldPage
+					set pOldPage=pPage 'kopia stronki
+				
+					'jezeli strona byla otwarta to sciagamy ja
+					'ze stosu stron
+					if (not pPage is nothing) then
+						pPage.activate
+						doc_.poppage
+						set pPage=nothing
+						trans_.discard()
+					end if
+
+					'jezeli brak strony to pobieramy i
+					'wrzucamy sobie na stos
+					if (pPage is nothing) then
+						
+						'ustaw kursor tylko po to by enablowac przyciski
+						pHli.prop(GVAR_CURSOR)=clng( CRSR_N5ZADANIE_WG_TEMATU )
+						
+						'wszystkie strony w jednej tranzakcji
+						pHli.prop(GVAR_CMD)=clng(CMD_OPEN_WIZARD_PAGE)
+
+						'pobieramy strone
+						set pPage=doc_.getpagehli(pHli)
+
+						if (pPage is nothing) then
+							set pPage=pOldPage
+							
+							if (pPage is nothing) then
+								exit function
+							end if
+						end if
+
+						'zaznacz, iz kursor bedzie dynamiczny
+						pPage.dynamic_cursor_on
+
+						set pfnEvent=pPage.GetEventRef()
+						if (not pfnEvent is nothing) then
+							pfnEvent.OnRecordChange
+						end if
+						
+						'otwarta strona
+						nPage=clng(pHli.prop(GVAR_DESTPAGE))
+						
+						'kladziemy na stos stron
+						doc_.pushpage pPage
+						nObj=pPage.root.idobj
+
+					end if
+
+					set pOldPage=nothing
+
+				else
+					'strona sie nie zmienia to zmieniamy root'a
+					dim bChangeRoot:bChangeRoot=false
+
+					if (pPage.root is nothing) then
+						bChangeRoot=true
+					else
+						if (pPage.root.idobj<>pObj.idobj) then
+							bChangeRoot=true
+						end if
+					end if
+
+					if (bChangeRoot) then
+						if (pPage.root.isnew) then
+							pPage.root.ignore=true
+						end if
+
+						set pPage.root=nothing
+
+						trans_.discard()
+
+						set pPage.root=pObj
+						nObj=pPage.root.idobj
+
+						set pfnEvent=pPage.GetEventRef()
+						if (not pfnEvent is nothing) then
+							pfnEvent.OnRecordChange
+						end if
+
+						pPage.updateview
+					end if
+
+				end if
+				
+				'robimy teraz otwarcie strony
+				nResult=pPage.domodal()
+				
+				set pObj=pPage.root
+
+				select case nResult
+					case CMD_FIRSTINCURSOR
+						if pIter.gofirst() then
+							set pObj=pIter.get()
+						end if
+
+					case CMD_NEXTINCURSOR
+						if pIter.gonext() then
+							set pObj=pIter.get()
+						end if
+
+					case CMD_LASTINCURSOR
+						if pIter.golast() then
+							set pObj=pIter.get()
+						end if
+
+					case CMD_PREVINCURSOR
+						if pIter.goprev() then
+							set pObj=pIter.get()
+						end if
+
+				end select
+			
+			end if
+
+		loop until (nResult=0) or (nResult=CMD_GOBACK)
+
+	end with
+
+	if (not pPage is nothing) then
+		pPage.activate
+		doc_.poppage
+	end if
+
+	set pSubTran=nothing
+end function
+
+function get_task_hli(byval nIdObj, byval strWhere, byval strOrderBy): set get_task_hli=nothing
+	dim pNewHli
+	set pNewHli=doc_.createhlistr("varFunctionHLI='task_open'")
+
+	pNewHli.prop(100)=Clng(nIdObj)
+	pNewHli.prop(101)=CStr(strWhere)
+	pNewHli.prop(102)=CStr(strOrderBy)
+
+	set get_task_hli=pNewHli
+end function
+
+function task_open(byref pHli)
+	taks_dynamic_cursor pHli.prop(100), pHli.prop(101), pHli.prop(102), ""
+end function
+
+#endif

@@ -1,0 +1,938 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1203.h"
+#include "h1231.h"
+#include "h1200.h"
+-->
+<page style='10'>
+<config>
+<title>
+wypełnianie VAT-7 z danych EB
+</title>
+
+#macro ADO2VATCUR(_column_)			ccur(trans_.afc.convert.roundn(ccur(pCursor("_column_")),0))
+
+<script>
+<![CDATA[
+
+'GetCurrentUser
+#include "50203"
+
+#include "50523"
+
+function fill_VAT7_from_EB(byref pVAT7)
+#ifdef ENABLE_DB12
+	dim strQueryC0 : strQueryC0 = replace(query_for_sprzedaz_vat(),"%groupby%","")
+#else
+	dim strQueryC0 : strQueryC0 = replace(query_for_sprzedaz_vat_2013(),"%groupby%","")
+#endif  
+	dim strQuerySpKraj : strQuerySpKraj = trans_.afc.convert.formatter(strQueryC0) _
+		.add("t_sprz.pRozlVat=" + cstr(pVAT7.idobj)) _
+		.add("t_1.eTyp in (N5REJESTRDOK_FAKT_SP,N5REJESTRDOK_KOR_FAKT_SP,N5REJESTRDOK_RACH,N5REJESTRDOK_KOR_RACH,N5REJESTRDOK_PARAGON,N5REJESTRDOK_KOR_PARAGON,N5REJESTRDOK_FAKTURA_ZALICZKOWA,N5REJESTRDOK_FAKTURA_ZALICZKOWA_KOR) ") _
+		.add("(1=1)") _
+		.done()
+			
+	dim pCursor
+	set pCursor = trans_.createadors(strQuerySpKraj)
+	with pVAT7
+		.vat7_curDostawyUslugiKrajZW = ADO2VATCUR(c_nZw)
+		.vat7_curDostawyUslugiKraj0  = ADO2VATCUR(c_n0)
+		.vat7_curDostawyUslugiKraj3	 = ADO2VATCUR(c_n3) + ADO2VATCUR(c_n5)
+		.vat7_curDostawyUslugiKraj3Podatek = ADO2VATCUR(c_v3) + ADO2VATCUR(c_v5)
+		.vat7_curDostawyUslugiKraj7	 = ADO2VATCUR(c_n7) + ADO2VATCUR(c_n8)
+		.vat7_curDostawyUslugiKraj7Podatek = ADO2VATCUR(c_v7) + ADO2VATCUR(c_v8)
+		.vat7_curDostawyUslugiKraj22	 = ADO2VATCUR(c_n22) + ADO2VATCUR(c_n23)
+		.vat7_curDostawyUslugiKraj22Podatek = ADO2VATCUR(c_v22) + ADO2VATCUR(c_v23)
+#ifdef ENABLE_DB12
+    .vat7_curDostawaTowarowSprzedaz = ADO2VATCUR(c_n23oo)
+#endif
+	end with
+  
+  'osoba aktualnie zalogowana
+  set pVAT7.vat7_pUzytRej = GetCurrentUser()
+
+#ifdef _ARTECH
+  dim strQueryNiePod : strQueryNiePod = trans_.afc.convert.formatter("select 'c_netto_razem'=isnull(sum(t_sprz.c_curwartnetto - " +_ 
+    "isnull(t_orgsprz.c_curwartnetto,0)),0) from vlist_n5sprzedaz_listPozycje t_sprz " +_ 
+	  "left outer join vlist_n5sprzedaz_listPozycje t_orgsprz on t_sprz.p_pPopSprzed = t_orgsprz.p_idobj and t_sprz.coll_lp = t_orgsprz.coll_lp " +_ 
+	  "inner join n5rejestrdok as t_1 on t_sprz.p_pRejestrDok = t_1.IdObj " +_ 
+	  "inner join n5produkt p on t_sprz.c_pprodukt = p.idobj " +_ 
+    "where %1 and %2 and %3") _
+		.add("t_sprz.p_pRozlVat = " + cstr(pVAT7.idobj)) _
+		.add("t_1.eTyp in (N5REJESTRDOK_FAKT_SP,N5REJESTRDOK_KOR_FAKT_SP) ") _
+		.add("p.eVAT = STAWKA_VAT_NIE_PODLEGA") _
+		.done()
+	set pCursor = trans_.createadors(strQueryNiePod)
+	with pVAT7
+		.vat7_curDostawyUslugiPozaKrajZW = ADO2VATCUR(c_netto_razem)
+	end with    
+#endif
+
+	dim strQueryWDT : strQueryWDT = trans_.afc.convert.formatter(strQueryC0) _
+		.add("t_sprz.pRozlVat=" + cstr(pVAT7.idobj)) _
+		.add("t_1.eTyp in (N5REJESTRDOK_KOREKTA_WDT,N5REJESTRDOK_WDT) ") _
+		.add("(1=1)") _
+		.done()
+	set pCursor = trans_.createadors(strQueryWDT)
+	with pVAT7
+		.vat7_curWDT = ADO2VATCUR(c_netto_razem)
+	end with
+
+	dim strQueryExp : strQueryExp = trans_.afc.convert.formatter(strQueryC0) _
+		.add("t_sprz.pRozlVat=" + cstr(pVAT7.idobj)) _
+		.add("t_1.eTyp in (N5REJESTRDOK_FAKT_EXP,N5REJESTRDOK_KOR_FAKT_EXP) ") _
+		.add("(1=1)") _
+		.done()
+	set pCursor = trans_.createadors(strQueryExp)
+	with pVAT7
+		.vat7_curEksportTowarow = ADO2VATCUR(c_netto_razem)
+	end with
+
+	dim strQueryZak0 : strQueryZak0 = _
+		"select 'c_netto'=isnull(sum(t_zakup.curSumaNetto - t_zakup.curNettoNp - t_zakup.curNettoZw - isnull(t_orgzakup.curSumaNetto - t_orgzakup.curNettoNp - t_orgzakup.curNettoZw,0)),0), " +_
+		"'c_vat'=case when max(t_zakup.eTypZakup)=N5ZAKUP_TYPZAKUP_SAMOCHOD_NO then isnull(sum(t_zakup.curSumaVAT/2 - isnull(t_orgzakup.curSumaVAT,0)/2),0)  " +_
+		"else isnull(sum(t_zakup.curSumaVAT - isnull(t_orgzakup.curSumaVAT,0)),0) end" +_
+#ifdef ENABLE_DB12
+		",'c_n23oo'=isnull(sum(t_zakup.curNetto23oo -isnull(t_orgzakup.curNetto23oo ,0)),0), " +_
+		"'c_v23oo'=isnull(sum(t_zakup.curVat23oo-isnull(t_orgzakup.curVat23oo,0)),0) " +_
+#endif    
+		" from n5zakup t_zakup " +_
+		" left outer join n5zakup t_orgzakup on t_zakup.pPopZakup = t_orgzakup.idobj " +_
+		"where t_zakup.pRozlVat=" + cstr(pVAT7.idobj) +_
+		" and (t_zakup.pRejestrDok not in (select idobj from n5rejestrdok where eTyp in(N5REJESTRDOK_FAKT_ZAK_RR,N5REJESTRDOK_KOR_FAKT_ZAK_RR)) or t_zakup.pSposobPlatnosci not in (select idobj from n5sposplat where eTyp=N5SPOSPLAT_GOTOWKA)) and "
+	set pCursor = trans_.createadors(strQueryZak0 + "t_zakup.eTypZakup = N5ZAKUP_TYPZAKUP_SRODEKTRW")
+	with pVAT7
+		.vat7_curNabycieTowUslSrtrwNetto = ADO2VATCUR(c_netto)
+		.vat7_curNabycieTowUslSrtrwPodatek = ADO2VATCUR(c_vat)      
+	end with
+
+#ifdef ENABLE_DB12
+	set pCursor = trans_.createadors(strQueryZak0 + "t_zakup.eTypZakup in (N5ZAKUP_TYPZAKUP_SRODEKTRW,N5ZAKUP_TYPZAKUP_TOWARHANDL)")
+	with pVAT7
+		.vat7_curDostawaPodNab = ADO2VATCUR(c_n23oo)
+		.vat7_curDostawaPodNabPodatek = ADO2VATCUR(c_v23oo)         
+	end with  
+#endif
+  
+	set pCursor = trans_.createadors(strQueryZak0 + "t_zakup.eTypZakup=N5ZAKUP_TYPZAKUP_TOWARHANDL")
+	with pVAT7
+		.vat7_curNabycieTowUslNetto = ADO2VATCUR(c_netto)
+		.vat7_curNabycieTowUslPodatek = ADO2VATCUR(c_vat)  
+	end with
+
+	set pCursor = trans_.createadors(strQueryZak0 + "t_zakup.eTypZakup=N5ZAKUP_TYPZAKUP_PALIWO")
+	with pVAT7
+		.vat7_curPodatekPaliwa = ADO2VATCUR(c_vat)
+	end with
+
+	set pCursor = trans_.createadors(strQueryZak0 + "t_zakup.eTypZakup=N5ZAKUP_TYPZAKUP_SAMOCHOD_NO")
+	with pVAT7
+		.vat7_curNabycieTowUslNetto = .vat7_curNabycieTowUslNetto + ADO2VATCUR(c_netto)
+		.vat7_curNabycieTowUslPodatek = .vat7_curNabycieTowUslPodatek + ADO2VATCUR(c_vat)
+	end with
+
+#ifdef _ARTECH
+	dim strQueryWNT
+	strQueryWNT = "select 'c_0'=max(t_1.strNazwa), 'c_rej_typ'=max(t_1.eTyp), 'c_rej_idobj'=max(t_1.IdObj), " +_
+		"'c_netto_razem'=isnull(sum(t_sprz.c_curwartnetto - isnull(t_orgsprz.c_curwartnetto,0)),0) " +_ 
+		"from vlist_n5zakup_listPozycje t_sprz " +_ 
+		"left outer join vlist_n5zakup_listPozycje t_orgsprz on t_sprz.p_pPopZAkup = t_orgsprz.p_idobj and t_sprz.coll_lp = t_orgsprz.coll_lp " +_
+		"inner join n5rejestrdok as t_1 on t_sprz.p_pRejestrDok = t_1.IdObj " +_ 
+		"inner join n5produkt p on t_sprz.c_pprodukt = p.idobj " +_ 
+		"where %1 and %2 and %3"
+	strQueryWNT = trans_.afc.convert.formatter(strQueryWNT) _
+		.add("t_sprz.p_pRozlVat=" + cstr(pVAT7.idobj)) _
+		.add("t_1.eTyp in (N5REJESTRDOK_WNT,N5REJESTRDOK_KOREKTA_WNT)") _
+		.add("p.eRodzaj = N5PRODUKT_TOWAR").done()
+#else
+	dim strQueryWNT : strQueryWNT = replace(query_for_wnt_as_sprzedaz_vat(""),"%groupby%","")
+	strQueryWNT = trans_.afc.convert.formatter(strQueryWNT) _
+		.add("t_sprz.pRozlVat=" + cstr(pVAT7.idobj)) _
+		.add("t_1.eTyp in (N5REJESTRDOK_WNT,N5REJESTRDOK_KOREKTA_WNT) ").done()
+#endif		
+    
+	set pCursor = trans_.createadors(strQueryWNT)
+	with pVAT7
+		.vat7_curWNT = ADO2VATCUR(c_netto_razem)
+
+#ifndef _ALMA_TREND
+  dim strQueryWNTPodatek: strQueryWNTPodatek = "select t_sprz.idobj from n5zakup t_sprz " + _
+    " inner join n5rejestrdok as t_1 on t_sprz.pRejestrDok = t_1.IdObj where " +_
+    " ((t_sprz.idobj not in (select pPoPzakup from n5zakup)) or " +_
+    " (t_sprz.idobj in (select pPoPzakup from n5zakup where pRozlVat <> t_sprz.pRozlVat))) " +_
+    " and %1 and %2 "
+      
+  strQueryWNTPodatek= trans_.afc.convert.formatter(strQueryWNTPodatek) _
+		.add("t_sprz.pRozlVat=" + cstr(pVAT7.idobj)) _
+		.add("t_1.eTyp in (N5REJESTRDOK_WNT,N5REJESTRDOK_KOREKTA_WNT) ").done()
+    
+  dim curWNTPod: curWNTPod = ccur(0)
+	dim curSumaWartoscVat : curSumaWartoscVat = ccur(0)
+  
+  set pCursor = trans_.createadors(strQueryWNTPodatek)
+      
+    do while not pCursor.EOF     
+      dim idWNT : idWNT = pCursor("idobj")
+	    dim pZakup : set pZakup = trans_.getobj(TYPEID_N5ZAKUP,idWNT)
+      dim pozycja, podstawa
+        for each pozycja in pZakup.listPozycje
+#ifdef _ARTECH
+          if pozycja.pProdukt.eRodzaj = N5PRODUKT_TOWAR then
+            podstawa = trans_.afc.convert.round2((pozycja.pzak_curWartWal + pozycja.curOplatyZagr) * pZakup.curKurs) + pozycja.curClo + pozycja.curAkcyza
+            curSumaWartoscVat  = curSumaWartoscVat + trans_.afc.convert.round2(podstawa * vat2val(pozycja.eVAT))
+          end if
+#else
+          podstawa = trans_.afc.convert.round2((pozycja.pzak_curWartWal + pozycja.curOplatyZagr) * pZakup.curKurs) + pozycja.curClo + pozycja.curAkcyza
+          curSumaWartoscVat  = curSumaWartoscVat + trans_.afc.convert.round2(podstawa * vat2val(pozycja.eVAT))
+#endif          
+        next
+        'gdy dokument oryginalny jest we wcześniejszym okresie vat => odejmij wartość oryginalnego
+        if not pZakup.pPopZakup is nothing then
+          if pZakup.pPopZakup.idobj > 0 then
+            dim pZakupOrg : set pZakupOrg = trans_.getobj(TYPEID_N5ZAKUP,pZakup.pPopZakup.idobj)
+            if month(pZakupOrg.dDataWyst) < month(pZakup.dDataWyst) then
+              for each pozycja in pZakupOrg.listPozycje
+#ifdef _ARTECH
+                if pozycja.pProdukt.eRodzaj = N5PRODUKT_TOWAR then              
+                  podstawa = trans_.afc.convert.round2((pozycja.pzak_curWartWal + pozycja.curOplatyZagr) * pZakup.curKurs) + pozycja.curClo + pozycja.curAkcyza
+                  curSumaWartoscVat  = curSumaWartoscVat - trans_.afc.convert.round2(podstawa * vat2val(pozycja.eVAT))
+                end if
+#else
+                podstawa = trans_.afc.convert.round2((pozycja.pzak_curWartWal + pozycja.curOplatyZagr) * pZakup.curKurs) + pozycja.curClo + pozycja.curAkcyza
+                curSumaWartoscVat  = curSumaWartoscVat - trans_.afc.convert.round2(podstawa * vat2val(pozycja.eVAT))
+#endif
+              next
+            end if  
+          end if
+        end if  
+    pCursor.MoveNext 
+    loop
+
+    .vat7_curWNTPodatek =  ccur(trans_.afc.convert.roundn(curSumaWartoscVat,0))
+   end with
+ 
+#ifdef _ARTECH
+	dim strQueryWNTUslugi
+	strQueryWNTUslugi = "select 'c_0'=max(t_1.strNazwa), 'c_rej_typ'=max(t_1.eTyp), 'c_rej_idobj'=max(t_1.IdObj), " +_
+                "'c_netto_razem'=isnull(sum(t_sprz.c_curwartnetto - isnull(t_orgsprz.c_curwartnetto,0)),0) " +_ 
+                "from vlist_n5zakup_listPozycje t_sprz " +_ 
+                "left outer join vlist_n5zakup_listPozycje t_orgsprz on t_sprz.p_pPopZAkup = t_orgsprz.p_idobj and t_sprz.coll_lp = t_orgsprz.coll_lp " +_
+                "inner join n5rejestrdok as t_1 on t_sprz.p_pRejestrDok = t_1.IdObj " +_ 
+                "inner join n5produkt p on t_sprz.c_pprodukt = p.idobj " +_ 
+                "where %1 and %2 and %3"
+	strQueryWNTUslugi = trans_.afc.convert.formatter(strQueryWNTUslugi) _
+		.add("t_sprz.p_pRozlVat=" + cstr(pVAT7.idobj)) _
+		.add("t_1.eTyp in (N5REJESTRDOK_WNT,N5REJESTRDOK_KOREKTA_WNT,N5REJESTRDOK_IMPORT_USLUG,N5REJESTRDOK_KOR_IMPORT_USLUG)") _
+		.add("p.eRodzaj = N5PRODUKT_USLUGA").done()
+ 
+	set pCursor = trans_.createadors(strQueryWNTUslugi)
+	with pVAT7
+		.vat7_curImportUslug = ADO2VATCUR(c_netto_razem)
+    
+	  curSumaWartoscVat = ccur(0)
+  
+    set pCursor = trans_.createadors(strQueryWNTPodatek)
+      
+    do while not pCursor.EOF     
+      idWNT = pCursor("idobj")
+	    set pZakup = trans_.getobj(TYPEID_N5ZAKUP,idWNT)
+        for each pozycja in pZakup.listPozycje
+          if pozycja.pProdukt.eRodzaj = N5PRODUKT_USLUGA then
+            podstawa = trans_.afc.convert.round2((pozycja.pzak_curWartWal + pozycja.curOplatyZagr) * pZakup.curKurs) + pozycja.curClo + pozycja.curAkcyza
+            curSumaWartoscVat  = curSumaWartoscVat + trans_.afc.convert.round2(podstawa * vat2val(pozycja.eVAT))
+          end if        
+        next
+        'gdy dokument oryginalny jest we wcześniejszym okresie vat => odejmij wartość oryginalnego
+        if not pZakup.pPopZakup is nothing then
+          if pZakup.pPopZakup.idobj > 0 then
+            set pZakupOrg = trans_.getobj(TYPEID_N5ZAKUP,pZakup.pPopZakup.idobj)
+            if month(pZakupOrg.dDataWyst) < month(pZakup.dDataWyst) then
+              for each pozycja in pZakupOrg.listPozycje
+                if pozycja.pProdukt.eRodzaj = N5PRODUKT_USLUGA then              
+                  podstawa = trans_.afc.convert.round2((pozycja.pzak_curWartWal + pozycja.curOplatyZagr) * pZakup.curKurs) + pozycja.curClo + pozycja.curAkcyza
+                  curSumaWartoscVat  = curSumaWartoscVat - trans_.afc.convert.round2(podstawa * vat2val(pozycja.eVAT))
+                end if
+              next
+            end if  
+          end if
+        end if  
+    pCursor.MoveNext 
+    loop
+
+    .vat7_curImportUslugPodatek =  ccur(trans_.afc.convert.roundn(curSumaWartoscVat,0))    
+  end with
+#else
+	dim strQueryImport : strQueryImport = replace(query_for_import_as_sprzedaz_vat(""),"%groupby%","")
+	strQueryImport = trans_.afc.convert.formatter(strQueryImport) _
+		.add("t_sprz.pRozlVat=" + cstr(pVAT7.idobj)) _
+		.add("t_1.eTyp in (N5REJESTRDOK_FAKT_IMP,N5REJESTRDOK_KOR_FAKT_IMP) ").done()	
+    
+	set pCursor = trans_.createadors(strQueryImport)
+	with pVAT7
+		.vat7_curImportUslug = ADO2VATCUR(c_netto_razem)
+    .vat7_curImportUslugPodatek = ADO2VATCUR(c_v23) + ADO2VATCUR(c_v8)+ ADO2VATCUR(c_v5)
+  end with
+	
+	'import usług
+	strQueryImport = replace(query_for_import_uslug_as_sprzedaz_vat(),"%groupby%","")
+	strQueryImport = trans_.afc.convert.formatter(strQueryImport) _
+		.add("t_sprz.pRozlVat=" + cstr(pVAT7.idobj)) _
+		.add("t_1.eTyp in (N5REJESTRDOK_IMPORT_USLUG,N5REJESTRDOK_KOR_IMPORT_USLUG) ").done()	
+    
+	set pCursor = trans_.createadors(strQueryImport)
+	with pVAT7
+		.vat7_curImportUslug_Art28b = ADO2VATCUR(c_netto_razem)
+    .vat7_curImportUslugPodatek_Art28b = ADO2VATCUR(c_v23) + ADO2VATCUR(c_v8)+ ADO2VATCUR(c_v5)
+  end with	
+	
+#endif
+#else
+  .vat7_curWNTPodatek = ADO2VATCUR(c_v23) + ADO2VATCUR(c_v8)+ ADO2VATCUR(c_v5)
+  end with
+ #endif
+
+end function
+
+#macro QUERY_NETTO(_vat_) "'c_n##_vat_'=isnull(sum(t_sprz.curNetto##_vat_ -isnull(t_orgsprz.curNetto##_vat_ ,0)),0), " +_
+#macro QUERY_VAT(_vat_) "'c_v##_vat_'=isnull(sum(t_sprz.curVat##_vat_-isnull(t_orgsprz.curVat##_vat_,0)),0), " +_
+#macro QUERY_NETTO_2(_vat_) "'c_n##_vat_'=isnull(t_sprz.curNetto##_vat_ -isnull(t_orgsprz.curNetto##_vat_ ,0),0), " +_
+#macro QUERY_VAT_2(_vat_) "'c_v##_vat_'=isnull(t_sprz.curVat##_vat_-isnull(t_orgsprz.curVat##_vat_,0),0), " +_
+#macro QUERY_NETTO_0(_vat_) "'c_n##_vat_'=0, " +_
+#macro QUERY_VAT_0(_vat_) "'c_v##_vat_'=0, " +_
+
+'--- zastąp %groupby% czym chcesz lub pustym stringiem --
+
+function query_for_sprzedaz_vat()
+  query_for_sprzedaz_vat = _
+  "select 'c_0'=max(pom.c_0), 'c_rej_typ'=max(pom.c_rej_typ), 'c_rej_idobj'=max(pom.c_rej_idobj), " +_ 
+  "'c_n23oo'=isnull(sum(pom.c_n23oo),0),'c_v23oo'=isnull(sum(pom.c_v23oo),0), " +_
+  "'c_n23'=isnull(sum(pom.c_n23),0),'c_v23'=isnull(sum(pom.c_v23),0), " +_
+  "'c_n8'=isnull(sum(pom.c_n8),0),'c_v8'=isnull(sum(pom.c_v8),0), " +_
+  "'c_n5'=isnull(sum(pom.c_n5),0),'c_v5'=isnull(sum(pom.c_v5),0), " +_
+  "'c_n22'=isnull(sum(pom.c_n22),0),'c_v22'=isnull(sum(pom.c_v22),0), " +_
+  "'c_n17'=isnull(sum(pom.c_n17),0),'c_v17'=isnull(sum(pom.c_v17),0), " +_
+  "'c_n12'=isnull(sum(pom.c_n12),0),'c_v12'=isnull(sum(pom.c_v12),0), " +_
+  "'c_n7'=isnull(sum(pom.c_n7),0),'c_v7'=isnull(sum(pom.c_v7),0), " +_
+  "'c_n3'=isnull(sum(pom.c_n3),0),'c_v3'=isnull(sum(pom.c_v3),0), " +_
+  "'c_n0'=isnull(sum(pom.c_n0),0),'c_nZw'=isnull(sum(pom.c_nZw),0),'c_nNp'=isnull(sum(pom.c_nNp),0),'c_netto_razem'=isnull(sum(pom.c_netto_razem),0) " +_
+  "from " +_ 
+  "( " +_  
+  query_for_sprzedaz_vat_2014() +_
+  ") as pom " + "%groupby%" + vbNewLine
+end function
+
+function Korekty(byval nNr): Korekty = ""
+  dim strPart: strPart = "({part2})"
+  dim strPart1: strPart1 = "select IdObj from n5sprzedaz where pPopSprzed in"
+  dim strPart2: strPart2 = "select IdObj from n5sprzedaz where Year(dDataWyst) <= 2013"
+  dim iter
+  for iter = 1 to nNr
+    Korekty = Korekty + "or t_sprz.pPopSprzed in " + strPart + vbNewLine
+    strPart = "({part1} " + strPart + ")" 
+  next
+  Korekty = Replace(Replace(Korekty,"{part1}",strPart1),"{part2}",strPart2)
+end function
+
+function Korekty2014(byval nNr): Korekty2014 = ""
+  dim strPart: strPart = "({part2})"
+  dim strPart1: strPart1 = "select IdObj from n5sprzedaz where pPopSprzed in"
+  dim strPart2: strPart2 = "select IdObj from n5sprzedaz where pPopSprzed = 0 and sprzed_pDostawa > 0 and dDataWyst >= 2014"
+  dim iter
+  for iter = 1 to nNr
+    Korekty2014 = Korekty2014 + "(t_sprz.pPopSprzed in " + strPart + ")"
+    if iter < nNr then
+      Korekty2014 = Korekty2014 + " or " + vbNewLine
+    end if
+    strPart = "({part1} " + strPart + ")" 
+  next
+  Korekty2014 = Replace(Replace(Korekty2014,"{part1}",strPart1),"{part2}",strPart2)
+end function
+
+function query_for_sprzedaz_vat_2013()
+	query_for_sprzedaz_vat_2013 = "select 'c_0'=max(t_1.strNazwa), 'c_rej_typ'=max(t_1.eTyp), 'c_rej_idobj'=max(t_1.IdObj), " +_
+#ifdef ENABLE_VAT2011
+	QUERY_NETTO(23)
+	QUERY_VAT(23)
+	QUERY_NETTO(8)
+	QUERY_VAT(8)
+	QUERY_NETTO(5)
+	QUERY_VAT(5)  
+#endif
+	QUERY_NETTO(22)
+	QUERY_VAT(22)
+	QUERY_NETTO(17)
+	QUERY_VAT(17)
+	QUERY_NETTO(12)
+	QUERY_VAT(12)
+	QUERY_NETTO(7)
+	QUERY_VAT(7)
+	QUERY_NETTO(3)
+	QUERY_VAT(3)
+	QUERY_NETTO(0)
+	QUERY_NETTO(Zw)
+	QUERY_NETTO(Np)
+	"'c_netto_razem'=isnull(sum(t_sprz.curSumaNetto - isnull(t_orgsprz.curSumaNetto,0)),0)" +_
+	" from n5sprzedaz t_sprz " +_
+	"left outer join n5sprzedaz t_orgsprz on t_sprz.ppopsprzed = t_orgsprz.idobj " +_
+	"inner join n5rejestrdok as t_1 on t_sprz.pRejestrDok = t_1.IdObj " +_
+	"where t_sprz.pRozlVAT<>0 and %1  and  %2 and %3 "  +_
+#ifdef ENABLE_DB12
+	"and (Year(t_sprz.dDataWyst) <= 2013 " +_
+	Korekty(5) + ")" +_
+#endif
+	"%groupby% "
+end function
+
+function query_for_sprzedaz_vat_2014()
+	query_for_sprzedaz_vat_2014 = "select t_sprz.IdObj,'c_0'=t_1.strNazwa, 'c_rej_typ'=t_1.eTyp, 'c_rej_idobj'=t_1.IdObj, " +_
+	QUERY_NETTO_2(23oo)
+	QUERY_VAT_2(23oo)
+	QUERY_NETTO_2(23)
+	QUERY_VAT_2(23)
+	QUERY_NETTO_2(8)
+	QUERY_VAT_2(8)
+	QUERY_NETTO_2(5)
+	QUERY_VAT_2(5)  
+	QUERY_NETTO_2(22)
+	QUERY_VAT_2(22)
+	QUERY_NETTO_2(17)
+	QUERY_VAT_2(17)
+	QUERY_NETTO_2(12)
+	QUERY_VAT_2(12)
+	QUERY_NETTO_2(7)
+	QUERY_VAT_2(7)
+	QUERY_NETTO_2(3)
+	QUERY_VAT_2(3)
+	QUERY_NETTO_2(0)
+	QUERY_NETTO_2(Zw)
+	QUERY_NETTO_2(Np)
+	"'c_netto_razem'=isnull(t_sprz.curSumaNetto - isnull(t_orgsprz.curSumaNetto,0),0)" +_
+	" from n5sprzedaz t_sprz " +_
+	"left outer join n5sprzedaz t_orgsprz on t_sprz.ppopsprzed = t_orgsprz.idobj " +_
+	"inner join n5rejestrdok as t_1 on t_sprz.pRejestrDok = t_1.IdObj " +_
+	"where t_sprz.pRozlVAT<>0 and %1  and  %2 and %3 "  +_
+	"and (Year(t_sprz.dDataWyst) <= 2013 " +_
+	Korekty(5) + ")" + vbNewLine +_
+	"union " + vbNewLine +_
+  "select t_sprz.IdObj,'c_0'=t_1.strNazwa, 'c_rej_typ'=t_1.eTyp, 'c_rej_idobj'=t_1.IdObj, " +_
+	QUERY_NETTO_2(23oo)
+	QUERY_VAT_2(23oo)
+	QUERY_NETTO_2(23)
+	QUERY_VAT_2(23)
+	QUERY_NETTO_2(8)
+	QUERY_VAT_2(8)
+	QUERY_NETTO_2(5)
+	QUERY_VAT_2(5)
+	QUERY_NETTO_2(22)
+	QUERY_VAT_2(22)
+	QUERY_NETTO_2(17)
+	QUERY_VAT_2(17)
+	QUERY_NETTO_2(12)
+	QUERY_VAT_2(12)
+	QUERY_NETTO_2(7)
+	QUERY_VAT_2(7)
+	QUERY_NETTO_2(3)
+	QUERY_VAT_2(3)
+	QUERY_NETTO_2(0)
+	QUERY_NETTO_2(Zw)
+	QUERY_NETTO_2(Np)
+	"'c_netto_razem'=isnull(t_sprz.curSumaNetto - isnull(t_orgsprz.curSumaNetto,0),0)" +_
+	" from n5sprzedaz t_sprz " +_
+	"left outer join n5sprzedaz t_orgsprz on t_sprz.ppopsprzed = t_orgsprz.idobj " +_
+	"inner join n5rejestrdok as t_1 on t_sprz.pRejestrDok = t_1.IdObj " +_
+	"where t_sprz.pRozlVAT<>0 and %1  and  %2 and %3 "  +_
+	"and Year(t_sprz.dDataWyst) >= 2014 -- dokumenty po zmianie momentu podatkowego " + vbNewLine +_
+	"and (((t_sprz.IdObj not in (select sprzed_pDostawa from n5sprzedaz)) -- gdy faktura i dostawa pokazuj tylko fakturę " + vbNewLine +_ 
+	"and (t_sprz.IdObj not in (select pPopSprzed from n5sprzedaz where IdObj in (select sprzed_pDostawa from n5sprzedaz))) -- korekta dostawy + faktura do korekty dostawy  -> pokazuj tylko fakurę " + vbNewLine +_
+	"and (t_sprz.IdObj not in (select IdObj from n5sprzedaz where sprzed_pDostawa = 0 and pPopSprzed = 0 and IdObj not in (select pPopSprzed from n5sprzedaz) and t_sprz.pRejestrDok in (select IdObj from n5rejestrdok where eTyp not in (N5REJESTRDOK_DOSTAWA,N5REJESTRDOK_KOR_DOSTAWA)))) -- faktura bez korekty i dostawy -> nie wchodzi " + vbNewLine +_
+	"and (t_sprz.IdObj not in (select IdObj from n5sprzedaz where pPopSprzed > 0 and (sprzed_pDostawa = 0 and pPopSprzed in (select IdObj from n5sprzedaz where sprzed_pDostawa = 0 and year(dDataWyst) >= 2014)) and t_sprz.pRejestrDok in (select IdObj from n5rejestrdok where eTyp not in (N5REJESTRDOK_DOSTAWA,N5REJESTRDOK_KOR_DOSTAWA)))) -- korekta bez dostawy nie wchodzi gdy oryginał nie ma dostawy " + vbNewLine +_
+	"and (t_sprz.IdObj not in (select IdObj from n5sprzedaz where sprzed_pDostawa = 0 and IdObj in (select pPopSprzed from n5sprzedaz where sprzed_pDostawa = 0) and t_sprz.pRejestrDok in (select IdObj from n5rejestrdok where eTyp not in (N5REJESTRDOK_DOSTAWA,N5REJESTRDOK_KOR_DOSTAWA)))) -- faktura bez dostawy nie wchodzi gdy korekta też nie ma dostawy " + vbNewLine +_
+	") or (t_sprz.pRejestrDok in (select IdObj from n5rejestrdok where eTyp in (N5REJESTRDOK_FAKTURA_ZALICZKOWA_KOR,N5REJESTRDOK_FAKTURA_ZALICZKOWA,N5REJESTRDOK_PARAGON,N5REJESTRDOK_KOR_PARAGON,N5REJESTRDOK_WDT,N5REJESTRDOK_KOREKTA_WDT,N5REJESTRDOK_FAKT_EXP,N5REJESTRDOK_KOR_FAKT_EXP))) " +_
+  "  or (" + Korekty2014(5) + ")) " + vbNewLine
+end function
+
+function query_for_wnt_as_sprzedaz_vat(byval strWhere)
+	query_for_wnt_as_sprzedaz_vat = "select 'c_0'=max(t_1.strNazwa), 'c_rej_typ'=max(t_1.eTyp), 'c_rej_idobj'=max(t_1.IdObj)," +_
+#ifdef ENABLE_DB12
+	QUERY_NETTO(23oo)
+	QUERY_VAT(23oo)
+#endif
+#ifdef ENABLE_VAT2011
+	QUERY_NETTO(23)
+	QUERY_VAT(23)
+	QUERY_NETTO(8)
+	QUERY_VAT(8)
+	QUERY_NETTO(5)
+	QUERY_VAT(5)  
+#endif  
+	QUERY_NETTO(22)
+	QUERY_VAT(22)
+	QUERY_NETTO(17)
+	QUERY_VAT(17)
+	QUERY_NETTO(12)
+	QUERY_VAT(12)
+	QUERY_NETTO(7)
+	QUERY_VAT(7)
+	QUERY_NETTO(3)
+	QUERY_VAT(3)
+	QUERY_NETTO(0)
+	QUERY_NETTO(Zw)
+	QUERY_NETTO(Np)
+	"'c_netto_razem'=isnull(sum(t_sprz.curSumaNetto - isnull(t_orgsprz.curSumaNetto,0)),0)" +_
+	" from n5zakup t_sprz " +_
+	"left outer join n5zakup t_orgsprz on t_sprz.pPopZAkup = t_orgsprz.idobj " +_
+	"inner join n5rejestrdok as t_1 on t_sprz.pRejestrDok = t_1.IdObj " +_
+	"where %1  and  %2 " + strWhere +_
+#ifdef ENABLE_DB12
+  "and t_1.eTyp not in (N5REJESTRDOK_FAKT_ZAK,N5REJESTRDOK_KOR_FAKT_ZAK,N5REJESTRDOK_FAKT_IMP,N5REJESTRDOK_KOR_FAKT_IMP) " +_
+#endif
+	"%groupby% "
+end function
+
+function query_for_import_as_sprzedaz_vat(byval strWhere)
+	query_for_import_as_sprzedaz_vat = "select 'c_0'=max(t_1.strNazwa), 'c_rej_typ'=max(t_1.eTyp), 'c_rej_idobj'=max(t_1.IdObj)," +_
+#ifdef ENABLE_DB12
+	QUERY_NETTO(23oo)
+	QUERY_VAT(23oo)
+#endif
+#ifdef ENABLE_VAT2011
+	QUERY_NETTO(23)
+	QUERY_VAT(23)
+	QUERY_NETTO(8)
+	QUERY_VAT(8)
+	QUERY_NETTO(5)
+	QUERY_VAT(5)  
+#endif  
+	QUERY_NETTO(22)
+	QUERY_VAT(22)
+	QUERY_NETTO(17)
+	QUERY_VAT(17)
+	QUERY_NETTO(12)
+	QUERY_VAT(12)
+	QUERY_NETTO(7)
+	QUERY_VAT(7)
+	QUERY_NETTO(3)
+	QUERY_VAT(3)
+	QUERY_NETTO(0)
+	QUERY_NETTO(Zw)
+	QUERY_NETTO(Np)
+	"'c_netto_razem'=isnull(sum(t_sprz.curSumaNetto - isnull(t_orgsprz.curSumaNetto,0)),0)" +_
+	" from n5zakup t_sprz " +_
+	"left outer join n5zakup t_orgsprz on t_sprz.pPopZAkup = t_orgsprz.idobj " +_
+	"inner join n5rejestrdok as t_1 on t_sprz.pRejestrDok = t_1.IdObj " +_
+	"where %1  and  %2 " + strWhere +_
+#ifdef ENABLE_DB12
+  "and t_1.eTyp in (N5REJESTRDOK_FAKT_IMP,N5REJESTRDOK_KOR_FAKT_IMP) " +_
+	"and (t_sprz.IdObj not in (select p_idobj from vlist_n5zakup_listPozycje)  --faktury importowe bez pozycji " + vbNewLine +_
+	"or t_sprz.IdObj in (select zak_poz.p_idobj from vlist_n5zakup_listPozycje zak_poz inner join n5produkt p on zak_poz.c_pprodukt = p.IdObj where p.eRodzaj = N5PRODUKT_USLUGA group by zak_poz.p_idobj " + vbNewLine +_
+	"except " + vbNewLine +_
+	"select zak_poz.p_idobj from vlist_n5zakup_listPozycje zak_poz inner join n5produkt p on zak_poz.c_pprodukt = p.IdObj where p.eRodzaj = N5PRODUKT_TOWAR group by zak_poz.p_idobj)) " + vbNewLine +_    
+#endif
+	"%groupby% "
+end function
+
+function query_for_import_uslug_as_sprzedaz_vat()
+	query_for_import_uslug_as_sprzedaz_vat = "select 'c_0'=max(t_1.strNazwa), 'c_rej_typ'=max(t_1.eTyp), 'c_rej_idobj'=max(t_1.IdObj)," +_
+#ifdef ENABLE_DB12
+	QUERY_NETTO(23oo)
+	QUERY_VAT(23oo)
+#endif
+#ifdef ENABLE_VAT2011
+	QUERY_NETTO(23)
+	QUERY_VAT(23)
+	QUERY_NETTO(8)
+	QUERY_VAT(8)
+	QUERY_NETTO(5)
+	QUERY_VAT(5)  
+#endif  
+	QUERY_NETTO(22)
+	QUERY_VAT(22)
+	QUERY_NETTO(17)
+	QUERY_VAT(17)
+	QUERY_NETTO(12)
+	QUERY_VAT(12)
+	QUERY_NETTO(7)
+	QUERY_VAT(7)
+	QUERY_NETTO(3)
+	QUERY_VAT(3)
+	QUERY_NETTO(0)
+	QUERY_NETTO(Zw)
+	QUERY_NETTO(Np)
+	"'c_netto_razem'=isnull(sum(t_sprz.curSumaNetto - isnull(t_orgsprz.curSumaNetto,0)),0)" +_
+	" from n5zakup t_sprz " +_
+	"left outer join n5zakup t_orgsprz on t_sprz.pPopZAkup = t_orgsprz.idobj " +_
+	"inner join n5rejestrdok as t_1 on t_sprz.pRejestrDok = t_1.IdObj " +_
+	"where %1  and  %2  "  +_
+	"and (t_sprz.IdObj not in (select p_idobj from vlist_n5zakup_listPozycje)  --faktury importowe bez pozycji " + vbNewLine +_
+	"or t_sprz.IdObj in (select zak_poz.p_idobj from vlist_n5zakup_listPozycje zak_poz inner join n5produkt p on zak_poz.c_pprodukt = p.IdObj where p.eRodzaj = N5PRODUKT_USLUGA group by zak_poz.p_idobj " + vbNewLine +_
+	"except " + vbNewLine +_
+	"select zak_poz.p_idobj from vlist_n5zakup_listPozycje zak_poz inner join n5produkt p on zak_poz.c_pprodukt = p.IdObj where p.eRodzaj = N5PRODUKT_TOWAR group by zak_poz.p_idobj)) " + vbNewLine +_
+	"%groupby% "
+end function
+
+function query_for_oo_as_sprzedaz_vat()
+	query_for_oo_as_sprzedaz_vat = "select 'c_0'=max(t_1.strNazwa), 'c_rej_typ'=max(t_1.eTyp), 'c_rej_idobj'=max(t_1.IdObj)," +_
+	QUERY_NETTO(23oo)
+	QUERY_VAT(23oo)
+	QUERY_NETTO_0(23)
+	QUERY_VAT_0(23)
+	QUERY_NETTO_0(8)
+	QUERY_VAT_0(8)
+	QUERY_NETTO_0(5)
+	QUERY_VAT_0(5)
+	QUERY_NETTO_0(22)
+	QUERY_VAT_0(22)
+	QUERY_NETTO_0(17)
+	QUERY_VAT_0(17)
+	QUERY_NETTO_0(12)
+	QUERY_VAT_0(12)
+	QUERY_NETTO_0(7)
+	QUERY_VAT_0(7)
+	QUERY_NETTO_0(3)
+	QUERY_VAT_0(3)
+	QUERY_NETTO_0(0)
+	QUERY_NETTO_0(Zw)
+	QUERY_NETTO_0(Np)
+	"'c_netto_razem'=isnull(sum(t_sprz.curSumaNetto - isnull(t_orgsprz.curSumaNetto,0)),0)" +_
+	" from n5zakup t_sprz " +_
+	"left outer join n5zakup t_orgsprz on t_sprz.pPopZAkup = t_orgsprz.idobj " +_
+	"inner join n5rejestrdok as t_1 on t_sprz.pRejestrDok = t_1.IdObj " +_
+	"where t_sprz.pRozlVAT<>0 and %1  and  %2 and [%3 and t_sprz.curNetto23oo > 0 and t_1.eTyp in (N5REJESTRDOK_FAKT_ZAK,N5REJESTRDOK_KOR_FAKT_ZAK) "  +_
+	"%groupby% "
+end function
+
+function qryexpr_zakup_brutto(byval strTable)
+	qryexpr_zakup_brutto = trans_.afc.convert.formatter("%1.curSumaBrutto").add(strTable).done()
+end function
+
+function qryexpr_zakup_bez_odliczen(byval strTable)
+	qryexpr_zakup_bez_odliczen = trans_.afc.convert.formatter( _
+#ifdef _ARTECH
+    "case when %1.pRozlVat=0 then %1.curSumaBrutto else (%1.curNettoZw + %1.curNettoNp) end") _
+#else
+#ifdef _INTERCO
+		"case when %1.pRozlVat=0 then %1.curSumaBrutto else case when %1.eTypZakup = N5ZAKUP_TYPZAKUP_ODLICZANE_75 then %1.curSumaBrutto-(%1.curNetto23)/2-%1.curNettoNp else (%1.curNettoNp) end end") _
+#else
+#ifdef _IOW
+		"case when %1.pRozlVat=0 then %1.curSumaBrutto else case when %1.eTypZakup = N5ZAKUP_TYPZAKUP_ODLICZANE_75 then %1.curSumaBrutto-(%1.curNetto23)/2-%1.curNettoNp else (%1.curNettoNp) end end") _
+#else
+		"case when %1.pRozlVat=0 then %1.curSumaBrutto else (%1.curNettoNp) end") _
+#endif		
+#endif
+#endif
+		.add(strTable).done()
+end function
+
+function qryexpr_zakup_zw(byval strTable)
+	qryexpr_zakup_zw = trans_.afc.convert.formatter( _
+		"case when %1.pRozlVat=0 then %1.curSumaBrutto else (%1.curNettoZw) end") _
+		.add(strTable).done()
+end function
+function qryexpr_zakup_np(byval strTable)
+	qryexpr_zakup_np = trans_.afc.convert.formatter( _
+		"case when %1.pRozlVat=0 then %1.curSumaBrutto else (%1.curNettoNp) end") _
+		.add(strTable).done()
+end function
+
+function qryexpr_zakup_expr(byval strTable,byval nTypOpod,byval strExpr)
+	strExpr = trans_.afc.convert.formatter(strExpr).add(strTable).done()
+	qryexpr_zakup_expr = trans_.afc.convert.formatter( _
+		"case when %1.eZwOpSprz=%2 and %1.pRozlVat<>0 then %3 else convert(decimal(12,2),0.0) end") _
+		.add(strTable).add(nTypOpod).add(strExpr).done()
+end function
+
+function qryexpr_zakup_expr_50(byval strTable,byval nTypOpod,byval strExpr)
+	strExpr = trans_.afc.convert.formatter(strExpr).add(strTable).done()
+	qryexpr_zakup_expr_50 = trans_.afc.convert.formatter( _
+		"case when %1.eZwOpSprz=%2 and %1.pRozlVat<>0 then case when %1.eTypZakup = N5ZAKUP_TYPZAKUP_SAMOCHOD_NO then (%3)/2 else %3 end else convert(decimal(12,2),0.0) end") _
+		.add(strTable).add(nTypOpod).add(strExpr).done()
+end function
+
+function qryexpr_zakup_expr_75(byval strTable,byval nTypOpod,byval strExpr)
+	strExpr = trans_.afc.convert.formatter(strExpr).add(strTable).done()
+	qryexpr_zakup_expr_75 = trans_.afc.convert.formatter( _
+		"case when %1.eZwOpSprz=%2 and %1.pRozlVat<>0 then case when %1.eTypZakup = N5ZAKUP_TYPZAKUP_ODLICZANE_75 then (%3)/2 else %3 end else convert(decimal(12,2),0.0) end") _
+		.add(strTable).add(nTypOpod).add(strExpr).done()
+end function
+
+function qryexpr_zakup_netto(byval strTable,byval nTypOpod)
+	qryexpr_zakup_netto = qryexpr_zakup_expr(strTable,nTypOpod, _
+#ifdef ENABLE_VAT2011
+  #ifdef ENABLE_DB12
+		  "%1.curNetto23oo+%1.curNetto23+%1.curNetto8+%1.curNetto22+%1.curNetto17+%1.curNetto12+%1.curNetto7+%1.curNetto5+%1.curNetto3+%1.curNetto0")   
+  #else
+		  "%1.curNetto23+%1.curNetto8+%1.curNetto22+%1.curNetto17+%1.curNetto12+%1.curNetto7+%1.curNetto5+%1.curNetto3+%1.curNetto0")    
+  #endif
+#else
+		"%1.curNetto22+%1.curNetto17+%1.curNetto12+%1.curNetto7+%1.curNetto5+%1.curNetto3+%1.curNetto0")
+#endif    
+end function
+
+function qryexpr_zakup_netto_bez_0(byval strTable,byval nTypOpod)
+	qryexpr_zakup_netto_bez_0 = qryexpr_zakup_expr(strTable,nTypOpod, _
+#ifdef ENABLE_VAT2011
+  #ifdef ENABLE_DB12
+		"%1.curNetto23oo+%1.curNetto23+%1.curNetto8+%1.curNetto22+%1.curNetto17+%1.curNetto12+%1.curNetto7+%1.curNetto5+%1.curNetto3")  
+  #else
+		"%1.curNetto23+%1.curNetto8+%1.curNetto22+%1.curNetto17+%1.curNetto12+%1.curNetto7+%1.curNetto5+%1.curNetto3")
+  #endif  
+#else
+		"%1.curNetto22+%1.curNetto17+%1.curNetto12+%1.curNetto7+%1.curNetto5+%1.curNetto3")
+#endif    
+end function
+
+
+function qryexpr_zakup_netto_0(byval strTable,byval nTypOpod)
+	qryexpr_zakup_netto_0 = qryexpr_zakup_expr(strTable,nTypOpod, _
+		"%1.curNetto0")
+end function
+
+function qryexpr_zakup_vat(byval strTable,byval nTypOpod)
+	qryexpr_zakup_vat = qryexpr_zakup_expr_50(strTable,nTypOpod, _
+#ifdef ENABLE_VAT2011
+  #ifdef ENABLE_DB12
+		"%1.curVat23oo+%1.curVat23+%1.curVat8+%1.curVat22+%1.curVat17+%1.curVat12+%1.curVat7+%1.curVat5+%1.curVat3 ")   
+  #else
+		"%1.curVat23+%1.curVat8+%1.curVat22+%1.curVat17+%1.curVat12+%1.curVat7+%1.curVat5+%1.curVat3 ")    
+  #endif  
+#else
+		"%1.curVat22+%1.curVat17+%1.curVat12+%1.curVat7+%1.curVat5+%1.curVat3 ")
+#endif    
+end function
+
+#macro QUERY_COL_ZAK(_col_,_typop_,_expr_)	"'_col_'=isnull(sum(isnull(" + qryexpr_zakup_expr("t_zakup",_typop_,_expr_) + ",0) - isnull(" + qryexpr_zakup_expr("t_orgzakup",_typop_,_expr_) + ",0)),0)"
+#macro QUERY_COL_ZAK_50(_col_,_typop_,_expr_)	"'_col_'=isnull(sum(isnull(" + qryexpr_zakup_expr_50("t_zakup",_typop_,_expr_) + ",0) - isnull(" + qryexpr_zakup_expr_50("t_orgzakup",_typop_,_expr_) + ",0)),0)"
+#macro QUERY_COL_ZAK_75(_col_,_typop_,_expr_)	"'_col_'=isnull(sum(isnull(" + qryexpr_zakup_expr_75("t_zakup",_typop_,_expr_) + ",0) - isnull(" + qryexpr_zakup_expr_75("t_orgzakup",_typop_,_expr_) + ",0)),0)"
+
+function query_for_zakup_vat()
+	query_for_zakup_vat = " select " +_
+		"'c_rej_nazwa'=max(t_rej.strNazwa), 'c_rej_typ'=max(t_rej.eTyp), 'c_rej_idobj'=max(t_rej.IdObj),'typ_zak'=max(t_zakup.eTypZakup), " +_
+#ifdef ENABLE_DB12
+		QUERY_COL_ZAK(c_n23ooop,N5ZAKUP_TYPOPOD_OPODATK, "%1.curNetto23oo") + "," +_
+		QUERY_COL_ZAK(c_n23oomi,N5ZAKUP_TYPOPOD_MIESZANE,"%1.curNetto23oo") + "," +_
+#endif
+#ifdef ENABLE_VAT2011
+#ifdef _INTERCO
+		QUERY_COL_ZAK_75(c_n23op,N5ZAKUP_TYPOPOD_OPODATK, "%1.curNetto23") + "," +_
+		QUERY_COL_ZAK_75(c_n23mi,N5ZAKUP_TYPOPOD_MIESZANE,"%1.curNetto23") + "," +_
+#else
+#ifdef _IOW
+		QUERY_COL_ZAK_75(c_n23op,N5ZAKUP_TYPOPOD_OPODATK, "%1.curNetto23") + "," +_
+		QUERY_COL_ZAK_75(c_n23mi,N5ZAKUP_TYPOPOD_MIESZANE,"%1.curNetto23") + "," +_
+#else
+		QUERY_COL_ZAK(c_n23op,N5ZAKUP_TYPOPOD_OPODATK, "%1.curNetto23") + "," +_
+		QUERY_COL_ZAK(c_n23mi,N5ZAKUP_TYPOPOD_MIESZANE,"%1.curNetto23") + "," +_
+#endif		
+#endif
+		QUERY_COL_ZAK(c_n8op,N5ZAKUP_TYPOPOD_OPODATK, "%1.curNetto8") + "," +_
+		QUERY_COL_ZAK(c_n8mi,N5ZAKUP_TYPOPOD_MIESZANE,"%1.curNetto8") + "," +_    
+#endif
+		QUERY_COL_ZAK(c_n22op,N5ZAKUP_TYPOPOD_OPODATK, "%1.curNetto22") + "," +_
+		QUERY_COL_ZAK(c_n22mi,N5ZAKUP_TYPOPOD_MIESZANE,"%1.curNetto22") + "," +_
+		QUERY_COL_ZAK(c_n17op, N5ZAKUP_TYPOPOD_OPODATK, "%1.curNetto17") + "," +_
+		QUERY_COL_ZAK(c_n17mi, N5ZAKUP_TYPOPOD_MIESZANE,"%1.curNetto17") + "," +_
+		QUERY_COL_ZAK(c_n12op, N5ZAKUP_TYPOPOD_OPODATK, "%1.curNetto12") + "," +_
+		QUERY_COL_ZAK(c_n12mi, N5ZAKUP_TYPOPOD_MIESZANE,"%1.curNetto12") + "," +_
+		QUERY_COL_ZAK(c_n7op, N5ZAKUP_TYPOPOD_OPODATK, "%1.curNetto7") + "," +_
+		QUERY_COL_ZAK(c_n7mi, N5ZAKUP_TYPOPOD_MIESZANE,"%1.curNetto7") + "," +_
+		QUERY_COL_ZAK(c_n5op, N5ZAKUP_TYPOPOD_OPODATK, "%1.curNetto5") + "," +_
+		QUERY_COL_ZAK(c_n5mi, N5ZAKUP_TYPOPOD_MIESZANE,"%1.curNetto5") + "," +_
+		QUERY_COL_ZAK(c_n3op, N5ZAKUP_TYPOPOD_OPODATK, "%1.curNetto3") + "," +_
+		QUERY_COL_ZAK(c_n3mi, N5ZAKUP_TYPOPOD_MIESZANE,"%1.curNetto3") + "," +_
+		QUERY_COL_ZAK(c_n0op, N5ZAKUP_TYPOPOD_OPODATK, "%1.curNetto0") + "," +_
+		QUERY_COL_ZAK(c_n0mi, N5ZAKUP_TYPOPOD_MIESZANE,"%1.curNetto0") + "," +_
+		QUERY_COL_ZAK(c_nzwop, N5ZAKUP_TYPOPOD_OPODATK, "%1.curNettoZw") + "," +_
+		QUERY_COL_ZAK(c_nzwmi, N5ZAKUP_TYPOPOD_MIESZANE,"%1.curNettoZw") + "," +_
+#ifdef ENABLE_DB12
+		QUERY_COL_ZAK(c_v23ooop,N5ZAKUP_TYPOPOD_OPODATK, "%1.curVAT23oo") + "," +_
+		QUERY_COL_ZAK(c_v23oomi,N5ZAKUP_TYPOPOD_MIESZANE,"%1.curVAT23oo") + "," +_
+#endif
+#ifdef ENABLE_VAT2011
+		QUERY_COL_ZAK_50(c_v23op,N5ZAKUP_TYPOPOD_OPODATK, "%1.curVAT23") + "," +_
+		QUERY_COL_ZAK_50(c_v23mi,N5ZAKUP_TYPOPOD_MIESZANE,"%1.curVAT23") + "," +_
+		QUERY_COL_ZAK(c_v8op,N5ZAKUP_TYPOPOD_OPODATK, "%1.curVAT8") + "," +_
+		QUERY_COL_ZAK(c_v8mi,N5ZAKUP_TYPOPOD_MIESZANE,"%1.curVAT8") + "," +_    
+#endif
+		QUERY_COL_ZAK(c_v22op,N5ZAKUP_TYPOPOD_OPODATK, "%1.curVAT22") + "," +_
+		QUERY_COL_ZAK(c_v22mi,N5ZAKUP_TYPOPOD_MIESZANE,"%1.curVAT22") + "," +_
+		QUERY_COL_ZAK(c_v17op, N5ZAKUP_TYPOPOD_OPODATK, "%1.curVAT17") + "," +_
+		QUERY_COL_ZAK(c_v17mi, N5ZAKUP_TYPOPOD_MIESZANE,"%1.curVAT17") + "," +_
+		QUERY_COL_ZAK(c_v12op, N5ZAKUP_TYPOPOD_OPODATK, "%1.curVAT12") + "," +_
+		QUERY_COL_ZAK(c_v12mi, N5ZAKUP_TYPOPOD_MIESZANE,"%1.curVAT12") + "," +_
+		QUERY_COL_ZAK(c_v7op, N5ZAKUP_TYPOPOD_OPODATK, "%1.curVAT7") + "," +_
+		QUERY_COL_ZAK(c_v7mi, N5ZAKUP_TYPOPOD_MIESZANE,"%1.curVAT7") + "," +_
+		QUERY_COL_ZAK(c_v5op, N5ZAKUP_TYPOPOD_OPODATK, "%1.curVAT5") + "," +_
+		QUERY_COL_ZAK(c_v5mi, N5ZAKUP_TYPOPOD_MIESZANE,"%1.curVAT5") + "," +_
+		QUERY_COL_ZAK(c_v3op, N5ZAKUP_TYPOPOD_OPODATK, "%1.curVAT3") + "," +_
+		QUERY_COL_ZAK(c_v3mi, N5ZAKUP_TYPOPOD_MIESZANE,"%1.curVAT3")  +_
+		" ,'c_bez_odliczen'=isnull(sum("+qryexpr_zakup_bez_odliczen("t_zakup")+"),0)-isnull(sum("+qryexpr_zakup_bez_odliczen("t_orgzakup")+"),0) " +_
+		" ,'c_zw'=isnull(sum("+qryexpr_zakup_zw("t_zakup")+"),0)-isnull(sum("+qryexpr_zakup_zw("t_orgzakup")+"),0) " +_
+		" ,'c_np'=isnull(sum("+qryexpr_zakup_np("t_zakup")+"),0)-isnull(sum("+qryexpr_zakup_np("t_orgzakup")+"),0) " +_
+		" from n5zakup t_zakup " +_
+		" left outer join n5zakup t_orgzakup on t_zakup.pPopZakup = t_orgzakup.idobj " +_
+		" inner join n5rejestrdok as t_rej on t_zakup.pRejestrDok = t_rej.IdObj " +_
+		" where  %1  and  %2 and %3 "  +_
+#ifdef _PRINTY_LAND
+		" and t_zakup.eTypZakup not in (N5ZAKUP_TYPZAKUP_PALIWO,N5ZAKUP_TYPZAKUP_SAMOCHOD_NO) " +_
+#endif    
+		"%groupby% order by c_rej_nazwa "
+end function
+
+function fill_VATUE_from_EB(byref pVATUE, byref pRozlVat)
+	'------------------------------------------------
+	'WDT
+	'------------------------------------------------
+	pVATUE.vtue_listWDT.deleteall
+	dim strRodzajProd
+#ifdef ENABLE_DB13
+	strRodzajProd = "p.prod_eRodzaj_VATUE"
+#else
+	strRodzajProd = "p.eRodzaj"
+#endif
+	dim strQry
+
+#ifdef _ABAKOSTEEL	
+	dim strRozlVat: strRozlVat = ""
+	if not pRozlVat is nothing then
+		strRozlVat = " vsp.p_prozlvat = " + cstr(pRozlVat.IdObj) + vbNewLine
+	end if
+#endif
+
+#ifdef _IOW
+  strQry = "select 'kraj'=max(kr.strSkrot), 'idkl'=kl.idobj,'nip'=max(kl.strNIP), 'suma'=sum(s.curSumaNetto)-sum(isnull(org.curSumaNetto,0))  " + vbNewLine +_ 
+  "from n5sprzedaz s " + vbNewLine +_  
+  " left join n5sprzedaz org on s.pPopSprzed = org.IdObj " + vbNewLine +_
+  "	join n5klient kl on s.pKlient = kl.idobj " + vbNewLine +_  
+  "	join n5kraj kr on kl.pKraj = kr.idobj " + vbNewLine +_
+  "where s.pRejestrdok in (select idobj from n5rejestrdok where eTyp in (N5REJESTRDOK_WDT,N5REJESTRDOK_KOREKTA_WDT) and strNazwa in ('5 - WDT','6 - Rejestr korekt WDT')) and " + vbNewLine +_ 
+  "s.dDataWyst between " + doc_.afc.convert.date2SQL(pVATUE.vtue_dDataOd) + " and " + doc_.afc.convert.date2SQL(pVATUE.vtue_dDataDo) + vbNewLine +_  
+  "group by kl.idobj " + vbNewLine +_  
+  "order by 1,2"
+#else
+  strQry = "select 'kraj'=max(kr.strSkrot), 'idkl'=kl.idobj,'rodzaj'=" + strRodzajProd + ", 'nip'=max(kl.strNIP), 'suma'=sum(vsp.c_curwartnetto - isnull(t_orgvsp.c_curwartnetto,0)) " + vbNewLine +_ 
+  "from vlist_n5sprzedaz_listPozycje vsp " + vbNewLine +_  
+  " left outer join vlist_n5sprzedaz_listpozycje t_orgvsp on vsp.p_ppopsprzed = t_orgvsp.p_idobj and vsp.coll_lp = t_orgvsp.coll_lp " + vbNewLine +_  
+  "	join n5klient kl on vsp.p_pklient = kl.idobj " + vbNewLine +_  
+  "	join n5kraj kr on kl.pKraj = kr.idobj " + vbNewLine +_  
+  "	join n5produkt p on vsp.c_pprodukt = p.idobj " + vbNewLine +_ 
+  "where " + strRodzajProd + " = N5PRODUKT_TOWAR and vsp.p_prejestrdok in (select idobj from n5rejestrdok where eTyp in (N5REJESTRDOK_WDT,N5REJESTRDOK_KOREKTA_WDT)) and " + vbNewLine +_  
+#ifdef _ABAKOSTEEL
+  strRozlVat +_
+#else
+  "	vsp.p_ddatawyst between " + doc_.afc.convert.date2SQL(pVATUE.vtue_dDataOd) + " and " + doc_.afc.convert.date2SQL(pVATUE.vtue_dDataDo) + vbNewLine +_  
+#endif  
+  "group by kl.idobj," + strRodzajProd + " " + vbNewLine +_  
+  "order by 1,2"  
+#endif  
+
+	dim oRSSp : set oRSSp = trans_.createadors(strQry)
+
+	do while not oRSSP.EOF
+		dim oPozVATUE
+		set oPozVATUE = pVATUE.vtue_listWDT.addnew()
+		set oPozVATUE.pvtue_refKlient = trans_.getobj(TYPEID_N5KLIENT,clng(oRSSP("idkl")))
+		oPozVATUE.pvtue_strKodKraju = cstr(oRSSP("kraj"))
+		oPozVATUE.pvtue_strNIPKontr = cstr(oRSSP("nip"))
+		oPozVATUE.pvtue_curKwota = trans_.afc.convert.roundn(ccur(oRSSP("suma")),0)
+		oRSSP.MoveNext
+	loop
+
+	'------------------------------------------------
+	'WNT
+	'------------------------------------------------
+	pVATUE.vtue_listWNT.deleteall
+	
+#ifdef _ABAKOSTEEL	
+	if not pRozlVat is nothing then
+		strRozlVat = " zak.p_prozlvat = " + cstr(pRozlVat.IdObj) + vbNewLine
+	end if
+#endif	
+	
+#ifdef _IOW
+	strQry = "select 'kraj'=max(kr.strSkrot), 'idkl'=kl.idobj, 'nip'=max(kl.strNIP), 'suma'=sum(zak.curSumaNetto)-sum(isnull(org.curSumaNetto,0))  " + vbNewLine +_ 
+           "from n5zakup zak " + vbNewLine +_ 
+           " left join n5zakup org on zak.pPopZakup = org.IdObj " + vbNewLine +_
+	         " join n5klient kl on zak.pDostawca = kl.idobj " + vbNewLine +_ 
+	         " join n5kraj kr on kl.pKraj = kr.idobj " + vbNewLine +_
+           "where zak.pRejestrdok in (select idobj from n5rejestrdok where eTyp in (N5REJESTRDOK_WNT,N5REJESTRDOK_KOREKTA_WNT) and strNazwa in ('7 - WNT','8 - Rejestr korekt WNT','WNT - transport')) and " + vbNewLine +_
+	         "zak.dDatawyst between " + doc_.afc.convert.date2SQL(pVATUE.vtue_dDataOd) + " and " + doc_.afc.convert.date2SQL(pVATUE.vtue_dDataDo) + vbNewLine +_ 
+           "group by kl.idobj " + vbNewLine +_
+           "order by 1,2"
+#else
+	strQry = "select 'kraj'=max(kr.strSkrot), 'idkl'=kl.idobj, 'nip'=max(kl.strNIP), 'suma'=sum(zak.c_curwartnetto - isnull(t_orgzak.c_curwartnetto,0)) " + vbNewLine +_ 
+           "from vlist_n5zakup_listPozycje zak " + vbNewLine +_ 
+           " left outer join vlist_n5zakup_listpozycje t_orgzak on zak.p_ppopzakup = t_orgzak.p_idobj and zak.coll_lp = t_orgzak.coll_lp " + vbNewLine +_ 
+	         " join n5klient kl on zak.p_pdostawca = kl.idobj " + vbNewLine +_ 
+	         " join n5kraj kr on kl.pKraj = kr.idobj " + vbNewLine +_
+	         " join n5produkt p on zak.c_pprodukt = p.idobj " + vbNewLine +_ 
+           "where " + strRodzajProd + " = N5PRODUKT_TOWAR and zak.p_prejestrdok in (select idobj from n5rejestrdok where eTyp in (N5REJESTRDOK_WNT,N5REJESTRDOK_KOREKTA_WNT)) and " + vbNewLine +_
+#ifdef _ABAKOSTEEL
+			strRozlVat +_
+#else		   
+	         " zak.p_ddatawyst between " + doc_.afc.convert.date2SQL(pVATUE.vtue_dDataOd) + " and " + doc_.afc.convert.date2SQL(pVATUE.vtue_dDataDo) + vbNewLine +_ 
+#endif			 
+           "group by kl.idobj " + vbNewLine +_
+           "order by 1,2"
+#endif           
+
+	set oRSSp = trans_.createadors(strQry)
+
+	do while not oRSSP.EOF
+		set oPozVATUE = pVATUE.vtue_listWNT.addnew()
+		set oPozVATUE.pvtue_refKlient = trans_.getobj(TYPEID_N5KLIENT,clng(oRSSP("idkl")))
+		oPozVATUE.pvtue_strKodKraju = cstr(oRSSP("kraj"))
+		oPozVATUE.pvtue_strNIPKontr = cstr(oRSSP("nip"))
+		oPozVATUE.pvtue_curKwota = trans_.afc.convert.roundn(ccur(oRSSP("suma")),0)
+		oRSSP.MoveNext
+	loop
+  
+	'------------------------------------------------
+	'WSU
+	'------------------------------------------------
+	pVATUE.vtue_listWSU.deleteall
+	
+#ifdef _ABAKOSTEEL	
+	if not pRozlVat is nothing then
+		strRozlVat = "	vsp.p_idobj not in (select pPopSprzed from n5sprzedaz where pRozlVat = " + cstr(pRozlVat.IdObj) + ") and " + vbNewLine +_  
+					 "	vsp.p_prozlvat = " + cstr(pRozlVat.IdObj) + vbNewLine
+	end if
+#endif		
+	
+#ifndef _IOW
+	strQry = "select 'kraj'=max(kr.strSkrot), 'idkl'=kl.idobj,'rodzaj'=" + strRodzajProd + ", 'nip'=max(kl.strNIP), 'suma'=sum(vsp.c_curwartnetto) " + vbNewLine +_ 
+	"from vlist_n5sprzedaz_listPozycje vsp " + vbNewLine +_  
+	"	join n5klient kl on vsp.p_pklient = kl.idobj " + vbNewLine +_  
+	"	join n5kraj kr on kl.pKraj = kr.idobj " + vbNewLine +_  
+	"	join n5produkt p on vsp.c_pprodukt = p.idobj " + vbNewLine +_ 
+	"where " + strRodzajProd + " = N5PRODUKT_USLUGA and vsp.p_prejestrdok in (select idobj from n5rejestrdok where eTyp in (N5REJESTRDOK_WDT,N5REJESTRDOK_KOREKTA_WDT)) and " + vbNewLine +_
+#ifdef _ABAKOSTEEL
+			strRozlVat +_
+#else		
+	"	vsp.p_idobj not in (select pPopSprzed from n5sprzedaz where dDataWyst between " + doc_.afc.convert.date2SQL(pVATUE.vtue_dDataOd) + " and " + doc_.afc.convert.date2SQL(pVATUE.vtue_dDataDo) + ") and " + vbNewLine +_  
+	"	vsp.p_ddatawyst between " + doc_.afc.convert.date2SQL(pVATUE.vtue_dDataOd) + " and " + doc_.afc.convert.date2SQL(pVATUE.vtue_dDataDo) + vbNewLine +_  
+#endif	
+	"group by kl.idobj," + strRodzajProd + " " + vbNewLine +_  
+	"order by 1,2"  
+
+	set oRSSp = trans_.createadors(strQry)
+
+	do while not oRSSP.EOF
+		set oPozVATUE = pVATUE.vtue_listWSU.addnew()
+		set oPozVATUE.pvtue_refKlient = trans_.getobj(TYPEID_N5KLIENT,clng(oRSSP("idkl")))
+		oPozVATUE.pvtue_strKodKraju = cstr(oRSSP("kraj"))
+		oPozVATUE.pvtue_strNIPKontr = cstr(oRSSP("nip"))
+		oPozVATUE.pvtue_curKwota = trans_.afc.convert.roundn(ccur(oRSSP("suma")),0)
+		oRSSP.MoveNext
+	loop  
+#endif  
+
+end function
+
+]]>
+</script>
+
+</config>
+<body>
+</body>
+</page>

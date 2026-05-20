@@ -1,0 +1,1004 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1231.h"
+#include "h1240.h"
+
+#define EDOC_CODE_KIND_NIP		1		
+#define EDOC_CODE_KIND_ILN		2
+
+#define EDOC_MAX_NIP_LEN		10
+#define EDOC_MAX_ILN_LEN		13
+
+#define cdata_begin_zakomentowane	"<![CD" + "ATA["
+#define cdata_end_zakomentowane	"]"+"]>"
+
+#define cdata_begin	""
+#define cdata_end	""
+
+-->
+<page>
+<config>
+<script>
+<![CDATA[
+
+#include "50523"
+
+'has_nxm_feature
+#include "50203"
+
+dim pM60182 : set pM60182 = doc_.getmodule(60182)
+
+function dokhadl_to_ecod(byval pDokHandlId , byval pDokHandlType)
+	select case pDokHandlType
+		case TYPEID_N5SPRZEDAZ
+			set dokhadl_to_ecod = invoice_to_ecod(pDokHandlId)
+		case TYPEID_N5ZAMOWIENIE
+			set dokhadl_to_ecod = order_to_ecod(pDokHandlId)
+	end select
+end function
+
+function dokmag_to_ecod(byval pDokMagId, byval pDokMagType, byval strPath): dokmag_to_ecod = ""
+#ifdef _DENIS
+	if has_nxm_feature("wz_to_edi") then
+		if not nx_.nxm_features.wz_to_edi(trans_.get_this(), pDokMagId, strPath) then
+			dokmag_to_ecod = nx_.nxm_features.last_error_code + " " + nx_.nxm_features.last_error_description
+		end if		
+	end if
+#else
+	dokmag_to_ecod = nx_.features.handel.export.to_edi(trans_.get_this(), pDokMagId, pDokMagType, strPath)
+#endif	
+end function
+
+function dokhadl_to_edi(byval pDokHandlId , byval pDokHandlType)
+	select case pDokHandlType
+		case TYPEID_N5SPRZEDAZ
+			set dokhadl_to_edi = invoice_to_edi(pDokHandlId)
+		case TYPEID_N5ZAMOWIENIE
+			set dokhadl_to_edi = order_to_edi(pDokHandlId)
+	end select
+end function
+
+
+
+'srvDate
+#include "50126"
+
+'currentFirma
+#include "50203"
+
+
+
+private function prepare_invoice_stream_for_ecod()
+	dim stream:set stream = doc_.createstreamobj()
+'	stream.write "<?xml version=""1.0"" encoding=""windows-1250""?>" + vbNewLine
+	stream.write "<Document-Invoice>" + vbNewLine
+	set prepare_invoice_stream_for_ecod = stream
+end function 
+
+private function finalize_invoice_stream(byref stream)
+	stream.write "</Document-Invoice>" + vbNewLine
+end function
+
+private function write_invoice_header(byval invoice , byref stream)
+  dim bKorekta : bKorekta = invoice.n5sprzedaz_isKorekta()
+  
+	stream.write "<Invoice-Header>" + vbNewLine
+	stream.write  "<InvoiceNumber>" + format_nr_for_ecod(invoice.strNrDok) + "</InvoiceNumber>" + vbNewLine
+	stream.write  "<InvoiceDate>" + format_date_to_ecod(invoice.dDataWyst) + "</InvoiceDate>" + vbNewLine
+	stream.write  "<SalesDate>" + format_date_to_ecod(invoice.dDataSprzed) + "</SalesDate>" + vbNewLine
+	stream.write  "<InvoiceCurrency>" + invoice.pWaluta.strSkrot + "</InvoiceCurrency>" + vbNewLine
+	stream.write  "<InvoicePaymentDueDate>" + format_date_to_ecod(invoice.dDataPlat) + "</InvoicePaymentDueDate>" + vbNewLine	
+	stream.write  "<InvoicePaymentTerms>" + cstr(invoice.pSposobPlatnosci.nDni) + "</InvoicePaymentTerms>" + vbNewLine
+	dim code
+	if not invoice.pPopSprzed is nothing then
+		code = "C"
+	else
+		code = "9"
+	end if
+	stream.write  "<DocumentFunctionCode>" + code + "</DocumentFunctionCode>" + vbNewLine
+	if bKorekta then
+    stream.write "<CorrectionReason>RABAT</CorrectionReason>" + vbNewLine
+  end if
+
+	if not invoice.pZamowienie is nothing then
+#ifdef _DENIS
+		stream.write "<BuyerOrderNumber>" + invoice.pZamowienie.zam_strNrDokObcy + "</BuyerOrderNumber>" + vbNewLine
+#else
+		stream.write "<BuyerOrderNumber>" + invoice.pZamowienie.strNrDok + "</BuyerOrderNumber>" + vbNewLine
+#endif
+		stream.write "<BuyerOrderDate>" + format_date_to_ecod(invoice.pZamowienie.dDataWyst) + "</BuyerOrderDate>" + vbNewLine
+	else
+'		nx_.trace.error "EED001","Brak zamówienia do faktury - dokument może nie być akceptowalny"
+	end if
+	if bKorekta then
+    stream.write "<Reference>" + vbNewLine
+    stream.write "<InvoiceReferenceNumber>"+format_nr_for_ecod(invoice.pPopSprzed.strNrDok)+"</InvoiceReferenceNumber>" + vbNewLine
+    stream.write "<InvoiceReferenceDate>"+format_date_to_ecod(invoice.pPopSprzed.dDataSprzed)+"</InvoiceReferenceDate>" + vbNewLine
+    stream.write "</Reference>" + vbNewLine
+  end if
+	stream.write "</Invoice-Header>" + vbNewLine
+end function 
+
+
+private function write_invoice_parties(byval invoice , byref stream)
+	stream.write "<Invoice-Parties>" + vbNewLine
+	stream.write "<Buyer>" + vbNewLine
+	dim strBuyerILN
+	strBuyerILN = invoice.pKlient.kli_strILN
+	stream.write "<ILN>" + format_iln_nip_for_ecod(strBuyerILN, EDOC_CODE_KIND_ILN) + "</ILN>" + vbNewLine
+
+	dim strBuyerName : strBuyerName = invoice.pKlient.strNazwa
+	stream.write "<BuyerName_1>" + format_itemname_for_ecod(left(strBuyerName,35)) + "</BuyerName_1>" + vbNewLine
+	strBuyerName = mid(strBuyerName,36)
+	if strBuyerName <> "" then
+		stream.write "<BuyerName_2>" + format_itemname_for_ecod(left(strBuyerName,70)) + "</BuyerName_2>" + vbNewLine
+		strBuyerName = mid(strBuyerName,71)
+		if strBuyerName <> "" then
+			stream.write "<BuyerName_3>" + format_itemname_for_ecod(left(strBuyerName,70)) + "</BuyerName_3>" + vbNewLine
+		end if
+	end if
+
+	dim strBuyerAddress : strBuyerAddress = invoice.pKlient.strUlica + " " + invoice.pKlient.strNrDomu + "/" + invoice.pKlient.strNrLokalu
+	stream.write "<BuyerAddressLine_1>" + format_itemname_for_ecod(left(strBuyerAddress,30)) + "</BuyerAddressLine_1>" + vbNewLine
+	strBuyerAddress = mid(strBuyerAddress,31)
+	if strBuyerAddress <> "" then
+		stream.write "<BuyerAddressLine_2>" + format_itemname_for_ecod(left(strBuyerAddress,35)) + "</BuyerAddressLine_2>" + vbNewLine
+		strBuyerAddress = mid(strBuyerAddress,36)
+		if strBuyerAddress <> "" then
+			stream.write "<BuyerAddressLine_3>" + format_itemname_for_ecod(left(strBuyerAddress,70)) + "</BuyerAddressLine_3>" + vbNewLine
+		end if
+	end if
+
+	'stream.write "<County>" + format_itemname_for_ecod(left(invoice.pKlient.pMiejscowosc.pWojewodztwo.strNazwa,70)) + "</County>" + vbNewLine
+	stream.write "<City>" + format_itemname_for_ecod(left(invoice.pKlient.pMiejscowosc.strNazwa,70)) + "</City>" + vbNewLine
+	stream.write "<PostCode>" + format_itemname_for_ecod(left(invoice.pKlient.strKod,20)) + "</PostCode>" + vbNewLine
+	stream.write "<Country>" + format_itemname_for_ecod(left(invoice.pKlient.pKraj.strNazwa,20)) + "</Country>" + vbNewLine
+
+	stream.write "<TaxID>" + format_iln_nip_for_ecod(invoice.pKlient.strNip , EDOC_CODE_KIND_NIP) + "</TaxID>" + vbNewLine
+	stream.write "</Buyer>" + vbNewLine
+
+	stream.write "<Seller>" + vbNewLine
+	stream.write "<ILN>" + format_iln_nip_for_ecod(getCurrentFirma().frm_strILN, EDOC_CODE_KIND_ILN) + "</ILN>" + vbNewLine
+
+	dim strSellerName : strSellerName = getCurrentFirma().strNazwa
+	stream.write "<SellerName_1>" + format_itemname_for_ecod(left(strSellerName,35)) + "</SellerName_1>" + vbNewLine
+	strSellerName = mid(strSellerName,36)
+	if strSellerName <> "" then
+		stream.write "<SellerName_2>" + format_itemname_for_ecod(left(strSellerName,70)) + "</SellerName_2>" + vbNewLine
+		strSellerName = mid(strSellerName,71)
+		if strSellerName <> "" then
+			stream.write "<SellerName_3>" + format_itemname_for_ecod(left(strSellerName,70)) + "</SellerName_3>" + vbNewLine
+		end if
+	end if
+
+	dim strSellerAddress : strSellerAddress = getCurrentFirma().strUlica + " " + getCurrentFirma().strNrDomu + "/" + getCurrentFirma().strNrLokalu
+	stream.write "<SellerAddressLine_1>" + format_itemname_for_ecod(left(strSellerAddress,30)) + "</SellerAddressLine_1>" + vbNewLine
+	strSellerAddress = mid(strSellerAddress,31)
+	if strSellerAddress <> "" then
+		stream.write "<SellerAddressLine_2>" + format_itemname_for_ecod(left(strSellerAddress,35)) + "</SellerAddressLine_2>" + vbNewLine
+		strSellerAddress = mid(strSellerAddress,36)
+		if strSellerAddress <> "" then
+			stream.write "<SellerAddressLine_3>" + format_itemname_for_ecod(left(strSellerAddress,70)) + "</SellerAddressLine_3>" + vbNewLine
+		end if
+	end if
+
+	'stream.write "<County>" + format_itemname_for_ecod(left(getCurrentFirma().pMiejscowosc.pWojewodztwo.strNazwa,70)) + "</County>" + vbNewLine
+	stream.write "<City>" + format_itemname_for_ecod(left(getCurrentFirma().pMiejscowosc.strNazwa,70)) + "</City>" + vbNewLine
+	stream.write "<PostCode>" + format_itemname_for_ecod(left(getCurrentFirma().strKod,20)) + "</PostCode>" + vbNewLine
+	stream.write "<Country>" + format_itemname_for_ecod(left(getCurrentFirma().pKraj.strNazwa,20)) + "</Country>" + vbNewLine
+
+	dim strNIP: strNIP = getCurrentFirma().strNip
+#ifdef _DENIS
+	stream.write "<TaxID>" + format_iln_nip_for_ecod("PL" + strNIP , EDOC_CODE_KIND_NIP) + "</TaxID>" + vbNewLine
+#else
+	stream.write "<TaxID>" + format_iln_nip_for_ecod(strNIP , EDOC_CODE_KIND_NIP) + "</TaxID>" + vbNewLine
+#endif  
+	stream.write "<CodeByBuyer>" + format_itemname_for_ecod(invoice.pKlient.kli_strIndeksNaszaFirma) + "</CodeByBuyer>" + vbNewLine
+	stream.write "</Seller>" + vbNewLine
+
+	stream.write "<Payee>" + vbNewLine
+	stream.write "<ILN>" + format_iln_nip_for_ecod(getCurrentFirma().frm_strILN, EDOC_CODE_KIND_ILN) + "</ILN>" + vbNewLine
+
+	dim strPayeeName : strPayeeName = getCurrentFirma().strNazwa
+	stream.write "<PayeeName_1>" + format_itemname_for_ecod(left(strPayeeName,35)) + "</PayeeName_1>" + vbNewLine
+	strPayeeName = mid(strPayeeName,36)
+	if strPayeeName <> "" then
+		stream.write "<PayeeName_2>" + format_itemname_for_ecod(left(strPayeeName,70)) + "</PayeeName_2>" + vbNewLine
+		strPayeeName = mid(strPayeeName,71)
+		if strPayeeName <> "" then
+			stream.write "<PayeeName_3>" + format_itemname_for_ecod(left(strPayeeName,70)) + "</PayeeName_3>" + vbNewLine
+		end if
+	end if
+
+	dim strPayeeAddress : strPayeeAddress = getCurrentFirma().strUlica + " " + getCurrentFirma().strNrDomu + "/" + getCurrentFirma().strNrLokalu
+	stream.write "<PayeeAddressLine_1>" + format_itemname_for_ecod(left(strPayeeAddress,30)) + "</PayeeAddressLine_1>" + vbNewLine
+	strPayeeAddress = mid(strPayeeAddress,31)
+	if strPayeeAddress <> "" then
+		stream.write "<PayeeAddressLine_2>" + format_itemname_for_ecod(left(strPayeeAddress,35)) + "</PayeeAddressLine_2>" + vbNewLine
+		strPayeeAddress = mid(strPayeeAddress,36)
+		if strPayeeAddress <> "" then
+			stream.write "<PayeeAddressLine_3>" + format_itemname_for_ecod(left(strPayeeAddress,70)) + "</PayeeAddressLine_3>" + vbNewLine
+		end if
+	end if
+
+	'stream.write "<County>" + format_itemname_for_ecod(left(getCurrentFirma().pMiejscowosc.pWojewodztwo.strNazwa,70)) + "</County>" + vbNewLine
+	stream.write "<City>" + format_itemname_for_ecod(left(getCurrentFirma().pMiejscowosc.strNazwa,70)) + "</City>" + vbNewLine
+	stream.write "<PostCode>" + format_itemname_for_ecod(left(getCurrentFirma().strKod,20)) + "</PostCode>" + vbNewLine
+	stream.write "<Country>" + format_itemname_for_ecod(left(getCurrentFirma().pKraj.strNazwa,20)) + "</Country>" + vbNewLine
+
+	stream.write "<AccountNumber>" + format_account_for_ecod(getCurrentFirma().strRachunek1) + "</AccountNumber>" + vbNewLine
+	stream.write "</Payee>" + vbNewLine
+
+	stream.write "<DeliveryDetail>" + vbNewLine
+	dim strILN_JO : strILN_JO = invoice.pKlient.kli_strILN
+	
+	if not invoice.pKlient_JO is nothing then
+		strILN_JO = invoice.pKlient_JO.kjo_strILN
+	end if
+
+	stream.write "<DeliveryLocationNumber>" + _
+		format_iln_nip_for_ecod(strILN_JO , EDOC_CODE_KIND_ILN) + "</DeliveryLocationNumber>" + vbNewLine
+	stream.write "<DeliveryDate>" + format_date_to_ecod(invoice.dDataWyst) + "</DeliveryDate>" + vbNewLine
+
+	dim strDeliveryDespatchNumber : strDeliveryDespatchNumber = ""
+	dim strSQL
+	strSQL = "select strNrDok from n5dokmag where " +_
+		   " pRejestrDok in (select idobj from n5rejestrdok where eTyp=N5REJESTRDOK__WZ) and " +_
+		   " wrefDokHandl_wrt=TYPEID_N5SPRZEDAZ and wrefDokHandl = " + cstr(invoice.idobj)
+	dim oRecordset
+	set oRecordset = trans_.createadors(strSQL)
+	if oRecordset.recordCount = 0 then
+		if not invoice.pZamowienie is nothing then
+			strSQL = "select strNrDok from n5dokmag where " +_
+				   " pRejestrDok in (select idobj from n5rejestrdok where eTyp=N5REJESTRDOK__WZ) and " +_
+				   " wrefDokHandl_wrt = TYPEID_N5ZAMOWIENIE and wrefDokHandl = " + cstr(invoice.pZamowienie.idobj)
+			set oRecordset = trans_.createadors(strSQL)
+		end if
+	end if
+  
+	if not oRecordset.EOF then
+		strDeliveryDespatchNumber = CStr(oRecordset("strNrDok").value)
+	end if
+
+	stream.write "<DespatchNumber>" + strDeliveryDespatchNumber + "</DespatchNumber>" + vbNewLine
+	stream.write "</DeliveryDetail>" + vbNewLine
+
+	stream.write "</Invoice-Parties>" + vbNewLine
+end function 
+
+
+
+private function write_invoice_line(byref invoice,byval invoice_position , byval iter , byref stream)
+  dim bKorekta : bKorekta = invoice.n5sprzedaz_isKorekta()
+  
+  dim oPozKorekty
+  if bKorekta then
+    set oPozKorekty = invoice.pPopSprzed.listPozycje.get(iter)
+  end if
+  
+	stream.write "<Line>" + vbNewLine
+
+	stream.write "<Line-Item>" + vbNewLine
+	stream.write "<LineNumber>" + cstr(iter) + "</LineNumber>" + vbNewLine
+	stream.write "<EAN>" + format_ean_for_ecod(invoice_position.pOpak.strEAN) + "</EAN>" + vbNewLine
+
+	stream.write "<BuyerPartNumber>" +_
+		+ pM60182.IndeksProduktu(invoice_position.pProdukt,invoice.pKlient) + "</BuyerPartNumber>" + vbNewLine
+#ifdef _METROX    
+	stream.write "<SupplierItemCode>" + invoice_position.pProdukt.strIndeks + "</SupplierItemCode>" + vbNewLine    
+#endif
+	dim strProdName: strProdName = invoice_position.pProdukt.strNazwa
+#ifdef _DENIS
+	'pobierz nazwę z info. dla klienta
+	strProdName = doc_.getmodule(60182).NazwaProduktu(invoice_position.pProdukt,invoice.pKlient) 
+	stream.write "<ItemDescription>" + format_itemname_for_ecod(strProdName) + "</ItemDescription>" + vbNewLine
+#else
+	stream.write "<ItemDescription>" + format_itemname_for_ecod(strProdName) + "</ItemDescription>" + vbNewLine
+#endif  
+	stream.write "<ItemType>CU</ItemType>" + vbNewLine
+
+	stream.write "<InvoiceQuantity>" + format_qty_for_ecod(invoice_position.curIloscOpak) + "</InvoiceQuantity>" + vbNewLine
+  if bKorekta then
+    stream.write "<PreviousInvoiceQuantity>"+format_qty_for_ecod(oPozKorekty.curIloscOpak)+"</PreviousInvoiceQuantity>"+ vbNewLine
+    stream.write "<CorrectionInvoiceQuantity>"+format_qty_for_ecod(invoice_position.curIloscOpak - oPozKorekty.curIloscOpak)+"</CorrectionInvoiceQuantity>"+ vbNewLine
+    stream.write "<QuantityPerUnit>"+format_qty_for_ecod(1.00)+"</QuantityPerUnit>"+ vbNewLine
+    stream.write "<CorrectionReason>RABAT</CorrectionReason>"+ vbNewLine
+  end if
+	stream.write "<UOMCoded>PCE</UOMCoded>" + vbNewLine
+  
+  dim bIsWalObca: bIsWalObca = (invoice.pWaluta.strSkrot <> "PLN")
+  if bIsWalObca then
+	  stream.write "<InvoiceUnitNetPrice>" + format_price_for_ecod(invoice_position.curCenaNettoWal) + "</InvoiceUnitNetPrice>" + vbNewLine  
+  else
+	  stream.write "<InvoiceUnitNetPrice>" + format_price_for_ecod(invoice_position.curCenaNetto) + "</InvoiceUnitNetPrice>" + vbNewLine
+  end if
+  if bKorekta then
+    if bIsWalObca then
+	    stream.write "<PreviousInvoiceUnitNetPrice>" + format_price_for_ecod(oPozKorekty.curCenaNettoWal) + "</PreviousInvoiceUnitNetPrice>" + vbNewLine
+      stream.write "<CorrectionInvoiceUnitNetPrice>" + format_price_for_ecod(invoice_position.curCenaNettoWal - oPozKorekty.curCenaNettoWal) + "</CorrectionInvoiceUnitNetPrice>" + vbNewLine    
+    else
+	    stream.write "<PreviousInvoiceUnitNetPrice>" + format_price_for_ecod(oPozKorekty.curCenaNetto) + "</PreviousInvoiceUnitNetPrice>" + vbNewLine
+      stream.write "<CorrectionInvoiceUnitNetPrice>" + format_price_for_ecod(invoice_position.curCenaNetto - oPozKorekty.curCenaNetto) + "</CorrectionInvoiceUnitNetPrice>" + vbNewLine
+    end if
+  end if
+	stream.write "<TaxRate>" + format_taxrate_for_ecod(invoice_position.eVat) + "</TaxRate>" + vbNewLine
+  if bKorekta then
+    stream.write "<PreviousTaxRate>" + format_taxrate_for_ecod(oPozKorekty.eVat) + "</PreviousTaxRate>" + vbNewLine
+  end if
+	stream.write "<TaxCategoryCode>" + format_taxcatcode_for_ecod(invoice_position.eVat) + "</TaxCategoryCode>" + vbNewLine
+  if bKorekta then
+	  stream.write "<PreviousTaxCategoryCode>" + format_taxcatcode_for_ecod(oPozKorekty.eVat) + "</PreviousTaxCategoryCode>" + vbNewLine
+  end if
+	stream.write "<TaxReference>" + vbNewLine
+	stream.write "<ReferenceType>" + format_taxreftype_for_ecod(invoice_position) + "</ReferenceType>" + vbNewLine
+	stream.write "<ReferenceNumber>" + format_taxrefnum_for_ecod(invoice_position) + "</ReferenceNumber>" + vbNewLine
+	stream.write "</TaxReference>" + vbNewLine
+
+	stream.write "<TaxAmount>" + format_price_for_ecod(invoice_position.curVat) + "</TaxAmount>" + vbNewLine
+  if bKorekta then
+ 	  stream.write "<PreviousTaxAmount>" + format_price_for_ecod(oPozKorekty.curVat) + "</PreviousTaxAmount>" + vbNewLine
+ 	  stream.write "<CorrectionTaxAmount>" + format_price_for_ecod(invoice_position.curVat - oPozKorekty.curVat) + "</CorrectionTaxAmount>" + vbNewLine
+  end if
+  if bIsWalObca then
+    stream.write "<NetAmount>" + format_price_for_ecod(invoice_position.curWartWal) + "</NetAmount>" + vbNewLine
+  else
+	  stream.write "<NetAmount>" + format_price_for_ecod(invoice_position.curWartNetto) + "</NetAmount>" + vbNewLine
+  end if
+  if bKorekta then
+    if bIsWalObca then
+      stream.write "<PreviousNetAmount>" + format_price_for_ecod(oPozKorekty.curWartWal) + "</PreviousNetAmount>" + vbNewLine
+      stream.write "<CorrectionNetAmount>" + format_price_for_ecod(invoice_position.curWartWal - oPozKorekty.curWartWal) + "</CorrectionNetAmount>" + vbNewLine    
+    else
+      stream.write "<PreviousNetAmount>" + format_price_for_ecod(oPozKorekty.curWartNetto) + "</PreviousNetAmount>" + vbNewLine
+      stream.write "<CorrectionNetAmount>" + format_price_for_ecod(invoice_position.curWartNetto - oPozKorekty.curWartNetto) + "</CorrectionNetAmount>" + vbNewLine
+    end if
+  end if
+	stream.write "</Line-Item>" + vbNewLine
+
+	stream.write "</Line>" + vbNewLine
+end function 
+
+
+private function write_invoice_lines(byval invoice , byref stream)
+	stream.write "<Invoice-Lines>" + vbNewLine
+	dim invoice_position
+	dim iter:iter = 1
+	for each invoice_position in invoice.listPozycje
+		write_invoice_line invoice,invoice_position , iter , stream
+		iter = iter + 1
+	next
+	stream.write "</Invoice-Lines>" + vbNewLine
+end function 
+
+
+private function write_invoice_summary(byval invoice , byref stream)
+  dim bKorekta : bKorekta = invoice.n5sprzedaz_isKorekta()
+  dim bIsWalObca: bIsWalObca = (invoice.pWaluta.strSkrot <> "PLN")
+  
+  stream.write "<Invoice-Summary>" + vbNewLine
+	stream.write "<TotalLines>" + cstr(invoice.listPozycje.count) + "</TotalLines>" + vbNewLine
+  if bIsWalObca then
+	  stream.write "<TotalNetAmount>" + format_price_for_ecod(invoice.curSumaWal) + "</TotalNetAmount>" + vbNewLine  
+  else
+	  stream.write "<TotalNetAmount>" + format_price_for_ecod(invoice.curSumaNetto) + "</TotalNetAmount>" + vbNewLine
+  end if
+  if bKorekta then
+    if bIsWalObca then
+	    stream.write "<PreviousTotalNetAmount>" + format_price_for_ecod(invoice.pPopSprzed.curSumaWal) + "</PreviousTotalNetAmount>" + vbNewLine
+	    stream.write "<CorrectionTotalNetAmount>" + format_price_for_ecod(invoice.curSumaWal - invoice.pPopSprzed.curSumaWal) + "</CorrectionTotalNetAmount>" + vbNewLine    
+    else
+	    stream.write "<PreviousTotalNetAmount>" + format_price_for_ecod(invoice.pPopSprzed.curSumaNetto) + "</PreviousTotalNetAmount>" + vbNewLine
+	    stream.write "<CorrectionTotalNetAmount>" + format_price_for_ecod(invoice.curSumaNetto - invoice.pPopSprzed.curSumaNetto) + "</CorrectionTotalNetAmount>" + vbNewLine
+    end if
+	
+    stream.write "<TotalTaxableBasis>" + format_price_for_ecod(invoice.curSumaNetto) + "</TotalTaxableBasis>" + vbNewLine
+    stream.write "<PreviousTotalTaxableBasis>" + format_price_for_ecod(invoice.pPopSprzed.curSumaNetto) + "</PreviousTotalTaxableBasis>" + vbNewLine
+    stream.write "<CorrectionTotalTaxableBasis>" + format_price_for_ecod(invoice.curSumaNetto - invoice.pPopSprzed.curSumaNetto) + "</CorrectionTotalTaxableBasis>" + vbNewLine
+  end if
+	stream.write "<TotalTaxAmount>" + format_price_for_ecod(invoice.curSumaVAT) + "</TotalTaxAmount>" + vbNewLine
+  if bKorekta then
+	  stream.write "<PreviousTotalTaxAmount>" + format_price_for_ecod(invoice.pPopSprzed.curSumaVAT) + "</PreviousTotalTaxAmount>" + vbNewLine
+	  stream.write "<CorrectionTotalTaxAmount>" + format_price_for_ecod(invoice.curSumaVAT - invoice.pPopSprzed.curSumaVAT) + "</CorrectionTotalTaxAmount>" + vbNewLine
+  end if
+  if bIsWalObca then
+	  stream.write "<TotalGrossAmount>" + format_price_for_ecod(invoice.curSumaWalBrutto) + "</TotalGrossAmount>" + vbNewLine  
+  else
+	  stream.write "<TotalGrossAmount>" + format_price_for_ecod(invoice.curSumaBrutto) + "</TotalGrossAmount>" + vbNewLine
+  end if
+  if bKorekta then
+    if bIsWalObca then
+	    stream.write "<PreviousTotalGrossAmount>" + format_price_for_ecod(invoice.pPopSprzed.curSumaWalBrutto) + "</PreviousTotalGrossAmount>" + vbNewLine
+	    stream.write "<CorrectionTotalGrossAmount>" + format_price_for_ecod(invoice.curSumaWalBrutto - invoice.pPopSprzed.curSumaWalBrutto) + "</CorrectionTotalGrossAmount>" + vbNewLine
+	    stream.write "<TotalGrossAmountFreeText>" + doc_.afc.display.slownie(invoice.curSumaWalBrutto) + "</TotalGrossAmountFreeText>" + vbNewLine    
+    else
+	    stream.write "<PreviousTotalGrossAmount>" + format_price_for_ecod(invoice.pPopSprzed.curSumaBrutto) + "</PreviousTotalGrossAmount>" + vbNewLine
+	    stream.write "<CorrectionTotalGrossAmount>" + format_price_for_ecod(invoice.curSumaBrutto - invoice.pPopSprzed.curSumaBrutto) + "</CorrectionTotalGrossAmount>" + vbNewLine
+	    stream.write "<TotalGrossAmountFreeText>" + doc_.afc.display.slownie(invoice.curSumaBrutto) + "</TotalGrossAmountFreeText>" + vbNewLine
+    end if
+	end if
+  stream.write "<Tax-Summary>" + vbNewLine
+
+	if invoice.curNetto0 <> ccur(0) then
+		stream.write "<Tax-Summary-Line>" + vbNewLine
+		stream.write "<TaxRate>" + format_taxrate_for_ecod(STAWKA_VAT_0) + "</TaxRate>" + vbNewLine
+    if bKorekta then
+		  stream.write "<PreviousTaxRate>" + format_taxrate_for_ecod(STAWKA_VAT_0) + "</PreviousTaxRate>" + vbNewLine
+    end if
+		stream.write "<TaxCategoryCode>" + format_taxcatcode_for_ecod(STAWKA_VAT_0) + "</TaxCategoryCode>" + vbNewLine
+    if bKorekta then
+		  stream.write "<PreviousTaxCategoryCode>" + format_taxcatcode_for_ecod(STAWKA_VAT_0) + "</PreviousTaxCategoryCode>" + vbNewLine
+    end if
+		stream.write "<TaxAmount>" + format_price_for_ecod(ccur(0)) + "</TaxAmount>" + vbNewLine
+    if bKorekta then
+		  stream.write "<PreviousTaxAmount>" + format_price_for_ecod(ccur(0)) + "</PreviousTaxAmount>" + vbNewLine
+		  stream.write "<CorrectionTaxAmount>" + format_price_for_ecod(ccur(0)) + "</CorrectionTaxAmount>" + vbNewLine
+	  end if
+    if bIsWalObca then
+  	  stream.write "<TaxableAmount>" + format_price_for_ecod(invoice.curSumaWal) + "</TaxableAmount>" + vbNewLine    
+    else
+  	  stream.write "<TaxableAmount>" + format_price_for_ecod(invoice.curNetto0) + "</TaxableAmount>" + vbNewLine
+    end if
+    if bKorekta then
+      if bIsWalObca then
+  	    stream.write "<PreviousTaxableAmount>" + format_price_for_ecod(invoice.pPopSprzed.curSumaWal) + "</PreviousTaxableAmount>" + vbNewLine
+  	    stream.write "<CorrectionTaxableAmount>" + format_price_for_ecod(invoice.curSumaWal - invoice.pPopSprzed.curSumaWal) + "</CorrectionTaxableAmount>" + vbNewLine      
+      else
+  	    stream.write "<PreviousTaxableAmount>" + format_price_for_ecod(invoice.pPopSprzed.curNetto0) + "</PreviousTaxableAmount>" + vbNewLine
+  	    stream.write "<CorrectionTaxableAmount>" + format_price_for_ecod(invoice.curNetto0 - invoice.pPopSprzed.curNetto0) + "</CorrectionTaxableAmount>" + vbNewLine
+      end if
+	  	stream.write "<TotalTaxableBasis>" + format_price_for_ecod(invoice.curNetto0) + "</TotalTaxableBasis>" + vbNewLine
+  	  stream.write "<PreviousTotalTaxableBasis>" + format_price_for_ecod(invoice.pPopSprzed.curNetto0) + "</PreviousTotalTaxableBasis>" + vbNewLine
+  	  stream.write "<CorrectionTotalTaxableBasis>" + format_price_for_ecod(invoice.curNetto0 - invoice.pPopSprzed.curNetto0) + "</CorrectionTotalTaxableBasis>" + vbNewLine
+	  	stream.write "<SubtotalAmount>" + format_price_for_ecod(invoice.curNetto0) + "</SubtotalAmount>" + vbNewLine
+  	  stream.write "<PreviousSubtotalAmount>" + format_price_for_ecod(invoice.pPopSprzed.curNetto0) + "</PreviousSubtotalAmount>" + vbNewLine
+  	  stream.write "<CorrectionSubtotalAmount>" + format_price_for_ecod(invoice.curNetto0 - invoice.pPopSprzed.curNetto0) + "</CorrectionSubtotalAmount>" + vbNewLine
+	  end if
+	  stream.write "</Tax-Summary-Line>" + vbNewLine		
+	end if
+
+	if invoice.curNettoZw <> ccur(0) then
+		stream.write "<Tax-Summary-Line>" + vbNewLine
+		stream.write "<TaxRate>" + format_taxrate_for_ecod(STAWKA_VAT_ZWOLNIONY) + "</TaxRate>" + vbNewLine
+		stream.write "<TaxCategoryCode>" + format_taxcatcode_for_ecod(STAWKA_VAT_ZWOLNIONY) + "</TaxCategoryCode>" + vbNewLine
+		stream.write "<TaxAmount>" + format_price_for_ecod(ccur(0)) + "</TaxAmount>" + vbNewLine
+		stream.write "<TaxableAmount>" + format_price_for_ecod(invoice.curNettoZw) + "</TaxableAmount>" + vbNewLine
+		stream.write "</Tax-Summary-Line>" + vbNewLine		
+	end if
+
+	if invoice.curNettoNp <> ccur(0) then
+		stream.write "<Tax-Summary-Line>" + vbNewLine
+		stream.write "<TaxRate>" + format_taxrate_for_ecod(STAWKA_VAT_NIE_PODLEGA) + "</TaxRate>" + vbNewLine
+		stream.write "<TaxCategoryCode>" + format_taxcatcode_for_ecod(STAWKA_VAT_NIE_PODLEGA) + "</TaxCategoryCode>" + vbNewLine
+		stream.write "<TaxAmount>" + format_price_for_ecod(ccur(0)) + "</TaxAmount>" + vbNewLine
+		stream.write "<TaxableAmount>" + format_price_for_ecod(invoice.curNettoNp) + "</TaxableAmount>" + vbNewLine
+		stream.write "</Tax-Summary-Line>" + vbNewLine		
+	end if
+
+
+	if invoice.curNetto2 <> ccur(0) then
+		stream.write "<Tax-Summary-Line>" + vbNewLine
+		stream.write "<TaxRate>" + format_taxrate_for_ecod(STAWKA_VAT_2) + "</TaxRate>" + vbNewLine
+		stream.write "<TaxCategoryCode>" + format_taxcatcode_for_ecod(STAWKA_VAT_2) + "</TaxCategoryCode>" + vbNewLine
+		stream.write "<TaxAmount>" + format_price_for_ecod(invoice.curVat2) + "</TaxAmount>" + vbNewLine
+		stream.write "<TaxableAmount>" + format_price_for_ecod(invoice.curNetto2) + "</TaxableAmount>" + vbNewLine
+		stream.write "</Tax-Summary-Line>" + vbNewLine		
+	end if
+
+
+	if invoice.curNetto3 <> ccur(0) then
+		stream.write "<Tax-Summary-Line>" + vbNewLine
+		stream.write "<TaxRate>" + format_taxrate_for_ecod(STAWKA_VAT_3) + "</TaxRate>" + vbNewLine
+		stream.write "<TaxCategoryCode>" + format_taxcatcode_for_ecod(STAWKA_VAT_3) + "</TaxCategoryCode>" + vbNewLine
+		stream.write "<TaxAmount>" + format_price_for_ecod(invoice.curVat3) + "</TaxAmount>" + vbNewLine
+		stream.write "<TaxableAmount>" + format_price_for_ecod(invoice.curNetto3) + "</TaxableAmount>" + vbNewLine
+		stream.write "</Tax-Summary-Line>" + vbNewLine		
+	end if
+
+
+	if invoice.curNetto4 <> ccur(0) then
+		stream.write "<Tax-Summary-Line>" + vbNewLine
+		stream.write "<TaxRate>" + format_taxrate_for_ecod(STAWKA_VAT_4) + "</TaxRate>" + vbNewLine
+		stream.write "<TaxCategoryCode>" + format_taxcatcode_for_ecod(STAWKA_VAT_4) + "</TaxCategoryCode>" + vbNewLine
+		stream.write "<TaxAmount>" + format_price_for_ecod(invoice.curVat4) + "</TaxAmount>" + vbNewLine
+		stream.write "<TaxableAmount>" + format_price_for_ecod(invoice.curNetto4) + "</TaxableAmount>" + vbNewLine
+		stream.write "</Tax-Summary-Line>" + vbNewLine		
+	end if
+
+
+	if invoice.curNetto7 <> ccur(0) then
+		stream.write "<Tax-Summary-Line>" + vbNewLine
+		stream.write "<TaxRate>" + format_taxrate_for_ecod(STAWKA_VAT_7) + "</TaxRate>" + vbNewLine
+    if bKorekta then
+		  stream.write "<PreviousTaxRate>" + format_taxrate_for_ecod(STAWKA_VAT_7) + "</PreviousTaxRate>" + vbNewLine
+    end if
+		stream.write "<TaxCategoryCode>" + format_taxcatcode_for_ecod(STAWKA_VAT_7) + "</TaxCategoryCode>" + vbNewLine
+	  if bKorekta then
+		  stream.write "<PreviousTaxCategoryCode>" + format_taxcatcode_for_ecod(STAWKA_VAT_7) + "</PreviousTaxCategoryCode>" + vbNewLine
+    end if
+    stream.write "<TaxAmount>" + format_price_for_ecod(invoice.curVat7) + "</TaxAmount>" + vbNewLine
+    if bKorekta then
+		  stream.write "<PreviousTaxAmount>" + format_price_for_ecod(invoice.pPopSprzed.curVat7) + "</PreviousTaxAmount>" + vbNewLine
+		  stream.write "<CorrectionTaxAmount>" + format_price_for_ecod(invoice.curVat7 - invoice.pPopSprzed.curVat7) + "</CorrectionTaxAmount>" + vbNewLine
+	  end if
+		stream.write "<TaxableAmount>" + format_price_for_ecod(invoice.curNetto7) + "</TaxableAmount>" + vbNewLine
+    if bKorekta then
+  	  stream.write "<PreviousTaxableAmount>" + format_price_for_ecod(invoice.pPopSprzed.curNetto7) + "</PreviousTaxableAmount>" + vbNewLine
+  	  stream.write "<CorrectionTaxableAmount>" + format_price_for_ecod(invoice.curNetto7 - invoice.pPopSprzed.curNetto7) + "</CorrectionTaxableAmount>" + vbNewLine
+	  	stream.write "<TotalTaxableBasis>" + format_price_for_ecod(invoice.curNetto7) + "</TotalTaxableBasis>" + vbNewLine
+  	  stream.write "<PreviousTotalTaxableBasis>" + format_price_for_ecod(invoice.pPopSprzed.curNetto7) + "</PreviousTotalTaxableBasis>" + vbNewLine
+  	  stream.write "<CorrectionTotalTaxableBasis>" + format_price_for_ecod(invoice.curNetto7 - invoice.pPopSprzed.curNetto7) + "</CorrectionTotalTaxableBasis>" + vbNewLine
+	  	stream.write "<SubtotalAmount>" + format_price_for_ecod(invoice.curBrutto7) + "</SubtotalAmount>" + vbNewLine
+  	  stream.write "<PreviousSubtotalAmount>" + format_price_for_ecod(invoice.pPopSprzed.curBrutto7) + "</PreviousSubtotalAmount>" + vbNewLine
+  	  stream.write "<CorrectionSubtotalAmount>" + format_price_for_ecod(invoice.curBrutto7 - invoice.pPopSprzed.curBrutto7) + "</CorrectionSubtotalAmount>" + vbNewLine
+	  end if
+		stream.write "</Tax-Summary-Line>" + vbNewLine		
+	end if
+
+
+	if invoice.curNetto12 <> ccur(0) then
+		stream.write "<Tax-Summary-Line>" + vbNewLine
+		stream.write "<TaxRate>" + format_taxrate_for_ecod(STAWKA_VAT_12) + "</TaxRate>" + vbNewLine
+		stream.write "<TaxCategoryCode>" + format_taxcatcode_for_ecod(STAWKA_VAT_12) + "</TaxCategoryCode>" + vbNewLine
+		stream.write "<TaxAmount>" + format_price_for_ecod(invoice.curVat12) + "</TaxAmount>" + vbNewLine
+		stream.write "<TaxableAmount>" + format_price_for_ecod(invoice.curNetto12) + "</TaxableAmount>" + vbNewLine
+		stream.write "</Tax-Summary-Line>" + vbNewLine		
+	end if
+
+
+	if invoice.curNetto17 <> ccur(0) then
+		stream.write "<Tax-Summary-Line>" + vbNewLine
+		stream.write "<TaxRate>" + format_taxrate_for_ecod(STAWKA_VAT_17) + "</TaxRate>" + vbNewLine
+		stream.write "<TaxCategoryCode>" + format_taxcatcode_for_ecod(STAWKA_VAT_17) + "</TaxCategoryCode>" + vbNewLine
+		stream.write "<TaxAmount>" + format_price_for_ecod(invoice.curVat17) + "</TaxAmount>" + vbNewLine
+		stream.write "<TaxableAmount>" + format_price_for_ecod(invoice.curNetto17) + "</TaxableAmount>" + vbNewLine
+		stream.write "</Tax-Summary-Line>" + vbNewLine		
+	end if
+
+
+	if invoice.curNetto22 <> ccur(0) then
+		stream.write "<Tax-Summary-Line>" + vbNewLine
+		stream.write "<TaxRate>" + format_taxrate_for_ecod(STAWKA_VAT_22) + "</TaxRate>" + vbNewLine
+    if bKorekta then
+		  stream.write "<PreviousTaxRate>" + format_taxrate_for_ecod(STAWKA_VAT_22) + "</PreviousTaxRate>" + vbNewLine
+    end if
+		stream.write "<TaxCategoryCode>" + format_taxcatcode_for_ecod(STAWKA_VAT_22) + "</TaxCategoryCode>" + vbNewLine
+	  if bKorekta then
+		  stream.write "<PreviousTaxCategoryCode>" + format_taxcatcode_for_ecod(STAWKA_VAT_22) + "</PreviousTaxCategoryCode>" + vbNewLine
+    end if
+		stream.write "<TaxAmount>" + format_price_for_ecod(invoice.curVat22) + "</TaxAmount>" + vbNewLine
+    if bKorekta then
+		  stream.write "<PreviousTaxAmount>" + format_price_for_ecod(invoice.pPopSprzed.curVat22) + "</PreviousTaxAmount>" + vbNewLine
+		  stream.write "<CorrectionTaxAmount>" + format_price_for_ecod(invoice.curVat22 - invoice.pPopSprzed.curVat22) + "</CorrectionTaxAmount>" + vbNewLine
+	  end if
+		stream.write "<TaxableAmount>" + format_price_for_ecod(invoice.curNetto22) + "</TaxableAmount>" + vbNewLine
+    if bKorekta then
+  	  stream.write "<PreviousTaxableAmount>" + format_price_for_ecod(invoice.pPopSprzed.curNetto22) + "</PreviousTaxableAmount>" + vbNewLine
+  	  stream.write "<CorrectionTaxableAmount>" + format_price_for_ecod(invoice.curNetto22 - invoice.pPopSprzed.curNetto22) + "</CorrectionTaxableAmount>" + vbNewLine
+	  	stream.write "<TotalTaxableBasis>" + format_price_for_ecod(invoice.curNetto22) + "</TotalTaxableBasis>" + vbNewLine
+  	  stream.write "<PreviousTotalTaxableBasis>" + format_price_for_ecod(invoice.pPopSprzed.curNetto22) + "</PreviousTotalTaxableBasis>" + vbNewLine
+  	  stream.write "<CorrectionTotalTaxableBasis>" + format_price_for_ecod(invoice.curNetto22 - invoice.pPopSprzed.curNetto22) + "</CorrectionTotalTaxableBasis>" + vbNewLine
+	  	stream.write "<SubtotalAmount>" + format_price_for_ecod(invoice.curBrutto22) + "</SubtotalAmount>" + vbNewLine
+  	  stream.write "<PreviousSubtotalAmount>" + format_price_for_ecod(invoice.pPopSprzed.curBrutto22) + "</PreviousSubtotalAmount>" + vbNewLine
+  	  stream.write "<CorrectionSubtotalAmount>" + format_price_for_ecod(invoice.curBrutto22 - invoice.pPopSprzed.curBrutto22) + "</CorrectionSubtotalAmount>" + vbNewLine
+	  end if
+    stream.write "</Tax-Summary-Line>" + vbNewLine		
+	end if
+  
+  
+	if invoice.curNetto5 <> ccur(0) then
+		stream.write "<Tax-Summary-Line>" + vbNewLine
+		stream.write "<TaxRate>" + format_taxrate_for_ecod(STAWKA_VAT_5) + "</TaxRate>" + vbNewLine
+    if bKorekta then
+		  stream.write "<PreviousTaxRate>" + format_taxrate_for_ecod(STAWKA_VAT_5) + "</PreviousTaxRate>" + vbNewLine
+    end if
+		stream.write "<TaxCategoryCode>" + format_taxcatcode_for_ecod(STAWKA_VAT_5) + "</TaxCategoryCode>" + vbNewLine
+	  if bKorekta then
+		  stream.write "<PreviousTaxCategoryCode>" + format_taxcatcode_for_ecod(STAWKA_VAT_5) + "</PreviousTaxCategoryCode>" + vbNewLine
+    end if
+		stream.write "<TaxAmount>" + format_price_for_ecod(invoice.curVat5) + "</TaxAmount>" + vbNewLine
+    if bKorekta then
+		  stream.write "<PreviousTaxAmount>" + format_price_for_ecod(invoice.pPopSprzed.curVat5) + "</PreviousTaxAmount>" + vbNewLine
+		  stream.write "<CorrectionTaxAmount>" + format_price_for_ecod(invoice.curVat5 - invoice.pPopSprzed.curVat5) + "</CorrectionTaxAmount>" + vbNewLine
+	  end if
+		stream.write "<TaxableAmount>" + format_price_for_ecod(invoice.curNetto5) + "</TaxableAmount>" + vbNewLine
+    if bKorekta then
+  	  stream.write "<PreviousTaxableAmount>" + format_price_for_ecod(invoice.pPopSprzed.curNetto5) + "</PreviousTaxableAmount>" + vbNewLine
+  	  stream.write "<CorrectionTaxableAmount>" + format_price_for_ecod(invoice.curNetto5 - invoice.pPopSprzed.curNetto5) + "</CorrectionTaxableAmount>" + vbNewLine
+	  	stream.write "<TotalTaxableBasis>" + format_price_for_ecod(invoice.curNetto5) + "</TotalTaxableBasis>" + vbNewLine
+  	  stream.write "<PreviousTotalTaxableBasis>" + format_price_for_ecod(invoice.pPopSprzed.curNetto5) + "</PreviousTotalTaxableBasis>" + vbNewLine
+  	  stream.write "<CorrectionTotalTaxableBasis>" + format_price_for_ecod(invoice.curNetto5 - invoice.pPopSprzed.curNetto5) + "</CorrectionTotalTaxableBasis>" + vbNewLine
+	  	stream.write "<SubtotalAmount>" + format_price_for_ecod(invoice.curBrutto5) + "</SubtotalAmount>" + vbNewLine
+  	  stream.write "<PreviousSubtotalAmount>" + format_price_for_ecod(invoice.pPopSprzed.curBrutto5) + "</PreviousSubtotalAmount>" + vbNewLine
+  	  stream.write "<CorrectionSubtotalAmount>" + format_price_for_ecod(invoice.curBrutto5 - invoice.pPopSprzed.curBrutto5) + "</CorrectionSubtotalAmount>" + vbNewLine
+	  end if
+    stream.write "</Tax-Summary-Line>" + vbNewLine		
+	end if  
+  
+  
+	if invoice.curNetto8 <> ccur(0) then
+		stream.write "<Tax-Summary-Line>" + vbNewLine
+		stream.write "<TaxRate>" + format_taxrate_for_ecod(STAWKA_VAT_8) + "</TaxRate>" + vbNewLine
+    if bKorekta then
+		  stream.write "<PreviousTaxRate>" + format_taxrate_for_ecod(STAWKA_VAT_8) + "</PreviousTaxRate>" + vbNewLine
+    end if
+		stream.write "<TaxCategoryCode>" + format_taxcatcode_for_ecod(STAWKA_VAT_8) + "</TaxCategoryCode>" + vbNewLine
+	  if bKorekta then
+		  stream.write "<PreviousTaxCategoryCode>" + format_taxcatcode_for_ecod(STAWKA_VAT_8) + "</PreviousTaxCategoryCode>" + vbNewLine
+    end if
+		stream.write "<TaxAmount>" + format_price_for_ecod(invoice.curVat8) + "</TaxAmount>" + vbNewLine
+    if bKorekta then
+		  stream.write "<PreviousTaxAmount>" + format_price_for_ecod(invoice.pPopSprzed.curVat8) + "</PreviousTaxAmount>" + vbNewLine
+		  stream.write "<CorrectionTaxAmount>" + format_price_for_ecod(invoice.curVat8 - invoice.pPopSprzed.curVat8) + "</CorrectionTaxAmount>" + vbNewLine
+	  end if
+		stream.write "<TaxableAmount>" + format_price_for_ecod(invoice.curNetto8) + "</TaxableAmount>" + vbNewLine
+    if bKorekta then
+  	  stream.write "<PreviousTaxableAmount>" + format_price_for_ecod(invoice.pPopSprzed.curNetto8) + "</PreviousTaxableAmount>" + vbNewLine
+  	  stream.write "<CorrectionTaxableAmount>" + format_price_for_ecod(invoice.curNetto8 - invoice.pPopSprzed.curNetto8) + "</CorrectionTaxableAmount>" + vbNewLine
+	  	stream.write "<TotalTaxableBasis>" + format_price_for_ecod(invoice.curNetto8) + "</TotalTaxableBasis>" + vbNewLine
+  	  stream.write "<PreviousTotalTaxableBasis>" + format_price_for_ecod(invoice.pPopSprzed.curNetto8) + "</PreviousTotalTaxableBasis>" + vbNewLine
+  	  stream.write "<CorrectionTotalTaxableBasis>" + format_price_for_ecod(invoice.curNetto8 - invoice.pPopSprzed.curNetto8) + "</CorrectionTotalTaxableBasis>" + vbNewLine
+	  	stream.write "<SubtotalAmount>" + format_price_for_ecod(invoice.curBrutto8) + "</SubtotalAmount>" + vbNewLine
+  	  stream.write "<PreviousSubtotalAmount>" + format_price_for_ecod(invoice.pPopSprzed.curBrutto8) + "</PreviousSubtotalAmount>" + vbNewLine
+  	  stream.write "<CorrectionSubtotalAmount>" + format_price_for_ecod(invoice.curBrutto8 - invoice.pPopSprzed.curBrutto8) + "</CorrectionSubtotalAmount>" + vbNewLine
+	  end if
+    stream.write "</Tax-Summary-Line>" + vbNewLine		
+	end if  
+
+
+	if invoice.curNetto23 <> ccur(0) then
+		stream.write "<Tax-Summary-Line>" + vbNewLine
+		stream.write "<TaxRate>" + format_taxrate_for_ecod(STAWKA_VAT_23) + "</TaxRate>" + vbNewLine
+    if bKorekta then
+		  stream.write "<PreviousTaxRate>" + format_taxrate_for_ecod(STAWKA_VAT_23) + "</PreviousTaxRate>" + vbNewLine
+    end if
+		stream.write "<TaxCategoryCode>" + format_taxcatcode_for_ecod(STAWKA_VAT_23) + "</TaxCategoryCode>" + vbNewLine
+	  if bKorekta then
+		  stream.write "<PreviousTaxCategoryCode>" + format_taxcatcode_for_ecod(STAWKA_VAT_23) + "</PreviousTaxCategoryCode>" + vbNewLine
+    end if
+		stream.write "<TaxAmount>" + format_price_for_ecod(invoice.curVat23) + "</TaxAmount>" + vbNewLine
+    if bKorekta then
+		  stream.write "<PreviousTaxAmount>" + format_price_for_ecod(invoice.pPopSprzed.curVat23) + "</PreviousTaxAmount>" + vbNewLine
+		  stream.write "<CorrectionTaxAmount>" + format_price_for_ecod(invoice.curVat23 - invoice.pPopSprzed.curVat23) + "</CorrectionTaxAmount>" + vbNewLine
+	  end if
+		stream.write "<TaxableAmount>" + format_price_for_ecod(invoice.curNetto23) + "</TaxableAmount>" + vbNewLine
+    if bKorekta then
+  	  stream.write "<PreviousTaxableAmount>" + format_price_for_ecod(invoice.pPopSprzed.curNetto23) + "</PreviousTaxableAmount>" + vbNewLine
+  	  stream.write "<CorrectionTaxableAmount>" + format_price_for_ecod(invoice.curNetto23 - invoice.pPopSprzed.curNetto23) + "</CorrectionTaxableAmount>" + vbNewLine
+	  	stream.write "<TotalTaxableBasis>" + format_price_for_ecod(invoice.curNetto23) + "</TotalTaxableBasis>" + vbNewLine
+  	  stream.write "<PreviousTotalTaxableBasis>" + format_price_for_ecod(invoice.pPopSprzed.curNetto23) + "</PreviousTotalTaxableBasis>" + vbNewLine
+  	  stream.write "<CorrectionTotalTaxableBasis>" + format_price_for_ecod(invoice.curNetto23 - invoice.pPopSprzed.curNetto23) + "</CorrectionTotalTaxableBasis>" + vbNewLine
+	  	stream.write "<SubtotalAmount>" + format_price_for_ecod(invoice.curBrutto23) + "</SubtotalAmount>" + vbNewLine
+  	  stream.write "<PreviousSubtotalAmount>" + format_price_for_ecod(invoice.pPopSprzed.curBrutto23) + "</PreviousSubtotalAmount>" + vbNewLine
+  	  stream.write "<CorrectionSubtotalAmount>" + format_price_for_ecod(invoice.curBrutto23 - invoice.pPopSprzed.curBrutto23) + "</CorrectionSubtotalAmount>" + vbNewLine
+	  end if
+    stream.write "</Tax-Summary-Line>" + vbNewLine		
+	end if
+	
+
+	stream.write "</Tax-Summary>" + vbNewLine
+	stream.write "</Invoice-Summary>" + vbNewLine
+end function 
+
+function invoice_to_ecod(byval idobj_invoice)
+	dim invoice:set invoice = trans_.getobj(TYPEID_N5SPRZEDAZ , idobj_invoice)
+	dim stream
+	set stream = prepare_invoice_stream_for_ecod()
+	write_invoice_header invoice , stream
+	write_invoice_parties invoice , stream
+	write_invoice_lines invoice , stream
+	write_invoice_summary invoice , stream
+	finalize_invoice_stream stream
+	set invoice_to_ecod = stream
+end function
+
+
+
+
+'*************************************************************
+
+function prepare_order_stream_for_ecod()
+	dim stream:set stream = doc_.createstreamobj()
+	stream.write "<?xml version=""1.0"" encoding=""windows-1250""?>" + vbNewLine
+	stream.write "<Document-Order>" + vbNewLine
+	set prepare_order_stream_for_ecod = stream
+end function 
+
+function finalize_order_stream(byref stream)
+	stream.write "</Document-Order>" + vbNewLine
+end function 
+
+function order_to_ecod(byval idOrder)
+	dim order:set order = trans_.getobj(TYPEID_N5ZAMOWIENIE , idorder)
+	dim stream
+	set stream = prepare_order_stream_for_ecod()
+	write_order_header order , stream
+	write_order_parties order , stream
+	write_order_lines order , stream
+	write_order_summary order , stream
+	finalize_order_stream stream
+	set order_to_ecod = stream
+end function
+
+
+
+
+function order_to_edi(byval idOrder)
+	dim order:set order = trans_.getobj(TYPEID_N5ZAMOWIENIE , idorder)
+	dim stream
+	set stream = prepare_order_stream_for_ecod()
+	write_order_header order , stream
+	write_order_parties order , stream
+	write_order_lines order , stream
+	write_order_summary order , stream
+	finalize_order_stream stream
+	set order_to_edi = stream
+end function
+
+
+
+private function write_order_header(byval order , byref stream)
+	stream.write "<Order-Header>" + vbNewLine
+	stream.write  "<OrderNumber>" + format_nr_for_ecod(order.strNrDok) + "</OrderNumber>" + vbNewLine
+	stream.write  "<OrderDate>" + format_date_to_ecod(Order.dDataWyst) + "</OrderDate>" + vbNewLine	
+	stream.write  "<ExpectedDeliveryDate>" + format_date_to_ecod(Order.dDataReal) + "</ExpectedDeliveryDate>" + vbNewLine	
+	stream.write  "<ExpectedDeliveryTime></ExpectedDeliveryTime>" + vbNewLine	
+	stream.write  "<PromotionReference></PromotionReference>" + vbNewLine
+	stream.write  "<DocumentFunctionCode>O</DocumentFunctionCode>" + vbNewLine
+	stream.write "</Order-Header>" + vbNewLine
+end function
+
+
+
+private function write_order_parties(byval order , byref stream)
+	stream.write "<Order-Parties>" + vbNewLine
+	stream.write "<Buyer>" + vbNewLine
+	stream.write  "<ILN>" + format_iln_nip_for_ecod(order.pKlient.kli_strILN , EDOC_CODE_KIND_ILN) + "</ILN>" + vbNewLine
+	stream.write "</Buyer>" + vbNewLine
+	stream.write "<Seller>" + vbNewLine
+	stream.write  "<ILN>" + format_iln_nip_for_ecod(getCurrentFirma().frm_strILN , EDOC_CODE_KIND_ILN) + "</ILN>" + vbNewLine
+	stream.write "</Seller>" + vbNewLine
+	stream.write "<DeliverPoint>" + vbNewLine
+	stream.write  "<ILN>" + format_iln_nip_for_ecod(order.pKlient.kli_strILN , EDOC_CODE_KIND_ILN) + "</ILN>" + vbNewLine
+	stream.write "</DeliverPoint>" + vbNewLine
+	stream.write "<ShipFrom>" + vbNewLine
+	stream.write  "<ILN>" + format_iln_nip_for_ecod(getCurrentFirma().frm_strILN , EDOC_CODE_KIND_ILN) + "</ILN>" + vbNewLine
+	stream.write "</ShipFrom>" + vbNewLine	
+	stream.write "</Order-Parties>" + vbNewLine
+end function  
+
+
+
+private function write_order_lines(byval order , byref stream)
+	stream.write "<Order-Lines>" + vbNewLine
+	dim order_position
+	dim iter:iter = 1
+	for each order_position in order.listPozycje
+		write_order_line order_position , iter , stream
+		iter = iter + 1
+	next
+	stream.write "</Order-Lines>" + vbNewLine
+end function 
+
+
+private function write_order_line (byval order_position , byval iter , byref stream)
+	stream.write "<Line>" + vbNewLine
+	stream.write "<Line-Item>" + vbNewLine
+	stream.write "<LineNumber>" + cstr(iter) + "</LineNumber>" + vbNewLine
+	stream.write "<EAN>" + format_ean_for_ecod(order_position.pOpak.strEAN) + "</EAN>" + vbNewLine
+	stream.write "<BuyerItemCode>" + format_itemcode_for_ecod(order_position.pOpak.strKodOpak) + "</BuyerItemCode>" + vbNewLine
+	stream.write "<SupplierItemCode>" + format_itemcode_for_ecod(order_position.pOpak.strKodOpak) + "</SupplierItemCode>" + vbNewLine
+	stream.write "<ItemDescription>" + format_itemname_for_ecod(order_position.pProdukt.strNazwa) + "</ItemDescription>" + vbNewLine
+	stream.write "<ItemType>CU</ItemType>" + vbNewLine
+	stream.write "<OrderedQuantity>" + format_qty_for_ecod(order_position.curIloscOpak) + "</OrderedQuantity>" + vbNewLine
+	stream.write "<OrderedUnitPacksize>" + format_qty_for_ecod(order_position.pOpak.currKrotnosc) + "</OrderedUnitPacksize>" + vbNewLine
+	stream.write "<UnitOfMeasure>" + format_uofm_for_ecod(order_position.pOpak.pJednOpak) + "</UnitOfMeasure>" + vbNewLine
+	stream.write "<OrderedUnitNetPrice>" + format_price_for_ecod(order_position.curCenaNetto) + "</OrderedUnitNetPrice>" + vbNewLine	
+	stream.write "</Line-Item>" + vbNewLine
+	stream.write "</Line>" + vbNewLine
+end function
+
+
+
+
+private function write_order_summary(byval order , byref stream)
+	stream.write "<Order-Summary>" + vbNewLine
+	stream.write "<TotalLines>" + cstr(order.listPozycje.count) + "</TotalLines>" + vbNewLine
+	stream.write "<TotalOrderedAmount>" + format_qty_for_ecod(0) + "</TotalOrderedAmount>" + vbNewLine	
+	stream.write "</Order-Summary>" + vbNewLine
+end function 
+
+
+
+
+'*************************************************************
+' tools
+
+private function format_date_to_ecod(byval dDate)
+	dim strYear:strYear = cstr(year(dDate))
+
+	dim strMonth:strMonth = cstr(month(dDate))
+	if len(strMonth) = 1 then
+		strMonth = "0" + strMonth
+	end if
+
+	dim strDay:strDay = cstr(day(dDate))
+	if len(strDay) = 1 then
+		strDay = "0" + strDay
+	end if
+
+	format_date_to_ecod = strYear + "-" + strMonth + "-" + strDay
+	
+end function
+
+
+
+private function format_iln_nip_for_ecod(byval strCode, byval nCodeKind)
+	format_iln_nip_for_ecod = ltrim(rtrim(replace(replace(strCode , "-","")," ","")))
+	dim nLen:nLen = len(format_iln_nip_for_ecod)
+
+	if nCodeKind = EDOC_CODE_KIND_NIP then		
+		if nLen > EDOC_MAX_NIP_LEN then
+			trans_.message 1002 , 0 , format_iln_nip_for_ecod + ": za długie pole NIP"
+		end if
+	end if
+
+	if nCodeKind = EDOC_CODE_KIND_ILN then
+		if nLen > EDOC_MAX_ILN_LEN then
+			trans_.message 1002 , 0 , format_iln_nip_for_ecod + ": za długie pole ILN"
+		end if
+	end if
+
+	if not isNumeric(format_iln_nip_for_ecod) then
+		trans_.message 1002 , 0 , format_iln_nip_for_ecod + ": NIP lub ILN powinien zawierac tylko znaki alfanumeryczne"
+	end if
+
+end function
+
+
+private function format_account_for_ecod(strAccount)
+	format_account_for_ecod = cdata_begin + strAccount + cdata_end
+end function
+
+private function format_ean_for_ecod(strEAN)
+	format_ean_for_ecod = strEAN
+end function
+
+private function format_itemcode_for_ecod(strItemCode)
+	format_itemcode_for_ecod = cdata_begin + strItemCode + cdata_end
+end function
+
+
+private function format_nr_for_ecod(strNr)
+	format_nr_for_ecod = cdata_begin + strNr + cdata_end
+end function
+
+
+private function format_itemname_for_ecod(strItemName)
+	format_itemname_for_ecod = cdata_begin + strItemName + cdata_end
+end function
+
+
+private function format_qty_for_ecod(curQty)
+	format_qty_for_ecod = replace(replace(doc_.afc.display.quantity(curQty,"",3),",",".")," ","")
+end function
+
+private function format_price_for_ecod(curPrice)
+	format_price_for_ecod = replace(replace(doc_.afc.display.money(curPrice,""),",",".")," ","")
+end function
+
+
+private function format_taxrate_for_ecod(byval eTaxRate)
+	format_taxrate_for_ecod = cstr(clng(vat2val(eTaxRate) * 100))
+end function
+
+private function format_taxcatcode_for_ecod(byval eTaxRate)
+	if eTaxRate = STAWKA_VAT_23_OO then
+		format_taxcatcode_for_ecod = "AE"		
+	elseif eTaxRate = STAWKA_VAT_ZWOLNIONY then
+		format_taxcatcode_for_ecod = "E"
+	else
+		format_taxcatcode_for_ecod = "S"
+	end if
+end function
+
+private function format_taxreftype_for_ecod(byval position)
+	format_taxreftype_for_ecod = "SWW"
+end function
+
+private function format_taxrefnum_for_ecod(byval position)
+	format_taxrefnum_for_ecod = position.pProdukt.strKodPKWiU
+end function
+
+
+private function get_order_num_for_invoice_position(byval position):get_order_num_for_invoice_position = ""
+	if not position.parent.pZamowienie is nothing then
+		get_order_num_for_invoice_position = format_nr_for_ecod(position.parent.pZamowienie.strNrDok)
+	end if
+end function
+
+
+private function get_order_date_for_invoice_position(byval position):get_order_date_for_invoice_position = ""
+	if not position.parent.pZamowienie is nothing then
+		get_order_date_for_invoice_position = format_date_to_ecod(position.parent.pZamowienie.dDataWyst)
+	end if
+end function
+
+
+private function format_uofm_for_ecod(pUnitOfMeasure):format_uofm_for_ecod=""
+
+	if ucase(pUnitOfMeasure.strSkrot) = ucase("szt.") then
+		format_uofm_for_ecod = "PCE"
+	end if
+
+	if ucase(pUnitOfMeasure.strSkrot) = ucase("kg") then
+		format_uofm_for_ecod = "KGM"
+	end if
+
+end function
+
+
+
+
+
+
+'*******************************************
+'EDI
+
+
+
+function invoice_to_edi(byval idobj_invoice)
+	dim invoice:set invoice = trans_.getobj(TYPEID_N5SPRZEDAZ , idobj_invoice)
+	dim stream
+	set stream = prepare_invoice_stream_edi()
+	write_invoice_header_edi invoice , stream
+	write_invoice_parties invoice , stream
+	write_invoice_lines invoice , stream
+	write_invoice_summary invoice , stream
+	finalize_invoice_stream_edi stream
+	set invoice_to_edi = stream
+end function
+
+
+private function prepare_invoice_stream_edi()
+	dim stream:set stream = doc_.createstreamobj()
+	stream.write "<?xml version=""1.0"" encoding=""windows-1250""?>" + vbNewLine
+	stream.write "<Invoice>" + vbNewLine
+	set prepare_invoice_stream_edi = stream
+end function 
+
+private function finalize_invoice_stream_edi(byref stream)
+	stream.write "</Invoice>" + vbNewLine
+end function
+
+
+private function write_invoice_header_edi(byval invoice , byref stream)
+	stream.write "<InvoiceHeader>" + vbNewLine
+	stream.write  "<InvoiceNumber>" + format_nr_edi(invoice.strNrDok) + "</InvoiceNumber>" + vbNewLine
+	stream.write  "<InvoiceIssueDate>" + format_date_to_ecod(invoice.dDataSprzed) + "</InvoiceDate>" + vbNewLine
+	stream.write  "<TaxPointDate></TaxPointDate>" + vbNewLine
+	stream.write  "<InvoiceReference>"
+	if not invoice.pPopSprzed is nothing then
+		stream.write format_nr_edi(invoice.pPopSprzed.strNrDok)
+	end if
+	stream.write "</InvoiceReference>" + vbNewLine
+	stream.write  "<InvoiceCurrency>" + invoice.pWaluta.strSkrot + "</InvoiceCurrency>" + vbNewLine
+	stream.write "</InvoiceHeader>" + vbNewLine
+end function
+
+
+private function format_nr_edi(strNr)
+	format_nr_edi = cdata_begin + strNr + cdata_end
+end function 
+
+
+
+]]>
+</script>
+</config>
+	<body>
+	</body>
+</page>

@@ -1,0 +1,674 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+Karta klienta
+
+#include "h1000.h"
+#include "h1004_cmdid.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1201.h"
+#include "h1231.h"
+#include "h1230.h"
+#include "h1232.h"
+
+#define CTRLID_LEFT_PANE		1001
+#define CTRLID_RIGHT_PANE		1002
+-->
+<page style='STYLE_PAGE'>
+<config>
+	<title>
+Karta klienta
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+<typeid>TYPEID_N5KLIENT</typeid>
+<script>
+  <![CDATA[
+
+'wybor rejestru
+#include "50517"
+#include "50203"
+'CCardBuilder
+#include "50131"
+'GetMenu
+#include "50506"
+'section_*
+#include "50222"
+'std_openform_field_hli
+#include "50610"
+
+'fire_choicelist
+#include "50200"
+
+'add_to_choicelist
+'delete_from_choicelist_hli
+#include "50102"
+
+'popraw dane
+#include "50609"
+
+'tree services
+#include "50617"
+
+'aspator and wtp_
+#include "50518"
+
+#include "50101"
+
+#include "50211"
+'------------------------------------------------------
+' local mode - wypełnia page_ na podstawie page_.root
+' external mode - wypełnia podany kontener funkcją fill_external_container
+' na podstawie podanego obiektu
+'------------------------------------------------------
+dim g_bLocalMode : g_bLocalMode = true
+dim g_idRoot : g_idRoot = 0
+
+dim g_bHideOption : g_bHideOption = false  'gdy true => ukrywanie wybranych elementów
+
+function set_external_data(byval idRoot)
+	g_bLocalMode = false
+	g_idRoot = idRoot
+end function
+
+function get_root_obj()
+	if g_bLocalMode then
+		set get_root_obj = page_.root
+	else
+		set get_root_obj = trans_.getobj(TYPEID_N5KLIENT,get_root_obj_idobj())
+	end if
+end function
+
+function get_root_obj_idobj()
+	if g_bLocalMode then
+		get_root_obj_idobj = page_.rootidobj
+	else
+		get_root_obj_idobj = g_idRoot
+	end if
+end function
+
+'------------------------------------------------------
+
+dim g_pCardBuilder : set g_pCardBuilder = nothing
+
+function fopen : fopen = false
+
+#ifdef _ABAKUS
+	if not doc_.getmodule(60106).FindRightFullMenu() then
+		g_bHideOption = true
+	end if
+#endif
+
+ trans_.var(GVAR_SELECTED_TAB_ITEM) = 0
+ trans_.var(GVAR_SELECTED_TAB_ITEM_RIGHT) = 0
+ trans_.var(GVAR_SPRZEDAZ_LAST_12_MONTHS) = 0
+
+	if not HARUI(UOR_READ(UAR_CUSTOMER_FIRM)) then
+		exit function
+	end if
+  
+#ifdef _ABAKUS
+	dim pModule60106: set pModule60106 = doc_.getmodule(60106)
+	if pModule60106.checkNaleznosciPrzeterm(page_.root) then
+		pModule60106.setBlokadaKlienta page_.root.IdObj
+	else
+		pModule60106.remBlokadaKlienta page_.root.IdObj
+	end if
+#endif
+
+#ifdef _ABAKOSTEEL
+if HARUI_FREE(UAR_OGRANICZONY_DOSTEP_DANE_KLIENTA) then
+	dim strKlientWhere
+	strKlientWhere = "IdObj=" + cstr(page_.root.IdObj) + " and pPracownik in (select wrefObiekt from n5wykonawca where wrefObiekt_wrt = TYPEID_N5PRACOWNIK " + vbNewLine +_
+					" and IdObj in (select pWykonawca from n5uzytkownik where IdObj = " + CStr(getCurrentUserID()) + ")) "
+	dim idKlient : idKlient = trans_.findobjid(TYPEID_N5KLIENT, strKlientWhere)
+	
+	if idKlient = 0 then
+		MessageBox "Brak uprawnień dostępu do tego klienta" , "Brak uprawnień", vbOKOnly, vbInformation
+		fopen = false
+		exit function
+	end if
+end if
+#endif
+
+
+	set g_pCardBuilder = new CCardBuilder
+	
+	tsrs_fopen()
+
+	'REV:KB:TODO: Arek: proszę sobie zobaczyć jak można przełączać (true/false - 8 kombinacji)
+	g_pCardBuilder.prepare_framework_ex page_.topelement,false,true,true,CTRLID_LEFT_PANE, CTRLID_RIGHT_PANE
+
+	build_menu
+	rebuild_contents
+
+	section_fopen THIS_FILE
+
+	fopen = true
+end function
+
+
+'called once to build menu
+sub build_menu
+	'dodajemy menu items
+	with g_pCardBuilder.menu
+		.add_item "Popraw dane","varFunction=""popraw_dane"""
+		if not g_bHideOption then
+		  .add_item "Dodaj do listy wyboru","varFunctionHLI=""add_to_choicelist"" vs100=""TYPEID_N5KLIENT"" vs101=""" + cstr(get_root_obj().idobj) + """ "
+		  .add_item "Usuń z listy wyboru","varFunctionHLI=""delete_from_choicelist_hli"" vs100=""0"" vs101=""0"" vs102=""TYPEID_N5KLIENT"" "
+		  .add_item "Przenieś między listami","varFunctionHLI=""choice_list_move_item_hli"" vs2=""TYPEID_N5KLIENT"" vs1=""" + cstr(get_root_obj().idobj) +  """ "
+		  .add_item "Utwórz dossier","varCmd=CMD_OPEN_STATIC_PAGE varDestPage=60155"
+		  .add_item "Rejestruj zadanie","varFunction=""register_new_task"" "
+		end if
+#ifdef APPCONFIG_PROTOKOLY
+		.add_item "Rejestruj zlecenie serwisowe","varFunction=""register_new_task_serwis"" "
+#endif
+		if not g_bHideOption then
+		  .add_item "Rejestruj kontakt","varFunction=""register_contact"" "
+		  .add_item "Nowy pracownik","varFunction=""new_employee"" "
+		  .add_item "Nowy obiekt","varFunction=""new_obiekt_klienta"" "
+		  .add_item "Nowy dokument","varFunction=""new_dokument"" "
+
+		  .add_item_pic "Wyślij email do klienta","varFunctionHLI='createmail_for_root' propc_email='strEmail' vn1=0 vn2=0", PICTURE_SMALL_EMAIL
+		  dim pSubMenu : set pSubMenu = .add_submenu("Korespondencja...")
+		  pSubMenu.add_item "Wezwanie do zapłaty","varFunction='wezwanie_do_zaplaty'"
+#ifdef _TORAL
+		  pSubMenu.add_item "Adres na kopercie","varFunction='adres_na_kopercie'"
+#endif
+		end if
+	end with
+end sub
+
+
+dim g_pPlugFactory : set g_pPlugFactory = nothing	'must be global to support tree
+
+'called on every root object change (including fopen)
+sub rebuild_contents
+	trans_.var(GVAR_CURRENT_CUSTOMER) = get_root_obj_idobj()
+
+	set g_pPlugFactory = doc_.getmodule(60161)
+	with g_pCardBuilder
+		.reset_framework
+		.leftpane.tabsinrow=5
+
+		dim image,info
+
+		if (get_root_obj().eAktywny=N5KLIENT_AKTYWNY) then
+			info ="   Status: Aktywny      " 
+		else
+			info ="   Status: Nieaktywny      "		
+		end if
+
+		if (get_root_obj().eKlasaKlienta=N5KLIENT_MALY) then
+			info = info + "Klasa: Mały"
+			image =CLng(PICTURE_ICON_KLIENT_NORMALNY)
+
+		elseif (get_root_obj().eKlasaKlienta=N5KLIENT_SREDNI) then
+			info = info + "Klasa: Średni"
+			image=CLng(PICTURE_ICON_KLIENT_WAZNY)
+		else
+			info = info + "Klasa: Duży"
+			image =CLng(PICTURE_ICON_KLIENT_SWAZNY)
+		end if
+		
+		dim strProdukty: strProdukty = "Sprzedane produkty"
+#ifdef _IOW
+		if InStr(get_root_obj().pGrupaKlient.strNazwa,"DOSTAWCA") > 0 then
+			strProdukty = "Kupione produkty"
+		end if
+#endif
+		
+		'tool pane
+		.toolpane.addnew(CTRL_TYPE_PICTURE,-1).image = image
+		.toolpane.addnew(CTRL_TYPE_STATIC,-1).text = info
+	
+		'title
+		.title = Ucase(get_root_obj().strNazwa)
+
+		g_pPlugFactory.plug_klient_podstawowe .new_section(.fixedpane, "Informacje podstawowe"), get_root_obj().idobj
+    
+		if not g_bHideOption then
+		  g_pPlugFactory.plug_klient_finanse_podsum .new_section(.fixedpane, "Finanse"), get_root_obj_idobj
+		end if		
+        
+		g_pPlugFactory.plug_klient_dzialania_tree g_pTSRS, .new_section(.fixedpane, "Działania"), get_root_obj_idobj
+
+		if not g_bHideOption then
+		  g_pPlugFactory.plug_klient_faktury .new_section(.leftpane, "Sprzedaż"), get_root_obj().idobj
+  		
+		  '//2= g_pPlugFactory.plug_klient_zakupy .new_section(.leftpane, "Zakupy"), get_root_obj().idobj
+		  .new_section .leftpane, "Zakupy"
+  		
+		  '//3= g_pPlugFactory.plug_klient_transakcje .new_section(.leftpane, "Transakcje"), get_root_obj_idobj
+		  .new_section .leftpane, "Transakcje"
+
+		  '//4= g_pPlugFactory.plug_klient_platnosci .new_section(.leftpane, "Płatności"), get_root_obj_idobj		
+		  .new_section .leftpane, "Płatności"
+
+		  '//5= g_pPlugFactory.plug_klient_produkty .new_section(.leftpane, "Sprzedane produkty"), get_root_obj_idobj
+		  .new_section .leftpane, strProdukty
+		end if
+
+		if not g_bHideOption then
+		  .new_section .leftpane, "Zamówienia"    
+		else
+		  g_pPlugFactory.plug_klient_zamowienia .new_section(.leftpane, "Zamówienia"), get_root_obj().idobj
+		end if  
+
+
+		'//7
+		if not g_bHideOption then
+		  .new_section .leftpane, "Rezerwacje"
+
+		  '//8= g_pPlugFactory.plug_klient_dokumenty .new_section(.leftpane, "Dokumenty"), get_root_obj_idobj
+		  .new_section .leftpane, "Dokumenty"
+		end if
+    
+#ifdef _HADEX
+		'//9= g_pPlugFactory.plug_klient_dokumenty .new_section(.leftpane, "WZ bez faktur"), get_root_obj_idobj
+		.new_section .leftpane, "WZ bez faktur"
+#endif
+
+#ifdef _BARON
+		.new_section .leftpane, "WZ"
+#endif
+
+#ifdef _ABAS_INWESTYCJE
+		.new_section .leftpane, "Projekty"
+#endif
+
+		if not g_bHideOption then
+		  g_pPlugFactory.plug_klient_pracownicy .new_section(.rightpane, "Pracownicy"), get_root_obj_idobj	
+		end if
+    g_pPlugFactory.plug_klient_jednostki page_.get_this(), .new_section(.rightpane, "Jedn. org."), get_root_obj_idobj	
+#ifdef APPCONFIG_KARTA_KLIENTA_OBIEKTY
+		g_pPlugFactory.plug_klient_obiekty page_.get_this(), .new_section(.rightpane, "Obiekty"), get_root_obj_idobj		
+#endif
+		if not g_bHideOption then
+      .new_section .rightpane, "Promocje"
+      
+      'g_pPlugFactory.plug_klient_promocje .new_section(.rightpane, "Promocje"), get_root_obj().idobj
+      
+		  g_pPlugFactory.plug_klient_listawyboru .new_section(.rightpane, "Listy"), get_root_obj_idobj
+		end if
+#ifndef APPCONFIG_PKPIR
+		if not g_bHideOption then
+		  g_pPlugFactory.plug_klient_konta .new_section(.rightpane, "Konta"), get_root_obj_idobj
+		end if
+#endif
+
+
+#ifdef APPCONFIG_SISCO_PLUGIN_CLIENT_CARD
+		dim pSiscoPlug:set pSiscoPlug = doc_.getmodule(60230)		
+		pSiscoPlug.init get_root_obj().idobj
+		pSiscoPlug.plug_konta_wlasne_SISCO_PL .new_section(.fixedpane, "Konta własne na ""sisco.pl"""), get_root_obj().idobj
+		pSiscoPlug.plug_konta_wlasne_NA_CZASIE .new_section(.fixedpane, "Konta własne na ""na czasie"""), get_root_obj().idobj
+		pSiscoPlug.plug_konta_wlasne_NA_CZASIE_P .new_section(.fixedpane, """Na czasie"" - poczta"), get_root_obj().idobj
+#endif
+		
+	end with
+end sub
+
+sub ShowAllDzialania(pHLI)
+  if pHLI.exists(100) then
+    trans_.var(GVAR_SELECTED_TAB_ITEM) = pHLI.prop(100)
+  end if
+  frefresh
+end sub
+
+sub ShowAllRight(pHLI)
+  if pHLI.exists(100) then
+    trans_.var(GVAR_SELECTED_TAB_ITEM_RIGHT) = pHLI.prop(100)
+  end if
+  frefresh
+  'ustaw się na wybranej zakładce
+  page_.ctrl(CTRLID_RIGHT_PANE).activeitem = trans_.var(GVAR_SELECTED_TAB_ITEM_RIGHT)
+end sub
+
+#ifdef APPCONFIG_SHOW_ALL_DOKUM
+sub ShowAllDok(pHLI)
+  if pHLI.exists(100) then
+    trans_.var(GVAR_SELECTED_TAB_ITEM) = pHLI.prop(100)
+  end if
+  if pHLI.exists(101) then
+    trans_.var(GVAR_SPRZEDAZ_LAST_12_MONTHS) = pHLI.prop(101)
+  end if  
+  frefresh
+  'ustaw się na wybranej zakładce
+  page_.ctrl(CTRLID_LEFT_PANE).activeitem = trans_.var(GVAR_SELECTED_TAB_ITEM)
+end sub
+#endif
+
+function fclose
+#ifdef APPCONFIG_SHOW_ALL_DOKUM
+  trans_.var(GVAR_SELECTED_TAB_ITEM) = -1
+#endif
+  trans_.var(GVAR_SELECTED_TAB_ITEM_RIGHT) = -1
+  trans_.var(GVAR_SPRZEDAZ_LAST_12_MONTHS) = -1
+
+	tsrs_fclose()
+	section_fclose THIS_FILE
+	set g_pCardBuilder = nothing
+	set g_pPlugFactory = nothing
+	trans_.var(GVAR_CURRENT_CUSTOMER) = 0
+end function
+
+function frefresh
+	rebuild_contents
+end function
+
+'----------------------------------------------------------------
+function c##CTRLID_LEFT_PANE##_ongetdata(byref oTabCtrl)
+	c##CTRLID_LEFT_PANE##_ongetdata = true 
+#ifdef APPCONFIG_SHOW_ALL_DOKUM
+  RefreshLeftPanel oTabCtrl
+#endif
+end function
+
+function c##CTRLID_RIGHT_PANE##_ongetdata(byref oTabCtrl)
+	c##CTRLID_RIGHT_PANE##_ongetdata = true
+  RefreshRightPanel oTabCtrl
+end function
+
+function RefreshLeftPanel(byref oTabCtrl)
+  dim nActiveItem: nActiveItem = trans_.var(GVAR_SELECTED_TAB_ITEM)
+  select case nActiveItem
+	  case 2
+		  g_pPlugFactory.plug_klient_zakupy oTabCtrl.element(nActiveItem), get_root_obj().idobj
+	  case 3
+		  g_pPlugFactory.plug_klient_transakcje page_.get_this(), oTabCtrl.element(nActiveItem), get_root_obj().idobj
+	  case 4
+		  g_pPlugFactory.plug_klient_platnosci oTabCtrl.element(nActiveItem), get_root_obj().idobj
+	  case 5
+		  g_pPlugFactory.plug_klient_produkty oTabCtrl.element(nActiveItem), get_root_obj().idobj
+	  case 6
+		  g_pPlugFactory.plug_klient_zamowienia oTabCtrl.element(nActiveItem), get_root_obj_idobj
+	  case 7
+		  g_pPlugFactory.plug_klient_rezerwacje oTabCtrl.element(nActiveItem), get_root_obj_idobj
+	  case 8
+		  g_pPlugFactory.plug_klient_dokumenty oTabCtrl.element(nActiveItem), get_root_obj_idobj
+	end select
+  trans_.var(GVAR_SELECTED_TAB_ITEM) = 0
+  trans_.var(GVAR_SPRZEDAZ_LAST_12_MONTHS) = 0
+end function
+
+function RefreshRightPanel(byref oTabCtrl)
+  dim nActiveItem: nActiveItem = trans_.var(GVAR_SELECTED_TAB_ITEM_RIGHT)
+  
+  c##CTRLID_RIGHT_PANE##_ontabitemactivate oTabCtrl, nActiveItem, true
+  
+  trans_.var(GVAR_SELECTED_TAB_ITEM_RIGHT) = 0
+  
+end function
+
+function c##CTRLID_RIGHT_PANE##_ontabitemactivate(oTabCtrl, nActiveItem, bFirstTime)
+	if not bFirstTime then
+		exit function
+	end if
+  
+ select case nActiveItem
+    case 3
+      g_pPlugFactory.plug_klient_promocje oTabCtrl.element(nActiveItem), get_root_obj().idobj
+  end select
+  
+end function
+
+function c##CTRLID_LEFT_PANE##_ontabitemactivate(oTabCtrl,nActiveItem,bFirstTime)
+	if not bFirstTime then
+		exit function
+	end if
+
+	select case nActiveItem
+	case 2
+		g_pPlugFactory.plug_klient_zakupy oTabCtrl.element(nActiveItem), get_root_obj().idobj
+	case 3
+		g_pPlugFactory.plug_klient_transakcje page_.get_this(), oTabCtrl.element(nActiveItem), get_root_obj().idobj
+	case 4
+		g_pPlugFactory.plug_klient_platnosci oTabCtrl.element(nActiveItem), get_root_obj().idobj
+	case 5
+		g_pPlugFactory.plug_klient_produkty oTabCtrl.element(nActiveItem), get_root_obj().idobj
+	case 6
+		g_pPlugFactory.plug_klient_zamowienia oTabCtrl.element(nActiveItem), get_root_obj_idobj
+	case 7
+		g_pPlugFactory.plug_klient_rezerwacje oTabCtrl.element(nActiveItem), get_root_obj_idobj
+	case 8
+		g_pPlugFactory.plug_klient_dokumenty oTabCtrl.element(nActiveItem), get_root_obj_idobj
+#ifdef _HADEX	
+  case 9
+		dim strWhere : strWhere = "and p_wrefDokHandl = 0"
+		g_pPlugFactory.plug_klient_wz oTabCtrl.element(nActiveItem), get_root_obj_idobj, strWhere
+#endif 
+#ifdef _BARON	
+  case 9
+		g_pPlugFactory.plug_klient_wz oTabCtrl.element(nActiveItem), get_root_obj_idobj, ""
+#endif 
+#ifdef _ABAS_INWESTYCJE
+  case 9
+		g_pPlugFactory.plug_klient_projekty_abas oTabCtrl.element(nActiveItem), get_root_obj_idobj, ""
+#endif
+	end select
+end function
+'----------------------------------------------------------------
+
+'----------------------------------------------------------------
+'interfejs do wypełniania innej strony
+'----------------------------------------------------------------
+function fill_external_container(byref pContainer)
+	set g_pCardBuilder = new CCardBuilder
+	g_pCardBuilder.prepare_framework pContainer,false,true,true
+
+	rebuild_contents
+	set g_pCardBuilder = nothing
+end function
+'----------------------------------------------------------------
+
+'taks_dynamic_cursor
+#include "50505"
+
+function open_dynamic_tasks(pHli)
+	taks_dynamic_cursor pHli.prop(100), "pKlient=" + CStr(get_root_obj().idobj), "dDataZlec desc, tCzasZlec desc", ""
+end function
+
+
+function generate_dossier
+	
+	dim pPage:set pPage=doc_.getpagehli("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=PAGE_UTIL_DOSSIER")
+	if pPage is nothing then
+		exit function
+	end if
+	pPage.domodalauto()
+	set pPage = nothing
+
+end function
+
+
+function register_new_task()
+
+	dim idRoot:idRoot=get_root_obj().idobj
+
+	dim pSubTrans:set pSubTrans = trans_.createsubtran()
+		doc_.getmodule(60129).form_domodal TYPEID_N5ZADANIE,0,USAGE_EDIT	
+	set pSubTrans=nothing
+
+end function
+
+
+
+
+function register_new_task_serwis()
+
+	dim idRoot:idRoot=get_root_obj().idobj
+
+	dim pSubTrans:set pSubTrans = trans_.createsubtran()
+		doc_.getmodule(60129).form_domodal TYPEID_N5ZADANIE,0,USAGE_ZADANIE_ZLECSERWIS	
+	set pSubTrans=nothing
+
+end function
+
+
+function register_contact()
+	dim idRoot:idRoot=get_root_obj().idobj
+	dim pSubTrans:set pSubTrans = trans_.createsubtran()
+		trans_.var(APPVAR_AUTO_SET_WYKONAWCA) = -1
+		trans_.var(APPVAR_ZADANIE_STATUS)=N5ZADANIE_UTWORZONE
+		doc_.getmodule(60129).form_domodal TYPEID_N5ZADANIE,0,PAGE_FORM_REJESTRACJA_KONTAKTU	
+	set pSubTrans=nothing
+
+end function
+
+function new_employee()
+	dim idRoot:idRoot=get_root_obj().idobj
+	doc_.postcommand "OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5KLIENT_PRACOWNIK,0,USAGE_EDIT)"
+end function
+
+function new_obiekt_klienta()
+	doc_.postcommand "OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5KLIENT_OBIEKT,0,USAGE_EDIT)"
+end function
+
+function new_dokument()
+	doc_.postcommand "OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5DOKUMENT,0,USAGE_EDIT)"
+end function
+
+function adres_na_kopercie()
+  dim strDPCName, nPubType
+  strDPCName = "Wydruk adresu na kopercie"
+  nPubType = N5DPC_PUBTYPE_INNY_ADRES_NA_KOPERCIE
+  
+  'znajdź publikacje o danym typie
+  dim idDPC : idDPC = trans_.findobjid(TYPEID_N5DPC, "pub_nInnyTyp=" + CStr(nPubType))
+  if idDPC < 1 then
+	  idDPC = fire_choice_list(TYPEID_N5DPC,"Publikacja typu '" + strDPCName + "'" ,"strNazwa","pub_nInnyTyp=" + CStr(nPubType),"","")	
+	  if idDPC = 0 then
+		  exit function
+	  end if
+  end if  
+  
+  dim oHLIResult : set oHLIResult = doc_.createhli()
+  realize_publication idDPC,page_.root,true,oHLIResult
+end function
+
+function wezwanie_do_zaplaty()
+	dim iTypDokumentu : iTypDokumentu = trans_.findobjid(TYPEID_N5TYPDOKUMENTU,"strNazwa='Wezwania do zapłaty'")
+	if iTypDokumentu <= 0 then
+		nx_.trace.fatal "FKK001","Brak typu dokumentu 'Wezwania do zapłaty'"
+		exit function
+	end if
+	
+	dim idDPC : idDPC = trans_.findobjid(TYPEID_N5DPC, "ePubType=" + CStr(N5DPC_PUBTYPE_WEZWANIE_DO_ZAPLATY))
+	if idDPC < 1 then
+		idDPC = fire_choice_list( TYPEID_N5DPC , "Publikacja typu 'Wezwanie do zapłaty'" ,"strNazwa","ePubType=" + CStr(N5DPC_PUBTYPE_WEZWANIE_DO_ZAPLATY) ,"",""	)	
+		if idDPC = 0 then
+			nx_.trace.fatal "FKK002","Brak publikacji typu 'Wezwania do zapłaty'"
+			exit function
+		end if
+	end if
+
+	dim oHLIResult : set oHLIResult = doc_.createhli()
+	realize_publication idDPC,page_.root,true,oHLIResult
+
+	dim strPlikWezwaniaDoZaplaty : strPlikWezwaniaDoZaplaty = ""
+	'see realize_hardcopy implementation
+	if oHLIResult.exists(3030) then
+		strPlikWezwaniaDoZaplaty = oHLIResult.prop(3030)
+	end if
+
+	dim idWDZ_Dokument : idWDZ_Dokument = clng(0)
+	if strPlikWezwaniaDoZaplaty <> "" then
+		
+		dim oWDZ_Dokument : set oWDZ_Dokument = trans_.newobj(TYPEID_N5DOKUMENT)
+		oWDZ_Dokument.strTematDokum = _
+			left("Wezwanie do zapłaty z " + doc_.afc.display.fulldate(trans_.var(GVAR_TODAY)) + " do " +_
+			page_.root.strSkrot,127)
+
+		set oWDZ_Dokument.pTypDokumentu = trans_.getobj(TYPEID_N5TYPDOKUMENTU,iTypDokumentu)
+		set oWDZ_Dokument.wpAdresat = page_.root
+		
+		oWDZ_Dokument.dDataWeWy = trans_.var(GVAR_TODAY)
+		oWDZ_Dokument.dDataRejestracji = trans_.var(GVAR_TODAY)
+		oWDZ_Dokument.dok_dDataGenNastFry = dateserial(2199,12,31)
+		oWDZ_Dokument.dok_dDataWystNastFry = dateserial(2199,12,31)
+
+		oWDZ_Dokument.nForma = cLng(1)
+		oWDZ_Dokument.strFileName = AddComputerName(strPlikWezwaniaDoZaplaty)
+		oWDZ_Dokument.fPlik.attach strPlikWezwaniaDoZaplaty
+		idWDZ_Dokument = oWDZ_Dokument.idobj
+
+		if not trans_.saveobjects() then
+			nx_.trace.fatal "FKK003","Nie można zachować dokumentu wezwania do zapłaty"
+			exit function
+		end if
+		set oWDZ_Dokument = nothing
+	end if
+
+	dim pUtility : set pUtility = doc_.getmodule(60158)
+	'wybór typu działania gdy brak
+	dim idTypDzialania : idTypDzialania = pUtility.supply_typ_dzialania_on_iid_id(N5TYPDZIALANIA_IID_NOTATKA)
+	if idTypDzialania <= 0 then
+		exit function
+	end if
+
+	trans_.var(APPVAR_REJESTR_TYP) = N5REJESTRDOK_ZADANIA
+	trans_.var(GVAR_CURSOR) = clng(0)
+#ifdef _SECURITY
+  dim idRejestr : idRejestr = choose_rejestr_dok("N5REJESTRDOK_ZADANIA", true , "Wybierz rejestr dokumentów")
+	if idRejestr <= 0 then
+		exit function
+	end if
+	
+	trans_.var(APPVAR_REJESTR_DOKUMENTOW) = idRejestr
+
+
+  dim oNotatka : set oNotatka = trans_.newobj(TYPEID_N5ZADANIE)
+  with oNotatka
+		  .strTemat = trans_.getobj(TYPEID_N5DPC,idDPC).strNazwa
+      set .pTypDzialania = trans_.getobj(TYPEID_N5TYPDZIALANIA,idTypDzialania)
+		  .nStatus=clng(N5ZADANIE_ZAMKNIETE)
+		  .strOpis = "Wezwanie do zapłaty"
+		  set .pZlecajacy=getCurrentWykonawca()
+		  set .pWykonawca=getCurrentWykonawca()
+		  set .pKlient=page_.root
+  	  if idWDZ_Dokument <> 0 then
+	  	  set .listZalaczniki.addnew().wrefZal = trans_.getobj(TYPEID_N5DOKUMENT,idWDZ_Dokument)
+		  end if
+  end with
+  
+  if (not trans_.saveobjects()) then
+  			nx_.trace.fatal "FKK004","Nie można zachować notatki"
+    		exit function
+  end if
+ 
+  set oNotatka= nothing
+#else
+  dim pOpenFormNotatka : set pOpenFormNotatka = doc_.getmodule(60129).prepare_form_open_command(TYPEID_N5ZADANIE,0,0)
+	if pOpenFormNotatka is nothing then
+		exit function
+	end if
+	dim pFormZadanie : set pFormZadanie = doc_.getpagehli(pOpenFormNotatka)
+	if pFormZadanie is nothing then
+		exit function
+	end if
+
+	with pFormZadanie.root
+		.strTemat = "Wezwanie do zapłaty"
+		set .pTypDzialania=trans_.getobj(TYPEID_N5TYPDZIALANIA,idTypDzialania)
+		.nStatus=clng(N5ZADANIE_ZAMKNIETE)
+		.strOpis = "Wezwanie do zapłaty"
+		set .pZlecajacy=getCurrentWykonawca()
+		set .pWykonawca=getCurrentWykonawca()
+		set .pKlient=page_.root
+		if idWDZ_Dokument <> 0 then
+			set .listZalaczniki.addnew().wrefZal = trans_.getobj(TYPEID_N5DOKUMENT,idWDZ_Dokument)
+		end if
+	end with
+
+	pFormZadanie.domodalauto()
+#endif
+
+end function
+
+]]></script>
+</config>
+<body>
+</body>
+</page>

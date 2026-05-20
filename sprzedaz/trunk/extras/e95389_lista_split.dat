@@ -1,0 +1,386 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+RAPTEMPLATE_PLATNOSCI_LISTA
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203_appconfig.h"
+#include "h1220.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1250.h"
+
+#define RAPORT_TITLE Lista płatności podzielonych (split-payment)
+
+-->
+<page style='36'>
+<config>
+<title>RAPORT_TITLE</title>
+<script>
+<![CDATA[
+<%
+function query()
+query = "select 'c_rej_nazwa'=t_rb.strNazwa,'c_numop'=t_platn.nNumOper,'c_dataop'=t_platn.dDataOper, " +_
+"'c_kwotapodm'=t_platn.curKwotaPodm,'c_kwotastan'=t_platn.curKwotaStan,'c_kwotaewid'=t_platn.curKwotaEwid, 'c_kwotavat' =t_platn.plat_curVat, " +_
+"'c_podmiot_nazwa'= CASE t_platn.wrefPodmiot_wrt WHEN TYPEID_N5KLIENT THEN t_klient.strNazwa WHEN TYPEID_N5PRACOWNIK " +_
+" THEN t_prac.strNazwisko WHEN TYPEID_N5INSTYTUCJA THEN t_inst.strNazwa WHEN TYPEID_N5BANK THEN t_bank.strNazwa " +_
+" WHEN TYPEID_N5FIRMA THEN t_firma.strSkrot ELSE '' END , " +_
+"'c_podmiot_type'= t_platn.wrefPodmiot_wrt,'c_podmiot_idobj'= t_platn.wrefPodmiot, " +_
+"'c_platn_opis'=t_platn.strOpis,'c_platn_idobj'=t_platn.IdObj, " +_
+"'c_platn_nrdok'=t_platn.strNrDok , " +_
+"'c_walrej'=t_walrej.strSkrot,'c_prec'=3,'c_walpodm'=t_walpodm.strSkrot, 'c_rej_2_nazwa' = t_rej.strNazwa " +_
+"from n5platnosc as t_platn " +_
+"left outer join n5klient as t_klient on t_platn.wrefPodmiot = t_klient.IdObj AND t_platn.wrefPodmiot_wrt = TYPEID_N5KLIENT " +_
+"left outer join n5pracownik as t_prac on t_platn.wrefPodmiot = t_prac.IdObj AND t_platn.wrefPodmiot_wrt = TYPEID_N5PRACOWNIK " +_
+"left outer join n5instytucja as t_inst on t_platn.wrefPodmiot = t_inst.IdObj AND t_platn.wrefPodmiot_wrt = TYPEID_N5INSTYTUCJA " +_
+"left outer join n5bank as t_bank on t_platn.wrefPodmiot = t_bank.IdObj AND t_platn.wrefPodmiot_wrt = TYPEID_N5BANK " +_
+"left outer join n5firma as t_firma on t_platn.wrefPodmiot = t_firma.IdObj AND t_platn.wrefPodmiot_wrt = TYPEID_N5FIRMA " +_
+"inner join n5rejestrdok as t_rej on t_platn.pRejestrDok = t_rej.IdObj " +_
+"inner join n5rejestrdok as t_rb on t_rej.rejdok_pRejestrDok = t_rb.IdObj " +_
+"inner join n5jednostka as t_walrej on t_rej.wrefParam1 = t_walrej.IdObj  " +_
+"inner join n5jednostka as t_walpodm on t_platn.pWalutaPodm = t_walpodm.IdObj  " +_
+"where   t_platn.plat_curVAT<> 0 and %1  and  (%2  or  %3  or  %4  or  %5 or (t_firma.strNazwa is not null) or EXTRA_CUSTOMER_FILTER_AND(8)) and " +_
+"%6 and %7 " +_
+"order by c_rej_nazwa,c_dataop,c_rej_2_nazwa, c_numop"
+end function
+%>
+<%
+function default_param()
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+	pParamArray.add doc_.afc.rap.param.new_date_range("Data operacji").bindexpr("t_platn.dDataOper")
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwa klienta").bindexpr("t_klient.strNazwa")
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwisko pracownika").bindexpr("t_prac.strNazwisko")
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwa instytucji").bindexpr("t_inst.strNazwa")
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwa banku").bindexpr("t_bank.strNazwa")
+
+	dim pParamFactory3: set pParamFactory3= doc_.afc.rap.param
+	dim pParam3: Set pParam3= pParamFactory3.new_choice("Rejestr").bindexpr("t_rb.idobj")
+	doc_.afc.rap.param.init_on_query pParam3, trans_ ,_
+		"select strNazwa , idobj from n5rejestrdok where eTyp = N5REJESTRDOK_BANKOWY_VAT order by strNazwa "
+	pParamArray.add pParam3
+
+	dim pParamFactory2: set pParamFactory2= doc_.afc.rap.param
+	dim pParam2: Set pParam2= pParamFactory2.new_choice("Status").bindexpr("t_platn.eStatus")
+	pParamFactory2.init_on_enum pParam2, TYPEID_N5PLATNOSC, "eStatus"
+	pParamArray.add pParam2
+	EXTRA_CUSTOMER_FILTER_PARAM(t_klient)
+
+	set default_param = pParamArray
+end function
+%>
+<%
+function actual_param(byref pActualParam)
+dim iter
+dim bAnyWritten : bAnyWritten = false
+if not pActualParam is nothing then
+for iter = 1 to 4 'pActualParam.upperIndex
+'for iter = 0 to pActualParam.upperIndex
+if pActualParam.value(iter).get_desc() <> "" then 
+	bAnyWritten = true
+end if
+next
+end if
+if pActualParam.upperIndex >= 7 then
+ if pActualParam.value(7).get_desc() <> "" then 'kod pocztowy
+	bAnyWritten = true
+ end if
+end if
+
+if not bAnyWritten then 
+	actual_param = 0
+else 
+	actual_param = 1
+end if
+
+end function
+%>
+<%
+function actual_param_date(byref pActualParam)
+dim iter
+if not pActualParam is nothing then
+if pActualParam.value(0).get_desc() <> "" then 
+	actual_param_date = 1
+else 
+	actual_param_date = 0
+end if
+end if
+end function
+%>
+
+
+<%
+function write_actual_param(byref pActualParam)
+dim iter
+dim bAnyWritten : bAnyWritten = false
+if not pActualParam is nothing then
+for iter = 0 to pActualParam.upperIndex
+if pActualParam.value(iter).get_desc() <> "" then 
+bAnyWritten = true
+	so.write "<t size='5' /><text fontsize='4'><![CD"+"ATA[" + pActualParam.value(iter).get_desc() + "]"+"]></text><br/>"
+end if
+next
+end if
+if not bAnyWritten then 
+	so.write "<t fontsize='4'>brak</t><br/>"
+end if
+	so.write "<br/>"
+end function
+%>
+<%
+function section_header_1(byref pSection,byref pRec)
+
+sumaPrzych = 0.0
+sumaRozch = 0.0
+sumaPrzychEwid = 0.0
+sumaRozchEwid = 0.0
+%>
+<tr userprop='propc_section_start="1" propc_section_hidden="0" propc_section_req="0"' fontsize='4'>
+	<td style='27' colspan='9'>
+		<picture name='<%so.write cstr(nSectionPicCounter)%>' tip='Zwiń' ignoresysdisable='true' image='PICTURE_SMALL_MINUS' width='SIZE_FOR_PLUS' height='SIZE_FOR_PLUS' href='vs1022="section_hideshow_hli" vn100="<%so.write cstr(nSectionPicCounter)%>"'/>
+	RXE_AUTO_TEXT(c_rej_nazwa)
+	<t size='2' />
+	RXE_T(c_walrej)
+	</td>
+</tr>
+<tr fontsize='4'>
+	<td style='27'  />
+	<td style='27' colspan='4'>
+		<t bold='true'>Stan początkowy</t>
+	</td>
+	<td style='27' align='right'>
+		<t bold='true'>
+		<%
+		dim pPlatnosc : set pPlatnosc = trans_.getobj(TYPEID_N5PLATNOSC,clng(pRec("c_platn_idobj")))
+    dim curStanPoczVAT
+		dim curStanPoczEwid
+		if actual_param_date(rapeng_.get_raport_param()) <> 0 then
+			'stan poczatkowy = operacji przed wybraną 
+       curStanPoczVAT = pPlatnosc.n5platnosc_stan_vat(1)
+		else
+			'stan poczatkowy - zawsze taki sam jak przed pierwszą transakcją
+      curStanPoczVAT = pPlatnosc.n5platnosc_stan_vat(1)
+	 end if
+
+		pSection.counter(0).add curStanPoczVAT
+		pRapExec.body.counter(0).add curStanPoczVAT
+		%>
+		</t>
+	</td>
+	<td style='27' align='right'>
+		<t bold='true'>
+		<%
+		so.write trans_.afc.display.money(curStanPoczVAT,"")
+		%>
+		</t>
+	</td>
+	<td style='27' colspan='2' />
+</tr>
+<%
+nSectionPicCounter=nSectionPicCounter+1
+end function
+%>
+<%
+function section_footer_1(byref pSection)
+%>
+<!--
+<tr fontsize='4'>
+	<td style='27'  />
+	<td style='27' colspan='4'>
+		<t >Suma rozchodów/przychodów</t>
+	</td>
+	<td style='27' align='right'>
+		<t><%so.write doc_.afc.display.quantity(sumaRozch,"",2)%></t>
+	</td>
+	<td style='27' align='right'>
+		<t><%so.write doc_.afc.display.quantity(sumaPrzych,"",2)%></t>
+	</td>
+	<td style='27' align='right'>
+		<t><%so.write doc_.afc.display.quantity(sumaRozchEwid,"",2)%></t>
+	</td>
+	<td style='27' align='right'>
+		<t><%so.write doc_.afc.display.quantity(sumaPrzychEwid,"",2)%></t>
+	</td>
+</tr>
+-->
+<tr fontsize='4'>
+	<td style='27'  />
+	<td style='27' colspan='4'>
+		<%if actual_param(rapeng_.get_raport_param()) = 0 then %>
+		<t bold='true'>Stan końcowy </t>
+		<%else%>
+		<t bold='true'>Suma wybranych operacji </t>
+		<%end if%>
+
+	</td>
+	<td style='27' align='right'>
+		<t bold='true'></t>
+	</td>
+	<td style='27' align='right'>
+		<t bold='true'><%so.write doc_.afc.display.quantity(pSection.counter(0).result,"",2)%></t>
+	</td>
+	<td style='27' colspan='2' />
+</tr>
+
+<tr border='0'><td colspan='9' /></tr>
+<tr hide='true' userprop='propc_section_end="1"'><td colspan='9' /></tr>
+<%
+end function
+%>
+
+<%
+dim sumaPrzych : sumaPrzych = 0.0
+dim sumaRozch: sumaRozch = 0.0
+dim sumaPrzychEwid : sumaPrzychEwid = 0.0
+dim sumaRozchEwid: sumaRozchEwid = 0.0
+
+%>
+<%
+function body_row(byref pSection,byref pRec)
+if pRapExec.RecNr mod 2 = 0 then
+%>
+<tr bordercolor='white' fontsize='2'>
+<%
+else
+%>
+<tr bordercolor='white' style='37' fontsize='2'>
+<%
+end if
+%>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+<td align='right'>RXE_LP</td>
+	<td keepline='true'>
+		RXE_T_LINK_FORM_VCC(TYPEID_N5PLATNOSC,c_platn_idobj,c_platn_nrdok)
+	</td>
+	<td align='right'>
+		RXE_T(c_numop)
+	</td>
+	<td>
+		RXE_DATE(c_dataop)
+	</td>
+	<td align='right'>
+		RXE_QUANTITY_CVV(c_kwotapodm,"",2)
+	</td>	
+  <td align='right'>
+		RXE_QUANTITY_CVV(c_kwotavat,"",2)
+	</td>
+	<td>
+		RXE_AUTOTEXT_LINK_FORM_CCC(c_podmiot_type,c_podmiot_idobj,c_podmiot_nazwa)
+	</td>
+	<td>
+		RXE_TEXT_LINK_FORM_VCC(TYPEID_N5PLATNOSC,c_platn_idobj,c_platn_opis)
+	</td>
+</tr><%
+end function
+%>
+<%
+function body_header(byref pSection,byref pRec)
+'so.write "<p backcolor='yellow'><text><![CD"+"ATA["+pRapExec.get_final_query() + "]"+"]></text></p><br/>" 
+%>
+<table border='1'>
+<thead>
+<tr style='21'>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+	<td width='min'><t>LP</t></td>
+	<td width='min'>
+		<text><![CDATA[Numer dokumentu]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Numer operacji]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Data operacji]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Kwota wpłaty / wypłaty]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[w tym VAT]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Nazwa]]></text>
+	</td>
+	<td width='max'>
+		<text><![CDATA[Opis]]></text>
+	</td>
+</tr>
+</thead>
+<tbody>
+<%
+end function
+%>
+<%
+function body_footer(byref pSection)
+%>
+</tbody>
+<tfoot>
+<tr style='21'>
+	<td style='27' colspan='5' />
+	<td style='27' align='right'>
+		<t></t>
+	</td>
+	<td style='27' align='right'>
+		<t>
+			<%so.write doc_.afc.display.quantity(pRapExec.body.counter(0).result,"",2)%>
+		</t>
+	</td>
+	<td style='27' colspan='2' />
+</tr>
+</tfoot>
+</table>
+<%
+end function
+%>
+<%dim nSectionPicCounter : nSectionPicCounter = 10000000%>
+function section_hideshow_hli(byref pHLI)
+doc_.afc.formsection.section_hideshow page_, pHLI.prop(100)
+end function
+]]>
+</script>
+</config>
+<header>
+</header>
+<body>
+<p>
+RAPORT_HEADER(3,0)
+</p>
+
+<p>
+<t size='2'/>
+</p>
+
+<p><text fontsize='7'><![CDATA[RAPORT_TITLE]]></text></p><br/><br/>
+<t fontsize='5' bold='true'>Kryteria selekcji:</t><br/>
+<%
+dim pRapExec : set pRapExec = rapeng_.new_engine()
+  with pRapExec
+  .add_body_ex (getref("body_header"),getref("body_footer"),getref("body_row")).add_sumator("c_kwotavat")
+  .add_group_section (0,getref("section_header_1"),getref("section_footer_1")).add_sumator("c_kwotavat")
+  if .prepare("RAPORT_TITLE",default_param(),rapeng_.get_raport_param(),query()) then
+  %>
+  <%
+	if actual_param(rapeng_.get_raport_param()) <> 0 then 
+		.ReplaceQueryParam "t_klient.strNazwa is not null", "1=0"
+		.ReplaceQueryParam "t_prac.strNazwisko is not null", "1=0"
+		.ReplaceQueryParam "t_inst.strNazwa is not null", "1=0"
+		.ReplaceQueryParam "t_bank.strNazwa is not null", "1=0"
+		.ReplaceQueryParam "t_firma.strNazwa is not null", "1=0"
+		if APPCONFIG_EXTRA_CUSTOMER_FILTER = 1 then
+			.ReplaceQueryParam "isnull(t_klient.strKod,'') is not null", "2=0"
+		end if
+		if APPCONFIG_EXTRA_CUSTOMER_FILTER = 0 then 
+			.ReplaceQueryParam "or (1=1))", "or (1=0))"
+		end if	
+	end if
+
+	write_actual_param rapeng_.get_raport_param()
+	if not .perform then
+	so.write "<p style='21'><t>Brak danych spełniających podane kryteria</t></p>"
+	end if
+%>
+<%
+end if
+end with
+%>
+</body>
+<footer>
+</footer>
+</page>

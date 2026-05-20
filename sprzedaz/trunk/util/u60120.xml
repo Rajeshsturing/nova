@@ -1,0 +1,265 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#comment OBSOLETE - check calls and remove
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200.h"
+#include "h1220.h"
+#include "h1201.h"
+#include "h1231.h"
+#include "h1240.h"
+-->
+<page>
+<config>
+<script>
+<!--
+
+	Engine do generowania raportów
+-->
+<![CDATA[
+
+'#include "50203"
+#include "50202"
+#include "50122"
+
+'--------------------------------------------------------------------------
+'
+'	generate_raport
+'	
+'	pSO - stream object
+'	
+'--------------------------------------------------------------------------
+
+'kontekst wykonania dostępny na każdym poziomie
+class CInternalRapCtxt
+	public  m_pRR	'CRawRaport
+	public  m_pSO	'output
+	private m_pCurrRec
+	private m_nCounterIter ' licznik znaczących rekordów
+	private m_nRecordCount ' liczba rekordów zapytania
+
+	private sub finish_section(byval nLevel)
+		m_pRR.m_Sections(nLevel).end_section m_pSO
+	end sub
+
+	private sub begin_section(byval nLevel)
+		m_pRR.m_Sections(nLevel).begin_section m_pSO, m_pCurrRec
+	end sub
+	private sub setwd_value(byval nLevel)
+		dim wdfield : wdfield = m_pRR.m_Sections(nLevel).getwdfield()
+		if wdfield <> -1 then
+			m_pRR.m_Sections(nLevel).wdval = m_pCurrRec.fields(wdfield)
+		end if
+	end sub
+
+	private sub write_row()
+		dim iter
+		for iter = 0 to m_pRR.m_SectionUB
+			m_pRR.m_Sections(iter).process_row m_pSO,m_pCurrRec
+		next
+	end sub
+
+	private function isend()
+		isend = m_pCurrRec.EOF
+	end function
+	
+	private sub next_row()
+		m_pCurrRec.MoveNext
+	end sub
+
+	private function open()
+		
+		'roboczo, lub gdy będziemy chcieli podłączyć się "żywcem" do jakiejś
+		'bazy
+		'dim adoConn : set adoConn = CreateObject("ADODB.Connection")
+		'adoConn.Open "navo_firma","sa",""
+		'set m_pCurrRec = CreateObject("ADODB.Recordset")
+		'm_pCurrRec.Open m_pRR.m_strADOQuery, adoConn
+		
+		set m_pCurrRec = trans_.createadors(m_pRR.m_strADOQuery)
+		
+		open = not isend()
+
+		if not isend() then
+			m_nCounterIter = clng(0)
+		end if
+
+		' wyznacz liczbę wyników w raporcie
+		
+		m_nRecordCount = m_pCurrRec.RecordCount
+
+		'if m_pRR.m_strADOQueryPartFrom<>"" then
+		'	dim strControlQuery: strControlQuery = "SELECT count(*) FROM " + m_pRR.m_strADOQueryPartFrom
+		'	if m_pRR.m_strADOQueryPartJoin<>"" then strControlQuery = strControlQuery + " " + m_pRR.m_strADOQueryPartJoin
+		'	if m_pRR.m_strADOQueryPartWhere<>"" then strControlQuery = strControlQuery + " WHERE " + m_pRR.m_strADOQueryPartWhere
+		'
+		'	dim oAdoCountRec: set oAdoCountRec = trans_.createadors(strControlQuery)
+		'	oAdoCountRec.MoveFirst
+		'	if not oAdoCountRec.EOF then
+		'		m_nRecordCount = clng(oAdoCountRec.fields(clng(0)))
+		'	end if
+		'end if
+
+	end function
+
+	private sub begin_raport_data()
+		dim iter
+		for iter = 0 to m_pRR.m_SectionUB
+			setwd_value iter
+			begin_section iter
+		next
+	end sub
+
+	private sub finish_raport_data()
+		dim iter
+		for iter = m_pRR.m_SectionUB to 0 step -1
+			finish_section iter
+		next
+	end sub
+
+	private sub process_row()
+		dim iter
+		for iter = 0 to m_pRR.m_SectionUB
+			dim wdfield : wdfield = m_pRR.m_Sections(iter).getwdfield()
+			if wdfield <> -1 then
+
+				dim strCurrRecVal: strCurrRecVal=""
+				dim strSectionsVal: strSectionsVal=""
+
+				if (not isNull(m_pCurrRec.fields(wdfield).value)) then
+					strCurrRecVal=CStr(m_pCurrRec.fields(wdfield).value)
+				end if
+
+				if (not isNull(m_pRR.m_Sections(iter).wdval)) then
+					strSectionsVal=CStr(m_pRR.m_Sections(iter).wdval)
+				end if
+
+				if (strCurrRecVal <> strSectionsVal) then	'detected change
+					'finish all from iter to m_watchdogUB
+					dim iter2
+					for iter2 = m_pRR.m_SectionUB to iter step -1
+						finish_section iter2
+						setwd_value iter2
+					next
+					'begin new sections
+					for iter2 = iter to m_pRR.m_SectionUB
+						begin_section iter2
+					next
+				end if
+
+			end if
+		next
+		write_row
+	end sub
+
+	public sub perform()
+		dim oPerf: set oPerf = doc_.performing("Generowanie raportu...")
+
+		'put header info
+		'open cursor
+		if open() then
+			begin_raport_data
+			
+			dim nGroupInterval: nGroupInterval = clng(100)
+			dim nGroupInterval2: nGroupInterval2 = clng(2000)
+
+			dim bCanGen: bCanGen = true ' czy wolno generowac dalej			
+			do while not isend() and bCanGen
+				
+				dim strMsg
+
+				if m_nCounterIter = nGroupInterval then
+					strMsg = "Raport zawiera już " + cstr(m_nCounterIter)
+					if m_nRecordCount>0 then
+						strMsg = strMsg + " z " + cstr(m_nRecordCount)
+					end if
+					strMsg = strMsg + " pozycji. Czy kontynuować generowanie?"
+
+					' ukryj na chwilę splasha
+					set oPerf = nothing
+
+					if MessageBoxAndForget(strMsg, "Generowanie raportu", vbYesNo, vbQuestion , USERPROF_REPORT_MOREDATA)<>vbYes then
+						bCanGen = false
+					else
+						' wyświetl ponownie splasha
+						set oPerf = doc_.performing("Generowanie raportu...")
+					end if
+				end if
+
+				if m_nCounterIter = nGroupInterval2 then
+					strMsg = "Raport zawiera już " + cstr(m_nCounterIter)
+					if m_nRecordCount>0 then
+						strMsg = strMsg + " z " + cstr(m_nRecordCount)
+					end if
+					strMsg = strMsg + " pozycji. Czy kontynuować generowanie?"
+
+					' ukryj na chwilę splasha
+					set oPerf = nothing
+
+					if MessageBoxAndForget(strMsg, "Generowanie raportu", vbYesNo, vbQuestion , USERPROF_REPORT_MOREDATA_LEVEL2)<>vbYes then
+						bCanGen = false
+					else
+						' wyświetl ponownie splasha
+						set oPerf = doc_.performing("Generowanie raportu...")
+					end if
+				end if
+
+				if bCanGen then
+					process_row
+					next_row
+					m_nCounterIter = m_nCounterIter + 1
+				end if
+			loop
+			finish_raport_data
+		end if
+	end sub
+end class
+
+function generate_raport(byref pSO,byref pRR)
+	dim pRC : set pRC = new CInternalRapCtxt
+	set pRC.m_pSO = pSO
+	set pRC.m_pRR = pRR
+	pRC.perform	
+end function
+
+function show_raport(byref pRowRaport, byval bTable)
+	dim pSO
+	set pSO=doc_.createstreamobj()
+
+	dim pm : set pm = doc_.getmodule(60120)
+
+	pSO.write "<?xml version=""1.0"" encoding=""windows-1250"" ?>"
+	pSO.write "<page style='STYLE_PAGE'>" + vbNewLine
+	pSO.write "<body>" + vbNewLine
+
+	if (bTable) then
+		pSO.write "<table border='1'>" + vbNewLine
+		pSO.write "<tbody>" + vbNewLine
+	end if
+
+	pm.generate_raport pSO, pRowRaport
+
+	if (bTable) then
+		pSO.write "</tbody>" + vbNewLine
+		pSO.write "</table>" + vbNewLine
+	end if
+
+	pSO.write "</body>" + vbNewLine
+	pSO.write "</page>" + vbNewLine
+
+	dim pHli
+	set pHli=doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE")
+	set pHli.prop(GVAR_DESTPAGE)=pSO.getstream()
+	
+	show_raport=doc_.getpagehli(pHli).domodalauto()
+
+end function
+
+]]>
+</script>
+</config>
+	<body>
+		<t>Engine do generowania raportów</t>
+	</body>
+</page>

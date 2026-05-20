@@ -1,0 +1,275 @@
+#ifndef FTS_SEARCH
+#define FTS_SEARCH
+
+
+'-----------------------------------------------------------------------
+' (c) 2002 Navo Ltd.
+' Spikowski Piotr
+'
+' CFTSWords, CFTSContains_Query
+'-----------------------------------------------------------------------
+
+
+
+'-----------------------------------------------------------------------
+' Klasa reprezentuje kolekcjê s³ów dla systemu wyszukiwania FTS
+'-----------------------------------------------------------------------
+class CFTSWords
+
+	private m_pWords	'navo_array zawieraj¹ce s³owa
+
+
+	private sub class_initialize()
+		set m_pWords = doc_.afc.new_navoarray()
+	end sub
+
+	private sub class_terminate()   'OK
+		set m_pWords = nothing
+	end sub
+		
+	'---------------------------------------------------------
+	' Funckja wydobywa ze zdania strSentence slowa i dodaje
+	' je do kolekcji slow
+	'---------------------------------------------------------
+	public function add_sentence(byval strSentence)
+
+		strSentence = trim(strSentence)
+
+		'Sprawdzamy czy w zdaniu znajduje sie
+		'obok siebie kilka spacji i jezeli tak
+		'to wycinamy je az do uzyskania spaji
+		'pojedynczej
+		
+		if (InStr(strSentence, Space(2))>0) then
+			do
+				strSentence = replace(strSentence, Space(2), Space(1))
+			loop until (InStr(strSentence, Space(2))=0)
+		end if
+
+		dim pTmpArray
+		set pTmpArray = doc_.afc.new_navoarray()
+
+		'Dodajemy nowe slowa na koniec
+		'naszej tablicy i wyrzycamy slowa, 
+		'ktore sa krotsze niz 2 litery
+
+		pTmpArray.Separate strSentence, Space(1)
+
+		dim n
+		for n=0 to (pTmpArray.Count() - 1)
+			'todo: i posiadaj¹ce znaki typu litery lub cyfry obok
+			'siebie - min 2
+			if (len(pTmpArray.Value(n))>1) then
+				m_pWords.Add pTmpArray.Value(n)
+			end if
+		next
+
+		set pTmpArray = nothing
+	end function
+
+	'---------------------------------------------------------
+	' Pobierz slowo z podanego indeksu
+	'---------------------------------------------------------
+	public function get_word(byval nIndex)
+		get_word = m_pWords.Value( nIndex )
+	end function
+
+	'---------------------------------------------------------
+	' Pobierz liczbe slow
+	'---------------------------------------------------------
+	public function get_wordsCount()
+		get_wordsCount = m_pWords.Count()
+	end function
+
+end class
+
+
+'-----------------------------------------------------------------------
+' Klasa reprezentuje zapytania dla systemu FTS Contains (zawiera)
+'-----------------------------------------------------------------------
+class CFTSContains_Query
+
+	private m_strFTSQuery
+
+	private sub class_initialize()
+		m_strFTSQuery = ""
+	end sub
+
+	private sub class_terminate()   'OK
+		m_strFTSQuery = ""
+	end sub
+
+	'---------------------------------------------------------
+	' Zamyka istniej¹ce zapytanie w grupe - w nawiasy tzn.
+	' maja znaczenie przy warunkach logicznych
+	'---------------------------------------------------------
+	public function fts_group()
+		if (len(m_strFTSQuery)=0) then
+			exit function
+		end if
+
+		m_strFTSQuery = "(" + m_strFTSQuery + ")"
+	end function
+
+	'---------------------------------------------------------
+	' Przerabia dowolny tekst na fraze, wyra¿enie i zwraca je
+	'---------------------------------------------------------
+	public function fts_phrase(byval strText)
+		fts_phrase = "{phrase}""" + CStr(strText) + """{/phrase}"
+	end function
+
+	'---------------------------------------------------------
+	' Dodaje do zapytania warunek logiczny o nazwie 
+	' strLogicalCondition dla stalej typu String - strWords
+	'---------------------------------------------------------
+	public function fts_logical_condition(byval strLogicalCondition, byval strWords)
+		'mamy dodac fraze jako string
+		strWords = trim(CStr(strWords))
+
+		if (isIgnoredSentence(strWords)) then
+			'nie dodawaj warunku
+			exit function
+		end if
+
+		if (len(m_strFTSQuery)>0) then
+			m_strFTSQuery = m_strFTSQuery + " " + strLogicalCondition + " "
+		end if
+
+		m_strFTSQuery = m_strFTSQuery + fts_phrase( strWords )
+	end function
+
+	'---------------------------------------------------------
+	' Dodaje do zapytania warunek logiczny o nazwie 
+	' strLogicalCondition dla stalej frazy gdy varWords jest 
+	' typu String (nie rozbijaj jej) lub dla wszystkich slow
+	' z tablicy gdy varWords jest typu CFTSWords
+	'---------------------------------------------------------
+	public function fts_logical_conditions(byval strLogicalCondition, byval varWords)
+		if (isObject(varWords)) then
+			'mamy doczynienia z tablica slow CFTSWords
+			dim i
+			for i=0 to (varWords.get_wordsCount()-1)
+				fts_logical_condition strLogicalCondition, varWords.get_word(i)
+			next
+		else
+			'mamy doczynienia z fraza
+			fts_logical_condition strLogicalCondition, varWords
+		end if
+	end function
+
+	'---------------------------------------------------------
+	' Warunek And
+	' 
+	' Dokumenty zwierajace wyraz * i varWords
+	'---------------------------------------------------------
+	public function fts_and(byval varWords)
+		fts_logical_conditions "AND", varWords
+	end function
+
+	'---------------------------------------------------------
+	' Warunek Or
+	'
+	' Dokumenty zawierajace wyraz * lub varWords
+	'---------------------------------------------------------
+	public function fts_or(byval varWords)
+		fts_logical_conditions "OR", varWords
+	end function
+
+	'---------------------------------------------------------
+	' Warunek And NOT
+	'
+	' Dokumenty zawierajace wyraz * i nie zawierajace varWords
+	'---------------------------------------------------------
+	public function fts_andnot(byval varWords)
+		fts_logical_conditions "AND NOT", varWords
+	end function
+
+	'---------------------------------------------------------
+	' Warunek NEAR
+	'
+	' Dokumenty zawierajace * w poblizu varWords
+	'---------------------------------------------------------
+	public function fts_near(byval varWords)
+		fts_logical_conditions "NEAR", varWords
+	end function
+
+	'---------------------------------------------------------
+	' Zwraca zapytanie
+	'---------------------------------------------------------
+	public function fts_getQuery()
+		if (len(m_strFTSQuery)=0) then
+			exit function
+		end if
+
+		fts_getQuery = "Contains " + m_strFTSQuery
+	end function
+
+end class
+
+
+'-----------------------------------------------------------------------
+' True jezeli znak char nalezy do ignorowanych przez FTS
+'-----------------------------------------------------------------------
+function isIgnoredChar(byval char): isIgnoredChar=false
+	if (char = "`" or _
+	char = "~" or _
+	char = "!" or _
+	char = "@" or _
+	char = "#" or _
+	char = "$" or _
+	char = "%" or _
+	char = "^" or _
+	char = "&" or _
+	char = "*" or _
+	char = "(" or _
+	char = ")" or _
+	char = "-" or _
+	char = "+" or _
+	char = "=" or _
+	char = "{" or _
+	char = "[" or _
+	char = "}" or _
+	char = "]" or _
+	char = ":" or _
+	char = ";" or _
+	char = """" or _
+	char = "'" or _
+	char = "," or _
+	char = "<" or _
+	char = "." or _
+	char = ">" or _
+	char = "/" or _
+	char = "?" or _
+	char = "|" or _
+	char = " " or _
+	char = "\") then
+		isIgnoredChar = true
+	end if
+end function
+
+'-----------------------------------------------------------------------
+' Zwraca false jezeli w stringu wystapily obok siebie min. 2 znaki
+' nie nalezace do grupy ignorowanych
+'-----------------------------------------------------------------------
+function isIgnoredSentence(byref strSentence): isIgnoredSentence=true
+
+	strSentence=trim(strSentence)
+
+	if (len(strSentence)<2) then
+		exit function
+	end if
+
+	dim n
+	for n=2 to len(strSentence)
+		if (not isIgnoredChar( mid(strSentence, n, 1) )) and _
+		   (not isIgnoredChar( mid(strSentence, (n - 1), 1) )) then
+			isIgnoredSentence=false
+			exit function
+		end if
+	next
+
+end function
+
+
+
+#endif

@@ -1,0 +1,364 @@
+class CSuggKontoCustomizer
+	private m_idCtrl
+	private m_idKlient
+	private m_bByName
+	public function query(byval strEntered,byref strWhere,byref strOrderBy,byref strJoin)		
+		strWhere = replace(strWhere , "n5produkt.strIndeks" , "n5klient_produkt.klpr_strIndeks" )
+		strWhere = replace(strWhere , "n5produkt.strNazwa" , "n5klient_produkt.klpr_strNazwa" )		
+		strWhere = strWhere + " and (n5klient_produkt.klpr_pKlient = "+cstr(m_idKlient)+") "
+		'noop
+	end function
+	public function before_fill(byref pSubPage)
+		before_fill = false
+	end function
+	public function fill_item(byref pBody, byval pFoundObj)	
+
+		dim pTableCell
+		set pTableCell = pBody.addnew(22,-1).addnew(21,-1)
+		dim pItemHLI : set pItemHLI = doc_.createhli()
+		
+		pItemHLI.prop(GVAR_FUNCTIONHLI) = "std_rs_choose"
+		pItemHLI.prop(PROPC_IDENT) = m_idCtrl
+		pItemHLI.prop(GVAR_TYPEID) = TYPEID_N5PRODUKT
+		pItemHLI.prop(GVAR_OBJECT) = pFoundObj.klpr_pProdukt.idobj
+		
+		dim pStatic
+		set pStatic = pTableCell.addnew(0,-1)
+		if m_bByName then
+			pStatic.text = pFoundObj.klpr_strNazwa
+			pItemHLI.prop(1) = pFoundObj.klpr_strNazwa
+		else
+			pStatic.text = pFoundObj.klpr_strIndeks
+			pItemHLI.prop(1) = pFoundObj.klpr_strIndeks
+		end if
+		
+
+		set pStatic.href = pItemHLI
+		fill_item = true
+	end function
+	public function after_fill(byref pSubPage)
+	end function
+	public sub setup(byval nCtrl,byval nIdKlient , byval bByName)
+		m_idCtrl = nCtrl
+		m_idKlient = nIdKlient
+		m_bByName = bByName
+	end sub
+end class
+
+dim g_fldnr_n5zam_listPozycje
+dim g_fldnr_n5pozzam_pProdukt
+
+dim g_fldnr_n5produkt_strNazwa
+dim g_fldnr_n5produkt_strInx
+
+dim g_fldnr_klpr_strNazwa
+dim g_fldnr_klpr_strIndeks
+
+sub init_fld_nrs(byval nTypeParent , nTypeChild)
+	dim pStdObjDef : set pStdObjDef = doc_.stdobjdef.getobjdef(nTypeParent)
+	g_fldnr_n5zam_listPozycje = pStdObjDef.getfieldindex("listPozycje")
+	set pStdObjDef = doc_.stdobjdef.getobjdef(nTypeChild)
+	g_fldnr_n5pozzam_pProdukt = pStdObjDef.getfieldindex("pProdukt")
+	set pStdObjDef = doc_.stdobjdef.getobjdef(TYPEID_N5PRODUKT)
+	g_fldnr_n5produkt_strNazwa = pStdObjDef.getfieldindex("strNazwa")
+	g_fldnr_n5produkt_strInx = pStdObjDef.getfieldindex("strIndeks")
+	set pStdObjDef = doc_.stdobjdef.getobjdef(TYPEID_N5KLIENT_PRODUKT)
+	g_fldnr_klpr_strNazwa = pStdObjDef.getfieldindex("klpr_strNazwa")
+	g_fldnr_klpr_strIndeks = pStdObjDef.getfieldindex("klpr_strIndeks")
+end sub
+
+
+
+function find_info_by_prod_cust(byval bNazwa , pProdukt , pKlient)
+	if pKlient is nothing then
+		if bNazwa then
+			find_info_by_prod_cust = pProdukt.strNazwa
+		else
+			find_info_by_prod_cust = pProdukt.strIndeks
+		end if
+		exit function		
+	end if
+	dim strWhere:strWhere = trans_.afc.convert.Formatter("klpr_pKlient=%2 and klpr_pProdukt=%1").add(cstr(pProdukt.idobj)).add(cstr(pKlient.idobj)).done()
+	dim id:id = trans_.findobjid (TYPEID_N5KLIENT_PRODUKT , strWhere)
+	if id < 1 then
+		trans_.message 1002 , 0 , "brak informacji o produkcie "+ pProdukt.text +" dla klienta " + pKlient.text + " lub infomacja niejednoznaczna "
+		if bNazwa then
+			find_info_by_prod_cust = pProdukt.strNazwa
+		else
+			find_info_by_prod_cust = pProdukt.strIndeks
+		end if
+	else
+		if bNazwa then
+			find_info_by_prod_cust = trans_.getobj(TYPEID_N5KLIENT_PRODUKT,id).klpr_strNazwa
+		else
+			find_info_by_prod_cust = trans_.getobj(TYPEID_N5KLIENT_PRODUKT,id).klpr_strIndeks
+		end if		
+	end if
+end function
+
+function show_hide_prod_cols (byval bObce , byval nStartingColl , byval idTableBoby)
+
+	'LP_PROD_COLS		 - kolumna z nazwa nasza
+	'LP_PROD_COLS + 1	 - kolumna z inx naszym
+
+	'LP_PROD_COLS + 2		 - kolumna z nazwa obca
+	'LP_PROD_COLS + 3	 - kolumna z inx obcym
+
+	dim oRow,oCell
+	for each oRow in page_.ctrl(idTableBoby)
+		for each oCell in oRow
+			if not oCell.userprop is nothing then
+				if oCell.userprop.prop(199) = 1 then
+					oCell.prevelement.prevelement.hide = bObce
+					oCell.prevelement.hide = bObce
+					oCell.hide = not bObce
+					oCell.nextelement.hide = not bObce
+					exit for
+				end if
+			end if
+		next
+	next
+	
+end function
+
+
+function std_choose_prod_list_hli_obce(byref pHLI)
+
+
+	if page_.root.field(pHLI.prop(4)) is nothing then
+		trans_.message 1002 , 0 , "Najpierw wska¿ klienta"	
+		exit function
+	end if
+
+	dim nRow : nRow = CLng(pHLI.prop(PROPC_ROW))
+
+	dim pChoicelist:set pChoicelist = doc_.getmodule(43001)
+	pChoicelist.useAsText false
+	pChoicelist.prepare_choice_list TYPEID_N5KLIENT_PRODUKT,"Produkt",cstr(pHLI.prop(3))," (klpr_pKlient="+cstr(page_.root.field(pHLI.prop(4)).idobj)+") ","","", nothing
+
+	dim idChoosen : idChoosen = pChoicelist.domodalauto()
+
+	if idChoosen > 0 then
+
+		dim pInfo:set pInfo = trans_.getobj(TYPEID_N5KLIENT_PRODUKT,idChoosen)
+
+		dim pObject
+		if page_.root.listPozycje.exists(nRow) then
+			set pObject = page_.root.listPozycje.get(nRow)
+		else
+			set pObject = page_.root.listPozycje.addnew()
+		end if
+
+		set pObject.pProdukt = pInfo.klpr_pProdukt		
+		
+	end if
+		
+
+end function	
+
+
+
+#ifndef OBCE_FLAG_STORAGE
+#define OBCE_FLAG_STORAGE g_ObceF
+#endif 
+
+#macro VB_CHECKBOX_OBCE_TRANSFER(_ctrl_,_collp_,_body_,_path_to_klient_)							\
+function c##_ctrl_##_ongetdata(byref pCtrl):c##_ctrl_##_ongetdata = true							\
+	pCtrl.element(1).disable = ((_path_to_klient_) is nothing)										\
+	if OBCE_FLAG_STORAGE <> "1" then																\
+		pCtrl.value = "0"																			\
+	else																							\
+		pCtrl.value = "1"																			\
+	end if																							\
+	show_hide_prod_cols (pCtrl.value = "1"), _collp_	, _body_ 										\
+end function																						\
+dim g_ObceF:g_ObceF = "0"																			\
+function c##_ctrl_##_ondataentered(byref pCtrl , byval newValue):c##_ctrl_##_ondataentered = true	\
+	if newValue = "1" then																			\
+		OBCE_FLAG_STORAGE = "1"																		\
+	else																							\
+		OBCE_FLAG_STORAGE = ""																		\
+	end if																							\
+	show_hide_prod_cols (newValue = "1"), _collp_	, _body_ 										\
+end function
+
+#macro VBG_PROD_BY_OBCE_TRANSFER(_ctrl_,_collp_,_klient_,_byname_,_body_,_cursor_,_fldnr_)			\
+function c##_ctrl_##_ondataentered(pCtrl,nRow, strEntered) : c##_ctrl_##_ondataentered = true		\
+	if page_.root._klient_ is nothing then															\
+		trans_.message 1002 , 0 , "Najpierw wska¿ klienta"											\
+		exit function																				\
+	end if																							\
+	dim pSuggCustomizer : set pSuggCustomizer = new CSuggKontoCustomizer							\
+	pSuggCustomizer.setup pCtrl.ident , page_.root._klient_.idobj , _byname_						\
+	custom_lrs_dataentered_n pCtrl,strEntered,g_fldnr_n5zam_listPozycje,nRow, _						\
+		g_fldnr_n5pozzam_pProdukt,TYPEID_N5KLIENT_PRODUKT,_fldnr_,_cursor_,pSuggCustomizer			\
+end function																						\
+function c##_ctrl_##_ongetdata(byref pCtrl,nRow)													\
+	if OBCE_FLAG_STORAGE <> "1" then																\
+		exit function																				\
+	end if																							\
+	show_hide_prod_cols (OBCE_FLAG_STORAGE = "1"), _collp_	, _body_								\
+	std_lrs_getdata_n pCtrl,g_fldnr_n5zam_listPozycje,nRow,g_fldnr_n5pozzam_pProdukt, _				\
+	_fldnr_																							\
+	dim strTip : strTip = pCtrl.value																\
+	if page_.root.listPozycje.exists(nRow) then														\
+		if not page_.root.listPozycje.get(nRow).pProdukt is nothing then							\
+			strTip = find_info_by_prod_cust(_byname_ , page_.root.listPozycje.get(nRow).pProdukt , page_.root._klient_)	\
+		end if	\
+	end if	\
+	pCtrl.value = strTip	\
+	pCtrl.backcolor = rgb(224,254,225) \
+end function	\
+function c##_ctrl_##_onlostfocus(byref pCtrl,nRow,nGotFocusId)	\
+	c##_ctrl_##_onlostfocus = std_rs_lostfocus(pCtrl,nGotFocusId)	\
+end function
+
+
+
+
+
+function custom_lrs_dataentered_n(byref pCtrl,byval strEntered,byval nListField,byval nDataRow,byval nRefField,byval nRefTypeId,byval nMatchField,byval idCursor,byref pCustomizer)
+	custom_lrs_dataentered_n = custom_rs_dataentered_obj(pCtrl,strEntered,nListField,nDataRow,nRefField,nRefTypeId,nMatchField,idCursor,pCustomizer)
+end function
+
+
+
+function custom_rs_dataentered_obj(byref pCtrl,byval strEntered,byval nListField,byval nDataRow,byval nRefField,byval nRefTypeId,byval nMatchField,byval idCursor,byref pCustomizer) : custom_rs_dataentered_obj = true
+	dim iProdField : iProdField = nMatchField
+	if nMatchField = g_fldnr_n5produkt_strNazwa then
+		nMatchField = g_fldnr_klpr_strNazwa
+	else
+		nMatchField = g_fldnr_klpr_strIndeks
+	end if
+	
+	strEntered = trim(cstr(strEntered))
+	
+	dim pRSWorker : set pRSWorker = pCtrl.suggestion
+
+	if pRSWorker is nothing then
+		set pRSWorker = new crefsugworker
+		pRSWorker.init pCtrl.ident,nRefField,nMatchField,nListField,nDataRow,TYPEID_N5KLIENT_PRODUKT
+		set pCtrl.suggestion = pRSWorker
+	end if
+
+	if strEntered = "" then
+		pRSWorker.remove
+		set pRSWorker.get_dest_obj().field(nRefField) = nothing
+		exit function
+	end if
+	
+	dim pCursor : set pCursor = pRSWorker.opencursor(nRefTypeId,nMatchField,strEntered,idCursor,pCustomizer)
+
+	if pCursor.exists(2) then	
+		pRSWorker.fill pCursor,pCustomizer,nMatchField
+		set pRSWorker.get_dest_obj().field(nRefField) = nothing
+	else
+		if pCursor.exists(1) then	
+			if not (pRSWorker.get_dest_obj().field(nRefField) is pCursor.get(1)) then
+				set pRSWorker.get_dest_obj().field(nRefField) = pCursor.get(1).klpr_pProdukt
+				with pCtrl
+					.value = cstr(pRSWorker.get_dest_obj().field(nRefField).field(iProdField))
+					.valid = true
+					'.movecaretto 0,false
+					.selecttoend
+				end with
+			end if
+		else	
+			set pRSWorker.get_dest_obj().field(nRefField) = nothing
+		end if
+		pRSWorker.remove
+	end if
+end function
+
+
+class line_selection_manager
+	public m_iDocId
+	public m_dictLines
+
+	private sub class_initialize()
+		m_iDocId = -1
+		set m_dictLines = createobject("Scripting.Dictionary")
+	end sub
+	public sub ensure_proper_doc()
+		if m_iDocId <> page_.rootidobj then
+			'set m_dictLines = createobject("Scripting.Dictionary")
+			m_iDocId = page_.rootidobj
+		end if
+	end sub
+	public sub write(iPosID, bSelected)
+		m_dictLines.Item(iPosID) = bSelected
+	end sub
+	public function read(iPosID)
+		if m_dictLines.Exists(iPosID) then
+			read = m_dictLines.Item(iPosID)
+		else
+			read = "0"
+		end if
+	end function
+	public sub for_all(oListPozycje, bSelected)
+		dim iRow
+		
+		for iRow = 1 to oListPozycje.count()
+			dim oPozycja : set oPozycja = oListPozycje.get(iRow)
+			write oPozycja.IdObj, bSelected
+		next
+	end sub 
+	
+	public sub delete_selected(oListPozycje)
+		dim bAny
+		
+		do
+			bAny = false
+			
+			dim iRow
+			
+			for iRow = 1 to oListPozycje.count()
+				dim oPozycja : set oPozycja = oListPozycje.get(iRow)
+				if read(oPozycja.IdObj) = "1" then
+					write oPozycja.IdObj, "0"
+					oListPozycje.delete iRow
+					bAny = true
+					exit for
+				end if
+			next
+			
+		loop while bAny
+		
+	end sub
+end class
+
+dim g_oLSM : set g_oLSM = new line_selection_manager
+
+
+function delete_selected_lines(oHLI)
+	g_oLSM.delete_selected page_.root.listPozycje
+end function
+
+#macro VBG_LINE_SELECTION(_ctrl_,_ctrl_all_,_list_field_)							\
+function c##_ctrl_all_##_ongetdata(oCtrl) : c##_ctrl_all_##_ongetdata = true		\
+end function																		\
+function c##_ctrl_all_##_ondataentered(oCtrl, vValue)								\
+	g_oLSM.for_all page_.root.listPozycje, vValue								\
+end function																		\
+function c##_ctrl_##_ongetdata(oCtrl, iRow) : c##_ctrl_##_ongetdata = true			\
+	if iRow = 1 then																\
+		g_oLSM.ensure_proper_doc													\
+	end if																			\
+	if page_.root.listPozycje.exists(iRow) then								\
+		dim oPozycja : set oPozycja = page_.root.listPozycje.get(iRow)			\
+		oCtrl.value = g_oLSM.read(oPozycja.IdObj)									\
+	end if																			\
+end function																		\
+function c##_ctrl_##_ondataentered(oCtrl, iRow, vValue)								\
+	if iRow = 1 then																\
+		g_oLSM.ensure_proper_doc													\
+	end if																			\
+	if page_.root.listPozycje.exists(iRow) then								\
+		dim oPozycja : set oPozycja = page_.root.listPozycje.get(iRow)			\
+		g_oLSM.write oPozycja.IdObj, vValue											\
+	end if																			\
+end function																		\
+function c##_ctrl_##_oncmdlist(pCtrl, nRow, pCmdList)								\
+	dim pHli:set pHli = doc_.createhlistr("varFunctionHLI='delete_selected_lines'")	\
+	pCmdList.addcommand "Usun zaznaczone" , pHli									\
+end function

@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+RAPTEMPLATE_ZLECPROD_NIEZREALIZOWANE
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1250.h"
+
+
+#define RAPORT_TITLE Zlecenia produkcyjne niezrealizowane
+
+-->
+<page style='36'>
+<config>
+<title>RAPORT_TITLE</title>
+<script>
+<![CDATA[
+<%
+function query()
+query = "select 'id_zlec'=zlec.IdObj,'nr_dok'=zlec.strNrDok,'data_wyst'=zlec.dDataWyst " + vbNewLine +_
+        "from n5zlecprod zlec " + vbNewLine +_
+        "inner join n5klient k on zlec.pKlient = k.IdObj " + vbNewLine +_
+        "where %1 and %2 and " + vbNewLine +_
+        "((1=0) or (zlec.IdObj not in (select wrefDokHandl from n5dokmag where wrefDokHandl_wrt=TYPEID_N5ZLECPROD and nTypDok = N5REJESTRDOK__PP))) -- nie ma PP " + vbNewLine +_
+        "and zlec.IdObj in (select wrefDokHandl from n5dokmag where wrefDokHandl_wrt=TYPEID_N5ZLECPROD and nTypDok = N5REJESTRDOK__RP) -- przynajmniej 1 RP " + vbNewLine +_ 
+        "order by zlec.dDataWyst"
+end function
+%>
+<%
+dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+function default_param()
+	pParamArray.add doc_.afc.rap.param.new_date_range("Data wystawienia").bindexpr("zlec.dDataWyst")
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwa klienta").bindexpr("k.strNazwa")
+#ifdef _IOW
+	dim pParamFactory: set pParamFactory = doc_.afc.rap.param
+	dim pParamRejDok: set pParamRejDok = pParamFactory.new_choice("Rejestr").bindexpr("")
+	doc_.afc.rap.param.init_on_query pParamRejDok, trans_ ,_
+		"select strNazwa, idobj from n5rejestrdok where eTyp in (N5REJESTRDOK__PP) order by strNazwa "
+	pParamArray.add pParamRejDok
+	
+	'odznacz rejestr PP
+	dim iter
+	for iter = 0 to pParamArray.Value(2).names.upperIndex
+		if InStr(pParamArray.Value(2).names.Value(iter),"PP") > 0 then
+			pParamArray.Value(2).selected.Value(iter) = false
+		end if
+	next
+#endif
+	set default_param = pParamArray
+end function
+%>
+<%
+function GetRejDokParam(): GetRejDokParam = "1=0"
+	dim iter, strMark, strWhere: strWhere = ""
+	for iter = 0 to pParamArray.Value(2).names.upperIndex
+		if pParamArray.Value(2).selected.Value(iter) then
+			strMark = "in"
+		else
+			strMark = "not in"
+		end if
+		strWhere = strWhere + "zlec.IdObj " + strMark + " (select wrefDokHandl from n5dokmag where wrefDokHandl_wrt=TYPEID_N5ZLECPROD and nTypDok = N5REJESTRDOK__PP and pRejestrDok in (" + cstr(pParamArray.Value(2).values.Value(iter)) + ")) and "
+	next
+	if Len(strWhere) > 4 then
+		strWhere = Left(strWhere,Len(strWhere) - 4)
+	end if
+	GetRejDokParam = strWhere
+end function
+%>
+<%
+function body_row(byref pSection,byref pRec)
+if pRapExec.RecNr mod 2 = 0 then
+%>
+<tr bordercolor='white'>
+<%
+else
+%>
+<tr bordercolor='white' style='37'>
+<%
+end if
+%>
+<td align='right'>RXE_LP</td>
+	<td>
+		RXE_TEXT_LINK_FORM_VCC(TYPEID_N5ZLECPROD,id_zlec,nr_dok)
+	</td>
+	<td>
+		RXE_DATE(data_wyst)
+	</td>
+</tr><%
+end function
+%>
+<%
+function body_header(byref pSection,byref pRec)
+%>
+<table border='1'>
+<thead>
+<tr style='21'>
+	<td width='min'><t>LP</t></td>
+	<td width='max'>
+		<text><![CDATA[Numer zlecenia prod]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Data wystawawienia]]></text>
+	</td>
+</tr>
+</thead>
+<tbody>
+<%
+end function
+%>
+<%
+function body_footer(byref pSection)
+%>
+</tbody>
+</table>
+<%
+end function
+%>
+]]>
+</script>
+</config>
+<header>
+</header>
+<body>
+<p>
+RAPORT_HEADER(3,0)
+</p>
+
+<p>
+<t size='2'/>
+</p>
+
+<p><text fontsize='7'><![CDATA[RAPORT_TITLE]]></text></p><br/><br/>
+<t fontsize='5' bold='true'>Kryteria selekcji:</t><br/>
+<%
+dim pRapExec : set pRapExec = rapeng_.new_engine()
+with pRapExec
+	.add_body_ex getref("body_header"),getref("body_footer"),getref("body_row")
+if .prepare("RAPORT_TITLE",default_param(),rapeng_.get_raport_param(),query()) then
+
+	dim strWhere: strWhere = "1=0"
+#ifdef _IOW
+	strWhere = GetRejDokParam()
+#endif
+	.ReplaceQueryParam "1=0",strWhere
+%>
+<%
+
+	rapeng_.write_actual_param so,rapeng_.get_raport_param()
+	if not .perform then
+	so.write "<p style='21'><t>Brak danych spełniających podane kryteria</t></p>"
+	end if
+%>
+<%
+end if
+end with
+%>
+</body>
+<footer>
+</footer>
+</page>

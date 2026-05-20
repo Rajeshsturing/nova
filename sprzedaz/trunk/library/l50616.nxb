@@ -1,0 +1,1404 @@
+#ifndef LIBRARY_50616
+#define LIBRARY_50616
+
+'////////////////////////////////////////////////////////////////////////////
+'// (c) Navo 2002 Ltd.
+'// EXPORT
+'// Konwersja ImportExport STREAM -> NE OBJECTS
+'//
+'// Spikowski Piotr
+'////////////////////////////////////////////////////////////////////////////
+
+#include "h1231.h"
+
+#include "50100"
+#include "50103"
+#include "50120"
+#include "50517"
+#include "50614"
+#include "50200"
+
+#macro VB_BEFIMP_SINGLE_FIELD(_obj_name_,_field_name_)									\
+function _obj_name_##_BefImport(byref pImpMan, byref pStream)							\
+	_obj_name_##_BefImport = pImpMan.getUniqueID("_field_name_='" + _					\
+		trans_.afc.convert.DoubleApostrophe( pStream.fields("_field_name_") ) + "'")	\
+	if (_obj_name_##_BefImport>0) then													\
+		_obj_name_##_BefImport = _obj_name_##_BefImport * (-1)							\
+	end if																				\
+end function
+
+dim bIgnoreAllPlatnosc: bIgnoreAllPlatnosc = false
+
+function n5rejestrdok_BefImport(byref pImpMan, byref pStream)
+	n5rejestrdok_BefImport = pImpMan.getUniqueID("strNazwa='" + trans_.afc.convert.DoubleApostrophe( pStream.fields("strNazwa") ) + "'")
+
+	if (n5rejestrdok_BefImport>0) then
+		n5rejestrdok_BefImport = n5rejestrdok_BefImport * (-1)
+	end if
+
+	if (n5rejestrdok_BefImport>=0) then
+		trans_.var(APPVAR_REJESTR_TYP) = pStream.fields("eTyp")
+	end if
+end function
+
+function n5dokument_BefImport(byref pImpMan, byref pStream)
+	n5dokument_BefImport = pImpMan.getUniqueID("strNumDok='" + _
+		trans_.afc.convert.DoubleApostrophe( pStream.fields("strNumDok") ) + "'")
+
+	 if (n5dokument_BefImport>0) then
+		n5dokument_BefImport = n5dokument_BefImport * (-1)
+	 end if
+end function
+
+function n5dokument_AftImport(byref pImpMan, byref pStream, byref pObject)
+	if (pObject.isnew) then
+		set pObject.pUzytkWypoz = nothing
+		pObject.strCheckoutFileName = ""
+	end if
+
+	n5dokument_AftImport = true
+end function
+
+function n5typdokumentu_BefImport(byref pImpMan, byref pStream)
+	n5typdokumentu_BefImport = pImpMan.getUniqueID("strNazwa='" + _
+		trans_.afc.convert.DoubleApostrophe( pStream.fields("strNazwa") ) + "'")
+
+	 if (n5typdokumentu_BefImport>0) then
+		n5typdokumentu_BefImport = n5typdokumentu_BefImport * (-1)
+	 end if
+end function
+
+function n5dokmag_BefImport(byref pImpMan, byref pStream)
+	n5dokmag_BefImport = pImpMan.getUniqueID("strNrDok='" + _
+		trans_.afc.convert.DoubleApostrophe( pStream.fields("strNrDok") ) + "'")
+
+	 if (n5dokmag_BefImport>0) then
+		n5dokmag_BefImport = n5dokmag_BefImport * (-1)
+	 end if
+
+	if (n5dokmag_BefImport>=0) then
+
+		dim nTypRej: nTypRej = -1
+		if (pStream.extraExists("TypRejestru")) then
+			nTypRej = pStream.extra("TypRejestru")
+		end if
+
+		if (not setRejestrVariable(pStream, pImpMan, nTypRej)) then
+			pImpMan.cancelImport
+		end if
+	end if
+end function
+
+dim g_bIgnoreAllInType: g_bIgnoreAllInType = false
+
+function n5dokmag_AftImport(byref pImpMan, byref pStream, byref pObject)
+	
+	if ((pObject.pDokMag is nothing) and (pObject.nTypDok = N5REJESTRDOK__MP or pObject.nTypDok = N5REJESTRDOK__PP or pObject.nTypDok = N5REJESTRDOK__ZD or pObject.nTypDok = N5REJESTRDOK__ZZ)) then
+
+		if (not g_bIgnoreAllInType) then
+			pImpMan.performing_destroy
+			select case MessageBoxCustom("Dla dokumentu magazynowego " + _
+				"" + " numer """ + pObject.strNrDok + """" + _
+				" wymagane jest istnienie dokument powi¹zanego, który nie istnieje. Chcesz pomin¹æ ten dokument i kontynuowaæ import?", "Brak dokumentu", vbYesNoCancel, vbQuestion ,"Pomiñ;Pomiñ wszystkie;Przerwij import")
+					
+					case vbYes	'pomin
+						page_.activate
+						pObject.ignore = true
+						pImpMan.performing_restore
+					
+					case vbNo	'pomin wszystkie
+						page_.activate
+						pObject.ignore = true
+						g_bIgnoreAllInType = true
+						pImpMan.performing_restore
+					
+					case vbCancel	'przerwij import
+						page_.activate
+						pImpMan.cancelImport
+						pImpMan.performing_restore
+						exit function
+			end select
+		else
+			pObject.ignore = true
+		end if
+
+	end if
+
+	n5dokmag_AftImport = true
+end function
+
+function n5pozdokmag_BefImport(byref pImpMan, byref pStream)
+	n5pozdokmag_BefImport = 0
+end function
+
+function n5pozdokmag_AftImport(byref pImpMan, byref pStream, byref pObject)
+	if (pObject.parent.pMagZrod is nothing) then
+		set pObject.parent.pMagZrod = pObject.pMagZrod
+	else
+		if (pObject.parent.pMagZrod.idObj <> pObject.pMagZrod.IdObj) then
+			view_message3 6242, 0, pObject.parent.strNrDok, pObject.parent.pMagZrod.strNazwa, pObject.pMagZrod.strNazwa
+			page_.activate
+			pObject.parent.ignore = true
+		end if
+	end if
+
+	if (pObject.parent.pMagDocel is nothing) then
+		set pObject.parent.pMagDocel = pObject.pMagDocel
+	else
+		if (pObject.parent.pMagDocel.idObj <> pObject.pMagDocel.IdObj) then
+			view_message3 6242, 0, pObject.parent.strNrDok, pObject.parent.pMagDocel.strNazwa, pObject.pMagDocel.strNazwa
+			page_.activate
+			pObject.parent.ignore = true
+		end if
+	end if
+
+	n5pozdokmag_AftImport = true
+end function
+
+function n5platnosc_BefImport(byref pImpMan, byref pStream)
+	n5platnosc_BefImport = 0
+
+	n5platnosc_BefImport = pImpMan.getUniqueID("strNrDok='" + _
+		trans_.afc.convert.DoubleApostrophe( pStream.fields("strNrDok") ) + "'")
+	
+	if (n5platnosc_BefImport > 0) then
+		n5platnosc_BefImport = n5platnosc_BefImport * (-1)
+	end if
+
+	if (n5platnosc_BefImport>=0) then
+
+		dim varRejestrId
+		varRejestrId = pImpMan.idFromMap(TYPEID_N5REJESTRDOK, pStream.fields("pRejestrDok"))
+
+		if (not isEmpty(varRejestrId)) then
+			trans_.var(APPVAR_REJESTR_DOKUMENTOW) = CLng(varRejestrId)
+		else
+			view_message 6334, 0
+			pImpMan.cancelImport
+			exit function
+		end if
+
+		trans_.var(APPVAR_REJESTR_TYP) = pStream.extra("TypRejestru")
+	end if
+
+end function
+
+dim bShow: bShow = true
+dim bSkip: bSkip = false
+
+function n5platnosc_AftImport(byref pImpMan, byref pStream, byref pObject)
+
+	if (pObject.pWalutaPodm is nothing) then
+		set pObject.pWalutaPodm = getCurrentFirma().pWaluta
+	end if
+
+	if (pObject.pUzytRej is nothing) then
+		set pObject.pUzytRej = getCurrentUser()
+	end if
+
+	n5platnosc_AftImport = true
+end function
+
+function n5pozplatnosc_BefImport(byref pImpMan, byref pStream)
+	n5pozplatnosc_BefImport = 0
+end function
+
+function n5pozplatnosc_AftImport(byref pImpMan, byref pStream, byref pObject): n5pozplatnosc_AftImport = false
+
+	'Okreœlamy transakcje na podstawie wczeœniej
+	'zaimportowanych obietków sprzeda¿/zakup
+	if (pObject.pTransakcja is nothing) then
+		if (pStream.extraExists("idsprzedaz")) then
+			'Transakcja dla sprzedazy
+			dim varSprzedaz
+			varSprzedaz = pImpMan.idFromMap(TYPEID_N5SPRZEDAZ, pStream.extra("idsprzedaz"))
+
+			if (not isEmpty(varSprzedaz)) then
+				dim pSprzedaz
+				set pSprzedaz = trans_.getobj(TYPEID_N5SPRZEDAZ, CLng(varSprzedaz))
+
+				if (not pSprzedaz is nothing) then
+					if (not pSprzedaz.pTransakcja is nothing) then
+						set pObject.pTransakcja = pSprzedaz.pTransakcja
+					else
+						'todo:spiko Komunikat
+					end if
+				else
+					'todo:spiko Komunikat
+				end if
+
+				set pSprzedaz = nothing
+			else
+				'todo:spiko Komunikat
+			end if
+
+		elseif (pStream.extraExists("idzakup")) then
+
+			'Transakcja dla zakupu
+			dim varZakup
+			varZakup = pImpMan.idFromMap(TYPEID_N5ZAKUP, pStream.extra("idzakup"))
+
+			if (not isEmpty(varZakup)) then
+				dim pZakup
+				set pZakup = trans_.getobj(TYPEID_N5ZAKUP, CLng(varZakup))
+
+				if (not pZakup is nothing) then
+					if (not pZakup.pTransakcja is nothing) then
+						set pObject.pTransakcja = pZakup.pTransakcja
+					else
+						'todo:spiko Komunikat
+					end if
+				else
+					'todo:spiko Komunikat
+				end if
+
+				set pZakup = nothing
+			else
+				'todo:spiko Komunikat
+			end if
+
+		end if
+
+	end if
+
+	n5pozplatnosc_AftImport = true
+end function
+
+function n5dowodksieg_BefImport(byref pImpMan, byref pStream)
+	n5dowodksieg_BefImport = pImpMan.getUniqueID("strNrDok='" + _
+		trans_.afc.convert.DoubleApostrophe( pStream.fields("strNrDok") ) + "'")
+
+	 if (n5dowodksieg_BefImport>0) then
+		n5dowodksieg_BefImport = n5dowodksieg_BefImport * (-1)
+	 end if
+
+	if (n5dowodksieg_BefImport>=0) then
+		dim nTypRej: nTypRej = -1
+		if (pStream.extraExists("TypRejestru")) then
+			nTypRej = pStream.extra("TypRejestru")
+		end if
+
+		if (not setRejestrVariable(pStream, pImpMan, nTypRej)) then
+			pImpMan.cancelImport
+		end if
+
+		trans_.var(APPVAR_DZIENNIK_DK) = trans_.var(APPVAR_REJESTR_DOKUMENTOW)
+	end if
+
+end function
+
+function n5dowodksieg_AftImport(byref pImpMan, byref pStream, byref pObject)
+
+	if (pObject.nNumDow=0) then
+		pObject.nNumDow = pObject.IdObj
+	end if
+
+	if (pObject.pRejestrDok is nothing) then
+		set pObject.pRejestrDok = getRejestDok(N5REJESTRDOK_DZIENNIK_NORM, pImpMan)
+	end if
+
+	n5dowodksieg_AftImport = true
+end function
+
+function n5dekret_BefImport(byref pImpMan, byref pStream)
+	n5dekret_BefImport = 0
+end function
+
+function n5pozsprzedaz_BefImport(byref pImpMan, byref pStream)
+	n5pozsprzedaz_BefImport = 0
+end function
+
+function n5dpc_BefImport(byref pImpMan, byref pStream)
+	n5dpc_BefImport = pImpMan.getUniqueID("strNazwa='" + _
+	 trans_.afc.convert.DoubleApostrophe( pStream.fields("strNazwa") ) + "' and ePubType=" + CStr(pStream.fields("ePubType")))
+
+	if (n5dpc_BefImport>0) then
+		n5dpc_BefImport = n5dpc_BefImport * (-1)
+	end if
+end function
+
+function n5sprzedaz_BefImport(byref pImpMan, byref pStream)
+
+	dim nTypRej: nTypRej = -1
+
+	if (pStream.extraExists("TypRejestru")) then
+		nTypRej = CLng( pStream.extra("TypRejestru") )
+	end if
+
+	if (nTypRej <> N5REJESTRDOK_KOR_FAKT_SP) then
+		n5sprzedaz_BefImport = pImpMan.getUniqueID("strNrDok='" + _
+			trans_.afc.convert.DoubleApostrophe( pStream.fields("strNrDok") ) + "'")
+	else
+		dim pCheckCursor
+		set pCheckCursor = trans_.createrawcursor(TYPEID_N5SPRZEDAZ, "n5sprzedaz.strNrDok = '" + pStream.fields("strNrDok") + "' and n5rejestrdok.eTyp=N5REJESTRDOK_KOR_FAKT_SP", "", "n5rejestrdok on n5rejestrdok.idobj = n5sprzedaz.pRejestrDok")
+
+		if (pCheckCursor.exists(1)) then
+			n5sprzedaz_BefImport = pCheckCursor.get(1).IdObj
+		else
+			n5sprzedaz_BefImport = 0
+		end if
+	end if
+
+	if (n5sprzedaz_BefImport>0) then
+		n5sprzedaz_BefImport = n5sprzedaz_BefImport * (-1)
+	end if
+
+	if (n5sprzedaz_BefImport>=0) then
+		if (not setRejestrVariable(pStream, pImpMan, nTypRej)) then
+			pImpMan.cancelImport
+		end if
+	end if
+
+end function
+
+#include "50203"
+#include "50523"
+
+function n5sprzedaz_AftImport(byref pImpMan, byref pStream, byref pObject)
+
+	if (pObject.pWaluta is nothing) then
+		set pObject.pWaluta = getDefaultWaluta()
+	end if
+
+	if (pObject.pSposobPlatnosci is nothing) then
+		set pObject.pSposobPlatnosci = getEmptySposobPlatnosci()
+	end if
+
+	'Ustawienie rozliczenia vat
+	if (pObject.pRozlVat is nothing) then
+		'Poszukiwanie
+		dim idRozliczenie
+		idRozliczenie = vat_lookup_rozliczenie( pObject.dDataWyst )
+
+		'Tworzenie
+		if (idRozliczenie=0) then
+			idRozliczenie = vat_create_rozliczenie( pObject.dDataWyst )
+		end if
+
+		'Podstawienie
+		if (idRozliczenie > 0) then
+			set pObject.pRozlVat = trans_.getobj(TYPEID_N5ROZLVAT, idRozliczenie)
+		else
+			view_message1 6304, 0, doc_.afc.display.fulldate(pObject.dDataWyst)
+			pImpMan.cancelImport
+		end if
+
+	end if
+
+	n5sprzedaz_AftImport = true
+end function
+
+function n5sposplat_BefImport(byref pImpMan, byref pStream)
+	n5sposplat_BefImport = pImpMan.getUniqueID("strNazwa='" + _
+		trans_.afc.convert.DoubleApostrophe( pStream.fields("strNazwa") ) + "'")
+
+	 if (n5sposplat_BefImport>0) then
+		n5sposplat_BefImport = n5sposplat_BefImport * (-1)
+	 end if
+end function
+
+function n5uzytkownik_BefImport(byref pImpMan, byref pStream)
+	n5uzytkownik_BefImport = pImpMan.getUniqueID("strNazwa='" + _
+		trans_.afc.convert.DoubleApostrophe( pStream.fields("strNazwa") ) + "' or " + _
+		"strLogin='" + trans_.afc.convert.DoubleApostrophe( pStream.fields("strLogin") ) + "'")
+
+	if (n5uzytkownik_BefImport>0) then
+		n5uzytkownik_BefImport = n5uzytkownik_BefImport * (-1)
+	end if
+end function
+
+function n5uzytkownik_AftImport(byref pImpMan, byref pStream, byref pObject)
+	n5uzytkownik_AftImport = true
+
+	'nadawanie uprawnien uzytkownikowi
+	'z szablonu pobranego z preload'u
+	dim idTemplate
+	idTemplate = trans_.findobjid(TYPEID_N5UZYTKOWNIK, "strNazwa = 'Importowani'" )
+
+	if (idTemplate <= 0) then
+		exit function
+	end if
+
+	'usun poprzednie uprawnienia jezeli by³y
+	dim cursor, pSO
+	set cursor = trans_.createrawcursor(TYPEID_N5SECURITYOBJ, "pUser=" + CStr(pObject.IdObj), "", "")
+
+	dim element
+	for each element in cursor
+		element.markdel = true
+	next
+
+	if (pObject.strLogin<>ADMIN_LOGIN) then
+		set cursor = trans_.createrawcursor(TYPEID_N5SECURITYOBJ, "pUser=" + CStr(idTemplate), "", "")
+
+		for each element in cursor
+			set pSO = trans_.newobj(TYPEID_N5SECURITYOBJ)
+			set pSO.pUser = pObject
+			set pSO.pSOD = element.pSOD
+		next
+
+	else
+
+		'mamy doczynienia z administratorem - nadajemy wszystkie
+		'uprawnienia
+		dim pCursor
+		set pCursor = trans_.createrawcursor(TYPEID_N5SOD, "",  "", "")
+
+		dim pSOD
+		for each pSOD in pCursor
+			if not pSOD is nothing then
+				set pSO = trans_.newobj(TYPEID_N5SECURITYOBJ)
+				set pSO.pSOD  = pSOD
+				set pSO.pUser = pObject
+			end if
+		next
+
+	end if
+
+end function
+
+function n5firma_BefImport(byref pImpMan, byref pStream)
+	'w bazie moze byc tylko jedna firma
+	n5firma_BefImport = pImpMan.getUniqueID("IdObj<>0")
+
+	if (n5firma_BefImport>0) then
+		n5firma_BefImport = n5firma_BefImport * (-1)
+	end if
+end function
+
+function n5firma_AftImport(byref pImpMan, byref pStream, byref pObject)
+	if (pObject.pWaluta is nothing) then
+		set pObject.pWaluta = getDefaultWaluta()
+	end if
+
+	if (pObject.pMiejscowosc is nothing) then
+		set pObject.pMiejscowosc = getEmptyMiejscowosc()
+	end if
+
+	if (not trans_.isvar(GVAR_FIRMA)) then
+		trans_.var(GVAR_FIRMA) = pObject.IdObj
+	end if
+
+	n5firma_AftImport = true
+end function
+
+function n5jednostka_BefImport(byref pImpMan, byref pStream)
+	'aaa=0
+	trans_.var(APPVAR_JEDNOSTKA_TYPE) = CLng(N5JEDNOSTKA_WALUTA)
+
+	n5jednostka_BefImport = pImpMan.getUniqueID("strSkrot='" + _
+	 trans_.afc.convert.DoubleApostrophe( pStream.fields("strSkrot") ) + "'")
+
+	 if (n5jednostka_BefImport>0) then
+		'nie robimy upgrade'u tylko dodajemy do mapy
+		'n5jednostka_BefImport = n5jednostka_BefImport * (-1)
+	 end if
+end function
+
+function n5grupaproduktow_BefImport(byref pImpMan, byref pStream)
+	n5grupaproduktow_BefImport = pImpMan.getUniqueID("strNazwa='" + _
+	 trans_.afc.convert.DoubleApostrophe( pStream.fields("strNazwa") ) + "'")
+
+	if (n5grupaproduktow_BefImport>0) then
+		n5grupaproduktow_BefImport = n5grupaproduktow_BefImport * (-1)
+	end if
+end function
+
+function n5magazyn_BefImport(byref pImpMan, byref pStream)
+	if (not isEmpty(pStream.fields("nInternalID"))) then
+		n5magazyn_BefImport = pImpMan.getUniqueID("nInternalID=" + _
+			trans_.afc.convert.DoubleApostrophe( pStream.fields("nInternalID") ))
+	else
+		n5magazyn_BefImport = pImpMan.getUniqueID("strNazwa='" + _
+			trans_.afc.convert.DoubleApostrophe( pStream.fields("strNazwa") ) + "'")
+	end if
+
+	if (n5magazyn_BefImport>0) then
+		n5magazyn_BefImport = n5magazyn_BefImport * (-1)
+	end if
+end function
+
+function n5grupaklient_BefImport(byref pImpMan, byref pStream)
+	n5grupaklient_BefImport = pImpMan.getUniqueID("strNazwa='" + _
+	 trans_.afc.convert.DoubleApostrophe( pStream.fields("strNazwa") ) + "'")
+
+	if (n5grupaklient_BefImport>0) then
+		n5grupaklient_BefImport = n5grupaklient_BefImport * (-1)
+	end if
+end function
+
+function n5bank_BefImport(byref pImpMan, byref pStream)
+	n5bank_BefImport = pImpMan.getUniqueID("strSkrot='" + _
+	 trans_.afc.convert.DoubleApostrophe( pStream.fields("strSkrot") ) + "'")
+
+	if (n5bank_BefImport>0) then
+		n5bank_BefImport = n5bank_BefImport * (-1)
+	end if
+end function
+
+function n5bank_AftImport(byref pImpMan, byref pStream, byref pObject)
+	if (pObject.pMiejscowosc is nothing) then
+		set pObject.pMiejscowosc = getEmptyMiejscowosc()
+	end if
+
+	n5bank_AftImport = true
+end function
+
+function n5wojewodztwo_BefImport(byref pImpMan, byref pStream)
+	n5wojewodztwo_BefImport = pImpMan.getUniqueID("strNazwa='" + _
+	 trans_.afc.convert.DoubleApostrophe( pStream.fields("strNazwa") ) + "'")
+
+	 if (n5wojewodztwo_BefImport>0) then
+		'nie robimy upgrade'u tylko dodajemy do mapy
+		n5wojewodztwo_BefImport = n5wojewodztwo_BefImport * (-1)
+	 end if
+end function
+
+function n5miejscowosc_BefImport(byref pImpMan, byref pStream)
+	n5miejscowosc_BefImport = pImpMan.getUniqueID("strNazwa='" + _
+	 trans_.afc.convert.DoubleApostrophe( pStream.fields("strNazwa") ) + "'")
+
+	if (n5miejscowosc_BefImport>0) then
+		'nie robimy upgrade'u tylko dodajemy do mapy
+		n5miejscowosc_BefImport = n5miejscowosc_BefImport * (-1)
+	end if
+
+end function
+
+function n5miejscowosc_AftImport(byref pImpMan, byref pStream, byref pObject)
+	if (pObject.pWojewodztwo is nothing) then
+		set pObject.pWojewodztwo = getEmptyWoj()
+	end if
+
+	n5miejscowosc_AftImport = true
+end function
+
+function n5pracownik_BefImport(byref pImpMan, byref pStream)
+	n5pracownik_BefImport = pImpMan.getMultiID("strNazwisko='" + _
+	 trans_.afc.convert.DoubleApostrophe( pStream.fields("strNazwisko") ) + "' and strImie='" + _
+	 trans_.afc.convert.DoubleApostrophe( pStream.fields("strImie") ) + "' and " + _
+	 "strPESEL='" + trans_.afc.convert.DoubleApostrophe( pStream.fields("strPESEL") ) + "' and " + _
+	 "strNIP='" + trans_.afc.convert.DoubleApostrophe( pStream.fields("strNIP") ) + "'")
+
+	if (n5pracownik_BefImport>0) then
+		n5pracownik_BefImport = n5pracownik_BefImport * (-1)
+	end if
+end function
+
+function n5pracownik_AftImport(byref pImpMan, byref pStream, byref pObject)
+	if (pObject.pMiejscowosc is nothing) then
+		set pObject.pMiejscowosc = getEmptyMiejscowosc()
+	end if
+
+	n5pracownik_AftImport = true
+end function
+
+function n5instytucja_BefImport(byref pImpMan, byref pStream)
+
+	dim nSourceMiejscowosc
+	nSourceMiejscowosc = pStream.fields("pMiejscowosc")
+
+	dim strMiejscowoscWhere: strMiejscowoscWhere = ""
+
+	if (not isEmpty(nSourceMiejscowosc)) then
+		dim nMiejscowoscIdObj: nMiejscowoscIdObj = CLng(0)
+		nMiejscowoscIdObj = pImpMan.idFromMap(TYPEID_N5MIEJSCOWOSC, pStream.fields("pMiejscowosc"))
+
+		if (not isEmpty(nMiejscowoscIdObj)) then
+			strMiejscowoscWhere = " and pMiejscowosc = " + CStr(nMiejscowoscIdObj)
+		end if
+
+	end if
+
+	n5instytucja_BefImport = pImpMan.getMultiID("strNazwa='" + _
+	 trans_.afc.convert.DoubleApostrophe( pStream.fields("strNazwa") ) + "' and " + _
+	 "strUlica='" + trans_.afc.convert.DoubleApostrophe( pStream.fields("strUlica") ) + "'" + strMiejscowoscWhere)
+
+	if (n5instytucja_BefImport>0) then
+		n5instytucja_BefImport = n5instytucja_BefImport * (-1)
+	end if
+end function
+
+function n5instytucja_AftImport(byref pImpMan, byref pStream, byref pObject)
+	if (pObject.pTyp is nothing) then
+		set pObject.pTyp = getEmptyTypInstytucji()
+	end if
+
+	if (pObject.pMiejscowosc is nothing) then
+		set pObject.pMiejscowosc = getEmptyMiejscowosc()
+	end if
+
+	n5instytucja_AftImport = true
+end function
+'----------------
+function n5klient_BefImport(byref pImpMan, byref pStream)
+	trans_.var(APPVAR_KLIENT_TYPE) = CLng(1)
+	n5klient_BefImport = pImpMan.getUniqueID("strIndeks='" + _
+		trans_.afc.convert.DoubleApostrophe( pStream.fields("strIndeks") ) + "'")
+end function
+
+function n5klient_AftImport(byref pImpMan, byref pStream, byref pObject)
+	if (pObject.pMiejscowosc is nothing) then
+		set pObject.pMiejscowosc = getEmptyMiejscowosc()
+	end if
+
+	if (pObject.pWaluta is nothing) then
+		set pObject.pWaluta = getCurrentFirma().pWaluta
+	end if
+
+	if (pObject.pGrupaKlient is nothing) then
+		pObject.pGrupaKlient = getEmptyGrupaKlient()
+	end if
+
+	n5klient_AftImport = true
+end function
+'----------------
+function n5_klient_jedn_org_BefImport(byref pImpMan, byref pStream)
+	dim strKlientIndex : strKlientIndex = pStream.fields("pKlient")
+	dim idKlient : idKlient = trans_.findobjid(TYPEID_N5KLIENT, "strIndeks='" + strKlientIndex + "'")
+	
+	pStream.fields("pKlient") = idKlient	
+	pImpMan.add2map TYPEID_N5KLIENT, idKlient, idKlient, cstr(idKlient)
+
+	n5_klient_jedn_org_BefImport = pImpMan.getUniqueID("strSkrot='" + _
+		trans_.afc.convert.DoubleApostrophe( pStream.fields("strSkrot") ) + "' and " + _
+		"pKlient=" + cstr(idKlient))
+
+	if (n5_klient_jedn_org_BefImport>0) then
+		n5_klient_jedn_org_BefImport = n5_klient_jedn_org_BefImport * (-1)
+	end if
+
+end function
+
+function n5_klient_jedn_org_AftImport(byref pImpMan, byref pStream, byref pObject)
+	n5_klient_jedn_org_AftImport = true
+end function
+
+'----------------
+
+function n5klient_pracownik_BefImport(byref pImpMan, byref pStream)
+	dim nIdKlient
+	nIdKlient = pImpMan.idFromMap(TYPEID_N5KLIENT, pStream.fields("pKlient"))
+
+	n5klient_pracownik_BefImport = pImpMan.getUniqueID("strNazwisko='" + _
+		trans_.afc.convert.DoubleApostrophe( pStream.fields("strNazwisko") ) + "' and " + _
+		"strImie='" + trans_.afc.convert.DoubleApostrophe( pStream.fields("strImie") ) + "' and " + _
+		"pKlient=" + CStr(nIdKlient))
+
+	if (n5klient_pracownik_BefImport>0) then
+		n5klient_pracownik_BefImport = n5klient_pracownik_BefImport * (-1)
+	end if
+end function
+
+function n5konto_BefImport(byref pImpMan, byref pStream)
+	n5konto_BefImport = pImpMan.getUniqueID("strSymbol='" + _
+		trans_.afc.convert.DoubleApostrophe( pStream.fields("strSymbol") ) + "'")
+
+	if (n5konto_BefImport>0) then
+		n5konto_BefImport = n5konto_BefImport * (-1)
+	end if
+end function
+
+function n5konto_AftImport(byref pImpMan, byref pStream, byref pObject)
+	if (pObject.pJednostka is nothing) then
+		set pObject.pJednostka = getCurrentFirma().pWaluta
+	end if
+
+	if (not pObject.pKontoNadrz is nothing) then
+		pObject.pKontoNadrz.eAnalit = clng(2)
+	end if
+
+	n5konto_AftImport = true
+end function
+
+function n5kodpcn_BefImport(byref pImpMan, byref pStream)
+	n5kodpcn_BefImport = pImpMan.getUniqueID("pcn_strKod='" + _
+	 trans_.afc.convert.DoubleApostrophe( pStream.fields("pcn_strKod") ) + "'")
+
+	 if (n5kodpcn_BefImport>0) then
+		'nie robimy upgrade'u tylko dodajemy do mapy
+		n5kodpcn_BefImport = n5kodpcn_BefImport * (-1)
+	 end if
+end function
+
+function n5produkt_BefImport(byref pImpMan, byref pStream)
+	n5produkt_BefImport = pImpMan.getUniqueID("strIndeks='" + _
+		trans_.afc.convert.DoubleApostrophe( pStream.fields("strIndeks") ) + "'")
+	'jezeli chcemy updateowac to taki warunek musi byc spelniony
+	if (n5produkt_BefImport>0) then
+		if pStream.extra("UPDATE") then
+			n5produkt_BefImport = n5produkt_BefImport
+		else
+			n5produkt_BefImport = n5produkt_BefImport * (-1)
+		end if
+	end if
+end function
+
+function n5opakowanie_produktu_BefImport(byref pImpMan, byref pStream)
+	'aaaaaaaa=0
+	n5opakowanie_produktu_BefImport = 0
+end function
+
+function n5zamowienie_BefImport(byref pImpMan, byref pStream)
+	n5zamowienie_BefImport = pImpMan.getUniqueID("strNrDok='" + _
+		trans_.afc.convert.DoubleApostrophe( pStream.fields("strNrDok") ) + "'")
+
+	if (n5zamowienie_BefImport>0) then
+		n5zamowienie_BefImport = n5zamowienie_BefImport * (-1)
+	end if
+
+	if (n5zamowienie_BefImport>=0) then
+		if (not setRejestrVariable(pStream, pImpMan, N5REJESTRDOK_DOK_MAG)) then
+			pImpMan.cancelImport
+		end if
+	end if
+end function
+
+function n5zamowienie_AftImport(byref pImpMan, byref pStream, byref pObject)
+	if (pObject.pSposobPlatnosci is nothing) then
+		set pObject.pSposobPlatnosci = getEmptySposobPlatnosci()
+	end if
+
+	n5zamowienie_AftImport = true
+end function
+
+function n5pozzamowienie_BefImport(byref pImpMan, byref pStream)
+	n5pozzamowienie_BefImport = 0
+end function
+
+function n5pozzamowienie_AftImport(byref pImpMan, byref pStream, byref pObject)
+
+	dim pParent
+	set pParent = pObject.parent
+
+	pParent.curSumaNetto = pParent.curSumaNetto + pObject.curWartNetto
+	pParent.curSumaVAT = pParent.curSumaVAT + pObject.curVAT
+	pParent.curSumaBrutto = pParent.curSumaNetto + pParent.curSumaVAT
+
+	n5pozzamowienie_AftImport = true
+end function
+
+function n5srtrw_BefImport(byref pImpMan, byref pStream)
+	n5srtrw_BefImport = pImpMan.getUniqueID("strNumEwid='" + _
+		trans_.afc.convert.DoubleApostrophe( pStream.fields("strNumEwid") ) + "'")
+
+	if (n5srtrw_BefImport>0) then
+		n5srtrw_BefImport = n5srtrw_BefImport * (-1)
+	end if
+end function
+
+function n5srtrw_AftImport(byref pImpMan, byref pStream, byref pObject)
+	if (pObject.pGrupa is nothing) then
+		set pObject.pGrupa = getGrupaSTPodstawowa()
+	end if
+
+	n5srtrw_AftImport = true
+end function
+
+function n5zakup_BefImport(byref pImpMan, byref pStream)
+	n5zakup_BefImport = pImpMan.getUniqueID("strNrDok='" + _
+		trans_.afc.convert.DoubleApostrophe( pStream.fields("strNrDok") ) + "'")
+
+	if (n5zakup_BefImport>0) then
+		n5zakup_BefImport = n5zakup_BefImport * (-1)
+	end if
+
+	if (n5zakup_BefImport>=0) then
+
+		dim nTypRej
+		if (pStream.extraExists("KOREKTA")) then
+			nTypRej = N5REJESTRDOK_KOR_FAKT_ZAK
+		else
+			nTypRej = N5REJESTRDOK_FAKT_ZAK
+		end if
+
+		if (not setRejestrVariable(pStream, pImpMan, nTypRej)) then
+			pImpMan.cancelImport
+		end if
+	end if
+end function
+
+function n5zakup_AftImport(byref pImpMan, byref pStream, byref pObject)
+	if (pObject.pSposobPlatnosci is nothing) then
+		set pObject.pSposobPlatnosci = getEmptySposobPlatnosci()
+	end if
+
+	'Ustawienie rozliczenia vat
+	if (pObject.pRozlVat is nothing) then
+		'Poszukiwanie
+		dim idRozliczenie
+		idRozliczenie = vat_lookup_rozliczenie( pObject.dDataOtrzym )
+
+		'Tworzenie
+		if (idRozliczenie=0) then
+			idRozliczenie = vat_create_rozliczenie( pObject.dDataOtrzym )
+		end if
+
+		'Podstawienie
+		if (idRozliczenie > 0) then
+			set pObject.pRozlVat = trans_.getobj(TYPEID_N5ROZLVAT, idRozliczenie)
+		end if
+	end if
+
+	n5zakup_AftImport = true
+end function
+
+function n5pozzakup_BefImport(byref pImpMan, byref pStream)
+	n5pozzakup_BefImport = 0
+end function
+
+function n5pozzakup_AftImport(byref pImpMan, byref pStream, byref pObject)
+
+	'Uzupelniamy odpowiednie sumy w parencie
+	select case pObject.eVAT
+		case 1 '0%
+			pObject.parent.curNetto0 = pObject.parent.curNetto0 + pObject.curWartNetto
+
+		case 2 'zwolniony
+			pObject.parent.curNettoZw = pObject.parent.curNettoZw + pObject.curWartNetto
+
+		case 3 'nie podlega
+			pObject.parent.curNettoNp = pObject.parent.curNettoNp + pObject.curWartNetto
+
+		case 4 '2%
+			pObject.parent.curNetto2 = pObject.parent.curNetto2 + pObject.curWartNetto
+			pObject.parent.curVat2 = pObject.parent.curVat2 + pObject.curVAT
+
+		case 5 '3%
+			pObject.parent.curNetto3 = pObject.parent.curNetto3 + pObject.curWartNetto
+			pObject.parent.curVat3 = pObject.parent.curVat3 + pObject.curVAT
+
+		case 6 '4%
+			pObject.parent.curNetto4 = pObject.parent.curNetto4 + pObject.curWartNetto
+			pObject.parent.curVat4 = pObject.parent.curVat4 + pObject.curVAT
+
+		case 7 '7%
+			pObject.parent.curNetto7 = pObject.parent.curNetto7 + pObject.curWartNetto
+			pObject.parent.curVat7 = pObject.parent.curVat7 + pObject.curVAT
+
+		case 8 '12%
+			pObject.parent.curNetto12 = pObject.parent.curNetto12 + pObject.curWartNetto
+			pObject.parent.curVat12 = pObject.parent.curVat12 + pObject.curVAT
+
+		case 9 '17%
+			pObject.parent.curNetto17 = pObject.parent.curNetto17 + pObject.curWartNetto
+			pObject.parent.curVat17 = pObject.parent.curVat17 + pObject.curVAT
+
+		case 10 '22%
+			pObject.parent.curNetto22 = pObject.parent.curNetto22 + pObject.curWartNetto
+			pObject.parent.curVat22 = pObject.parent.curVat22 + pObject.curVAT
+
+	end select
+
+	pObject.parent.curSumaNetto = pObject.parent.curSumaNetto + pObject.curWartNetto
+	pObject.parent.curSumaVAT = pObject.parent.curSumaVAT + pObject.curVAT
+	pObject.parent.curSumaBrutto = pObject.parent.curSumaNetto + pObject.parent.curSumaVAT
+	pObject.parent.curSumaWal = pObject.parent.curSumaWal + (pObject.curCenaNettoWal * pObject.curIloscOpak)
+
+	n5pozzakup_AftImport = true
+end function
+
+function n5recepta_BefImport(byref pImpMan, byref pStream)
+	n5recepta_BefImport = pImpMan.getUniqueID("strNazwa='" + _
+		trans_.afc.convert.DoubleApostrophe( pStream.fields("strNazwa") ) + "'")
+
+	if (n5recepta_BefImport>0) then
+		n5recepta_BefImport = n5recepta_BefImport * (-1)
+	end if
+end function
+
+function n5pozrecepta_BefImport(byref pImpMan, byref pStream)
+	n5pozrecepta_BefImport = 0
+end function
+
+function n5licencja_BefImport(byref pImpMan, byref pStream)
+	n5licencja_BefImport = pImpMan.getUniqueID("strKod='" + _
+		trans_.afc.convert.DoubleApostrophe( pStream.fields("strKod") ) + "'")
+end function
+
+function n5kraj_BefImport(byref pImpMan, byref pStream)
+	n5kraj_BefImport = pImpMan.getUniqueID("strSkrot='" + _
+		trans_.afc.convert.DoubleApostrophe( pStream.fields("strSkrot") ) + "'")
+
+	if (n5kraj_BefImport>0) then
+		n5kraj_BefImport = n5kraj_BefImport * (-1)
+	end if
+end function
+
+function SearchType_BefImport(byref pImpMan, byref pStream)
+	SearchType_BefImport = pImpMan.getUniqueID("Nazwa='" + _
+		trans_.afc.convert.DoubleApostrophe( pStream.fields("Nazwa") ) + "'")
+
+	if (SearchType_BefImport>0) then
+		SearchType_BefImport = SearchType_BefImport * (-1)
+	end if
+end function
+
+function SearchTypeItem_BefImport(byref pImpMan, byref pStream)
+	SearchTypeItem_BefImport = 0
+end function
+
+function n5typinstytucji_BefImport(byref pImpMan, byref pStream)
+	n5typinstytucji_BefImport = pImpMan.getUniqueID("strNazwa='" + _
+		trans_.afc.convert.DoubleApostrophe( pStream.fields("strNazwa") ) + "'")
+
+	if (n5typinstytucji_BefImport>0) then
+		n5typinstytucji_BefImport = n5typinstytucji_BefImport * (-1)
+	end if
+end function
+
+function n5procedura_BefImport(byref pImpMan, byref pStream)
+	n5procedura_BefImport = pImpMan.getUniqueID("strNazwa='" + _
+		trans_.afc.convert.DoubleApostrophe( pStream.fields("strNazwa") ) + "'")
+
+	if (n5procedura_BefImport>0) then
+		n5procedura_BefImport = n5procedura_BefImport * (-1)
+	end if
+end function
+
+function n5typdzialania_BefImport(byref pImpMan, byref pStream)
+	n5typdzialania_BefImport = pImpMan.getUniqueID("strNazwa='" + _
+		trans_.afc.convert.DoubleApostrophe( pStream.fields("strNazwa") ) + "'")
+
+	if (n5typdzialania_BefImport>0) then
+		n5typdzialania_BefImport = n5typdzialania_BefImport * (-1)
+	end if
+end function
+
+function n5sodgroup_BefImport(byref pImpMan, byref pStream)
+	n5sodgroup_BefImport = pImpMan.getUniqueID("strNazwa='" + _
+		trans_.afc.convert.DoubleApostrophe( pStream.fields("strNazwa") ) + "'")
+
+	if (n5sodgroup_BefImport>0) then
+		n5sodgroup_BefImport = n5sodgroup_BefImport * (-1)
+	end if
+end function
+
+function n5sod_BefImport(byref pImpMan, byref pStream)
+
+	dim nSODGroup
+	nSODGroup = pImpMan.idFromMap(TYPEID_N5SODGROUP, pStream.fields("pSODGroup"))
+	if (isEmpty(nSODGroup)) then
+		nSODGroup = 0
+	end if
+
+	n5sod_BefImport = pImpMan.getUniqueID("strNazwa='" + _
+		trans_.afc.convert.DoubleApostrophe( pStream.fields("strNazwa") ) + "' and " + _
+		"pSODGroup=" + CStr(nSODGroup)  + " and " + _
+		"nSecId=" + trans_.afc.convert.DoubleApostrophe( pStream.fields("nSecId") ) + " and " + _
+		"nIdent=" + trans_.afc.convert.DoubleApostrophe( pStream.fields("nIdent") ))
+
+	if (n5sod_BefImport>0) then
+		n5sod_BefImport = n5sod_BefImport * (-1)
+	end if
+end function
+
+function n5miesiac_BefImport(byref pImpMan, byref pStream)
+	n5miesiac_BefImport = pImpMan.getUniqueID("nNumer='" + _
+		trans_.afc.convert.DoubleApostrophe( pStream.fields("nNumer") ) + "'")
+
+	if (n5miesiac_BefImport>0) then
+		n5miesiac_BefImport = n5miesiac_BefImport * (-1)
+	end if
+end function
+
+function n5securityobj_BefImport(byref pImpMan, byref pStream)
+
+	dim nSOD
+	nSOD = pImpMan.idFromMap(TYPEID_N5SOD, pStream.fields("pSOD"))
+	if (isEmpty(nSOD)) then
+		nSOD = 0
+	end if
+
+	dim nUser
+	nUser = pImpMan.idFromMap(TYPEID_N5UZYTKOWNIK, pStream.fields("pUser"))
+	if (isEmpty(nUser)) then
+		nUser = 0
+	end if
+
+	n5securityobj_BefImport = pImpMan.getUniqueID("pSOD=" + CStr(nSOD) + " and " + _
+	"pUser=" + CStr(nUser))
+
+	if (n5securityobj_BefImport>0) then
+		n5securityobj_BefImport = n5securityobj_BefImport * (-1)
+	end if
+end function
+
+function choicelist_BefImport(byref pImpMan, byref pStream)
+	choicelist_BefImport = pImpMan.getUniqueID("nTypeId=" + _
+		trans_.afc.convert.DoubleApostrophe( pStream.fields("nTypeId") ) + " and " + _
+		"strNazwa='" + trans_.afc.convert.DoubleApostrophe( pStream.fields("strNazwa") ) + "'")
+
+	if (choicelist_BefImport>0) then
+		choicelist_BefImport = choicelist_BefImport * (-1)
+	end if
+end function
+
+function choicelistitem_BefImport(byref pImpMan, byref pStream)
+	choicelistitem_BefImport = 0
+end function
+
+function n5jedn_org_BefImport(byref pImpMan, byref pStream)
+	n5jedn_org_BefImport = pImpMan.getUniqueID("strNazwa='" + _
+		trans_.afc.convert.DoubleApostrophe( pStream.fields("strNazwa") ) + "'")
+
+	if (n5jedn_org_BefImport>0) then
+		n5jedn_org_BefImport = n5jedn_org_BefImport * (-1)
+	end if
+end function
+
+function n5branza_BefImport(byref pImpMan, byref pStream)
+	n5branza_BefImport = pImpMan.getUniqueID("strNazwa='" + _
+		trans_.afc.convert.DoubleApostrophe( pStream.fields("strNazwa") ) + "'")
+
+	if (n5branza_BefImport>0) then
+		n5branza_BefImport = n5branza_BefImport * (-1)
+	end if
+end function
+
+function n5wykonawca_BefImport(byref pImpMan, byref pStream)
+	n5wykonawca_BefImport = pImpMan.getUniqueID("strIndeks='" + _
+		trans_.afc.convert.DoubleApostrophe( pStream.fields("strIndeks") ) + "'")
+
+	if (n5wykonawca_BefImport>0) then
+		n5wykonawca_BefImport = n5wykonawca_BefImport * (-1)
+	end if
+end function
+
+'to na razie roboczo
+'place:todo: stawki mog¹ siê powtarzaæ !!!
+'prawid³owy warunek to unikalnoœæ strKod + wrefObiekt + przedzia³ czasowy
+
+function n5plstawka_BefImport(byref pImpMan, byref pStream)
+	n5plstawka_BefImport = pImpMan.getUniqueID("strKod='" + _
+		trans_.afc.convert.DoubleApostrophe( pStream.fields("strKod") ) + "'")
+
+	if (n5plstawka_BefImportt>0) then
+		n5plstawka_BefImport = n5plstawka_BefImport * (-1)
+	end if
+end function
+
+'--------- p³ace --------------------------
+VB_BEFIMP_SINGLE_FIELD(n5plsubkonto,strKod)
+VB_BEFIMP_SINGLE_FIELD(n5pllistaplac,strNazwa)
+VB_BEFIMP_SINGLE_FIELD(n5plschematnal,strNazwa)
+VB_BEFIMP_SINGLE_FIELD(n5plgrzas,strNazwa)
+VB_BEFIMP_SINGLE_FIELD(n5transakcja,strSymTrans)
+
+function n5rozlvat_BefImport(byref pImpMan, byref pStream)
+	n5rozlvat_BefImport = pImpMan.getUniqueID("dDataOd=" + _
+		trans_.afc.convert.date2sql( cdate(pStream.fields("dDataOd")) ) + "")
+
+	if (n5rozlvat_BefImport>0) then
+		n5rozlvat_BefImport = n5rozlvat_BefImport * (-1)
+	end if
+
+end function
+
+
+
+#define UNKNOWN_NAME	"brak"
+#define INSTYTUCJA_TYP "Urz¹d"
+#define SPOSOB_PLATNOSCI_EMPTY "nieokreœlony"
+
+dim pRejestrDokChoice
+set pRejestrDokChoice = nothing
+
+function getEmptySposobPlatnosci(): set getEmptySposobPlatnosci = nothing
+	dim pSubTrans
+	set pSubTrans = trans_.createsubtran()
+
+	dim idFounded
+	idFounded = trans_.findobjid(TYPEID_N5SPOSPLAT, "strNazwa='" + SPOSOB_PLATNOSCI_EMPTY + "'")
+
+	if (idFounded=0) then
+
+		dim pObject
+		set pObject = trans_.newobj(TYPEID_N5SPOSPLAT)
+
+		pObject.strNazwa = SPOSOB_PLATNOSCI_EMPTY
+
+		idFounded = pObject.idobj
+
+		if (not trans_.SaveObjects()) then
+			set pObject = nothing
+			set pSubTrans = nothing
+			exit function
+		end if
+	end if
+
+	set pObject = nothing
+	set pSubTrans = nothing
+	set getEmptySposobPlatnosci = trans_.getobj(TYPEID_N5SPOSPLAT, idFounded)
+end function
+
+function setRejestrVariableFld(byref pStream, byref pImpMan, byval strFieldName, byval nTypRej): setRejestrVariableFld = false
+	dim nIdRejestrDok
+	nIdRejestrDok = pStream.fields( strFieldName )
+
+	if (isEmpty(nIdRejestrDok)) then
+		dim pRejestrDok
+		set pRejestrDok = getRejestDok(nTypRej, pImpMan)
+
+		if (not pRejestrDok is nothing) then
+			nIdRejestrDok = pRejestrDok.IdObj
+			trans_.var(APPVAR_REJESTR_TYP) = pRejestrDok.eTyp
+		end if
+
+		set pRejestrDok = nothing
+	else
+		nIdRejestrDok = pImpMan.idFromMap(TYPEID_N5REJESTRDOK, CLng(nIdRejestrDok) )
+		set pRejestrDok = trans_.getobj(TYPEID_N5REJESTRDOK, nIdRejestrDok)
+		
+		trans_.var(APPVAR_REJESTR_TYP) = pRejestrDok.eTyp
+
+		set pRejestrDok = nothing
+	end if
+
+	if (isNumeric(nIdRejestrDok)) then
+		trans_.var(APPVAR_REJESTR_DOKUMENTOW) = CLng(nIdRejestrDok)
+		setRejestrVariableFld = true
+	end if
+
+	if (not setRejestrVariableFld) then
+		view_message 6303, 0
+	end if
+	
+end function
+
+function setRejestrVariable(byref pStream, byref pImpMan, byval nTypRej)
+	setRejestrVariable = setRejestrVariableFld(pStream, pImpMan, "pRejestrDok", nTypRej)
+end function
+
+function getRejestDok(byval nTyp, byref pImpMan): set getRejestDok = nothing
+
+	if (nTyp<0) then
+		exit function
+	end if
+
+	dim IdRejestr
+	IdRejestr = trans_.findobjid(TYPEID_N5REJESTRDOK, "eTyp = " + cstr(nTyp))
+
+	if (IdRejestr <= 0) then
+
+		if (pRejestrDokChoice is nothing) then
+			set pRejestrDokChoice = CreateObject("Scripting.Dictionary")
+		end if
+
+		if (pRejestrDokChoice.exists(CStr(nTyp))) then
+			IdRejestr = pRejestrDokChoice.item(CStr(nTyp))
+		else
+
+			pImpMan.performing_destroy
+				
+			dim strTyp: strTyp = eTypRejestru2Str(nTyp)
+			
+			trans_.var(APPVAR_REJESTR_TYP)=CLng(nTyp)
+						
+			dim choice : choice = clng(0)
+
+			while (choice = clng(0))
+				choice = fire_choice_list (TYPEID_N5REJESTRDOK, "Wybierz domyœlny rejestr typu:" + strTyp, "strNazwa", "eTyp = " + CStr(nTyp), "", "")
+				
+				if choice > clng(0) then
+
+					'Sprawdzenie potrzebne w przypadku dodania nowego rejestru (je¿eli ktoœ doda³ rejestr innego typu)
+					choice = trans_.findobjid(TYPEID_N5REJESTRDOK, "eTyp = " + CStr(nTyp) + " AND IdObj = " + CStr(choice))
+
+					if choice > clng(0) then
+						IdRejestr = choice
+						pRejestrDokChoice.add CStr(nTyp), IdRejestr
+					else
+						MessageBox "Musisz wybraæ lub utworzyæ rejstr typu: " + cstr(strTyp) , "B³êdny typ rejestru", vbOKOnly, vbInformation
+					end if
+				else
+					if (MessageBox("Musisz wybraæ domyœlny rejestr. Kontynuowaæ?" , "Brak wyboru", vbYesNo, vbInformation))<>vbYes then
+						pImpMan.cancelImport
+						exit function
+					end if
+				end if
+			wend
+
+		end if 'exists key
+
+	end if
+
+	page_.activate
+	pImpMan.performing_restore
+	set getRejestDok = trans_.getobj(TYPEID_N5REJESTRDOK, IdRejestr)
+
+end function
+
+function getDefaultWaluta(): set getDefaultWaluta = nothing
+	dim pSubTrans
+	set pSubTrans = trans_.createsubtran()
+
+	dim idFounded
+	idFounded = trans_.findobjid(TYPEID_N5JEDNOSTKA, "strSkrot='PLN'")
+
+	if (idFounded=0) then
+
+		trans_.var(APPVAR_JEDNOSTKA_TYPE)=CLng(N5JEDNOSTKA_WALUTA)
+
+		dim pObject
+		set pObject = trans_.newobj(TYPEID_N5JEDNOSTKA)
+
+		pObject.strNazwa = "Polski z³oty"
+		pObject.strSkrot = "PLN"
+		pObject.nDokladnosc = CLng(3)
+
+		idFounded = pObject.idobj
+
+		if (not trans_.SaveObjects()) then
+			set pObject = nothing
+			set pSubTrans = nothing
+			exit function
+		end if
+	end if
+
+	set pObject = nothing
+	set pSubTrans = nothing
+	set getDefaultWaluta = trans_.getobj(TYPEID_N5JEDNOSTKA, idFounded)
+end function
+
+function getGrupaSTPodstawowa(): set getGrupaSTPodstawowa = nothing
+	dim pSubTrans
+	set pSubTrans = trans_.createsubtran()
+	
+	dim idFounded
+	idFounded = trans_.findobjid(TYPEID_N5GRUPASRTRW, "strNazwa='Podstawowa'")
+
+	if (idFounded=0) then
+		dim pObject
+		set pObject = trans_.newobj(TYPEID_N5GRUPASRTRW)
+
+		pObject.strNazwa = "Podstawowa"
+
+		idFounded = pObject.idobj
+
+		if (not trans_.SaveObjects()) then
+			set pObject = nothing
+			set pSubTrans = nothing
+			exit function
+		end if
+	end if
+
+	set pObject = nothing
+	set pSubTrans = nothing
+	set getGrupaSTPodstawowa = trans_.getobj(TYPEID_N5GRUPASRTRW, idFounded)
+end function
+
+function getEmptyGrupaKlient(): set getEmptyGrupaKlient = nothing
+	dim pSubTrans
+	set pSubTrans = trans_.createsubtran()
+	
+	dim idFounded
+	idFounded = trans_.findobjid(TYPEID_N5GRUPAKLIENT, "strNazwa='" + INSTYTUCJA_TYP + "'")
+
+	if (idFounded=0) then
+		dim pObject
+		set pObject = trans_.newobj(TYPEID_N5GRUPAKLIENT)
+
+		pObject.strNazwa = INSTYTUCJA_TYP
+
+		idFounded = pObject.idobj
+
+		if (not trans_.SaveObjects()) then
+			set pObject = nothing
+			set pSubTrans = nothing
+			exit function
+		end if
+	end if
+
+	set pObject = nothing
+	set pSubTrans = nothing
+	set getEmptyGrupaKlient = trans_.getobj(TYPEID_N5GRUPAKLIENT, idFounded)
+end function
+
+function getEmptyTypInstytucji(): set getEmptyTypInstytucji = nothing
+	dim pSubTrans
+	set pSubTrans = trans_.createsubtran()
+	
+	dim idTyp
+	idTyp = trans_.findobjid(TYPEID_N5TYPINSTYTUCJI, "strNazwa='" + INSTYTUCJA_TYP + "'")
+
+	if (idTyp=0) then
+		dim pInstytucja
+		set pInstytucja = trans_.newobj(TYPEID_N5TYPINSTYTUCJI)
+
+		pInstytucja.strNazwa = INSTYTUCJA_TYP
+
+		idTyp = pInstytucja.idobj
+
+		if (not trans_.SaveObjects()) then
+			set pInstytucja = nothing
+			set pSubTrans = nothing
+			exit function
+		end if
+	end if
+
+	set pInstytucja = nothing
+	set pSubTrans = nothing
+	set getEmptyTypInstytucji = trans_.getobj(TYPEID_N5TYPINSTYTUCJI, idTyp)
+end function
+
+function getEmptyWoj(): set getEmptyWoj = nothing
+
+	dim pSubTrans
+	set pSubTrans = trans_.createsubtran()
+
+	dim idWoj
+	idWoj = trans_.findobjid(TYPEID_N5WOJEWODZTWO, "strNazwa='" + UNKNOWN_NAME + "'")
+
+	if (idWoj = 0) then
+		dim pWoj
+		set pWoj = trans_.newobj(TYPEID_N5WOJEWODZTWO)
+
+		pWoj.strNazwa = UNKNOWN_NAME
+
+		idWoj = pWoj.idobj
+
+		if (not trans_.SaveObjects()) then
+			set pWoj = nothing
+			set pSubTrans = nothing
+			exit function
+		end if
+
+	end if
+
+	set pWoj = nothing
+	set pSubTrans = nothing
+	set getEmptyWoj = trans_.getobj(TYPEID_N5WOJEWODZTWO, idWoj)
+end function
+
+function getEmptyMiejscowosc(): set getEmptyMiejscowosc = nothing
+
+	dim pSubTrans
+	set pSubTrans = trans_.createsubtran()
+
+	dim idMiejsc
+	idMiejsc = trans_.findobjid(TYPEID_N5MIEJSCOWOSC, "strNazwa='" + UNKNOWN_NAME + "'")
+
+	if (idMiejsc = 0) then
+		dim pMiejscowosc
+		set pMiejscowosc = trans_.newobj(TYPEID_N5MIEJSCOWOSC)
+
+		pMiejscowosc.strNazwa = UNKNOWN_NAME
+		set pMiejscowosc.pWojewodztwo = getEmptyWoj()
+
+		idMiejsc = pMiejscowosc.idobj
+
+		if (not trans_.SaveObjects()) then
+			set pMiejscowosc = nothing
+			set pSubTrans = nothing
+			exit function
+		end if
+
+	end if
+
+	set pMiejscowosc = nothing
+	set pSubTrans = nothing
+	set getEmptyMiejscowosc = trans_.getobj(TYPEID_N5MIEJSCOWOSC, idMiejsc)
+end function
+
+#endif

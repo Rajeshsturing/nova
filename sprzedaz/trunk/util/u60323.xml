@@ -1,0 +1,818 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1200.h"
+#include "h1231.h"
+#include "h1240.h"
+
+#comment Kreator korekt - Amplus
+
+-->
+
+<page>
+<config>
+<title></title>
+<script>
+<![CDATA[
+
+#include "50123"
+'SelectFile
+
+#include "50517"
+'choose_rejestr_dok
+
+'klasa do zapamiętania danych wczytanych z pliku .xml
+class CFiltrKorektParser
+
+	private m_strCurTag
+  'filtry
+  private m_dFiltrDataPocz
+  private m_dFiltrDataKonc
+  private m_strFiltrSkrotKlie
+  private m_strFiltrNrDok
+  private m_strFiltrGrupa
+  'parametry
+  private m_strIndeksPodm
+  private m_strParamNrKor
+  private m_strParamPowodKor
+  private m_dParamDataKor
+  private m_strParamKwotCalWal
+  private m_curParamKwotCalWart
+  private m_strParamKwotGrWal
+  private m_pParamKwotGrNazwa
+  private m_pParamKwotGrWart
+  private m_pParamProcGrupaNazwa
+  private m_pParamProcGrupaWart
+  'tabele do zapamiętania id pozycji faktur oraz obliczanych rabatów
+  private t_LpKor
+  private t_LpPozKor
+  private t_curCenaBazowa
+  private t_curRabat
+  private t_curKwotaSprz
+  private sumaPoz
+  private sumaPozRabat
+  'tabela pamiętająca nazwy grup produktów na wybranych dokumentach
+  private t_pNazwaGrupy  
+  'tabela dla idobj dokumentów nie mających korekt
+  public t_pIdDok
+  
+	private sub class_initialize()
+	  m_strCurTag = ""
+    m_dFiltrDataPocz = ""
+    m_dFiltrDataKonc = ""
+    m_strFiltrSkrotKlie = ""
+    m_strFiltrNrDok = ""
+    m_strFiltrGrupa = ""
+    m_strIndeksPodm = ""
+    m_strParamNrKor = ""
+    m_strParamPowodKor = ""
+    m_dParamDataKor = ""
+    m_strParamKwotCalWal = ""
+    m_curParamKwotCalWart = ccur(0)
+    m_strParamKwotGrWal = ""
+    set m_pParamKwotGrNazwa = doc_.afc.new_navoarray()
+    set m_pParamKwotGrWart = doc_.afc.new_navoarray()
+    set m_pParamProcGrupaNazwa = doc_.afc.new_navoarray()
+    set m_pParamProcGrupaWart = doc_.afc.new_navoarray()
+    set t_LpKor = trans_.afc.new_navoarray()
+    set t_LpPozKor = trans_.afc.new_navoarray()  
+    set t_curCenaBazowa = trans_.afc.new_navoarray()
+    set t_curRabat = trans_.afc.new_navoarray()
+    set t_curKwotaSprz = trans_.afc.new_navoarray()
+    set t_pNazwaGrupy = trans_.afc.new_navoarray()
+    set t_pIdDok = trans_.afc.new_navoarray()
+    'suma pozycji z zapytania
+    sumaPoz = ccur(0)
+    'suma rabatów dla użytych grup
+    sumaPozRabat = ccur(0)
+	end sub  
+
+	public function OnElementStart(byval strTag, byref pAttr)
+    m_strCurTag = strTag
+    select case m_strCurTag
+      'filtry
+      case "DataWyst"
+			  m_dFiltrDataPocz = pAttr.get("datapocz")
+        m_dFiltrDataKonc = pAttr.get("datakonc")
+		  case "SkrotKlienta"
+        m_strFiltrSkrotKlie = pAttr.get("skrot")
+      case "NrDokWykl"
+        m_strFiltrNrDok = pAttr.get("nrdokwy")
+      case "GrupaWykl"
+        m_strFiltrGrupa = pAttr.get("grupawy")
+      'parametry
+      case "PodmTrans"
+        m_strIndeksPodm = pAttr.get("indeks")
+      case "NrKorekty"
+        m_strParamNrKor = pAttr.get("korekta")
+      case "PowodKor"
+        m_strParamPowodKor = pAttr.get("powod")
+      case "DataKor"
+        m_dParamDataKor = pAttr.get("datawyst")
+      case "KwotowyCalosc"
+        m_strParamKwotCalWal = pAttr.get("waluta")
+      case "KwotowyGrupa"
+        m_strParamKwotGrWal = pAttr.get("waluta")
+      case "KwGrupa"
+        m_pParamKwotGrNazwa.add pAttr.get("nazwagr")
+      case "PrGrupa"
+        m_pParamProcGrupaNazwa.add pAttr.get("nazwagr")         
+    end select
+	end function
+
+	public function OnElementEnd(byval strTag)
+	end function
+
+	public function OnData(byval strValue)
+    if strValue = "" then
+      strValue = "0"
+    end if
+    'separator dziesiętny windows
+    dim strSep : strSep = Mid(CStr(1/2),2,1)
+    if strSep = "." then
+      strValue = Replace(strValue,",",".")
+    else
+      strValue = Replace(strValue,".",",")
+    end if
+		select case m_strCurTag
+      case "KwotowyCalosc"
+        m_curParamKwotCalWart = CCur(strValue) 
+      case "KwGrupa"
+        m_pParamKwotGrWart.add CCur(strValue)  
+      case "PrGrupa"  
+        m_pParamProcGrupaWart.add CCur(strValue)
+		end select
+	end function
+  
+  '--------------------------------------------------------------
+  'wypełnia tabelę idobj dokumentów sprzedaży nie mających korekt
+  '--------------------------------------------------------------
+  public function strQueryParam : strQueryParam = true 
+    dim strQuery, idDok, iter
+    dim pPerf : set pPerf = doc_.performing("Trwa przygotowywanie danych...")
+    'dokumenty oryginalne
+    strQuery = "select 'id_dok' = s.IdObj from n5sprzedaz s " +_ 
+               "  inner join n5rejestrdok r on s.pRejestrDok = r.idobj " +_
+               "  inner join n5klient k on s.pKlient = k.idobj " +_
+               "where r.eTyp = N5REJESTRDOK_FAKT_SP and " +_
+               "  s.dDataWyst between " + strFiltr2Sql("datapocz") + " and " + strFiltr2Sql("datakonc") + " and " +_
+               "  k.strSkrot like '%" + strFiltr2Sql("skrot") + "%' and " +_
+               "  s.strNrDok not in " + strFiltr2Sql("nrdokwy") +_
+               "  order by s.strNrDok"
+    dim oRS: set oRS = trans_.createadors(strQuery)
+    if oRS.RecordCount = 0 then
+      trans_.message 7000, 0, "Brak danych spełniających podane kryteria"
+      strQueryParam = false 
+      exit function
+    else
+      'dodaj idobj oryginalnych dokumentów do tabeli
+      do while not oRS.EOF
+        idDok = clng(oRS("id_dok"))
+        t_pIdDok.add idDok
+        oRS.movenext
+      loop
+    end if
+    'zastąpienie oryginalnych dokumentów korektami
+    dim bContinue : bContinue = true
+    dim iPoz : iPoz = 0
+    do while bContinue
+      bContinue = false
+      for iter = iPoz to t_pIdDok.upperIndex
+        strQuery = " select 'id_dok' = s.IdObj from n5sprzedaz s " +_
+                   " inner join n5rejestrdok r on s.pRejestrDok = r.idobj " +_
+                   " where r.eTyp = N5REJESTRDOK_KOR_FAKT_SP and s.strNrDok not in " + strFiltr2Sql("nrdokwy") +_
+                   " and s.pPopSprzed = " + cstr(t_pIdDok.value(iter))
+        set oRS = trans_.createadors(strQuery)
+        'jeśli istnieje korekta - zastąp oryginalny korektą
+        if oRS.RecordCount <> 0 then
+          t_pIdDok.value(iter) = clng(oRS("id_dok"))
+          if not bContinue then
+            iPoz = iter
+          end if  
+          bContinue = true
+        end if
+      next
+    loop  
+    set pPerf = nothing  
+  end function
+  
+  '----------------------------------------
+  'wypełnia tablice wartościami z zapytania
+  '----------------------------------------
+  public sub wypelnijTab(byval pFaktura, byval nNumDok)
+    dim pPoz
+    dim nNumPoz : nNumPoz = clng(1)
+    for each pPoz in pFaktura.listPozycje
+      t_LpKor.add nNumDok
+      t_LpPozKor.add nNumPoz
+      t_curCenaBazowa.add pPoz.curCenaBazowaNettoWal
+      t_curRabat.add ccur(0)
+      t_curKwotaSprz.add ccur(0)
+      sumaPoz = sumaPoz + pPoz.curCenaBazowaNettoWal
+      nNumPoz = nNumPoz + 1
+    next
+  end sub  
+  
+  '---------------------------  
+  'zwraca parametr jako string
+  '---------------------------
+  public function getStrParam(byval strParam) : getStrParam = ""
+    select case strParam
+      case "indeks"
+        getStrParam = m_strIndeksPodm
+      case "korekta"
+        getStrParam = m_strParamNrKor
+      case "powod"
+        getStrParam = m_strParamPowodKor
+      case "datawyst"
+        getStrParam = m_dParamDataKor
+    end select    
+  end function  
+  
+  '--------------------------------
+  'zwraca filtr po konwersji do sql
+  '--------------------------------
+  public function strFiltr2Sql(byval strParam) : strFiltr2Sql = ""
+    select case strParam
+      case "datapocz"
+        strFiltr2Sql = trans_.afc.convert.date2sql(m_dFiltrDataPocz)
+      case "datakonc"
+        strFiltr2Sql = trans_.afc.convert.date2sql(m_dFiltrDataKonc)
+      case "skrot"
+        strFiltr2Sql = trans_.afc.convert.str2sql(m_strFiltrSkrotKlie)
+      case "nrdokwy"
+        strFiltr2Sql = strNrDokum(m_strFiltrNrDok)
+      case "grupawy"
+        strFiltr2Sql = strNrDokum(m_strFiltrGrupa)
+    end select
+  end function
+  
+  '----------------------------
+  'konwersja numerów dokumentów
+  '----------------------------
+  public function strNrDokum(byval strDok) : strNrDokum = ""
+    if strDok = "" then
+      strNrDokum = "('')"
+      exit function
+    end if
+    dim tab : tab = Split(strDok, ",")
+    dim iter
+	  for iter = 0 to ubound(tab)
+      strNrDokum = strNrDokum + "'" + tab(iter) + "'," 
+    next
+    'usunięcie przecinka na końcu
+    strNrDokum = "(" + Left(strNrDokum,Len(strNrDokum)-1) + ")"
+  end function  
+  
+  '----------------------------------------
+  'przydziela rabat procentowy dla produktu
+  '----------------------------------------
+  public function setRabat(byval idProd, byval nNumDok, byval nNumPoz) : setRabat = ccur(0)
+    'rabat dla produktu
+    dim curProdRabat : curProdRabat = ccur(0)
+    'gdy produkt należy do grupy wykluczonej => rabat = 0
+    dim strQuery, oRS
+    strQuery = "select idobj from n5grupaproduktow where idobj in (select pGrupaProd from n5produkt where idobj = " + cstr(idProd) + ") " +_
+               "and strNazwa in " + strFiltr2Sql("grupawy")
+    set oRS = trans_.createadors(strQuery)
+    if oRS.RecordCount <> 0 then
+      curProdRabat = ccur(0)
+      exit function
+    end if
+    
+    'ustaw rabat na podstawie danych w tabeli pomocniczej => pozycja(nNumDok,nNumPoz)
+    dim iter
+    for iter = 0 to t_curRabat.upperIndex
+      if t_LpKor.value(iter) = nNumDok and t_LpPozKor.value(iter) = nNumPoz then
+        curProdRabat = t_curRabat.value(iter)
+        exit for
+      end if
+    next   
+    
+    setRabat = curProdRabat
+                        
+  end function
+  
+  '---------------------------------------
+  'rabat kwotowy dla wszystkich dokumentów
+  '---------------------------------------
+  public sub pozRabatAll
+    dim udzProc : udzProc = ccur(0)
+    dim kwotaRab : kwotaRab = ccur(0)
+    dim procRab : procRab = ccur(0)
+
+    dim iter
+    for iter = 0 to t_LpKor.upperIndex
+      if procRab = ccur(0) then
+        'udział procentowy pozycji
+        if sumaPoz <> 0 then
+          udzProc = (t_curCenaBazowa.value(iter)/sumaPoz) * 100
+        end if
+        'kwota rabatu
+        kwotaRab = (udzProc * m_curParamKwotCalWart)/100
+        'wylicz procent rabatu dla pozycji
+        if t_curCenaBazowa.value(iter) <> 0 then
+          procRab = (kwotaRab/t_curCenaBazowa.value(iter)) * 100
+        end if
+        'kwota rabatu zaokrąglona w dół do 2 miejsc po przecinku
+        dim iPos : iPos = InStr(cstr(procRab),",")
+        if iPos = 2 then
+          procRab = ccur(left(cstr(procRab),4))
+        elseif iPos = 3 then
+          procRab = ccur(left(cstr(procRab),5))
+        end if
+      end if
+      t_curRabat.value(iter) = procRab
+    next
+    
+  end sub
+  
+  '--------------------------------
+  'rabat kwotowy dla grup produktów
+  '--------------------------------
+  public sub pozRabatGroup(byval pPozKor, byval nNumPoz)
+    dim udzProc : udzProc = ccur(0)
+    dim kwotaRab : kwotaRab = ccur(0)
+    dim sumGrupa : sumGrupa = ccur(0)
+    dim procRab : procRab = ccur(0)
+    
+    dim oProd : set oProd = trans_.getobj(TYPEID_N5PRODUKT,pPozKor.pProdukt.idobj)
+    dim idGrupy : idGrupy = oProd.pGrupaProd.idobj
+    dim oGrupaProd : set oGrupaProd = trans_.getobj(TYPEID_N5GRUPAPRODUKTOW,idGrupy)
+    dim kwotaRabGr : kwotaRabGr = ccur(0)
+    dim iter, i
+    dim bAddGroup : bAddGroup = true    
+    'kwota przydzielanego rabatu
+    for iter = 0 to m_pParamKwotGrNazwa.upperIndex
+      if m_pParamKwotGrNazwa.value(iter) = oGrupaProd.strNazwa then    
+        kwotaRabGr = m_pParamKwotGrWart.value(iter)
+        'zapamiętaj nazwę wybranej grupy (tylko raz)
+        for i = 0 to t_pNazwaGrupy.upperIndex
+          if t_pNazwaGrupy.value(i) = oGrupaProd.strNazwa then
+            bAddGroup = false
+            exit for
+          end if
+        next
+        if bAddGroup then
+          t_pNazwaGrupy.add oGrupaProd.strNazwa          
+        end if        
+        exit for
+      end if
+    next
+    dim pPoz, pKorekta
+    'suma pozycji dla danej grupy
+    for iter = 0 to t_pIdDok.upperIndex
+      if t_pIdDok.value(iter) > 0 then
+        set pKorekta = trans_.getobj(TYPEID_N5SPRZEDAZ,clng(t_pIdDok.value(iter)))
+        for each pPoz in pKorekta.listPozycje
+          set oProd = trans_.getobj(TYPEID_N5PRODUKT,pPoz.pProdukt.idobj)
+          if oProd.pGrupaProd.idobj = idGrupy then
+            sumGrupa = sumGrupa + pPoz.curCenaBazowaNettoWal
+          end if
+        next
+      end if  
+    next
+    'udział procentowy
+    if sumGrupa <> 0 then
+      udzProc = (pPozKor.curCenaBazowaNettoWal/sumGrupa) * 100
+    end if
+    'kwota rabatu
+    kwotaRab = (udzProc * kwotaRabGr)/100
+    'procent rabatu dla pozycji
+    if pPozKor.curCenaBazowaNettoWal <> 0 then
+      procRab = (kwotaRab/pPozKor.curCenaBazowaNettoWal) * 100
+    end if    
+    'kwota rabatu zaokrąglona w dół do 2 miejsc po przecinku
+    dim iPos : iPos = InStr(cstr(procRab),",")
+    if iPos = 2 then
+      procRab = ccur(left(cstr(procRab),4))
+    elseif iPos = 3 then
+      procRab = ccur(left(cstr(procRab),5))
+    end if
+    'zwiększ rabat
+    t_curRabat.value(nNumPoz) = t_curRabat.value(nNumPoz) + procRab
+      
+  end sub
+  
+  '-----------------------------------
+  'korekta ostatniej pozycji z rabatem
+  '-----------------------------------
+  public sub korOstPoz  
+    dim iter, lastPoz
+    dim sumaPozRab : sumaPozRab = ccur(0)
+    'wyznacz kwoty sprzedazy oraz sumę pozycji po rabacie
+    for iter = 0 to t_curKwotaSprz.upperIndex
+      t_curKwotaSprz.value(iter) = t_curCenaBazowa.value(iter) - (t_curCenaBazowa.value(iter) * t_curRabat.value(iter) / 100)
+      sumaPozRab = sumaPozRab + t_curKwotaSprz.value(iter)
+      'pozycja ostatniej pozycji z rabatem
+      if t_curRabat.value(iter) <> ccur(0) then
+        lastPoz = iter
+      end if
+    next
+    'suma rabatów wybranych grup
+    dim sumRabatow : sumRabatow = ccur(0)
+    for iter = 0 to t_pNazwaGrupy.upperIndex
+      sumRabatow = sumRabatow + getKwotaRab(t_pNazwaGrupy.value(iter))
+    next    
+    'dokonaj korekty rabatu ostatniej pozycji
+    t_curKwotaSprz.value(lastPoz) = t_curKwotaSprz.value(lastPoz) - (sumaPozRab - (sumaPoz - (m_curParamKwotCalWart + sumRabatow)))
+    if t_curCenaBazowa.value(lastPoz) <> 0 then
+      t_curRabat.value(lastPoz) = 100 - t_curKwotaSprz.value(lastPoz) / t_curCenaBazowa.value(lastPoz) * 100
+    end if
+    
+  end sub
+  
+  '----------------------------------------------
+  'zwraca kwotę rabatu dla grupy o podanej nazwie
+  '----------------------------------------------
+  public function getKwotaRab(byval strNazwaGr) : getKwotaRab = ccur(0)
+    dim iter
+    for iter = 0 to m_pParamKwotGrNazwa.upperIndex
+      if strNazwaGr = m_pParamKwotGrNazwa.value(iter) then
+        getKwotaRab = m_pParamKwotGrWart.value(iter)
+        exit for
+      end if
+    next
+  end function
+  
+  '-----------------------------------
+  'rabat procentowy dla grup produktów
+  '-----------------------------------
+  public sub pozRabatGroupProc(byval idProd, byval nNumPoz)
+    dim iter, curRabatAll
+    if idProd > 0 then
+      'zmienna bool, czy udzielać rabat dla wszystkich grup
+      dim bAll : bAll = false
+      for iter = 0 to m_pParamProcGrupaNazwa.upperIndex
+        if m_pParamProcGrupaNazwa.value(iter) = "WSZYSTKIE" then
+          curRabatAll = m_pParamProcGrupaWart.value(iter)
+          if curRabatAll <> ccur(0) then
+            bAll = true
+          end if
+          exit for
+        end if
+      next      
+      'przydziel rabat dla poszczególnych grup
+      dim pProd : set pProd = trans_.getobj(TYPEID_N5PRODUKT,idProd)
+      dim pGrupaProd : set pGrupaProd = trans_.getobj(TYPEID_N5GRUPAPRODUKTOW,pProd.pGrupaProd.idobj)
+      for iter = 0 to m_pParamProcGrupaNazwa.upperIndex
+        if m_pParamProcGrupaNazwa.value(iter) = pGrupaProd.strNazwa and m_pParamProcGrupaWart.value(iter) <> ccur(0) then
+          'gdy przydzielono dla danej grupy => pomiń dla wszystkich
+          t_curRabat.value(nNumPoz) = t_curRabat.value(nNumPoz) + m_pParamProcGrupaWart.value(iter)
+          bAll = false
+          exit for
+        end if
+      next
+      'przydziel rabat dla wszystkich grup
+      if bAll then
+        t_curRabat.value(nNumPoz) = t_curRabat.value(nNumPoz) + curRabatAll
+      end if
+    end if    
+  end sub
+  
+  '--------------------------------------------------------------
+  'gdy żadna z pozycji nie będzie korygowana => nie twórz korekty
+  '--------------------------------------------------------------
+  public sub checkPoz
+    'gdy rabat kwotowy lub procentowy dla wybranych grup
+    dim idDok, pFaktura, pPoz, oProd, idGrupy, oGrupaProd, iter, i
+    for iter = 0 to t_pIdDok.upperIndex
+      dim bDelete : bDelete = true
+      idDok = clng(t_pIdDok.value(iter))
+      if idDok > 0 then
+        set pFaktura = trans_.getobj(TYPEID_N5SPRZEDAZ,idDok)
+        for each pPoz in pFaktura.listPozycje
+          set oProd = trans_.getobj(TYPEID_N5PRODUKT,pPoz.pProdukt.idobj)
+          idGrupy = oProd.pGrupaProd.idobj
+          set oGrupaProd = trans_.getobj(TYPEID_N5GRUPAPRODUKTOW,idGrupy)
+          
+          'gdy rabat kwotowy dla wszystkich dokumentów
+          if m_curParamKwotCalWart <> ccur(0) then
+            bDelete = false
+          end if          
+          'gdy rabat procentowy dla grupy "WSZYSTKIE"
+          for i = 0 to m_pParamProcGrupaNazwa.upperIndex
+            if m_pParamProcGrupaNazwa.value(i) = "WSZYSTKIE" and m_pParamProcGrupaWart.value(i) <> ccur(0) then
+              bDelete = false
+              exit for
+            end if
+          next          
+          'dla rabatu kwotowego
+          for i = 0 to m_pParamKwotGrNazwa.upperIndex
+            if m_pParamKwotGrNazwa.value(i) = oGrupaProd.strNazwa and m_pParamKwotGrWart.value(i) <> ccur(0) then
+              bDelete = false
+              exit for
+            end if
+          next
+          'dla rabatu procentowego
+          if bDelete then
+            for i = 0 to m_pParamProcGrupaNazwa.upperIndex
+              if m_pParamProcGrupaNazwa.value(i) = oGrupaProd.strNazwa and m_pParamProcGrupaWart.value(i) <> ccur(0) then
+                bDelete = false
+                exit for
+              end if            
+            next
+          end if
+          'jeśli produkt należy do grupy wykluczonej
+          dim tab : tab = Split(m_strFiltrGrupa,",")
+	        for i = 0 to ubound(tab)
+            if oGrupaProd.strNazwa = tab(i) then
+               bDelete = true
+               exit for              
+            end if
+          next
+          'gdy występuje chociaż jedna pozycja do korekty => nie sprawdzaj dalej
+          if not bDelete then
+            exit for
+          end if
+        next
+        if bDelete then
+          t_pIdDok.value(iter) = clng(0)
+        end if
+      end if  
+    next    
+  end sub
+
+end class
+
+'--------------------
+'rozpoczęcie kreatora
+'--------------------
+function fopen()
+  
+  'wczytanie pliku .xml
+	dim strFileName
+	strFileName = SelectFile("c:\", "*.xml", "")
+	'strFileName = "C:\kreator_korekt.xml"
+  
+	if (strFileName="") then
+    trans_.message 7000, 0, "Nie wybrano pliku"
+    fopen = false
+    exit function
+	end if
+  
+  dim oSO : set oSO = doc_.createstreamobj
+  oSO.attach strFileName
+  
+	dim pFiltrKorPars : set pFiltrKorPars = new CFiltrKorektParser
+	doc_.parsexml pFiltrKorPars, oSO
+ 
+  'gdy numer korekty zbiorczej jest w bazie => przerwij działanie
+  dim oRS : set oRS = trans_.createadors("select idobj from n5sprzedaz where strNrDok like '" + pFiltrKorPars.getStrParam("korekta") + "%'")
+  if oRS.RecordCount > 0 then
+    trans_.message 7000, 0, "Numer korekty zbiorczej nie może się powtarzać"
+    fopen = false
+    exit function    
+  end if
+
+  'podmiot i numer transakcji zbiorczej 
+  dim pPodmTrans : set pPodmTrans = nothing
+  dim strSymTrans : strSymTrans = ""
+  dim idPodm : idPodm = trans_.findobjid(TYPEID_N5KLIENT, "strIndeks = '" + pFiltrKorPars.getStrParam("indeks") + "'")
+  if idPodm > clng(0) then
+    set pPodmTrans = trans_.getobj(TYPEID_N5KLIENT, idPodm)
+    strSymTrans = pFiltrKorPars.getStrParam("korekta")
+    dim iPos : iPos = InStrRev(strSymTrans, "/")
+    if iPos > 0 then
+      strSymTrans = Left(strSymTrans,iPos - 1)
+    end if
+  else
+    trans_.message 7000, 0, "Nie rozpoznano indeksu podmiotu transakcji zbiorczej"
+    fopen = false
+    exit function
+  end if
+  
+  
+  'wybór rejestrdu dokumentów
+  dim idRejestrDok : idRejestrDok = choose_rejestr_dok("N5REJESTRDOK_KOR_FAKT_SP",true,"Wybierz rejestr dokumentów")
+
+  trans_.var(APPVAR_POZ_SPRZED_PROCENT) = clng(1)
+ 
+  if not pFiltrKorPars.strQueryParam then
+    fopen = false
+    exit function
+  end if
+  
+  if pFiltrKorPars.t_pIdDok.upperIndex = clng(-1) then
+    trans_.message 7000, 0, "Brak danych spełniających podane kryteria"
+    fopen = false
+    exit function    
+  end if
+  
+  'gdy brak dokumentów => nie twórz korekty
+  pFiltrKorPars.checkPoz
+  
+  dim iter
+  dim bIsPoz : bIsPoz = false
+  for iter = 0 to pFiltrKorPars.t_pIdDok.upperIndex
+    if pFiltrKorPars.t_pIdDok.value(iter) <> clng(0) then
+      bIsPoz = true
+      exit for
+    end if
+  next
+  if not bIsPoz then
+    trans_.message 7000, 0, "Brak pozycji do korygowania"
+    fopen = false
+    exit function     
+  end if
+  
+  'update cen bazowych przed rozpoczęciem kreatora
+  update_cen pFiltrKorPars.t_pIdDok
+  
+  dim idDok, pFaktura
+  'wypełnij tabele wartościami
+  dim nNumDok : nNumDok = clng(1)
+  for iter = 0 to pFiltrKorPars.t_pIdDok.upperIndex
+    idDok = clng(pFiltrKorPars.t_pIdDok.value(iter))
+    if idDok > 0 then
+      set pFaktura = trans_.getobj(TYPEID_N5SPRZEDAZ,idDok)
+      if not pFaktura.n5sprzedaz_maKorekte then      
+	      pFiltrKorPars.wypelnijTab pFaktura, nNumDok
+        nNumDok = nNumDok + 1
+      end if  
+    end if  
+  next
+  
+  'wylicz rabaty dla wszystkich pozycji
+  pFiltrKorPars.pozRabatAll
+  
+  'wylicz rabaty dla grup produktów
+  dim pPozSprz
+  dim nNumPoz : nNumPoz = clng(0)
+  for iter = 0 to pFiltrKorPars.t_pIdDok.upperIndex
+    idDok = clng(pFiltrKorPars.t_pIdDok.value(iter))
+    if idDok > 0 then
+      set pFaktura = trans_.getobj(TYPEID_N5SPRZEDAZ,idDok)
+      if not pFaktura.n5sprzedaz_maKorekte then      
+        for each pPozSprz in pFaktura.listPozycje
+          pFiltrKorPars.pozRabatGroup pPozSprz, nNumPoz
+          nNumPoz = nNumPoz + 1
+        next
+      end if  
+    end if  
+  next
+  
+  'dokonaj korekty ostatniej pozycji
+  pFiltrKorPars.korOstPoz
+  
+  'wylicz rabaty procentowe dla grup produktów
+  nNumPoz = clng(0)
+  for iter = 0 to pFiltrKorPars.t_pIdDok.upperIndex
+    idDok = clng(pFiltrKorPars.t_pIdDok.value(iter))
+    if idDok > 0 then
+      set pFaktura = trans_.getobj(TYPEID_N5SPRZEDAZ,idDok)
+      if not pFaktura.n5sprzedaz_maKorekte then      
+        for each pPozSprz in pFaktura.listPozycje  
+          pFiltrKorPars.pozRabatGroupProc pPozSprz.pProdukt.idobj, nNumPoz  
+          nNumPoz = nNumPoz + 1
+        next
+      end if  
+    end if  
+  next
+
+	'wartosc transkacji zbiorczej
+	dim curZbTransWn : curZbTransWn = ccur(0.0)
+	dim curZbTransMa : curZbTransMa = ccur(0.0)
+  'utwórz korekty
+  nNumDok = clng(0)
+  dim nNumKol : nNumKol = clng(1)  'kolejny nr faktury
+  dim strNrZb : strNrZb = ""
+  for iter = 0 to pFiltrKorPars.t_pIdDok.upperIndex
+    idDok = clng(pFiltrKorPars.t_pIdDok.value(iter))
+    if idDok > 0 then
+      set pFaktura = trans_.getobj(TYPEID_N5SPRZEDAZ,idDok)
+      if not pFaktura.n5sprzedaz_maKorekte then
+				dim curOldTransWn : curOldTransWn = pFaktura.pTransakcja.curWn
+				dim curOldTransMa : curOldTransMa = pFaktura.pTransakcja.curMa
+	      
+				create_korekta pFaktura, N5REJESTRDOK_KOR_FAKT_SP, idRejestrDok, pFiltrKorPars, strNrZb, nNumDok, nNumKol
+
+				curZbTransWn = curZbTransWn + (pFaktura.pTransakcja.curWn - curOldTransWn)
+				curZbTransMa = curZbTransMa + (pFaktura.pTransakcja.curMa - curOldTransMa)
+				pFaktura.pTransakcja.curWn = curOldTransWn
+				pFaktura.pTransakcja.curMa = curOldTransMa
+        
+				nNumDok = nNumDok + 1
+        nNumKol = nNumKol + 1
+      end if
+    end if  
+  next
+
+	if curZbTransWn <> ccur(0.0) or curZbTransMa <> ccur(0.0) then
+		dim oZbTrans : set oZbTrans = trans_.newobj(TYPEID_N5TRANSAKCJA)
+		oZbTrans.curWn = curZbTransWn
+		oZbTrans.curMa = curZbTransMa
+		oZbTrans.strSymTrans = strSymTrans
+		set oZbTrans.wrefPodmiot = pPodmTrans
+		if not trans_.saveobjects() then
+			trans_.message 7000, 0, "Zapis do bazy nieudany"
+			fopen = false
+			exit function
+		end if    
+	end if
+
+  fopen = false
+  
+  MessageBox "Działanie kreatora zakończone powodzeniem" , "Kreator korekt", vbOKOnly, vbInformation
+  
+end function
+
+'-------------------------
+'tworzy pojedynczą korektę
+'-------------------------
+function create_korekta(byval pSourceObj , byval nTypKorekty, byval idRejestrDok, byval pParam, byref strNrZb, byref nNumDok, byval nNumKol) : create_korekta = false
+
+	trans_.var(APPVAR_POP_DOKUMENT) = pSourceObj.idobj
+	trans_.var(APPVAR_REJESTR_TYP) = clng(nTypKorekty)
+  trans_.var(APPVAR_REJESTR_DOKUMENTOW) = clng(idRejestrDok)
+    
+  dim pOpenForm : set pOpenForm = doc_.getmodule(60129).prepare_form_open_command(pSourceObj.type,0,0)	
+
+	if pOpenForm is nothing then
+		exit function
+	end if
+				
+	dim pForm : set pForm = doc_.getpagehli(pOpenForm)
+  if not pForm is nothing then
+    dim pKorekta : set pKorekta = pForm.root
+  else
+    exit function
+  end if
+
+  'generuj kolejny nr korekty
+  if nNumDok = clng(0) then
+    dim i
+    dim strNrKor : strNrKor = pParam.getStrParam("korekta")
+    dim iPos : iPos = InStrRev(strNrKor,"/")
+    strNrZb = Left(strNrKor,iPos)
+    dim strKolNr : strKolNr = Mid(strNrKor,iPos + 1)
+    'usuń zera na początku
+    dim strKolNrPom : strKolNrPom = strKolNr
+    for i = 1 to Len(strKolNr)
+      if Mid(strKolNr,i,1) = "0" then
+        strKolNrPom = Mid(strKolNr,i+1)
+      else
+        strKolNr = strKolNrPom
+        exit for
+      end if
+    next
+    nNumDok = Clng(strKolNr)
+  end if  
+  
+  pKorekta.strNrDok = strNrZb + mid(cstr(10000 + nNumDok),2)
+  dim nRok : nRok = clng(Mid(pParam.getStrParam("datawyst"),1,4))
+  dim nMies : nMies = clng(Mid(pParam.getStrParam("datawyst"),6,2))
+  dim nDzien : nDzien = clng(Mid(pParam.getStrParam("datawyst"),9,2))
+  pKorekta.dDataWyst = DateSerial(nRok,nMies,nDzien)
+  pKorekta.dDataPlat = pKorekta.dDataWyst
+  pKorekta.strUwagi = pParam.getStrParam("powod")
+
+  dim pPozKor, idProd
+  dim nNumPoz : nNumPoz = clng(1)
+  for each pPozKor in pKorekta.listPozycje
+    idProd = pPozKor.pProdukt.idobj
+    pPozKor.curRabat = pPozKor.curRabat + ccur(pParam.setRabat(idProd,nNumKol,nNumPoz))
+    nNumPoz = nNumPoz + 1
+  next
+  pForm.fsave
+
+	create_korekta = true
+
+end function
+
+'-----------------------------------------------
+'update cen bazowych przed rozpoczęciem kreatora
+'-----------------------------------------------
+sub update_cen(byval pIdArray)
+  dim pPoz, iter, pSprz
+  dim pPerf : set pPerf = doc_.performing("Aktualizacja cen bazowych...")
+  for iter = 0 to pIdArray.upperIndex
+    if pIdArray.value(iter) > 0 then
+      set pSprz = trans_.getobj(TYPEID_N5SPRZEDAZ,pIdArray.value(iter))
+      for each pPoz in pSprz.listPozycje
+        if pPoz.idobj > 0 then     
+          dim idPoz : idPoz = pSprz.listPozycje.findonid(pPoz.idobj)
+          if idPoz > 0 then
+            dim oPozPlat : set oPozPlat = pSprz.listPozycje.get(idPoz)
+            if oPozPlat.curCenaBazNetto = ccur(0) and oPozPlat.curCenaBazowaNettoWal = ccur(0) then
+              oPozPlat.curCenaBazNetto = oPozPlat.curCenaNetto
+              oPozPlat.curCenaBazowaNettoWal = oPozPlat.curCenaNetto
+            end if
+          end if       
+        end if
+      next
+      if not trans_.saveobjects() then
+        exit sub
+      end if
+    end if  
+  next
+  set pPerf = nothing
+end sub
+
+]]>
+
+</script>
+</config>
+<body>
+</body>
+</page>

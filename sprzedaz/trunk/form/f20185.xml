@@ -1,0 +1,513 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+Recepta
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1201.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1222.h"
+#include "h1228.h"
+#include "h1200.h"
+#include "h1232.h"
+
+#define FORM_SPAN				2
+#define RCELL_SPAN				1
+
+
+#define CTRLID_ILOSC_CZYNNOSC		100
+#define CTRLID_OPAK_CZYNNOSC		101
+#define CTRLID_ILOSC_SUROWCE		102	
+#define CTRLID_OPAK_SUROWCE			103
+#define CTRLID_ILOSC_WYROB			104
+#define CTRLID_OPAK_WYROB			105
+#define CTRLID_WSPOLCZYNNIK_WYROB	106	
+#define CTRLID_OPIS					107
+
+#define CTRLID_GRID_PRODUKT_INDEKS_WYROB		108
+#define CTRLID_GRID_PRODUKT_INDEKS_SUR			109
+#define CTRLID_GRID_PRODUKT_INDEKS_CZYN			110
+
+#ifdef APPCONFIG_DB10_PLUS_PRODUKCJA_2
+#define CTRLID_ILOSC_ZASOB          111
+#ifdef ENABLE_DB11
+#define CTRLID_KOD_OPERACJI         112
+#define CTRLID_POPRZEDNIKI          113
+#define CTRLID_KROTNOSC_RECEPT      114
+#endif
+#endif
+
+#define SECID_PODSTAWOWE		1000
+#define SECID_UWAGI				1001
+
+#define REC_KOLEJNOSC_NAZWA_INDEKS		appvar_dokhandlform_kolejnosc_nazwa_indeks
+#define REC_SHOW_OPAKOWANIE				appvar_dokhandlform_show_opak	
+
+#define NAZWA_SIZE				20
+#define INDEKS_SIZE				12
+
+#macro SVE_CURRENCY_CUSTOM(_ctrl_,_pListField_,_pObjectField_,_prec_)   \
+function c##_ctrl_##_ongetdata(byref pCtrl,nRow): c##_ctrl_##_ongetdata = true   \
+	pCtrl.precision = clng(_prec_)   \
+	if _pListField_.exists(nRow) then   \
+		pCtrl.value = _pListField_.get(nRow)._pObjectField_   \
+	else   \
+		pCtrl.value = ccur(0.0)   \
+		exit function   \
+	end if   \
+	pCtrl.unit = ""   \
+end function   \
+function c##_ctrl_##_ondataentered(byref pCtrl,nRow,varValue) :	c##_ctrl_##_ondataentered = true   \
+	dim pPozObject   \
+	if _pListField_.exists(nRow) then   \
+		set pPozObject = _pListField_.get(nRow)   \
+	else   \
+		set pPozObject = _pListField_.addnew()   \
+	end if   \
+	pPozObject._pObjectField_ = ccur(varValue)   \
+end function
+
+#macro SVE_EDIT_CUSTOM(_ctrl_,_pListField_,_pObjectField_,_nZnakNr_)   \
+function c##_ctrl_##_ongetdata(byref pCtrl,nRow): c##_ctrl_##_ongetdata = true   \
+	if _pListField_.exists(nRow) then   \
+		pCtrl.value = _pListField_.get(nRow)._pObjectField_   \
+	else   \
+		pCtrl.value = ""   \
+		exit function   \
+	end if   \
+end function   \
+function c##_ctrl_##_ondataentered(byref pCtrl,nRow,varValue) :	c##_ctrl_##_ondataentered = true   \
+	dim pPozObject   \
+	if _pListField_.exists(nRow) then   \
+		set pPozObject = _pListField_.get(nRow)   \
+	else   \
+		set pPozObject = _pListField_.addnew()   \
+	end if   \
+	pPozObject._pObjectField_ = left(cstr(varValue),_nZnakNr_)   \
+end function
+
+
+-->
+<page style='STYLE_PAGE'>
+<config>
+	<title>
+Receptura
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+<typeid>TYPEID_N5RECEPTA</typeid>
+<script><![CDATA[
+
+#include "50222"
+#include "50606"
+#include "50200"
+
+
+'customizer
+#include "50621"
+
+
+VBG_PRODUKT_INDEKS_CUSTOM_PODPO(CTRLID_GRID_PRODUKT_INDEKS_WYROB,listWyrob,pProdukt,CRSR_N5PRODUKT_WYROB_PROD_AKT,0,false)
+VBG_PRODUKT_INDEKS_INIT_CUSTOMIZER(TYPEID_N5RECEPTA,TYPEID_N5POZRECEPTA,listWyrob,pProdukt,0)
+
+
+VBG_PRODUKT_INDEKS_CUSTOM_PODPO(CTRLID_GRID_PRODUKT_INDEKS_SUR,listSurowce,pProdukt,CRSR_N5PRODUKT_SUROW_PROD_AKT,1,false)
+VBG_PRODUKT_INDEKS_INIT_CUSTOMIZER(TYPEID_N5RECEPTA,TYPEID_N5POZRECEPTA,listSurowce,pProdukt,1)
+
+
+VBG_PRODUKT_INDEKS_CUSTOM_PODPO(CTRLID_GRID_PRODUKT_INDEKS_CZYN,listCzynnosci,pProdukt,CRSR_N5PRODUKT_USL_PROD_AKT,2,false)
+VBG_PRODUKT_INDEKS_INIT_CUSTOMIZER(TYPEID_N5RECEPTA,TYPEID_N5POZRECEPTA,listCzynnosci,pProdukt,2)
+
+
+function fopen()
+	if not std_fopen() then
+		fopen = false
+		exit function
+	end if
+
+	section_fopen THIS_FILE
+	fopen = true
+
+	VBG_INIT_CUSTOMIZER(0)
+	VBG_INIT_CUSTOMIZER(1)
+	VBG_INIT_CUSTOMIZER(2)
+end function
+
+
+function fclose
+	section_fclose THIS_FILE
+end function
+
+
+
+function fsave
+	dim bSave: bSave=std_fsave()
+	if not bSave then
+		section_fsave THIS_FILE
+	end if	
+	fsave=bSave
+end function
+
+
+
+VBG_OPAK_GETDATA(CTRLID_OPAK_SUROWCE,listSurowce)
+VBG_OPAK_GETDATA(CTRLID_OPAK_CZYNNOSC,listCzynnosci)
+VBG_OPAK_GETDATA(CTRLID_OPAK_WYROB,listWyrob)
+
+
+VBG_ILOSC_OPAK_HANDLERS(CTRLID_ILOSC_SUROWCE,listSurowce,true)
+VBG_ILOSC_OPAK_HANDLERS(CTRLID_ILOSC_CZYNNOSC,listCzynnosci,true)
+VBG_ILOSC_OPAK_HANDLERS(CTRLID_ILOSC_WYROB,listWyrob,true)
+
+
+function c##CTRLID_WSPOLCZYNNIK_WYROB##_ongetdata(byref pCtrl,nRow): c##CTRLID_WSPOLCZYNNIK_WYROB##_ongetdata=true				
+	dim bCtrlDisable:bCtrlDisable = true
+	if page_.root.listWyrob.exists(nRow) then
+		pCtrl.value = ccur(100.0) * page_.root.listWyrob.get(nRow).curWspolczynnik
+		bCtrlDisable = (page_.root.listWyrob.get(nRow).eRodzajWyceny = N5POZREALPROD_RODZAJWYCENY_CENA)
+	else																					
+		pCtrl.value = ccur(0.0)																
+	end if																						
+	pCtrl.unit = ""																		
+	pCtrl.disable = bCtrlDisable																					
+end function
+
+SVE_CURRENCY_CUSTOM_PRICE_DATAENTER(CTRLID_WSPOLCZYNNIK_WYROB,page_.root.listWyrob,curWspolczynnik,0.01,2)
+
+
+
+function copy_2_new
+
+	dim strMessage:strMessage = ""
+
+	if page_.root.isnew() then
+		strMessage = "Musisz najpierw zapisac bieząca receptę aby na jej podstawie utworzyc nową."
+	end if
+
+	if trans_.isdirty() then
+		strMessage = "Musisz najpierw zapisac bieząca receptę aby na jej podstawie utworzyc nową."
+	end if
+
+	if strMessage <> "" then
+		trans_.message 1002 , 0 , strMessage
+		exit function
+	end if
+
+	dim pProdUtil:set pProdUtil = doc_.getmodule(60234)
+
+	dim id:id = page_.root.idobj
+	dim pSubTrans: set pSubTrans = trans_.createsubtran()
+		pProdUtil.utworz_recepte_z_recepty id
+	set pSubTrans = nothing
+
+end function
+
+function fire_creator
+	trans_.var(APPVAR_PARAM_IDOBJ) = page_.root.idobj
+	dim pPage : set pPage = doc_.getpagehli("varCmd=CMD_OPEN_WIZARD_PAGE varDestPage=43034")
+	pPage.domodalauto() 
+end function
+
+SVE_CURRENCY_CUSTOM(CTRLID_ILOSC_ZASOB,page_.root.rcpt_listZasob,prz_curIlosc,4)
+
+#ifdef ENABLE_DB11
+SVE_EDIT_CUSTOM(CTRLID_KOD_OPERACJI,page_.root.rcpt_listOper,pro_strKod,8)
+SVE_EDIT_CUSTOM(CTRLID_POPRZEDNIKI,page_.root.rcpt_listOper,pro_strPoprzedniki,64)
+SVE_CURRENCY_CUSTOM(CTRLID_KROTNOSC_RECEPT,page_.root.rcpt_listOper,pro_curKrotnosc,4)
+#endif
+
+]]></script>
+</config>
+<header>
+</header>
+<body>
+
+QXF_BEGIN
+
+	QXS_BEGIN_FLAT(SECID_PODSTAWOWE,Informacje podstawowe,FORM_SPAN)
+		<tr>	
+			<td width='max'>
+				QXE_LABEL_REQ(Nazwa)
+			</td>
+			QXC_EDIT_FIELD(-1,40,strNazwa,RCELL_SPAN)
+		</tr>
+		QXR_EDIT_FIELD(Norma,-1,40,strNorma,RCELL_SPAN)
+		QXX_STATUS_RADIO2(rcpt_eAktywny,FORM_SPAN)
+	QXS_END_FLAT(FORM_SPAN)
+
+	QXS_MULTILINE(SECID_UWAGI,CTRLID_OPIS,strOpis,Opis,FORM_SPAN)
+
+	QXR_SEPARATOR(FORM_SPAN)
+
+		<tr>
+			QXC_LABEL_REQ(Wyroby,FORM_SPAN)
+		</tr>
+
+		<tr>
+			<td colspan='FORM_SPAN'>
+				<grid style='STYLE_TABLE'>
+				<transfer mode='grid_list'>
+					<field>listWyrob</field>
+				</transfer>
+
+				<thead style='STYLE_TABLE_HEADER'>
+				<tr>
+					QXC_LABEL(LP,1)
+#if REC_KOLEJNOSC_NAZWA_INDEKS = 1
+			<td width='max'><t>Nazwa wyrobu</t></td>
+			<td width='min'><t>Indeks wyrobu</t></td>
+#endif
+
+#if REC_KOLEJNOSC_NAZWA_INDEKS = 2
+			<td width='max'><t>Indeks wyrobu</t></td>
+			<td width='min'><t>Nazwa wyrobu</t></td>			
+#endif
+#if REC_SHOW_OPAKOWANIE = 1
+			QXC_LABEL(Opakowanie,1)
+#endif
+					<td align='right' width='min'><t>Ilość</t></td>
+					QXC_LABEL(Rodzaj wyceny,1)
+					<td align='right' width='min'><t>Współczynnik</t></td>
+				</tr>
+				</thead>
+
+				<tbody style='STYLE_TABLE_BODY'>
+					<tr>
+					
+						SXC_LP
+#if REC_KOLEJNOSC_NAZWA_INDEKS = 1
+						SXX_EDIT_REF_PRODUKT(-1,NAZWA_SIZE,listWyrob,pProdukt,CRSR_N5PRODUKT_WYROB_PROD_AKT)
+						SXX_EDIT_REF_PRODUKT_INDEX(CTRLID_GRID_PRODUKT_INDEKS_WYROB,INDEKS_SIZE,listWyrob,pProdukt,CRSR_N5PRODUKT_WYROB_PROD_AKT)
+#endif
+
+#if REC_KOLEJNOSC_NAZWA_INDEKS = 2
+						SXX_EDIT_REF_PRODUKT_INDEX(CTRLID_GRID_PRODUKT_INDEKS_WYROB,INDEKS_SIZE,listWyrob,pProdukt,CRSR_N5PRODUKT_WYROB_PROD_AKT)
+						SXX_EDIT_REF_PRODUKT(-1,NAZWA_SIZE,listWyrob,pProdukt,CRSR_N5PRODUKT_WYROB_PROD_AKT)
+#endif
+#if REC_SHOW_OPAKOWANIE = 1
+						XG_REF_CELL_OPAK(CTRLID_OPAK_WYROB,listWyrob)
+#endif
+						SXC_CURRENCY_CUSTOM(CTRLID_ILOSC_WYROB,9,0,)
+							<td>
+								<radio colspan='2' border='0'>
+										<transfer mode='row_edit_field'>
+											<field>eRodzajWyceny</field>
+										</transfer>
+									<t>cena</t>
+									<t>współczynnik</t>
+								</radio>
+							</td>
+							<td>
+								SXE_CURRENCY_CUSTOM(CTRLID_WSPOLCZYNNIK_WYROB,12,2,%)
+							</td>
+
+					</tr>
+				</tbody>		
+
+				</grid>
+			</td>
+		</tr>
+
+		QXR_SEPARATOR(FORM_SPAN)	
+			
+		<tr>
+			QXC_LABEL_REQ(Składniki,FORM_SPAN)
+		</tr>
+
+
+		<tr>
+			<td colspan='FORM_SPAN'>
+				<grid style='STYLE_TABLE'>
+				<transfer mode='grid_list'>
+					<field>listSurowce</field>
+				</transfer>
+
+				<thead style='STYLE_TABLE_HEADER'>
+				<tr>
+					QXC_LABEL(LP,1)
+#if REC_KOLEJNOSC_NAZWA_INDEKS = 1
+					<td width='max'><t>Nazwa surowca</t></td>
+					<td width='min'><t>Indeks surowca</t></td>
+#endif
+#if REC_KOLEJNOSC_NAZWA_INDEKS = 2
+					<td width='min'><t>Indeks surowca</t></td>
+					<td width='max'><t>Nazwa surowca</t></td>
+#endif
+#if REC_SHOW_OPAKOWANIE = 1
+					QXC_LABEL(Opakowanie,1)
+#endif
+					<td align='right' width='min'><t>Ilość</t></td>
+				</tr>
+				</thead>
+
+				<tbody style='STYLE_TABLE_BODY' maxvisiblerows='20'>
+					<tr>
+					
+						SXC_LP
+#if REC_KOLEJNOSC_NAZWA_INDEKS = 1
+						SXX_EDIT_REF_PRODUKT(-1,NAZWA_SIZE,listSurowce,pProdukt,CRSR_N5PRODUKT_SUROW_PROD_AKT)
+						SXX_EDIT_REF_PRODUKT_INDEX(CTRLID_GRID_PRODUKT_INDEKS_SUR,INDEKS_SIZE,listSurowce,pProdukt,CRSR_N5PRODUKT_SUROW_PROD_AKT)
+#endif
+#if REC_KOLEJNOSC_NAZWA_INDEKS = 2
+						SXX_EDIT_REF_PRODUKT_INDEX(CTRLID_GRID_PRODUKT_INDEKS_SUR,NAZWA_SIZE,listSurowce,pProdukt,CRSR_N5PRODUKT_SUROW_PROD_AKT)
+						SXX_EDIT_REF_PRODUKT(-1,INDEKS_SIZE,listSurowce,pProdukt,CRSR_N5PRODUKT_SUROW_PROD_AKT)
+#endif
+#if REC_SHOW_OPAKOWANIE = 1
+						XG_REF_CELL_OPAK(CTRLID_OPAK_SUROWCE,listSurowce)							
+#endif
+						SXC_CURRENCY_CUSTOM(CTRLID_ILOSC_SUROWCE,9,0,)
+					</tr>
+				</tbody>		
+
+				</grid>
+			</td>
+		</tr>
+
+		<tr>
+			<td colspan='FORM_SPAN'>
+				<grid style='STYLE_TABLE'>
+				<transfer mode='grid_list'>
+					<field>listCzynnosci</field>
+				</transfer>
+
+				<thead style='STYLE_TABLE_HEADER'>
+				<tr>
+					QXC_LABEL(LP,1)
+#if REC_KOLEJNOSC_NAZWA_INDEKS = 1
+					<td width='max'><t>Nazwa czynności</t></td>
+					<td width='max'><t>Indeks czynności</t></td>
+#endif
+
+#if REC_KOLEJNOSC_NAZWA_INDEKS = 2
+					<td width='max'><t>Indeks czynności</t></td>
+					<td width='max'><t>Nazwa czynności</t></td>					
+#endif
+
+#if REC_SHOW_OPAKOWANIE = 1
+					QXC_LABEL(Rodzaj,1)
+#endif
+					<td align='right' width='min'><t>Ilość</t></td>
+				</tr>
+				</thead>
+
+				<tbody style='STYLE_TABLE_BODY'>
+					<tr>				
+
+						SXC_LP
+#if REC_KOLEJNOSC_NAZWA_INDEKS = 1
+						SXX_EDIT_REF_PRODUKT(-1,NAZWA_SIZE,listCzynnosci,pProdukt,CRSR_N5PRODUKT_USL_PROD_AKT)
+						SXX_EDIT_REF_PRODUKT_INDEX(CTRLID_GRID_PRODUKT_INDEKS_CZYN,INDEKS_SIZE,listCzynnosci,pProdukt,CRSR_N5PRODUKT_USL_PROD_AKT)
+#endif
+
+#if REC_KOLEJNOSC_NAZWA_INDEKS = 2						
+						SXX_EDIT_REF_PRODUKT_INDEX(CTRLID_GRID_PRODUKT_INDEKS_CZYN,INDEKS_SIZE,listCzynnosci,pProdukt,CRSR_N5PRODUKT_USL_PROD_AKT)
+						SXX_EDIT_REF_PRODUKT(-1,NAZWA_SIZE,listCzynnosci,pProdukt,CRSR_N5PRODUKT_USL_PROD_AKT)
+#endif
+
+#if REC_SHOW_OPAKOWANIE = 1
+						XG_REF_CELL_OPAK(CTRLID_OPAK_CZYNNOSC,listCzynnosci)												
+#endif
+						SXC_CURRENCY_CUSTOM(CTRLID_ILOSC_CZYNNOSC,9,0,)
+
+					</tr>
+				</tbody>
+
+				</grid>
+			</td>
+		</tr>
+
+  QXR_SEPARATOR(FORM_SPAN)
+
+#ifdef APPCONFIG_DB10_PLUS_PRODUKCJA_2
+  #comment Zasoby
+  <tr>
+			QXC_LABEL_REQ(Zasoby,FORM_SPAN)
+		</tr>
+		<tr>
+			<td colspan='FORM_SPAN'>
+				<grid style='STYLE_TABLE'>
+				<transfer mode='grid_list'>
+					<field>rcpt_listZasob</field>
+				</transfer>
+
+				<thead style='STYLE_TABLE_HEADER'>
+				<tr>
+					QXC_LABEL(LP,1)
+					<td width='max'><t>Typ zasobu</t></td>
+          <td width='max' align='right'><t>Użycie (min.)</t></td>          
+				</tr>
+				</thead>
+
+				<tbody style='STYLE_TABLE_BODY' maxvisiblerows='20'>
+          <tr>
+            SXC_LP
+            SXC_EDIT_REF(-1,NAZWA_SIZE,PICTURE_CHOICE_N5PRODUKT,rcpt_listZasob,prz_pTypZasobu,tzp_strNazwa,CRSR_DEFAULT)
+            SXC_CURRENCY_CUSTOM(CTRLID_ILOSC_ZASOB,20,2,)
+          </tr>          
+				</tbody>
+  
+				</grid>
+			</td>
+		</tr>
+#ifdef ENABLE_DB11
+
+  #comment operacje
+  <tr>
+			QXC_LABEL_REQ(Operacje,FORM_SPAN)
+		</tr>
+		<tr>
+			<td colspan='FORM_SPAN'>
+				<grid style='STYLE_TABLE'>
+				<transfer mode='grid_list'>
+					<field>rcpt_listOper</field>
+				</transfer>
+
+				<thead style='STYLE_TABLE_HEADER'>
+				<tr>
+					QXC_LABEL(LP,1)
+					<td width='max'><t>Podrecepta</t></td>
+          <td width='2000'><t>Kod operacji</t></td>
+          <td><t>Poprzedniki</t></td>
+          <td width='max' align='right'><t>Krotność receptury</t></td>          
+				</tr>
+				</thead>
+
+				<tbody style='STYLE_TABLE_BODY' maxvisiblerows='20'>
+          <tr>
+            SXC_LP
+            SXC_EDIT_REF(-1,NAZWA_SIZE,PICTURE_CHOICE_N5PRODUKT,rcpt_listOper,pro_pRecepta,strNazwa,CRSR_DEFAULT)
+            <td>
+              SXE_EDIT_CUSTOM(CTRLID_KOD_OPERACJI,8)
+            </td>
+            <td>
+              SXE_EDIT_CUSTOM(CTRLID_POPRZEDNIKI,20)
+            </td>            
+            SXC_CURRENCY_CUSTOM(CTRLID_KROTNOSC_RECEPT,20,2,)
+          </tr>          
+				</tbody>
+  
+				</grid>
+			</td>
+		</tr>
+  QXR_SEPARATOR(FORM_SPAN)
+  #endif
+#endif
+
+  <tr style='STYLE_DESC_ROW'>
+			<td colspan='FORM_SPAN' kepline='true'>
+				QXE_BUTTON(-1,15,Kopiuj do nowej,varFunction="copy_2_new")
+				QXE_BUTTON(-1,15,Projektowanie wyrobu,varFunction="fire_creator")
+			</td>
+		</tr>
+
+QXF_END
+
+</body>
+<footer>
+</footer>
+</page>

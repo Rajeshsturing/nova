@@ -1,0 +1,510 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1200.h"
+#include "h1231.h"
+
+#include "h1201.h"
+#include "h1203_appconfig.h"
+
+#include "h1240.h"
+#include "h1234.h"
+#include "h1250.h"
+
+
+-->
+<page>
+<config>
+<script>
+<!--
+	Wsparcie dla wyliczeń rentowności oblugi maszyn dla RAND
+-->
+<![CDATA[
+
+'asp_raport_appfile
+#include "50518"	
+
+'LicUMUI
+#include "50101"
+
+
+#comment '------------------------------------------------------------------------------------
+
+
+class CRentOblugaMaszyn
+	private sub class_initialize()
+		dim strSQL
+		strSQL =  "create table #wyniki ( " + vbNewLine +_
+              "-- protoków serwisowy " + vbNewLine +_
+              "idProt integer not null, " + vbNewLine +_
+              "strNrProt varchar(255) not null, " + vbNewLine +_
+              "-- dokument magazynowy " + vbNewLine +_
+              "idMag integer not null, " + vbNewLine +_
+              "strNrMag varchar(255) not null, " + vbNewLine +_
+              "-- klient " + vbNewLine +_
+              "idKl integer not null, " + vbNewLine +_                              
+              "strNazwaKl varchar(255) not null, " + vbNewLine +_          
+              "strIndeksKl varchar(32) not null, " + vbNewLine +_
+              "-- obiekt klienta " + vbNewLine +_                       
+              "idObKl integer not null, " + vbNewLine +_         
+              "strNazwaObKl varchar(255) not null, " + vbNewLine +_
+              "strIndeksObKl varchar(32) not null, " + vbNewLine +_
+              "kontoObiektuKl varchar(40), " + vbNewLine +_
+              "-- produkt " + vbNewLine +_
+              "idProd integer not null, " + vbNewLine +_
+              "strNazwaProd varchar(128) not null, " + vbNewLine +_
+              "strIndeksProd varchar(32) not null, " + vbNewLine +_             
+              "rodzajProd varchar(20) not null, " + vbNewLine +_               
+              "-- koszty " + vbNewLine +_
+              "kosztDziałuHandl decimal(12,2), " + vbNewLine +_
+              "kosztUslug decimal(12,2), " + vbNewLine +_             
+              "kosztMaterialow decimal(12,2), " + vbNewLine +_ 
+              "kosztLeasingu decimal(12,2), " + vbNewLine +_
+              "-- przychod " + vbNewLine +_
+              "wartosc decimal(12,2), " + vbNewLine +_
+              "-- pozostałe " + vbNewLine +_
+              "zasadaObslugi varchar(5), " + vbNewLine +_
+              "data datetime, " + vbNewLine +_
+              "dataCiagla integer not null, " + vbNewLine +_
+              "-- rejestry " + vbNewLine +_
+              "idRejestrWZ integer not null, " + vbNewLine +_
+              "idRejestrSprz integer not null, " + vbNewLine +_
+              "-- kwalifikator obiektu " + vbNewLine +_
+              "idKwalObj integer not null)"
+		trans_.execsql strSQL
+    
+    dim pModRapEngine: set pModRapEngine = doc_.getmodule(60108)
+    dim pParamArray: set pParamArray = doc_.afc.new_navoarray()
+    pParamArray.add doc_.afc.rap.param.new_date_range("Analizowany okres").bindexpr("{data}")
+    pParamArray.add doc_.afc.rap.param.new_text("Nazwa klienta").bindexpr("kl.strNazwa")
+    pParamArray.add doc_.afc.rap.param.new_text("Indeks klienta").bindexpr("kl.strIndeks")
+    
+    'pobierz kwalifikatory oddziałów i zbuduj where dla filtru
+    dim pLicModule : set pLicModule =  doc_.getmodule(60106)
+    dim strWhere: strWhere = ""
+  
+    dim pCursor: set pCursor = trans_.createrawcursor(TYPEID_N5KWALIFIKATOR,"strNazwa like 'Oddział%'", "strNazwa", "")
+    dim oKwal
+    for each oKwal in pCursor
+      if pLicModule.FindRightOddzial(oKwal.strNazwa) then
+        strWhere = strWhere + cstr(oKwal.IdObj) + ","
+      end if    
+    next
+    if len(strWhere) > 1 then
+      strWhere = " and IdObj in (" + Left(strWhere,Len(strWhere)-1) + ")"
+    else
+      strWhere = " and (0=1)"
+    end if
+  
+	  dim pParamFactoryKwal: set pParamFactoryKwal = doc_.afc.rap.param
+	  dim pParamRejKwal: Set pParamRejKwal = pParamFactoryKwal.new_choice("Urządzenie oddział").bindexpr("kw.IdObj")
+	  doc_.afc.rap.param.init_on_query pParamRejKwal, trans_ ,"select strNazwa,idobj from n5kwalifikator where eAktywny = 1 " + strWhere + " order by strNazwa"
+	  pParamArray.add pParamRejKwal    
+
+    if pModRapEngine.show_raport_param_dialog(pParamArray,"Rentowność obsługi maszyn") <> 0 then   
+    
+    dim pPerf: set pPerf = doc_.performing("Trwa przygotowywanie danych...")
+    
+		'napełnienie wynikami z protokołu serwisowego (koszt usług)
+		strSQL =  "insert into #wyniki " + vbNewLine +_
+              "select " + vbNewLine +_
+              "'idProt' = vlzam.p_idobj, " + vbNewLine +_
+              "'strNrProt' = vlzam.p_strnrdok, " + vbNewLine +_
+              "'idMag' = 0, " + vbNewLine +_
+              "'strNrMag' = '', " + vbNewLine +_
+              "'idKl' = kl.idobj, " + vbNewLine +_                              
+              "'strNazwaKl' = kl.strNazwa, " + vbNewLine +_          
+              "'strIndeksKl' = kl.strIndeks, " + vbNewLine +_                      
+              "'idObKl' = klob.IdObj, " + vbNewLine +_         
+              "'strNazwaObKl' = klob.klob_strNazwa, " + vbNewLine +_
+              "'strIndeksObKl' = klob.klob_strIndeks, " + vbNewLine +_
+              "'kontoObiektuKl' = klob.klob_strTel3, " + vbNewLine +_
+              "'idProd' = pr.idobj, " + vbNewLine +_
+              "'strNazwaProd' = pr.strNazwa, " + vbNewLine +_
+              "'strIndeksProd' = pr.strIndeks, " + vbNewLine +_             
+              "'rodzajProd' = CASE pr.eRodzaj when 1 then 'Towar' else 'Usluga' end, " + vbNewLine +_
+              "'kosztDziałuHandl' = isnull(case when pr.strIndeks = 'kdh' then vlzam.c_curwartnetto end,0), " + vbNewLine +_ 
+              "'kosztUslug' = case when pr.strIndeks <> 'kdh' then " + vbNewLine +_ 
+              "case when pr.strCecha3 <> 'DOJ' then " + vbNewLine +_ 
+              "case when (pr.strIndeks = 'WYSYŁKA' or pr.strIndeks = 'serwis/z' or pr.strIndeks = 'iuk' or pr.strIndeks = 'kliki') then vlzam.c_curwartnetto else " + vbNewLine +_
+              "case when vlzam.p_ddatawyst <= {d '2012-09-30'} then (vlzam.c_curwartnetto * 33)/100 else (vlzam.c_curwartnetto * 36)/100 end end else " + vbNewLine +_ 
+              "case when klob.curExtra4 <> 0 then (klob.curExtra4 * vlzam.c_curiloscopak) else vlzam.c_curwartnetto end end end, " + vbNewLine +_ 
+              "'kosztMaterialow' = 0, " + vbNewLine +_
+              "'kosztLeasingu'= 0, " + vbNewLine +_
+              "'wartosc' = 0, " + vbNewLine +_
+              "'zasadaObslugi' = right(left(klob.strExtra1,4),1), " + vbNewLine +_
+              "'data' = vlzam.p_ddatareal, " + vbNewLine +_
+              "'dataCiagla' = month(vlzam.p_ddatareal) + year(vlzam.p_ddatareal) * 12, " + vbNewLine +_  
+              "'idRejestrWZ' = 0, " + vbNewLine +_
+              "'idRejestrSprz' = 0, " + vbNewLine +_
+              "'idKwalObj' = kw.IdObj " + vbNewLine +_
+              "from vlist_n5zamowienie_listPozycje vlzam " + vbNewLine +_                            
+              "inner join n5produkt pr on vlzam.c_pprodukt=pr.IdObj " + vbNewLine +_                 
+              "inner join n5zadanie zad on vlzam.p_pzadanie = zad.IdObj " + vbNewLine +_             
+              "inner join n5klient kl on vlzam.p_pklient = kl.IdObj " + vbNewLine +_                 
+              "inner join n5klient_obiekt klob ON zad.zad_pKLOB=klob.IdObj " + vbNewLine +_ 
+              "inner join n5kwalifikator kw on klob.pKwalifikatorEx = kw.IdObj " + vbNewLine +_
+              "where pr.eRodzaj = 2 and %1 and %2 and %3 and %4 "
+    strSQL = pModRapEngine.query_apply_actual_param(strSQL,pParamArray)
+    strSQL = Replace(strSQL,"{data}","vlzam.p_ddatareal")
+		trans_.execsql strSQL
+    
+		'napełnienie wynikami z protokołu serwisowego (koszt usług) - protokoły wprowadzone ręcznie (bez zlecenia)
+		strSQL =  "insert into #wyniki " + vbNewLine +_
+              "select " + vbNewLine +_
+              "'idProt' = vlzam.p_idobj, " + vbNewLine +_
+              "'strNrProt' = vlzam.p_strnrdok, " + vbNewLine +_
+              "'idMag' = 0, " + vbNewLine +_
+              "'strNrMag' = '', " + vbNewLine +_
+              "'idKl' = kl.idobj, " + vbNewLine +_                              
+              "'strNazwaKl' = kl.strNazwa, " + vbNewLine +_          
+              "'strIndeksKl' = kl.strIndeks, " + vbNewLine +_                      
+              "'idObKl' = klob.IdObj, " + vbNewLine +_         
+              "'strNazwaObKl' = klob.klob_strNazwa, " + vbNewLine +_
+              "'strIndeksObKl' = klob.klob_strIndeks, " + vbNewLine +_
+              "'kontoObiektuKl' = klob.klob_strTel3, " + vbNewLine +_
+              "'idProd' = pr.idobj, " + vbNewLine +_
+              "'strNazwaProd' = pr.strNazwa, " + vbNewLine +_
+              "'strIndeksProd' = pr.strIndeks, " + vbNewLine +_             
+              "'rodzajProd' = CASE pr.eRodzaj when 1 then 'Towar' else 'Usluga' end, " + vbNewLine +_
+              "'kosztDziałuHandl' = isnull(case when pr.strIndeks = 'kdh' then vlzam.c_curwartnetto end,0), " + vbNewLine +_ 
+              "'kosztUslug' = case when pr.strIndeks <> 'kdh' then " + vbNewLine +_ 
+              "case when pr.strCecha3 <> 'DOJ' then " + vbNewLine +_ 
+              "case when (pr.strIndeks = 'WYSYŁKA' or pr.strIndeks = 'serwis/z' or pr.strIndeks = 'iuk' or pr.strIndeks = 'kliki') then vlzam.c_curwartnetto else " + vbNewLine +_
+              "case when vlzam.p_ddatawyst <= {d '2012-09-30'} then (vlzam.c_curwartnetto * 33)/100 else (vlzam.c_curwartnetto * 36)/100 end end else " + vbNewLine +_ 
+              "case when klob.curExtra4 <> 0 then (klob.curExtra4 * vlzam.c_curiloscopak) else vlzam.c_curwartnetto end end end, " + vbNewLine +_ 
+              "'kosztMaterialow' = 0, " + vbNewLine +_
+              "'kosztLeasingu'= 0, " + vbNewLine +_
+              "'wartosc' = 0, " + vbNewLine +_
+              "'zasadaObslugi' = right(left(klob.strExtra1,4),1), " + vbNewLine +_
+              "'data' = vlzam.p_ddatareal, " + vbNewLine +_
+              "'dataCiagla' = month(vlzam.p_ddatareal) + year(vlzam.p_ddatareal) * 12, " + vbNewLine +_   
+              "'idRejestrWZ' = 0, " + vbNewLine +_
+              "'idRejestrSprz' = 0, " + vbNewLine +_
+              "'idKwalObj' = kw.IdObj " + vbNewLine +_ 
+              "from vlist_n5zamowienie_listPozycje vlzam " + vbNewLine +_                            
+              "inner join n5produkt pr on vlzam.c_pprodukt=pr.IdObj " + vbNewLine +_            
+              "inner join n5klient kl on vlzam.p_pklient = kl.IdObj " + vbNewLine +_                 
+              "inner join n5klient_obiekt klob ON cast(vlzam.p_curextra5 as integer)=klob.IdObj " + vbNewLine +_          
+              "inner join n5kwalifikator kw on klob.pKwalifikatorEx = kw.IdObj " + vbNewLine +_ 
+              "where pr.eRodzaj = 2 and isnull(vlzam.p_pzadanie,0) = 0 and %1 and %2 and %3 and %4 "
+    strSQL = pModRapEngine.query_apply_actual_param(strSQL,pParamArray)
+    strSQL = Replace(strSQL,"{data}","vlzam.p_ddatareal")
+		trans_.execsql strSQL    
+    
+		'napełnienie wynikami z dokumentu magazynowego (koszt materiałów)
+		strSQL =  "insert into #wyniki " + vbNewLine +_
+              "select " + vbNewLine +_
+              "'idProt' = 0, " + vbNewLine +_
+              "'strNrProt' = '', " + vbNewLine +_
+              "'idMag' = dokm.p_idobj, " + vbNewLine +_
+              "'strNrMag' = dokm.p_strnrdok, " + vbNewLine +_
+              "'idKl' = kl.idobj, " + vbNewLine +_   
+              "'strNazwaKl' = kl.strNazwa, " + vbNewLine +_
+              "'strIndeksKl' = kl.strIndeks, " + vbNewLine +_
+              "'idObKl' = klob.IdObj, " + vbNewLine +_
+              "'strNazwaObKl' = klob.klob_strNazwa, " + vbNewLine +_
+              "'strIndeksObKl' = klob.klob_strIndeks, " + vbNewLine +_
+              "'kontoObiektuKl' = klob.klob_strTel3, " + vbNewLine +_
+              "'idProd' = pr.idobj, " + vbNewLine +_
+              "'strNazwaProd' = pr.strNazwa, " + vbNewLine +_
+              "'strIndeksProd' = pr.strIndeks, " + vbNewLine +_
+              "'rodzajProd' = CASE pr.eRodzaj when 1 then 'Towar' else 'Usluga' end, " + vbNewLine +_
+              "'kosztDziałuHandl' = 0, " + vbNewLine +_
+              "'kosztUslug' = 0, " + vbNewLine +_
+              "'kosztMaterialow' = -(select sum(gmo_curWartosc) from n5gmop " + vbNewLine +_ 
+              "                      where gmo_nNumOp = dokm.p_nnumoper and gmo_pProd = dokm.c_pprodukt and gmo_nLP = dokm.coll_lp), " + vbNewLine +_
+              "'kosztLeasingu'= 0, " + vbNewLine +_
+              "'wartosc' = 0, " + vbNewLine +_
+              "'zasadaObslugi' = right(left(klob.strExtra1,4),1), " + vbNewLine +_
+              "'data' = dokm.p_ddatawyst, " + vbNewLine +_
+              "'dataCiagla' = month(dokm.p_ddatawyst) + year(dokm.p_ddatawyst) * 12, " + vbNewLine +_
+              "'idRejestrWZ' = r.IdObj, " + vbNewLine +_
+              "'idRejestrSprz' = 0, " + vbNewLine +_
+              "'idKwalObj' = kw.IdObj " + vbNewLine +_
+              "from vlist_n5dokmag_listPozycje dokm " + vbNewLine +_                        
+              "inner join n5klient kl on dokm.p_pklient = kl.IdObj " + vbNewLine +_                           
+              "inner join n5klient_obiekt klob on dokm.c_pdm_pObiektKlienta = klob.idobj " + vbNewLine +_ 
+              "inner join n5rejestrdok r on dokm.p_prejestrdok = r.idobj and r.eTyp = N5REJESTRDOK__WZ " + vbNewLine +_
+              "inner join n5produkt pr on dokm.c_pprodukt = pr.idobj " + vbNewLine +_
+              "inner join n5kwalifikator kw on klob.pKwalifikatorEx = kw.IdObj " + vbNewLine +_
+              "where %1 and %2 and %3 and %4 "
+    strSQL = pModRapEngine.query_apply_actual_param(strSQL,pParamArray)
+    strSQL = Replace(strSQL,"{data}","dokm.p_ddatawyst")
+		trans_.execsql strSQL
+    
+		'napełnianie wynikami z pozycji faktur sprzedazy (przychod)
+		strSQL =  "insert into #wyniki " + vbNewLine +_
+              "select " + vbNewLine +_
+              "'idProt' = max(0), " + vbNewLine +_
+              "'strNrProt' = max(''), " + vbNewLine +_
+              "'idMag' = max(0), " + vbNewLine +_
+              "'strNrMag' = max(''), " + vbNewLine +_ 
+              "'idKl' = kl.idobj, " + vbNewLine +_
+              "'strNazwaKl' = max(kl.strNazwa), " + vbNewLine +_ 
+              "'strIndeksKl' = max(kl.strIndeks), " + vbNewLine +_
+              "'idObKl' = obkl.idobj, " + vbNewLine +_
+              "'strNazwaObKl' = max(obkl.klob_strNazwa), " + vbNewLine +_
+              "'strIndeksObKl' = max(obkl.klob_strIndeks), " + vbNewLine +_
+              "'kontoObiektuKl' = max(obkl.klob_strTel3), " + vbNewLine +_
+              "'idProd' = max(0), " + vbNewLine +_
+              "'strNazwaProd' = max(''), " + vbNewLine +_
+              "'strIndeksProd' = max(''), " + vbNewLine +_
+              "'rodzajProd' = max(''), " + vbNewLine +_
+              "'kosztDziałuHandl' = max(0), " + vbNewLine +_
+              "'kosztUslug' = max(0), " + vbNewLine +_
+              "'kosztMaterialow' = max(0), " + vbNewLine +_
+              "'kosztLeasingu'= 0, " + vbNewLine +_
+              "'wartosc' = SUM(poz.c_curWartNetto), " + vbNewLine +_
+              "'zasadaObslugi' = max(right(left(obkl.strExtra1,4),1)), " + vbNewLine +_
+              "'data' = max(poz.p_ddatasprzed), " + vbNewLine +_
+              "'dataCiagla' = (month(poz.p_ddatasprzed) + year(poz.p_ddatasprzed) * 12), " + vbNewLine +_   
+              "'idRejestrWZ' = 0, " + vbNewLine +_
+              "'idRejestrSprz' = r.IdObj, " + vbNewLine +_            
+              "'idKwalObj' = max(kw.IdObj) " + vbNewLine +_ 
+              "from vlist_n5sprzedaz_listPozycje poz " + vbNewLine +_                                           
+              "left outer join vlist_n5sprzedaz_listPozycje kor on kor.p_ppopsprzed = poz.p_idobj " + vbNewLine +_
+              "inner join n5klient kl on poz.p_pKlient = kl.idobj " + vbNewLine +_
+              "inner join n5klient_obiekt obkl on poz.c_psprzed_pklob = obkl.idobj " + vbNewLine +_
+              "inner join n5rejestrdok r on poz.p_prejestrdok = r.IdObj " + vbNewLine +_
+              "inner join n5kwalifikator kw on obkl.pKwalifikatorEx = kw.IdObj " + vbNewLine +_
+              "where kor.p_ppopsprzed is null and %1 and %2 and %3 and %4 " + vbNewLine +_                                                       
+              "group by kl.idobj,obkl.idobj,(month(poz.p_ddatasprzed) + year(poz.p_ddatasprzed) * 12),r.IdObj "
+    strSQL = pModRapEngine.query_apply_actual_param(strSQL,pParamArray)
+    strSQL = Replace(strSQL,"{data}","poz.p_ddatasprzed")
+		trans_.execsql strSQL
+    
+    'koszt leasingu dla każdego z obiektów
+    strSQL = "select idObKl,data from #wyniki"
+    dim oRS: set oRS = trans_.createadors(strSQL)
+    dim oKlObj, dDataOd, dDataDo, curKwota, bUpdate
+    do while not oRS.EOF
+      bUpdate = false
+      dDataOd = trans_.afc.globals.nulldate()
+      dDataDo = trans_.afc.globals.nulldate()
+      'pobierz obiekt
+      set oKlObj = trans_.getobj(TYPEID_N5KLIENT_OBIEKT,clng(oRS(0).value))
+      'wykonaj update tylko gdy podano datę rozpoczęcia leasingu i kwotę
+      if oKlObj.dExtra3 <> dDataOd and oKlObj.klob_strTel2 <> "" then
+        dDataOd = oKlObj.dExtra3
+        curKwota = strToCur(oKlObj.klob_strTel2)
+        if curKwota > ccur(0) then
+          'data zakończenia
+          if oKlObj.strExtra2 <> "" and oKlObj.strExtra2 <> "????-??-??" then
+            dDataDo = CDate(oKlObj.strExtra2)
+            if dDataDo = trans_.afc.globals.nulldate() then
+              if oRS(1).value >= dDataOd then
+                bUpdate = true
+              end if            
+            else
+              if dDataOd <= dDataDo and oRS(1).value >= dDataOd and oRS(1).value <= dDataDo then
+                bUpdate = true
+              end if
+            end if
+          else  
+            if oRS(1).value >= dDataOd then
+              bUpdate = true
+            end if
+          end if
+        
+          if bUpdate then
+            trans_.execsql "update #wyniki set kosztLeasingu = " + doc_.afc.convert.cur2sql(curKwota) + " where idObKl = " + CStr(oRS(0).value) +_ 
+                           " and data = " + trans_.afc.convert.date2SQL(oRS(1).value)      
+          end if  
+        end if
+      end if
+
+      oRS.movenext
+    loop    
+    
+	  'napełnienie wynikami z dekretów (amortyzacja)
+    strSQL =  "create table #amortyzacja( " + vbNewLine +_
+              "symKonta VARCHAR(120) not null, " + vbNewLine +_   
+              "dataKsieg DATETIME not null, " + vbNewLine +_    
+              "curMa numeric(12,2), " + vbNewLine +_
+              "dataCiag integer not null) "
+    trans_.execsql strSQL
+    
+    strSQL =  "insert into #amortyzacja " + vbNewLine +_       
+              "select " + vbNewLine +_ 
+              "'symKonta' = ltrim(k.strSymbol), " + vbNewLine +_         
+              "'dataKsieg' = p.dDataKsieg, " + vbNewLine +_               
+              "'curMa' = sum(p.curMa), " + vbNewLine +_
+              "'dataCiag' = (month(p.dDataKsieg) + year(p.dDataKsieg) * 12) " + vbNewLine +_                            
+              "from n5dekret p " + vbNewLine +_                              
+              "inner join n5konto k on p.pKonto = k.IdObj " + vbNewLine +_
+              "where p.eTyp <> N5_DEKRET_TYP_BO " + vbNewLine +_
+              "group by ltrim(k.strsymbol),p.dDataKsieg " 
+    trans_.execsql strSQL
+    
+    set pPerf = nothing
+    end if 
+	end sub
+  
+  public function strToCur(byval strKwota) : strToCur = ccur(0.0)
+    'separator dziesiętyny windows
+    dim strSep : strSep = mid(cstr(ccur(1/2)),2,1)
+    if strSep = "." then
+      strToCur = ccur(replace(replace(strKwota,",",".")," ",""))
+    elseif strSep = "," then
+      strToCur = ccur(replace(replace(strKwota,".",",")," ",""))
+    else
+      strToCur = ccur(replace(strKwota," ",""))
+    end if 
+  end function     
+
+	private sub class_terminate() 'OK
+	end sub
+	
+  
+	public function get_okres_param()
+		dim pOkresParam : set pOkresParam = doc_.afc.rap.param.new_date_range("Analizowany okres").bindexpr("TMP_DATES.DATA")
+		set get_okres_param = pOkresParam
+	end function
+
+end class
+
+
+
+class CRentOblugaMaszyn2
+	private sub class_initialize()
+    dim strSQL	
+      strSQL =  " CREATE TABLE #material                          " + vbCrLf +_
+           " (idobjdok INTEGER,                           " + vbCrLf +_
+             " idObiektuKlienta integer NOT NULL,         " + vbCrLf +_
+             " nazwaObiektuKlienta varchar (255) NOT NULL," + vbCrLf +_
+             " indeksObiektuKlienta VARCHAR (32) NOT NULL," + vbCrLf +_
+             " kontoObiektuKlienta VARCHAR(40),           " + vbCrLf +_
+             " strIndeks varchar(32) not null,            " + vbCrLf +_
+             " strNazwa varchar(128) not null,            " + vbCrLf +_
+             " rodzaj VARCHAR(20) NOT NULL,               " + vbCrLf +_
+             " idKl INTEGER,                              " + vbCrLf +_
+             " strNazwaKl varchar(255) not null,          " + vbCrLf +_
+             " strIndeksKl Varchar(32) not null,          " + vbCrLf +_
+             " dataCiagla integer not null,               " + vbCrLf +_
+             " dDataWyst datetime not null,               " + vbCrLf +_
+             " kosztUslug numeric(12,2) NULL,             " + vbCrLf +_
+             " kosztMaterialow numeric(12,2) NULL,        " + vbCrLf +_
+             " zasadaObslugi varchar(5) NULL,             " + vbCrLf +_
+             " nrdok VARCHAR (50) NOT NULL, )             " 
+		trans_.execsql strSQL
+
+strSQL =  " INSERT INTO #material                                                         " + vbCrLf +_
+              "(	IdObjdok,	idObiektuKlienta,	nazwaObiektuKlienta,indeksObiektuKlienta,	" + vbCrLf +_
+              "kontoObiektuKlienta, strIndeks,	strNazwa,	rodzaj,	idKl,	strNazwaKl,	    " + vbCrLf +_
+              "strIndeksKl,dataCiagla,                                                  " + vbCrLf +_
+              "dDataWyst,	kosztUslug,kosztMaterialow,zasadaObslugi,	nrdok)              " + vbCrLf +_
+              "SELECT * from #wyniki where rodzaj='towar'"
+trans_.execsql strSQL
+
+	end sub
+
+	private sub class_terminate() 'OK
+    
+	end sub
+
+end class
+
+
+class CRentOblugaMaszyn3
+	private sub class_initialize()
+    dim strSQL	
+      strSQL =  " CREATE TABLE #uslugi                          " + vbCrLf +_
+           " (idobjdok INTEGER,                           " + vbCrLf +_
+             " idObiektuKlienta integer NOT NULL,         " + vbCrLf +_
+             " nazwaObiektuKlienta varchar (255) NOT NULL," + vbCrLf +_
+             " indeksObiektuKlienta VARCHAR (32) NOT NULL," + vbCrLf +_
+             " kontoObiektuKlienta VARCHAR(40),           " + vbCrLf +_
+             " strIndeks varchar(32) not null,            " + vbCrLf +_
+             " strNazwa varchar(128) not null,            " + vbCrLf +_
+             " rodzaj VARCHAR(20) NOT NULL,               " + vbCrLf +_
+             " idKl INTEGER,                              " + vbCrLf +_
+             " strNazwaKl varchar(255) not null,          " + vbCrLf +_
+             " strIndeksKl Varchar(32) not null,          " + vbCrLf +_
+             " dataCiagla integer not null,               " + vbCrLf +_
+             " dDataWyst datetime not null,               " + vbCrLf +_
+             " kosztUslug numeric(12,2) NULL,             " + vbCrLf +_
+             " kosztMaterialow numeric(12,2) NULL,        " + vbCrLf +_
+             " zasadaObslugi varchar(5) NULL,             " + vbCrLf +_
+             " nrdok VARCHAR (50) NOT NULL, )             " 
+		trans_.execsql strSQL
+
+strSQL =  " INSERT INTO #uslugi                                                         " + vbCrLf +_
+              "(	IdObjdok,	idObiektuKlienta,	nazwaObiektuKlienta,indeksObiektuKlienta,	" + vbCrLf +_
+              "kontoObiektuKlienta, strIndeks,	strNazwa,	rodzaj,	idKl,	strNazwaKl,	    " + vbCrLf +_
+              "strIndeksKl,dataCiagla,                                                  " + vbCrLf +_
+              "dDataWyst,	kosztUslug,kosztMaterialow,zasadaObslugi,	nrdok)              " + vbCrLf +_
+              "SELECT * from #wyniki where rodzaj='usluga'"
+trans_.execsql strSQL
+
+	end sub
+
+	private sub class_terminate() 'OK
+    
+	end sub
+
+end class
+
+
+class CRentOblugaMaszyn4
+	private sub class_initialize()
+    dim strSQL	
+      strSQL =  " CREATE TABLE #amortyzacja                          " + vbCrLf +_
+           " (idobjdok INTEGER,                           " + vbCrLf +_
+             " idObiektuKlienta integer NOT NULL,         " + vbCrLf +_
+             " nazwaObiektuKlienta varchar (255) NOT NULL," + vbCrLf +_
+             " indeksObiektuKlienta VARCHAR (32) NOT NULL," + vbCrLf +_
+             " kontoObiektuKlienta VARCHAR(40),           " + vbCrLf +_
+             " strIndeks varchar(32) not null,            " + vbCrLf +_
+             " strNazwa varchar(128) not null,            " + vbCrLf +_
+             " rodzaj VARCHAR(20) NOT NULL,               " + vbCrLf +_
+             " idKl INTEGER,                              " + vbCrLf +_
+             " strNazwaKl varchar(255) not null,          " + vbCrLf +_
+             " strIndeksKl Varchar(32) not null,          " + vbCrLf +_
+             " dataCiagla integer not null,               " + vbCrLf +_
+             " dDataWyst datetime not null,               " + vbCrLf +_
+             " kosztUslug numeric(12,2) NULL,             " + vbCrLf +_
+             " kosztMaterialow numeric(12,2) NULL,        " + vbCrLf +_
+             " zasadaObslugi varchar(5) NULL,             " + vbCrLf +_
+             " nrdok VARCHAR (50) NOT NULL, )             " 
+		trans_.execsql strSQL
+
+strSQL =  " INSERT INTO #amortyzacja                                                         " + vbCrLf +_
+              "(	IdObjdok,	idObiektuKlienta,	nazwaObiektuKlienta,indeksObiektuKlienta,	" + vbCrLf +_
+              "kontoObiektuKlienta, strIndeks,	strNazwa,	rodzaj,	idKl,	strNazwaKl,	    " + vbCrLf +_
+              "strIndeksKl,dataCiagla,                                                  " + vbCrLf +_
+              "dDataWyst,	kosztUslug,kosztMaterialow,zasadaObslugi,	nrdok)              " + vbCrLf +_
+              "SELECT * from #wyniki where rodzaj='usluga'"
+trans_.execsql strSQL
+
+	end sub
+
+	private sub class_terminate() 'OK
+    
+	end sub
+
+end class
+
+
+function new_rent
+	set new_rent = new CRentOblugaMaszyn
+end function
+
+function new_rent_sp()
+	set new_rent_sp = new CRentOblugaMaszyn2
+end function
+
+function new_rent_us()
+	set new_rent_us = new CRentOblugaMaszyn3
+end function
+
+function new_rent_am()
+	set new_rent_am = new CRentOblugaMaszyn4
+end function
+
+]]>
+</script>
+</config>
+	<body>
+	</body>
+</page>

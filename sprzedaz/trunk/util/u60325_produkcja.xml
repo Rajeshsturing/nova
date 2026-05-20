@@ -1,0 +1,666 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200.h"
+#include "h1201.h"
+#include "h1220.h"
+#include "h1222.h"
+#include "h1240.h"
+#include "h1231.h"
+
+#define CTRLID_ILOSC_PROP     101
+#define CTRLID_DATE_ROZP      102
+#define CTRLID_DATE_ZAK       103
+#define CTRLID_ZASOB_PROD     104
+#define CTRLID_STATUS_OPER    105
+#define CTRLID_ILOSC_WYKON    106
+
+#define PROP_TAB_INX            201
+#define PROP_CHANGE_STATUS      202
+#define PROP_TAB_ROW_HEADER     203
+#define PROP_DATE_BUTTON        204
+
+#define ID_TITLE             501
+#define ID_HEADER            502
+#define ID_TAB_SUROWIEC      503
+#define ID_TAB_EDIT          504
+#define ID_TAB_BUTTONS       505
+
+#define PAGE_COLOR           RGB(222,231,254)
+#define BORDER_COLOR         RGB(0,102,151)
+#define ROW_COLOR            RGB(232,232,232)
+#define WHITE_COLOR          RGB(255,255,255)
+#define YELLOW_COLOR         RGB(255,255,150)
+#define PAGE_SEPARATOR       <table><tbody><tr><td><t></t></td></tr></tbody></table>
+
+#define CHECKBOX_CELL_NR     7
+
+-->
+<page width='9000' style='STYLE_PAGE'>
+<config>
+<script>
+<!--
+	Raport potwierdzenia wykonania akcji (produkcja)
+-->
+<![CDATA[
+
+dim oPUEdit, oPUCopyEdit
+
+'fire_choice_list
+#include "50200"
+
+'GetMenu
+#include "50506"
+
+'---------------------
+'generuj potwierdzenie
+'---------------------
+class cGenConf
+
+  '------------
+  'tytul strony
+  '------------
+  public sub pageTitle(byval strTitle)
+    dim pTitle : set pTitle = page_.ctrl(ID_TITLE)
+    pTitle.text = ""
+    pTitle.fontsize = 5
+    page_.topelement.title = strTitle
+  end sub
+  
+  '----------------------
+  'nagłówek potwierdzenia
+  '----------------------
+  public sub pageHeader(byval strText)
+    cleanPage
+    dim tab : set tab = doc_.afc.new_tb(page_).attach(page_.ctrl(ID_HEADER))
+    dim strNrZlec : strNrZlec = ""
+    tab.newrow
+    tab.row.styleitem = STYLE_TABLE_INFO
+    dim idZlec : idZlec = oPUCopyEdit.get_item(0).m_idZlecProd
+    if idZlec > clng(0) then
+      strNrZlec = trans_.getobj(TYPEID_N5ZLECPROD, idZlec).strNrDok
+    end if
+    tab.newcell.addtext(strText).element.bold = true
+    tab.addctrl(CTRL_TYPE_STATIC,-1).element.text = strNrZlec
+    tab.cell.colspan = 3
+  end sub
+  
+  '------------------
+  'tabela z surowcami
+  '------------------
+  public sub tableSurow(byref oRepDict, byval pDraw)
+    dim tab : set tab = doc_.afc.new_tb(page_).attach(page_.ctrl(ID_TAB_SUROWIEC))
+    'nagłowek
+    tab.newrow
+    tab.row.styleitem = STYLE_TABLE_HEADER
+    pDraw.drawCellHead tab, 1, "LP", 600, "", 1, 1, false
+    pDraw.drawCellHead tab, 1, "Surowiec", 6000, "", 1, 1, false
+    pDraw.drawCellHead tab, 1, "Ilość", 2000, "", 1, 1, false
+    
+    dim nLP : nLP = 1
+    dim iter, oPUI
+    for iter = 0 to oPUCopyEdit.count()
+      set oPUI = oPUCopyEdit.get_item(iter)
+      if oRepDict.exists(iter) and oPUI.m_eTyp = N5PROPT_SUROWIEC then
+        'rekord
+        tab.newrow
+        dim crColor
+        if nLP mod 2 = 0 then
+          tab.row.backcolor = ROW_COLOR
+          crColor = ROW_COLOR
+        else
+          crColor = WHITE_COLOR
+        end if  
+
+        oPUI.m_curIloscWykon = oPUI.m_curIloscDoWyk - oPUI.m_curIloscWykon
+        pDraw.drawCell     tab, cstr(nLP), "Verdana", ALIGN_RIGHT, 0, 0, ""
+        dim strNazwaProd : strNazwaProd = ""
+        if oPUI.m_idProdukt > clng(0) then
+          strNazwaProd = trans_.getobj(TYPEID_N5PRODUKT,oPUI.m_idProdukt).strNazwa
+        end if
+        pDraw.drawCell     tab, cstr(strNazwaProd), "Verdana", ALIGN_LEFT, 0, 0, ""
+        pDraw.drawCellCur  tab, CTRLID_ILOSC_PROP, oPUI.m_curIloscWykon, "Verdana", 4, 12, "", crColor
+        tab.element.border = 1
+        'właściwość dla wiersza (indeks w tablicy)
+        set tab.row.userprop = doc_.createhli()
+        tab.row.userprop.prop(PROP_TAB_INX) = iter
+        nLP = nLP + 1
+      end if
+    next
+  end sub
+  
+  '------------------------
+  'tabela do edycji PROP'ow
+  '------------------------
+  public sub tableEdit(byref oRepDict, byval pDraw)
+    dim tab : set tab = doc_.afc.new_tb(page_).attach(page_.ctrl(ID_TAB_EDIT))
+    'nagłowek
+    tab.newrow
+    tab.row.styleitem = STYLE_TABLE_HEADER
+    pDraw.drawCellHead tab, 1, "LP", 600, "", 1, 1, false
+    pDraw.drawCellHead tab, 1, "Data rozp", 2000, "", 1, 1, false
+    pDraw.drawCellHead tab, 1, "Data zakon", 2000, "", 1, 1, false
+    pDraw.drawCellHead tab, 1, "Typ zasobu", 3000, "", 1, 1, false
+    pDraw.drawCellHead tab, 1, "Zasób", 3000, "", 1, 1, false
+    tab.cell.colspan = 2
+    pDraw.drawCellHead tab, 1, "Produkt", 3500, "", 1, 1, false
+    pDraw.drawCellHead tab, 1, "Typ", 700, "", 1, 1, false
+    pDraw.drawCellHead tab, 1, "Status", 1500, "", 1, 1, false
+    tab.cell.colspan = 2
+    pDraw.drawCellHead tab, 1, "Ilość wykon", 1000, "", 1, 1, false
+    
+    dim nLP : nLP = 1
+    dim iter, oPUI
+    for iter = 0 to oPUCopyEdit.count()
+      set oPUI = oPUCopyEdit.get_item(iter)
+      if oRepDict.exists(iter) then
+        tab.newrow
+        dim crColor
+        if nLP mod 2 = 0 then
+          tab.row.backcolor = ROW_COLOR
+          crColor = ROW_COLOR
+        else
+          crColor = WHITE_COLOR
+        end if  
+        
+        pDraw.drawCell     tab, cstr(nLP), "Verdana", ALIGN_RIGHT, 0, 0, ""
+        pDraw.drawCellDate tab, CTRLID_DATE_ROZP, oPUI.m_dDataRozp, "Verdana", crColor
+        tab.element.border = 1
+        pDraw.drawCellDate tab, CTRLID_DATE_ZAK, oPUI.m_dDataZak, "Verdana", crColor
+        tab.element.border = 1
+        'typ zasobu
+        dim oTypZasobu : set oTypZasobu = nothing
+        if oPUI.m_idTypZasobu > clng(0) then
+          set oTypZasobu = trans_.getobj(TYPEID_N5TYPZASOBPROD,oPUI.m_idTypZasobu)
+        end if
+        if not oTypZasobu is nothing then
+          pDraw.drawCell     tab, oTypZasobu.tzp_strNazwa, "Verdana", ALIGN_LEFT, 0, 0, ""
+        else
+          pDraw.drawCell     tab, "", "Verdana", ALIGN_LEFT, 0, 0, ""    
+        end if
+        'zasób
+        pDraw.drawCellEdit tab, CTRLID_ZASOB_PROD, 12, 0, "Verdana", crColor
+        'wybór zasobu
+        tab.newcell
+        with tab.cell.addnew(CTRL_TYPE_PICTURE, -1)
+          .image = clng(PICTURE_CHOICE_N5PRODUKT)
+		      .width=Clng(HEIGHT_FOR_12PX)
+		      .height=Clng(HEIGHT_FOR_12PX)    
+          .tip = "Wybór z listy"
+          set .hli= doc_.createhli()
+          .hli.prop(GVAR_FUNCTIONHLI) = "stdChoiceZasobProd"
+          .hli.prop(PROP_TAB_INX) = iter
+        end with      
+        'produkt
+        dim oProdukt : set oProdukt = nothing
+        if oPUI.m_idProdukt > clng(0) then
+          set oProdukt = trans_.getobj(TYPEID_N5PRODUKT,oPUI.m_idProdukt)
+        end if        
+        if not oProdukt is nothing then
+          pDraw.drawCell     tab, oProdukt.strNazwa, "Verdana", ALIGN_LEFT, 0, 0, ""
+          pDraw.drawCell     tab, strTyp(oProdukt.prod_cWyrob,oProdukt.prod_cSurowiec), "Verdana", ALIGN_LEFT, 0, 0, ""
+        else
+          pDraw.drawCell     tab, "", "Verdana", ALIGN_LEFT, 0, 0, ""
+          pDraw.drawCell     tab, "", "Verdana", ALIGN_LEFT, 0, 0, ""
+        end if
+        'status
+        pDraw.drawCellEdit tab, CTRLID_STATUS_OPER, 6, 0, "Verdana", crColor
+        'zmiana statusu      
+        tab.newcell
+        with tab.cell.addnew(CTRL_TYPE_PICTURE, -1)
+          .image = clng(PICTURE_CHOICE_N5PRODUKT)
+		      .width=Clng(HEIGHT_FOR_12PX)
+		      .height=Clng(HEIGHT_FOR_12PX)
+          .tip = "Wybór z listy"
+          set .hli= doc_.createhli()
+          .hli.prop(GVAR_FUNCTIONHLI) = "stdChoiceStatus"
+          .hli.prop(PROP_TAB_INX) = iter
+          .hli.prop(PROP_CHANGE_STATUS) = clng(.ident)
+        end with
+        'ilość wykonana
+        pDraw.drawCellCur  tab, CTRLID_ILOSC_WYKON, oPUI.m_curIloscWykon, "Verdana", 4, 10, "", crColor
+        
+        'właściwość dla wiersza (indeks w tablicy)
+        set tab.row.userprop = doc_.createhli()
+        tab.row.userprop.prop(PROP_TAB_INX) = iter
+        nLP = nLP + 1
+      end if
+    next    
+  end sub
+
+  '---------------------------------------
+  'dodaje odpowiednie przyciski na stronie
+  '---------------------------------------
+  public sub pageButtons
+    dim tab : set tab = doc_.afc.new_tb(page_).attach(page_.ctrl(ID_TAB_BUTTONS))
+    tab.newrow.newcell
+    pageAddButton tab, "OK", vbOK
+    pageAddButton tab, "Anuluj", vbCancel
+  end sub
+
+  '-------------------
+  'pojedynczy przycisk
+  '-------------------
+  public sub pageAddButton(byref tab, byval strName, byval nOption)
+    dim pNewHli
+    set pNewHli = doc_.createhli()
+    pNewHli.prop(GVAR_FUNCTIONHLI) = "pageClick"
+    pNewHli.prop(GVAR_MODALRES) = CLng(nOption)
+
+    tab.addctrl CTRL_TYPE_BUTTON,-1
+    tab.cell.keepline = true
+    tab.cell.align = ALIGN_RIGHT
+    set tab.element.hli = pNewHli
+    with tab.element
+      .text = strName
+      .size = 12
+      .styleitem = STYLE_BUTTON
+    end with
+  end sub
+  
+  '------------------
+  'czyści całą stronę
+  '------------------
+  public sub cleanPage
+    doc_.afc.new_tb(page_).attach(page_.ctrl(ID_HEADER)).removeall
+    doc_.afc.new_tb(page_).attach(page_.ctrl(ID_TAB_SUROWIEC)).removeall
+    doc_.afc.new_tb(page_).attach(page_.ctrl(ID_TAB_BUTTONS)).removeall
+  end sub
+  
+  '------------------------------------------
+  'rysowanie potwierdzenia (wydanie surowców)
+  '------------------------------------------
+  public sub drawConfPageRawMat(byref g_oRepDict, byval pDraw)
+    pageTitle "Wydanie materiału"
+    pageHeader "Wydanie surowców dla zlecenia:  "
+    tableSurow g_oRepDict, pDraw
+    pageButtons
+  end sub
+  
+  '----------------------------------------
+  'rysowanie potwierdzenia do edycji PROP'ow
+  '----------------------------------------
+  public sub drawConfPageEdit(byref g_oRepDict, byval pDraw)
+    pageTitle "Edycja operacji produkcyjnej"
+    pageHeader "Edycja operacji dla zlecenia:  "
+    tableEdit g_oRepDict, pDraw
+    pageButtons
+  end sub
+
+end class
+
+'---------------------
+'otwórz/zamknij stronę
+'---------------------
+function fopen()
+	fopen = true
+end function
+
+function fback()
+	page_.result = vbCancel
+	cleanVar
+	page_.goback()
+	fback = true
+end function
+
+'----------------------
+'naciśnięcie na klawisz
+'----------------------
+sub pageClick(byref pHli)
+  page_.result=pHli.prop(GVAR_MODALRES)
+  cleanVar
+  page_.goback
+end sub
+
+'-------------------------------
+'potwierdzenie wydania materiału
+'-------------------------------
+function drawPageRawMat(byref oPUCopy, byref g_oRepDict, byval pDraw)
+  set oPUCopyEdit = oPUCopy
+  dim pGRM : set pGRM = new cGenConf
+  pGRM.drawConfPageRawMat g_oRepDict, pDraw
+  drawPageRawMat = page_.domodalauto()
+end function
+
+'--------------------
+'edycja pola w propie
+'--------------------
+function drawPageEdit(byref oPU, byref oPUCopy, byref g_oRepDict, byval pDraw)
+  'przekazanie oPU do kolorowania wprowadzonych zmian
+  set oPUEdit = oPU
+  set oPUCopyEdit = oPUCopy 
+  dim pGRM : set pGRM = new cGenConf
+  pGRM.drawConfPageEdit g_oRepDict, pDraw
+  drawPageEdit = page_.domodalauto()
+end function
+
+'--------------------------
+'wybór zasobu produkcyjnego
+'--------------------------
+function stdChoiceZasobProd(pHLI)
+  dim idZasob, strWhere
+  dim nIndex : nIndex= pHLI.prop(PROP_TAB_INX)
+  if oPUCopyEdit.get_item(nIndex).m_idTypZasobu > clng(0) then
+    strWhere = "zsp_pTypZasobu = " + cstr(oPUCopyEdit.get_item(nIndex).m_idTypZasobu)
+  else
+    strWhere = ""
+  end if
+  idZasob = fire_choice_list(TYPEID_N5ZASOBPROD,"Wybór zasobu produkcyjnego","",strWhere,"","")
+  if idZasob > 0 then
+    oPUCopyEdit.get_item(nIndex).m_idZasob = idZasob
+  end if
+end function
+
+'----------------------------------------------------------
+'zwraca typ produktu W-wyrób, S-surowiec, WS-wyrób/surowiec
+'----------------------------------------------------------
+function strTyp(byval cWyrob, byval cSurowiec) : strTyp = ""
+  if cWyrob = "1" and cSurowiec = "1" then
+    strTyp = "WS"
+  else
+    if cWyrob = "1" then
+      strTyp = "W"
+    elseif cSurowiec = "1" then
+      strTyp = "S"
+    else
+      strTyp = ""
+    end if
+  end if
+end function
+
+'-----------------------------------
+'zwraca status operacji produkcyjnej
+'-----------------------------------
+function strStatus(byval eStatus)
+  select case eStatus
+    case 1
+      strStatus = "Sym"
+    case 2
+      strStatus = "Zlec"
+    case 3
+      strStatus = "Do wyk"
+    case 4
+      strStatus = "W real"
+    case 5
+      strStatus = "Zreal"
+    case else
+      strStatus = "Inny"
+  end select
+end function
+
+'----------------------
+'wybór statusu operacji
+'----------------------
+function stdChoiceStatus(pHLI)
+  dim idZasob
+  dim nIndex : nIndex= pHLI.prop(PROP_TAB_INX)
+  dim pCtrl : set pCtrl = page_.ctrl(pHLI.prop(PROP_CHANGE_STATUS))
+  dim pMenu : set pMenu = mm_new_menu("Wybór z listy", pHLI.prop(PROP_CHANGE_STATUS))
+  with pMenu
+    .add_item "Symulacja", "varFunctionHLI=""changeStatus"" vs100=""1"" vs101=""" + cstr(nIndex) + """ "
+    .add_item "Zlecone", "varFunctionHLI=""changeStatus"" vs100=""2"" vs101=""" + cstr(nIndex) + """ "
+    .add_item "Do wykonania", "varFunctionHLI=""changeStatus"" vs100=""3"" vs101=""" + cstr(nIndex) + """ "
+    .add_item "W realizacji", "varFunctionHLI=""changeStatus"" vs100=""4"" vs101=""" + cstr(nIndex) + """ "
+    .add_item "Zrealizowane", "varFunctionHLI=""changeStatus"" vs100=""5"" vs101=""" + cstr(nIndex) + """ "
+    .add_item "Inny", "varFunctionHLI=""changeStatus"" vs100=""6"" vs101=""" + cstr(nIndex) + """ "    
+  end with
+  mm_show_hide page_, pMenu
+end function
+
+'--------------
+'zmiana statusu
+'--------------
+function changeStatus(pHLI)
+  dim eStatus : eStatus = pHLI.prop(100)
+  dim nIndex : nIndex= pHLI.prop(101)
+  oPUCopyEdit.get_item(nIndex).m_eStatus = clng(eStatus)
+end function
+
+'--------------------------------------------
+'ustawia kolor dla wiersza w zależności od LP
+'--------------------------------------------
+function setRowStyle(nLP)
+  if nLP mod 2 = 0 then
+	  setRowStyle = ROW_COLOR
+  else
+    setRowStyle = WHITE_COLOR
+  end if   
+end function
+
+'-------------------
+'kolorowanie wiersza
+'-------------------
+function changeRowColor(byref oRow, byval bValue)
+  if bValue then
+    'wiersz na żółto
+    oRow.backcolor = YELLOW_COLOR
+  else
+    'usuń żółty kolor
+    if oRow.userprop.exists(PROP_TAB_INX) then
+      dim nLP : nLP = oRow.userprop.prop(PROP_TAB_INX) + 1
+      oRow.backcolor = setRowStyle(nLP)
+    end if
+  end if
+  changeRowColor = oRow.backcolor
+end function
+
+'-----------------------------------
+'zwraca true jeśli modyfikowano PROP
+'-----------------------------------
+function compare_PUI(byval nIndex) : compare_PUI = false
+  dim oPUI : set oPUI = oPUEdit.get_item(nIndex)
+  dim oPUIBuf : set oPUIBuf = oPUCopyEdit.get_item(nIndex)
+  if (not oPUEdit.compare_item(oPUI,oPUIBuf)) or (oPUIBuf.m_curIloscWykon > ccur(0)) then
+    compare_PUI = true
+  else
+    compare_PUI = false
+  end if
+end function
+
+'--------------------------
+'kontrolki dla pól currency
+'--------------------------
+function c##CTRLID_ILOSC_PROP##_ongetdata(byref oCtrl) : c##CTRLID_ILOSC_PROP##_ongetdata = true
+  dim nIndex
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+    if oRow.userprop.exists(PROP_TAB_INX) then 
+      nIndex = oRow.userprop.prop(PROP_TAB_INX)
+      dim oPUI : set oPUI = oPUCopyEdit.get_item(nIndex)
+      if oPUI.m_curIloscWykon > ccur(0) then
+        oCtrl.value = ccur(oPUI.m_curIloscWykon)
+      else
+        oCtrl.value = ccur(0)
+      end if
+    end if
+  end if  
+end function
+
+function c##CTRLID_ILOSC_PROP##_ondataentered(byref oCtrl, byval newValue) : c##CTRLID_ILOSC_PROP##_ondataentered = false
+  dim nIndex
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+    if oRow.userprop.exists(PROP_TAB_INX) then 
+      nIndex = oRow.userprop.prop(PROP_TAB_INX)
+      dim oPUI : set oPUI = oPUCopyEdit.get_item(nIndex)
+      oPUI.m_curIloscWykon = ccur(newValue)
+    end if
+  end if
+  c##CTRLID_ILOSC_PROP##_ondataentered = true
+end function
+
+'-----------------------------------
+'czyści zmienne po zamknięciu strony
+'-----------------------------------
+sub cleanVar
+  set oPUEdit = nothing 
+  set oPUCopyEdit = nothing
+end sub
+
+'-----------------------------
+'kontrolki dla daty realizacji
+'-----------------------------
+function c##CTRLID_DATE_ROZP##_ongetdata(byref oCtrl) : c##CTRLID_DATE_ROZP##_ongetdata = true
+  dim nIndex
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+    if oRow.userprop.exists(PROP_TAB_INX) then 
+      nIndex = oRow.userprop.prop(PROP_TAB_INX)
+      oCtrl.value = oPUCopyEdit.get_item(nIndex).m_dDataRozp
+      oCtrl.backcolor = changeRowColor(oRow, compare_PUI(nIndex))
+      exit function
+    end if
+  end if  
+  oCtrl.value = trans_.afc.globals.nulldate()
+end function
+
+function c##CTRLID_DATE_ROZP##_ondataentered(byref oCtrl, newValue) : c##CTRLID_DATE_ROZP##_ondataentered = true
+  dim nIndex
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+    if oRow.userprop.exists(PROP_TAB_INX) then 
+      nIndex = oRow.userprop.prop(PROP_TAB_INX)
+      oPUCopyEdit.get_item(nIndex).m_dDataRozp = cdate(newValue)
+    end if
+  end if
+end function
+
+'------------------------------
+'kontrolki dla daty zakończenia
+'------------------------------
+function c##CTRLID_DATE_ZAK##_ongetdata(byref oCtrl) : c##CTRLID_DATE_ZAK##_ongetdata = true
+  dim nIndex
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+    if oRow.userprop.exists(PROP_TAB_INX) then 
+      nIndex = oRow.userprop.prop(PROP_TAB_INX)
+      oCtrl.value = oPUCopyEdit.get_item(nIndex).m_dDataZak
+      oCtrl.backcolor = changeRowColor(oRow, compare_PUI(nIndex))
+      exit function
+    end if
+  end if  
+  oCtrl.value = trans_.afc.globals.nulldate()
+end function
+
+function c##CTRLID_DATE_ZAK##_ondataentered(byref oCtrl, newValue) : c##CTRLID_DATE_ZAK##_ondataentered = true
+  dim nIndex
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+    if oRow.userprop.exists(PROP_TAB_INX) then 
+      nIndex = oRow.userprop.prop(PROP_TAB_INX)
+      oPUCopyEdit.get_item(nIndex).m_dDataZak = cdate(newValue)
+    end if
+  end if
+end function
+
+'----------------------------------
+'kontrolki dla zasobu produkcyjnego
+'----------------------------------
+function c##CTRLID_ZASOB_PROD##_ongetdata(byref oCtrl) : c##CTRLID_ZASOB_PROD##_ongetdata = true
+  dim nIndex
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+    if oRow.userprop.exists(PROP_TAB_INX) then 
+      nIndex = oRow.userprop.prop(PROP_TAB_INX)
+      if oPUCopyEdit.get_item(nIndex).m_idZasob > clng(0) then
+        oCtrl.value = trans_.getobj(TYPEID_N5ZASOBPROD,clng(oPUCopyEdit.get_item(nIndex).m_idZasob)).zsp_strNazwa
+      else
+        oCtrl.value = ""
+      end if   
+      oCtrl.backcolor = changeRowColor(oRow, compare_PUI(nIndex))
+    end if
+  end if
+end function
+
+function c##CTRLID_ZASOB_PROD##_ondataentered(byref oCtrl, newValue) : c##CTRLID_ZASOB_PROD##_ondataentered = true
+  dim nIndex
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+    if oRow.userprop.exists(PROP_TAB_INX) then 
+      nIndex = oRow.userprop.prop(PROP_TAB_INX)
+      oPUCopyEdit.get_item(nIndex).m_idZasob = clng(0)
+    end if
+  end if
+end function
+
+'-------------------------------------
+'kontrolka dla wyboru statusu operacji
+'-------------------------------------
+function c##CTRLID_STATUS_OPER##_ongetdata(byref oCtrl) : c##CTRLID_STATUS_OPER##_ongetdata = true
+  dim nIndex
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+    if oRow.userprop.exists(PROP_TAB_INX) then 
+      nIndex = oRow.userprop.prop(PROP_TAB_INX)
+      oCtrl.value = strStatus(oPUCopyEdit.get_item(nIndex).m_eStatus)
+      oCtrl.backcolor = changeRowColor(oRow, compare_PUI(nIndex))
+    end if
+  end if
+  oCtrl.disable = true
+end function
+
+'------------------------------
+'kontrolki dla ilości wykonanej
+'------------------------------
+function c##CTRLID_ILOSC_WYKON##_ongetdata(byref oCtrl) : c##CTRLID_ILOSC_WYKON##_ongetdata = true
+  dim nIndex
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+    if oRow.userprop.exists(PROP_TAB_INX) then 
+      nIndex = oRow.userprop.prop(PROP_TAB_INX)
+      dim oPUI : set oPUI = oPUCopyEdit.get_item(nIndex)
+      oCtrl.value = ccur(oPUI.m_curIloscWykon)
+      oCtrl.backcolor = changeRowColor(oRow, compare_PUI(nIndex))
+    end if
+  end if
+end function
+
+function c##CTRLID_ILOSC_WYKON##_ondataentered(byref oCtrl, newValue) : c##CTRLID_ILOSC_WYKON##_ondataentered = true
+  dim nIndex
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+    if oRow.userprop.exists(PROP_TAB_INX) then 
+      nIndex = oRow.userprop.prop(PROP_TAB_INX)
+      oPUCopyEdit.get_item(nIndex).m_curIloscWykon = ccur(newValue)
+    end if
+  end if
+end function
+
+]]>
+</script>
+
+</config>
+	<body>
+		<text width='max' name='t##ID_TITLE'></text>
+		<br/><br/>
+    
+		<!-- Potwierdzenie wykonania operacji -->
+		<table name='t##ID_HEADER'>
+			<tbody> 
+			</tbody>
+		</table>
+
+		PAGE_SEPARATOR
+    
+		<table  border='1' name='t##ID_TAB_SUROWIEC'>
+			<tbody backcolor='white' bordercolor='#006697'>
+			</tbody>
+		</table> 
+    
+		<table  border='1' name='t##ID_TAB_EDIT'>
+			<tbody backcolor='white' bordercolor='#006697'>
+			</tbody>
+		</table>    
+    
+		PAGE_SEPARATOR
+    
+		<table name='t##ID_TAB_BUTTONS' style='STYLE_ROW_BTN'>
+			<tbody>
+			</tbody>
+		</table>
+
+	</body>
+</page>
+

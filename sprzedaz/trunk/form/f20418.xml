@@ -1,0 +1,243 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+Karta dokumentu
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1201.h"
+#include "h1231.h"
+#include "h1230.h"
+
+-->
+<page style='STYLE_PAGE'>
+<config>
+	<title>
+Karta dokumentu
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+<typeid>TYPEID_N5DOKUMENT</typeid>
+<script><![CDATA[
+
+
+
+'CCardBuilder
+#include "50131"
+'GetMenu
+#include "50506"
+'section_*
+#include "50222"
+'enum2str
+#include "50100"
+
+
+'std_openform_field_hli
+#include "50200"
+
+
+'view - SS
+#include "50212"
+
+'popraw dane
+#include "50609"
+
+
+dim g_pCardBuilder : set g_pCardBuilder = nothing
+
+function fopen
+	set g_pCardBuilder = new CCardBuilder
+	
+	'REV:KB:TODO: Arek: proszę sobie zobaczyć jak można przełączać (true/false - 8 kombinacji)
+	g_pCardBuilder.prepare_framework page_.topelement,false,true,false
+
+	build_menu
+	rebuild_contents
+
+	fopen = true
+end function
+
+
+'called once to build menu
+sub build_menu
+	'dodajemy menu items
+	with g_pCardBuilder.menu
+		.add_item "Popraw dane","varFunction=""popraw_dane"""
+#ifdef _SECURITY
+		.add_item "Ustaw przypomnienie","varFunction=""add_reminder"""
+#endif
+	end with
+end sub
+
+function add_reminder()
+	dim oM60158 : set oM60158 = doc_.getmodule(60158)
+	oM60158.create_note_with_reminder_and_document "Przypomnienie o " + page_.root.strTematDokum,page_.root.idobj
+end function
+
+'called on every root object change (including fopen)
+sub rebuild_contents
+	dim pPlugFactory : set pPlugFactory = doc_.getmodule(60167)
+	with g_pCardBuilder
+		.reset_framework
+
+
+		dim pTyp: set pTyp = page_.root.pTypDokumentu
+		dim strRodzaj
+		dim info
+		if not pTyp is nothing then
+			select case pTyp.eRodzaj
+				case 1:
+					strRodzaj="Dokument przychodzący"
+				case 2:
+					strRodzaj="Dokument wychodzący"
+				case 3:
+					strRodzaj="Dokument wewnętrzny"
+			end select
+			info=strRodzaj + "," + pTyp.strNazwa + ",forma " +  formaToString
+		end if
+
+
+		
+		.toolpane.addnew(CTRL_TYPE_STATIC,-1).text = info
+	
+		'title
+		.title = page_.root.strTematDokum
+
+		pPlugFactory.plug_dokument_podstawowe .new_section(.fixedpane, "Informacje podstawowe"), page_.root.idobj
+
+#ifdef _SECURITY
+		pPlugFactory.plug_dokument_atrybuty .new_section(.fixedpane, "Atrybuty"), page_.root.idobj
+#endif
+		pPlugFactory.plug_dokument_streszczenie .new_section(.fixedpane, "Streszczenie"), page_.root.idobj
+		pPlugFactory.plug_dokument_cechy .new_section(.fixedpane, "Cechy"), page_.root.idobj
+		pPlugFactory.plug_dokument_wypozyczenie .new_section(.fixedpane, "Wypożyczenie"), page_.root.idobj
+		pPlugFactory.plug_dokument_powiazania .new_section(.fixedpane, "Powiązania"), page_.root.idobj
+
+		
+	end with
+end sub
+
+
+function fclose
+	set g_pCardBuilder = nothing
+end function
+
+function frefresh
+	rebuild_contents
+end function
+
+
+function formaToString
+	select case page_.root.nForma
+		case 1: 
+			formaToString = "elektroniczna"
+		case 2:
+			formaToString = "papierowa, stron " + cstr(page_.root.nLiczbaStron)
+		case 3:
+			formaToString = "elektroniczna i papierowa, oryginał papierowy, stron " + cstr(page_.root.nLiczbaStron)
+		case 4:
+			formaToString = "elektroniczna i papierowa, oryginał elektroniczny, stron " + cstr(page_.root.nLiczbaStron)
+	end select
+end function
+
+
+
+function ss_view()
+	View page_.root
+	page_.enableedit = true
+end function
+
+
+function ss_edit()
+	if page_.root.nIsSecurity then
+		if not HORUI(STDR_UPDATE,TYPEID_N5DOKUMENT,page_.root.IdObj) then
+			ss_edit = true
+			exit function
+		end if
+	end if	
+	if (not trans_.saveobjects()) then
+		page_.enableedit = true
+		exit function
+	end if
+
+	Edit page_.root
+	page_.enableedit = true
+end function
+
+
+function ss_checkout()
+	if page_.root.nIsSecurity then
+		if not HORUI(STDR_UPDATE,TYPEID_N5DOKUMENT,page_.root.IdObj) then
+			ss_checkout = true
+			exit function
+		end if
+	end if
+	if (not trans_.saveobjects()) then
+		page_.enableedit = true
+		exit function
+	end if
+
+	dim strCheckedPath
+	
+	if checkOut(page_.root, strCheckedPath) then
+		view_message1 4098, 0 , "Dokument został wypożyczony jako " + strCheckedPath
+		
+	end if
+	page_.enableedit = true
+	rebuild_contents
+end function
+
+
+function ss_checkin()
+	if (not trans_.saveobjects()) then
+		page_.enableedit = true
+		exit function
+	end if
+
+	if checkIn(page_.root) then
+		' "Dokument został oddany."
+		view_message 4099, 0
+	end if
+	page_.enableedit = true
+	rebuild_contents
+end function
+
+
+function ss_undocheckout()
+	if (not trans_.saveobjects()) then
+		page_.enableedit = true
+		exit function
+	end if
+
+	if undoCheckOut(page_.root) then
+		'"Anulowano wypożyczenie dokumentu."
+		view_message 4100, 0
+	end if
+	page_.enableedit = true
+	rebuild_contents
+end function
+
+
+function ss_sendnotify()
+	if (not trans_.saveobjects()) then
+		exit function
+	end if
+	NotifyUserWithDocument page_.root
+end function
+
+
+function linked_docs()	
+end function
+
+
+
+
+
+
+
+]]></script>
+</config>
+<body>
+</body>
+</page>

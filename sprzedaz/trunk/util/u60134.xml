@@ -1,0 +1,565 @@
+#include "h1000.h"
+#include "h1001.h"
+#include "h1004.h"
+#include "h1200.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1240.h"
+#include "h1201.h"
+#include "h1203_appconfig.h"
+
+#define PAGE_FORM_WIZZARD_LABELS_STEP1		20513
+#define PAGE_FORM_WIZZARD_LABELS_STEP2		20514
+#define PAGE_FORM_WIZZARD_LABELS_STEP3		20515
+
+#define COUNT_CHAR	10
+#define COUNT_MM	20
+
+#define OFFSET    450
+
+
+<?xml version="1.0" encoding="windows-1250" ?>
+<page>
+<config>
+<title>Kreator etykiet</title>
+<script>
+<!--
+PAGE_FORM_WIZZARD_LABELS
+-->
+<![CDATA[
+#include "50209"
+#include "50203"
+#include "50122"
+
+'harui
+#include "50101"
+dim g_strAdditionalWhere : g_strAdditionalWhere = ""	'Dodatkowy where
+
+class CLabelsWizzard
+
+	private m_pObject
+	private m_nObjectCounter
+
+	public m_nLabelWidth
+	public m_nLabelHeight
+	public m_nCountLabelsOnPage ' ilosc wierszy na stronie
+	public m_nCountColumns ' ilosc kolumn na stronie
+	public m_nStartPrintRow
+	public m_nStopPrintRow
+	public m_nLeftMargin
+	public m_nUpMargin
+	private m_strLine1
+	private m_strLine2
+	private m_strLine3
+	private m_strLine4
+	private m_strLine5
+	private m_strLine6
+
+	private m_countObjects
+
+	public m_bSaveToProfile
+
+	' zrodlo danych  - raport albo lista
+	public m_nDest ' odczytywane z radio (czy raport czy lista)
+	public m_nTypeID ' typ obiektów
+	public m_nIdObj	' idobj listy albo raportu
+	public m_strName ' nazwa listy albo raportu
+	public m_strWhere ' where dla tworzonego kursora
+	public m_pCursor
+
+	public sub make_cursor()
+
+		set m_pCursor = trans_.createrawcursor(m_nTypeID,m_strWhere,"","")
+		m_pCursor.forwardonly = false
+	end sub
+
+
+
+	public sub get_object()
+
+		if m_nObjectCounter >= m_countObjects then
+			m_strLine1=""
+			m_strLine2=""
+			m_strLine3=""
+			m_strLine4=""
+			m_strLine5=""
+			m_strLine6=""
+		else
+'			dim pList
+'			set pList = trans_.getobj(TYPEID_CHOICELIST,m_nListID)
+			set m_pObject = m_pCursor.get(m_nObjectCounter)
+			if not m_pObject is nothing then
+				select case m_pObject.type
+					case TYPEID_N5PRACOWNIK:
+						m_strLine1 = cut_string(m_pObject.strImie + " " + m_pObject.strNazwisko , m_strLine5 , COUNT_CHAR)
+						m_strLine2 = m_pObject.strUlica + " " + m_pObject.strNrDomu
+						if m_pObject.strNrLokalu <> "" then
+							m_strLine2 = m_strLine2 + "/" + m_pObject.strNrLokalu
+						end if				
+						m_strLine3 = m_pObject.strKod + " " + m_pObject.pMiejscowosc.strNazwa
+					case TYPEID_N5KLIENT:
+						m_strLine1 = cut_string(m_pObject.strNazwa,m_strLine5 , COUNT_CHAR)
+						m_strLine2 = m_pObject.strUlica + " " + m_pObject.strNrDomu
+						if m_pObject.strNrLokalu <> "" then
+							m_strLine2 = m_strLine2 + "/" + m_pObject.strNrLokalu
+						end if				
+						m_strLine3 = m_pObject.strKod + " " + m_pObject.pMiejscowosc.strNazwa
+					case TYPEID_N5KLIENT_PRACOWNIK:
+						m_strLine1 = cut_string(m_pObject.pKlient.strSkrot,m_strLine5 , COUNT_CHAR)
+						m_strLine2 = cut_string(m_pObject.strImie + " " + m_pObject.strNazwisko , m_strLine6 , COUNT_CHAR)
+						m_strLine3 = m_pObject.pKlient.strUlica + " " + m_pObject.pKlient.strNrDomu
+						if m_pObject.pKlient.strNrLokalu <> "" then
+							m_strLine3 = m_strLine3 + "/" + m_pObject.pKlient.strNrLokalu
+						end if				
+						m_strLine4 = m_pObject.pKlient.strKod + " " + m_pObject.pKlient.pMiejscowosc.strNazwa
+				end select 
+				
+				
+			end if
+			m_nObjectCounter = m_nObjectCounter + 1
+		end if
+	end sub
+
+	private function cut_string(byval strSource, byref strLine2 , byval nWidth)
+
+		cut_string = strSource
+
+		dim nOneCharLen:nOneCharLen = COUNT_MM \ COUNT_CHAR
+		dim strLen:strLen = (len (strSource) * nOneCharLen)
+
+		if strLen+m_nLeftMargin+5 > m_nLabelWidth then
+
+
+			dim n:n = (m_nLabelWidth - m_nLeftMargin - 5) \ nOneCharLen
+			dim iter
+			for iter=n to 0 step -1
+				if mid(strSource,iter,1)=" " or mid(strSource,iter,1)="-" then
+					exit for
+				end if
+			next
+			if iter>0 then
+				cut_string = left(strSource,iter)
+				strLine2 = mid (strSource,iter+1)
+				exit function
+			else
+				cut_string = left(strSource,n)
+				strLine2 = mid (strSource,n+1)
+				exit function
+			end if
+		else
+			strLine2 = ""
+		end if		
+		
+	end function
+
+	public function get_line1()
+		get_line1 = m_strLine1
+	end function
+
+	public function get_line2()
+		get_line2 = m_strLine2
+	end function
+
+	public function get_line3()
+		get_line3 = m_strLine3
+	end function
+
+	public function get_line4()
+		get_line4 = m_strLine4
+	end function
+
+	public function get_line5()
+		get_line5 = m_strLine5
+	end function
+
+	public function get_line6()
+		get_line6 = m_strLine6
+	end function
+
+	private sub Class_Initialize()
+
+		m_nDest = 1
+
+		m_nObjectCounter = 1
+		m_bSaveToProfile = "1"
+
+		dim strProfile:strProfile = getglobprofile(GLOBPROF_LABELS_SETTINGS)
+		if strProfile = "" then
+			m_nLabelWidth = clng(100)
+			m_nLabelHeight = clng(50)
+			m_nCountLabelsOnPage = clng(5)
+			m_nCountColumns = clng(2)
+			m_nStartPrintRow = clng(1)
+			m_nStopPrintRow  = m_nCountLabelsOnPage
+			m_nLeftMargin = clng(0)
+			m_nUpMargin = clng(0)		
+		else
+			Dim MyString
+			MyString = Split(strProfile, ";", -1, 1)
+			m_nLabelWidth = clng(MyString(0))
+			m_nLabelHeight = clng(MyString(1))
+			m_nCountLabelsOnPage = clng(MyString(2))
+			m_nCountColumns = clng(MyString(3))
+			m_nStartPrintRow = clng(MyString(4))
+			m_nStopPrintRow  = clng(MyString(5))
+			m_nLeftMargin = clng(MyString(6))
+			m_nUpMargin = clng(MyString(7))
+			m_bSaveToProfile = "0"
+		end if
+
+		m_nTypeID = TYPEID_N5KLIENT
+		m_nIdObj = 0
+		m_nDest = 1
+	end sub
+
+	public function count_pages()
+
+		dim nElems		
+		dim nLabels:nLabels=1
+		dim nLabelsOnPage
+		nLabelsOnPage = (m_nCountLabelsOnPage-(m_nStartPrintRow-1)-(m_nCountLabelsOnPage-m_nStopPrintRow)) * m_nCountColumns
+
+		if nLabelsOnPage <= 0 then
+			count_pages = 0
+			exit function
+		end if
+
+		while m_pCursor.exists(nLabels)
+			nLabels=nLabels+1
+		wend
+
+		m_countObjects = nLabels
+
+		if (nLabels-1) mod nLabelsOnPage > 0 then
+			count_pages = clng(nLabels \ nLabelsOnPage) + 1
+		else
+			count_pages = clng(nLabels \ nLabelsOnPage)
+		end if
+
+	end function
+
+
+
+	public function get_page_size()
+		dim width,height
+		width = (m_nLabelWidth *  m_nCountColumns) + m_nLeftMargin
+		height = (m_nLabelHeight * m_nCountLabelsOnPage) + m_nUpMargin
+		get_page_size = " width='"+cstr(width*100)+"' height='"+cstr(height*100)+"'"
+	end function
+
+end class
+
+dim pParamClass
+
+function fopen()
+	if HARUI(UAR_CMDID(CMDID_WIZZARD_ETYKIETY)) then
+		run_this
+	end if
+	fopen=false
+end function
+
+function run_this()
+  dim iEtykieta : iEtykieta = trans_.var(GVAR_ETYKIETA)
+  dim idKlient : idKlient = trans_.var(GVAR_ID_KLIENT)
+	dim pWizzard
+	set pParamClass = new CLabelsWizzard
+	set pWizzard=CWizzard(false)
+	pWizzard.add_container pParamClass
+  
+  'w przypadku wydruku pojedynczej etykiety pomiń krok 1
+  if iEtykieta = 1 then
+    pojEtykieta idKlient
+	  pWizzard.add_step PAGE_FORM_WIZZARD_LABELS_STEP2
+	  pWizzard.add_step PAGE_FORM_WIZZARD_LABELS_STEP3    
+  else
+	  pWizzard.add_step PAGE_FORM_WIZZARD_LABELS_STEP1
+	  pWizzard.add_step PAGE_FORM_WIZZARD_LABELS_STEP2
+	  pWizzard.add_step PAGE_FORM_WIZZARD_LABELS_STEP3
+  end if
+  
+	pWizzard.run
+end function
+
+sub pojEtykieta(byval idKlient)
+  pParamClass.m_strWhere = " idobj = " + cstr(idKlient)
+end sub
+
+function onPageEnter(pWizzardPage)
+	select case ( pWizzardPage.m_nPage )
+		case PAGE_FORM_WIZZARD_LABELS_STEP1:
+		case PAGE_FORM_WIZZARD_LABELS_STEP2:
+		case PAGE_FORM_WIZZARD_LABELS_STEP3:
+	end select
+end function
+
+function onPageExit(pWizzardPage)
+	onPageExit = PAGE_DEFAULT
+	select case ( pWizzardPage.m_nPage )
+		case PAGE_FORM_WIZZARD_LABELS_STEP1:
+			if pWizzardPage.m_pPage.is_empty() then
+				MessageBox "Nic nie wybrano" , "Kreator etykiet" , vbOkOnly, vbInformation
+				onPageExit = PAGE_DONOTEXIT
+			else
+				select case pParamClass.m_nDest
+					case 3:			
+						'uruchom raport i pobierz z niego czesci 
+						'zapytania
+						dim pSearchObj : set pSearchObj = trans_.getobj(TYPEID_SEARCHTYPE,pParamClass.m_nIdObj)
+						if pSearchObj is nothing then
+							onPageExit = PAGE_DONOTEXIT
+							exit function
+						end if
+						dim pPM: set pPM = doc_.getmodule(60115)
+  
+                    dim oNXArray : set oNXArray = nx_.new_array()
+	          				dim oNXRapDef : set oNXRapDef = pPM.nx_load_raport_definition(pSearchObj)
+
+	          				dim oSQLQuery : set oSQLQuery = oNXRapDef.create_query(nx_.apprep,0)
+	          				dim strWhere : strWhere = oSQLQuery.get_sql_where()
+	          				if g_strAdditionalWhere <> "" then
+		          			   if strWhere = "" then
+			          		       strWhere = g_strAdditionalWhere
+		                                   else
+			                               strWhere = strWhere + " and " + g_strAdditionalWhere
+		                                   end if
+	          				end if
+             
+	          				pPM.nx_build_param_array_on_rapdef oNXArray,oNXRapDef
+
+	          				dim iResult : iResult = pPM.nx_acquire_parameters_ui(oNXArray,oNXRapDef.title,20217,strWhere)
+	          				if iResult = 0 then
+		          				exit function
+	          				end if
+     #ifdef _HADEX   
+            'ręczne wywołanie filtra według daty wystawienia dokumentu sprzedaży
+            dim pSearchObjId : pSearchObjId = trans_.findobjid(TYPEID_SEARCHTYPE,"Nazwa='wg daty wystawienia i rejestru'")
+            if pSearchObjId > 0 then
+              dim pSearchObj2 : set pSearchObj2 = trans_.getobj(TYPEID_SEARCHTYPE,pSearchObjId)
+              if pSearchObj2 is nothing then
+							  onPageExit = PAGE_DONOTEXIT
+							  exit function
+						  end if
+              dim pPM2 : set pPM2 = doc_.getmodule(60115)
+              dim oNXArray2 : set oNXArray2 = nx_.new_array()
+	          				  dim oNXRapDef2 : set oNXRapDef2 = pPM2.nx_load_raport_definition(pSearchObj2)
+
+	          				  dim oSQLQuery2 : set oSQLQuery2 = oNXRapDef2.create_query(nx_.apprep,0)
+	          				  dim strWhere2 : strWhere2 = oSQLQuery2.get_sql_where()
+	          				  if g_strAdditionalWhere <> "" then
+		          			     if strWhere2 = "" then
+			          		         strWhere2 = g_strAdditionalWhere
+		                     else
+			                       strWhere2 = strWhere2 + " and " + g_strAdditionalWhere
+		                     end if
+	          				  end if
+               
+	          				  pPM2.nx_build_param_array_on_rapdef oNXArray2,oNXRapDef2
+
+	          				  dim iResult2 : iResult2 = pPM2.nx_acquire_parameters_ui(oNXArray2,oNXRapDef2.title,20217,strWhere2)
+	          				  if iResult2 = 0 then
+		          				  exit function
+	          				  end if
+                      
+              'modyfikacja filtru daty wystawienia dokumentu
+              strWhere = Left(strWhere,Len(strWhere)-1)
+              strWhere2 = Left(strWhere2,Len(strWhere2)-1)
+              strWhere2 = Right(strWhere2,Len(strWhere2)-1)
+            
+            'złączenie dwóch filtrów
+            strWhere = strWhere + " and " + "(n5klient.idobj in (select n5klient.idobj from n5klient " +_ 
+                                            "inner join n5sprzedaz on n5klient.idobj = n5sprzedaz.pKlient and n5klient.strCecha2 = '' and " +_
+                                             strWhere2 + ")))"
+            end if
+			#endif		
+            pParamClass.m_strWhere = strWhere
+
+					case 2:
+						dim pList:set pList = trans_.getobj(TYPEID_CHOICELIST,pParamClass.m_nIdObj)
+						if pList is nothing then
+							onPageExit = PAGE_DONOTEXIT
+							exit function
+						end if
+						dim elem
+						pParamClass.m_strWhere = " idobj=0 "
+						for each elem in pList.listElement
+							pParamClass.m_strWhere = pParamclass.m_strWhere + " or idobj=" + cstr(elem.idElement)
+						next
+					case 1:
+						pParamClass.m_strWhere = " eAktywny=1 "																								
+				end select
+			end if
+		case PAGE_FORM_WIZZARD_LABELS_STEP2:
+			dim bWrong:bWrong = false
+			if (pParamClass.m_nLabelWidth * pParamClass.m_nCountColumns) > 84000 then 'A0				
+				bWrong = true
+			end if
+			if (pParamClass.m_nLabelHeight * pParamClass.m_nCountLabelsOnPage) > 118800 then 'A0				
+				bWrong = true
+			end if
+			if pParamClass.m_nStartPrintRow > pParamClass.m_nCountLabelsOnPage  then
+				bWrong = true
+			end if
+			if pParamClass.m_nStopPrintRow > pParamClass.m_nCountLabelsOnPage  then
+				bWrong = true
+			end if
+			if pParamClass.m_nLeftMargin > (pParamClass.m_nLabelWidth * pParamClass.m_nCountColumns)  then
+				bWrong = true
+			end if
+			if pParamClass.m_nUpMargin > (pParamClass.m_nLabelHeight * pParamClass.m_nCountLabelsOnPage)  then
+				bWrong = true
+			end if
+			if bWrong then
+				MessageBox "Podane parametry są nieprawidłowe" , "Kreator etykiet" , vbOkOnly, vbInformation
+				onPageExit = PAGE_DONOTEXIT
+			end if
+
+		case PAGE_FORM_WIZZARD_LABELS_STEP3:
+	end select
+end function
+
+function onPageInit(pWizzardPage)
+	select case ( pWizzardPage.m_nPage )
+		case PAGE_FORM_WIZZARD_LABELS_STEP1:
+		case PAGE_FORM_WIZZARD_LABELS_STEP2:
+		case PAGE_FORM_WIZZARD_LABELS_STEP3:
+	end select
+end function
+
+function onWizzardComplete(pWizzardPage)
+	onWizzardComplete=false
+
+	dim strProfile
+		strProfile=	cstr(pParamClass.m_nLabelWidth) + ";" +_
+					cstr(pParamClass.m_nLabelHeight) + ";" +_
+					cstr(pParamClass.m_nCountLabelsOnPage) + ";" +_
+					cstr(pParamClass.m_nCountColumns) + ";" +_
+					cstr(pParamClass.m_nStartPrintRow) + ";" +_
+					cstr(pParamClass.m_nStopPrintRow) + ";" +_
+					cstr(pParamClass.m_nLeftMargin) + ";" +_
+					cstr(pParamClass.m_nUpMargin)
+	if pParamClass.m_bSAveToProfile then
+		setglobprofile GLOBPROF_LABELS_SETTINGS,strProfile
+		trans_.saveobjects()
+	end if
+
+	dim xmlNavoPage,xmlReadyPage
+	xmlNavoPage = "<?xml version=""1.0"" encoding=""windows-1250"" ?>" + vbNewLine
+	xmlNavoPage = xmlNavoPage + "<page "+pParamClass.get_page_size()+" margins='0,0,0,0'>"  + vbNewLine
+'	xmlNavoPage = xmlNavoPage + "<page width='10000' height='10000' margins='0,0,0,0'>"  + vbNewLine
+	xmlNavoPage = xmlNavoPage + "<config>"  + vbNewLine
+	xmlNavoPage = xmlNavoPage + "<script><![CD" + "AT" + "A["  + vbNewLine
+	xmlNavoPage = xmlNavoPage + "]"+"]>" +  +  "</script>"  + vbNewLine 
+'	xmlNavoPage = xmlNavoPage + "</config>" +vbNewLine + "<header>" + vbNewLine + "</header>" + vbNewLine + "<body>"  + vbNewLine  + "<table>"  + vbNewLine + "<tbody>"  + vbNewLine
+	xmlNavoPage = xmlNavoPage + "</config>" +vbNewLine + "<header>" + vbNewLine + "</header>" + vbNewLine + "<body>"  + vbNewLine
+	xmlNavoPage = xmlNavoPage + "%%LABELS%%"
+'	xmlNavoPage = xmlNavoPage + "<t position='1000,1000'>wiersz</t>" + vbNewLine
+'	xmlNavoPage = xmlNavoPage + "<t position='3000,3000'>wiersz</t>" + vbNewLine
+'	xmlNavoPage = xmlNavoPage + "</tbody>" + vbNewLine + "</table>" + vbNewLine + "</body>" + vbNewLine + "<footer>" + vbNewLine + "</footer>" + vbNewLine + "</page>"  + vbNewLine
+	xmlNavoPage = xmlNavoPage + "</body>" + vbNewLine + "<footer>" + vbNewLine + "</footer>" + vbNewLine + "</page>"  + vbNewLine
+
+
+	pParamClass.make_cursor()
+
+	dim so,pHli,pPage,iter_pages,iter_rows,iter_cols,iter_objects,x,y
+	dim nPrintedPages:nPrintedPages = 0
+	dim nAnswer:nAnswer = -1
+	dim bForget:bForget = false
+
+	for iter_pages=1 to pParamClass.count_pages()
+		dim strLabels:strLabels = ""
+
+		for iter_rows=1 to pParamClass.m_nCountLabelsOnPage
+			for iter_cols=1 to pParamClass.m_nCountColumns
+				if iter_rows >= pParamClass.m_nStartPrintRow and iter_rows <= pParamClass.m_nStopPrintRow then
+					pParamClass.get_object()
+
+					x = ((pParamClass.m_nLeftMargin + ((iter_cols-1)*pParamClass.m_nLabelWidth))*100)
+					y = ((pParamClass.m_nUpMargin + ((iter_rows-1)*pParamClass.m_nLabelHeight))*100)
+
+					strLabels = strLabels + "<t  fontsize='4' position='"+cstr(x)+","+cstr(y)+"'><![CDA"+"TA["+pParamClass.get_line1()+"]"+"]></t>" + vbNewLine
+					dim offset_y:offset_y = OFFSET
+
+					if pParamClass.get_line5() <> "" then
+						strLabels = strLabels + "<t  fontsize='4' position='"+cstr(x)+","+cstr(y+offset_y)+"'><![CDA"+"TA["+pParamClass.get_line5()+"]"+"]></t>" + vbNewLine
+						offset_y = offset_y + OFFSET
+					end if
+
+					strLabels = strLabels + "<t  fontsize='4' position='"+cstr(x)+","+cstr(y+offset_y)+"'><![CDA"+"TA["+pParamClass.get_line2()+"]"+"]></t>" + vbNewLine
+					offset_y = offset_y + OFFSET
+
+					if pParamClass.get_line6() <> "" then
+						strLabels = strLabels + "<t  fontsize='4' position='"+cstr(x)+","+cstr(y+offset_y)+"'><![CDA"+"TA["+pParamClass.get_line6()+"]"+"]></t>" + vbNewLine
+						offset_y = offset_y + OFFSET
+					end if
+
+					strLabels = strLabels + "<t  fontsize='4' position='"+cstr(x)+","+cstr(y+offset_y)+"'><![CDA"+"TA["+pParamClass.get_line3()+"]"+"]></t>" + vbNewLine
+					offset_y = offset_y + OFFSET
+
+					if pParamClass.get_line4() <> "" then
+						strLabels = strLabels + "<t  fontsize='4' position='"+cstr(x)+","+cstr(y+offset_y)+"'><![CDA"+"TA["+pParamClass.get_line4()+"]"+"]></t>" + vbNewLine
+						offset_y = offset_y + OFFSET
+					end if
+					
+				end if
+			next
+		next
+
+
+
+		xmlReadyPage = replace(xmlNavoPage, "%%LABELS%%" , strLabels)
+		
+
+		set so = doc_.createstreamobj
+		so.write xmlReadyPage
+
+
+'so.save "c:\labels_test.xml"
+
+
+		set pHli=doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE")
+		set pHli.prop(GVAR_DESTPAGE)=so.getstream()
+		set pPage = doc_.getpagehli(pHli)
+		if not pPage is nothing then
+			if not bForget then
+				nAnswer =  MessageBoxCustom("Strona " + cstr(nPrintedPages+1) + " z " + cstr(pParamClass.count_pages()) + " - co robić dalej?", "Kreator etykiet", vbYesNoCancel, vbQuestion, "Drukuj;Drukuj wszystko;Przerwij")
+			end if
+			select case nAnswer
+				case vbYes:
+					trans_.var(GVAR_AUTOPRINT) = 1
+					pPage.fprint
+					trans_.var(GVAR_AUTOPRINT) = 0
+				case vbNo:
+					bForget = true
+				case vbCancel:
+'					MessageBox "Działanie kreatora zakonczone" , "Kreator etykiet" , vbOkOnly, vbInformation		
+'					onWizzardComplete=true
+					exit for
+			end select			
+			if bForget then
+				trans_.var(GVAR_AUTOPRINT) = 1
+				pPage.fprint
+				trans_.var(GVAR_AUTOPRINT) = 0
+			end if
+
+			set pPage = nothing
+			nPrintedPages = nPrintedPages + 1
+		end if
+
+	next
+
+	if nPrintedPages > 0 then
+		MessageBox "Działanie kreatora zakonczyło sie sukcesem" , "Kreator etykiet" , vbOkOnly, vbInformation		
+	else
+		MessageBox "Nie wydrukowano zadnej strony - w bazie nie ma danych spełniajacych kryterium wyboru lub operacja została przerwana." , "Kreator etykiet" , vbOkOnly, vbInformation
+	end if
+	onWizzardComplete=true
+
+end function
+
+]]>
+</script>
+</config>
+<body></body>
+</page>

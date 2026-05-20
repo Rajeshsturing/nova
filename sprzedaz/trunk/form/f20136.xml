@@ -1,0 +1,824 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+
+PAGE_FORM_EMAIL
+
+todo:spiko ktore potrzebne
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1004.h"
+#include "h1230.h"
+#include "h1220.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1200.h"
+#include "h1201.h"
+#include "h1232.h"
+#include "h1228.h"
+#include "h1222.h"
+
+#define ID_EMAIL_SUBJECT	1002
+#define ID_EMAIL_MSG		1003
+#define ID_REJESTRUJ		1004
+#define ID_EDIT_TO			1005
+#define ID_EDIT_DATE		1006
+#define ID_EDIT_TIME		1007
+#define ID_EDIT_REMIND		1008
+#define ID_GRID_DOCUMENTS	1009
+
+-->
+<page style='STYLE_PAGE'>
+<config>
+	
+	<title>
+	Wyślij wiadomość e-mail
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+
+	<typeid>TYPEID_N5SENDEMAIL</typeid>
+
+	<startpos>center</startpos>
+
+<script>
+<![CDATA[
+
+'HARUI
+#include "50101"
+'MessageBox
+#include "50122"
+'MAKRA
+#include "50200"
+'getCurrent*
+#include "50203"
+'SendDokument
+#include "50206"
+'CNavoMAPI
+#include "50226"
+'CFileDrive
+#include "50211"
+
+'------------------------------------------------------------------------
+' Klasa pamieta ustawienia dla tworzonego zadania do wysłanej 
+' wiadomości - czy przypominać, czy tez nie. Uzywane przez funckje
+' SaveDokumentZadanie
+'------------------------------------------------------------------------
+class CReminder
+
+	public m_bPrzyp			'Czy przypominac (string)
+	public m_dDataPrzyp		'Data przypomnienie
+	public m_tCzasPrzyp		'Czas przypomnienia
+
+	private sub class_initialize()
+		m_bPrzyp = "0"
+		m_dDataPrzyp = doc_.afc.globals.nulldate()
+		m_tCzasPrzyp = doc_.afc.globals.nulltime()
+	end sub
+
+end class
+
+
+'------------------------------------------------------------------------
+' Zmienne globalne
+'------------------------------------------------------------------------
+
+
+dim pRemind 'obiekt z ustawieniami przypominania lub nie
+set pRemind = new CReminder
+
+dim strEmailMsg		'Treść wiadomości
+dim strEmailSubject	'Temat wiadomości
+
+dim arrAttachment	'Tablica załączników - NavoArray - załączniki z tej
+					'tablicy nie są zapisywane w zadaniu jako załącznik
+					'lecz jako tekst są one natomiast normalnie
+					'wysyłane e-maile'm - obiekty CMailAttachment
+set arrAttachment = trans_.afc.new_navoarray()
+
+dim bSaveAsTask		'Czy zapisać jako zadanie
+dim strExtraMsg		'Dodatkowy tekst dodawany do obiektu zadania
+					'za treścią wiadomości
+strExtraMsg = ""
+
+dim g_strFldName	'Nazwa pola, z którego domyślnie ma być pobierany
+					'adres e-mail
+
+dim g_strEmail		'Aktualnie wybrany lub wpisany adres e-mail
+g_strEmail = ""
+
+
+function fopen()
+
+	if (not HARUI(UAR_CMDID(CMDID_WYSLIJ_EMAIL))) then
+		fopen = false
+		exit function
+	end if
+
+	'Deaktywuj przyciski na toolbarze
+	disable_toolbar page_
+
+	'Ignorujemy obiekt - jest on tylko naszym pomocnikiem
+	'page_.root.ignore = true
+
+	fopen=true
+end function
+
+function fback()
+	page_.root.ignore = true
+	trans_.discard()
+	page_.goback
+	fback = true
+end function
+
+'------------------------------------------------------------------------
+' Wylacz odpowiednie przyciski z toolbar'a
+'------------------------------------------------------------------------
+private function disable_toolbar(byref page)
+	page.cmdenabled CMD_NEWFORM,		false
+	page.cmdenabled CMD_SAVEFORM,		false
+	page.cmdenabled CMD_DELETEFORM,		false
+	page.cmdenabled CMD_ENABLEEDIT,		false
+	page.cmdenabled CMD_UNDO,			false
+	page.cmdenabled CMD_FIRSTINCURSOR,	false
+	page.cmdenabled CMD_PREVINCURSOR,	false
+	page.cmdenabled CMD_NEXTINCURSOR,	false
+	page.cmdenabled CMD_LASTINCURSOR,	false
+	page.cmdenabled CMD_SEARCH,			false
+end function
+
+
+'------------------------------------------------------------------------
+' Rozpoczyna proces tworzenia e-maila - inicjuje odpowiednie kontrolki
+' i oczywiscie otwiera sama strone - sama siebie to należy wołać 
+' z zewnątrz
+'
+' pInitObj - domyslny obiekt nadawcy
+' strField - domyslne pole z ktorego bedzie pobierany adres e-mail
+'------------------------------------------------------------------------
+function createmail(byref pInitObj , byval strField)
+
+	if (pInitObj.type=TYPEID_N5KLIENT_PRACOWNIK or _
+		pInitObj.type=TYPEID_N5PRACOWNIK or _
+		pInitObj.type=TYPEID_N5KLIENT) then
+		set page_.root.wpNadawca = pInitObj
+	end if
+
+	g_strFldName = strField
+
+	if not page_.root.wpNadawca is nothing then
+		g_strEmail = page_.root.wpNadawca.field(strField)
+	end if
+
+	createmail = page_.domodalauto()
+end function
+
+
+'------------------------------------------------------------------------
+' Rozpoczyna proces tworzenia e-maila - inicjuje odpowiednie kontrolki
+' i oczywiscie otwiera sama strone - sama siebie to należy wołać 
+' z zewnątrz
+'
+' strEmail - domyślny adres e-mail
+'------------------------------------------------------------------------
+function createmail_adress(byval strEmail)
+	g_strEmail = strEmail
+
+	createmail = page_.domodalauto()
+end function
+
+
+'------------------------------------------------------------------------
+' event:
+'
+' Wysyła wiadomość na podstawie podanych danych i jeżeli się udało
+' to zamyka również aktualnie otwartą stronę do wysyłania
+'------------------------------------------------------------------------
+function send(): send = false
+
+	if (not send_check()) then
+		exit function
+	end	if
+
+	send = send_internal()
+	
+	if (send) then
+		MessageBox "Twoja wiadomość zostala wysłana", "Zakończono wysyłanie", vbOKOnly, vbInformation
+		page_.goback
+	end if
+
+end function
+
+
+'------------------------------------------------------------------------
+' Wołane przed rozpoczęciem procesu wysyłania w celu sprawdzenia
+' czy wypełniono wszystko co miało być wypelnione
+'------------------------------------------------------------------------
+function send_check(): send_check=false
+
+	strEmailSubject = trim(CStr(strEmailSubject))
+	strEmailMsg = CStr(strEmailMsg)
+
+	if (g_strEmail = "") then
+		MessageBox "Musisz podać do kogo wysłać tą wiadomość", "Nie wysyłam", vbOKOnly, vbInformation
+		exit function
+	end if
+
+	if (strEmailSubject = "") then
+		MessageBox "Musisz podać temat wiadomości.", "Nie wysyłam", vbOKOnly, vbInformation
+		page_.ctrl(ID_EMAIL_SUBJECT).focus=true
+		exit function
+	end if
+
+	'Jeżeli przypomnienie wraz z zadaniem
+	if (pRemind.m_bPrzyp = "1") then
+		
+		if (pRemind.m_dDataPrzyp < srvDate) then
+			MessageBox "Nieprawidłowa data przypomnienia.", "Kreator wysyłki", vbOKOnly, vbInformation
+			exit function
+		end if
+		
+		if (pRemind.m_dDataPrzyp = srvDate()) then
+			if (pRemind.m_tCzasPrzyp < srvTime() or pRemind.m_tCzasPrzyp = doc_.afc.globals.nulltime()) then
+				MessageBox "Nieprawidłowy czas przypomnienia.", "Kreator wysyłki", vbOKOnly, vbInformation
+				exit function
+			end if					
+		end if
+
+	end if
+
+	send_check = true
+end function
+
+
+'------------------------------------------------------------------------
+' Pobierz obiekt licencji dla aktualnej aplikacji. Wykorzystywane do
+' swtorzenia podpisu w wiadomosci gdy zrobiono zadanie
+'------------------------------------------------------------------------
+function getLicence():set getLicence = nothing
+	dim nLicence
+	nLicence = trans_.findobjid(TYPEID_N5LICENCJA, "strKod='" + "EB4" + "'")
+
+	if (nLicence>0) then
+		set getLicence=trans_.getobj(TYPEID_N5LICENCJA, nLicence)
+	end if
+end function
+
+
+'------------------------------------------------------------------------
+' Jeżleli na podstawie e-mail'a zostanie stworzone zadanie to email
+' w podpisie (sam dol) bedzie zawieral odpowiednie informacje o tym
+' zdaniu
+'------------------------------------------------------------------------
+function getSignature()
+	getSignature = vbNewLine + vbNewLine + vbNewLine + vbNewLine + vbNewLine + _
+		"#" + "*" + CStr(trans_.var(GVAR_APPLICATION)) + ";" + _
+		CStr(getLicence().strIdUser) + ";"
+end function
+
+
+'------------------------------------------------------------------------
+' Wysyła wiadomość sprawdzając błędy
+'------------------------------------------------------------------------
+function send_internal(): send_internal = false
+
+#ifdef _DEBUG
+#else
+	on error resume next
+#endif
+
+		dim arrDocuments
+		set arrDocuments=trans_.afc.new_navoarray()
+
+		dim id:id=page_.root.idobj
+
+		'Caly zapis zadania w subtranzakcji
+		dim pSubTran
+		set pSubTran=trans_.createsubtran()
+
+		dim pRoot
+		set pRoot = trans_.getobj(TYPEID_N5SENDEMAIL,id)
+
+		if (not pRoot is nothing) then
+			dim pObj
+			for each pObj in pRoot.listDokumenty
+
+				if not pObj is nothing then
+					arrDocuments.Add pObj.pDokument
+				end if
+			next
+		end if
+
+		'Nie zapisuj zadania w funckji SaveDokumentZadanie
+		'Przejmujemy kontrole nad zapisem
+		g_AutoSaveTask = false
+		g_TaskID = clng(0)
+
+		'Jezeli mamy zapisywac jako zadanie
+		bSaveAsTask = page_.ctrl(ID_REJESTRUJ).value="1"
+		
+		if (bSaveAsTask) then
+
+			if (not getCurrentWykonawca() is nothing) then
+				
+				if (not SaveDokumentZadanie(pRoot.wpNadawca, arrDocuments, strEmailSubject, strEmailMsg + strExtraMsg , pRemind )) then
+					MessageBox "Nie udało się zapisać wysyłki jako zadania - " + strEmailSubject, "Nie zapisano wysyłki", vbOKOnly, vbInformation
+				else
+					send_internal=true
+				end if
+
+			else
+				'czy ignorowac, ze nie da sie zapisac zadania
+				if MessageBox("Nie będzie można zapisać wysyłki jako zadania ponieważ brak domyślnego wykonawcy dla zalogowanego użytkownika. Chcesz kontynuować wysyłanie?", "Mam tylko wysłać wiadomość?", vbYesNo, vbQuestion)=vbYes then
+					send_internal=true
+				end if
+			end if
+
+		else
+			send_internal=true
+		end if
+
+		'Jezeli wystapil blad podczas proby wypelnienia obiektu zadania
+		'to nic nie mozemy wysylac e-mail'a
+		if (not send_internal) then
+			exit function
+		end if
+
+		send_internal = false
+
+		'Dodaj do końca wiadomości informację o zadaniu
+		if (g_TaskID>0) then
+			
+			strEmailMsg=strEmailMsg + getSignature() + _
+				CStr(g_TaskID)
+
+		end if
+
+		dim strEmailAdd: strEmailAdd = ""
+		strEmailAdd = getglobprofile(GLOBPROF_ADD_EMAIL_ABAKUS)	
+		
+		if strEmailAdd <> "" then
+			g_strEmail = g_strEmail + ";" + strEmailAdd
+		end if		
+
+		if (not pRoot is nothing) then
+			dim arrRecips: arrRecips = split(g_strEmail, ";")
+			if isArray(arrRecips) then
+				dim i
+				for i=0 to ubound(arrRecips)			
+					dim pNavoMapi
+					set pNavoMapi = new CNavoMAPI
+
+					if (not pNavoMapi.connect()) then
+						exit function
+					end if
+
+					dim pMail
+					set pMail = pNavoMapi.getMAIL()				
+				
+					if (not SendDokument(pRoot.wpNadawca, g_strFldName , arrRecips(i) , arrDocuments, strEmailSubject, strEmailMsg, pMail, arrAttachment)) then
+						MessageBox "Nie udało się wysłać wiadomości " + strEmailSubject, "Nie wysłano", vbOKOnly, vbInformation
+						exit function
+					else
+						if (not trans_.saveobjects()) then
+							MessageBox "Nie udało się zapisać zadania dla " + strEmailSubject, "Nie zapisano zadania", vbOKOnly, vbInformation
+						end if
+					end if	
+				next
+			end if	
+		else
+			MessageBox "Nie udało się wysłać wiadomości " + strEmailSubject, "Nie wysłano", vbOKOnly, vbInformation
+			exit function
+		end if
+
+		set pRoot=nothing
+		set pSubTran=nothing
+
+	if send_error() then exit function
+
+	send_internal = true
+end function
+
+'------------------------------------------------------------------------
+' Wysyła e-mail na danym obiekcie MAPI
+' pAttachments - tablica NavoArray obiektów CMailAttachment
+'------------------------------------------------------------------------
+function send_email(byref pMail, strTo, strSubject, strText, pAttachments)
+#ifdef _DEBUG
+#else
+	on error resume next
+#endif
+
+	send_email = false
+
+	dim arrRecips
+	arrRecips=split(strTo, ";")
+
+	if send_error() then exit function
+
+#ifndef APPCONFIG_EMAIL_Z_SERWERA_POCZTOWEGO
+	if isArray(arrRecips) then
+		dim i: for i=0 to ubound(arrRecips)
+			pMail.addrecip arrRecips(i), arrRecips(i)
+		next
+	else
+		pMail.addrecip strTo, strTo
+	end if
+#else
+  'przygotuj maila
+  pMail.prepare_message 1, strSubject, strText, true
+#endif  
+
+	if (not pAttachments is nothing) then
+		dim n
+		for n=0 to pAttachments.Count()-1
+#ifdef APPCONFIG_EMAIL_Z_SERWERA_POCZTOWEGO
+			dim bOK
+			dim pFD: set pFD = CFileDrive(bOK)
+			if bOK then
+				dim strFilePath
+				strFilePath = doc_.system.createtempfilename(pFD.RemoveExtension(pFD.GetFileName(pAttachments.Value(n).strName)), pFD.GetFileExtension(pAttachments.Value(n).strName))
+				pAttachments.Value(n).pSO.save strFilePath
+				pAttachments.Value(n).pSO.rewind
+				if (pFD.isFile(strFilePath) and err.number = 0) then
+					pMail.add_attachment strFilePath, pAttachments.Value(n).strName  
+				else
+					MessageBox "Nie udało się dodać załącznika: " + pAttachments.Value(n).strName, "Dodawanie załącznika", vbOkOnly, vbInformation
+					exit function        
+				end if
+			end if      
+#else
+			pMail.addattachment pAttachments.Value(n).strName, pAttachments.Value(n).pSO
+#endif      
+		next
+	end if
+
+	if send_error() then exit function
+
+#ifdef APPCONFIG_EMAIL_Z_SERWERA_POCZTOWEGO
+	if (pMail.send(strTo) = "") then
+#else
+	if (pMail.send(strSubject, strText, 0)) then
+#endif  
+		if send_error() then exit function
+		send_email = true
+		exit function
+	else
+		MessageBox "Nie udało się wysłać wiadomości.", "Nie wysłano", vbOKOnly, vbInformation
+	end if
+
+	if send_error() then exit function
+end function
+
+function send_error():send_error=false
+	if err.number>0 then
+		MessageBox "Nie udało się wysłać wiadomości. " + CStr(err.description), "Nie wysłano", vbOKOnly, vbInformation
+		send_error=true
+	end if
+end function
+
+'------------------------------------------------------------------------
+' Edycja dodanego jako załącznik dokumentu
+'------------------------------------------------------------------------
+function list_edit_element(byref pHli): list_edit_element=false
+
+	dim pParent
+	set pParent = page_.root
+
+	'numer elementu
+	dim nRow: nRow=CLng(pHli.prop(PROPC_ROW))
+
+	if not pParent.listDokumenty.exists(nRow) then
+		exit function
+	end if
+
+	'Pobieramy odpowiednie dziecko
+	dim pChild
+	set pChild = pParent.listDokumenty.get(nRow)
+
+	if (pChild is nothing) then
+		exit function
+	end if
+
+	doc_.getmodule(60129).form_domodal pChild.pDokument.type, pChild.pDokument.idobj , USAGE_VIEW
+
+	list_edit_element=true
+end function
+
+'------------------------------------------------------------------------
+' Wybor adresata (pole Do:)
+'------------------------------------------------------------------------
+function choose_adresat()
+
+
+	dim strFldName:strFldName ="wpNadawca"
+	dim strOrders:strOrders ="strNazwisko;strNazwisko;strNazwa"
+	dim strWheres:strWheres ="strEmail<>'' or strEmail2<>'';strEmail<>'' or strEmail2<>'';strEmail<>''"
+
+	'Wybieramy adresata lub sam wpisany adres
+	dim pPageSuggest
+	set pPageSuggest = doc_.getmodule(43023)
+
+	if (page_.root.wpNadawca is nothing) then
+		pPageSuggest.setCustomEmail g_strEmail
+	else
+		pPageSuggest.setCustomEmail ""
+	end if
+
+	dim nObjectId
+	nObjectId = pPageSuggest.adresat_choose(page_.root, strFldName, strOrders, strWheres)
+	
+	if (nObjectId > 0) then
+
+		'Wybrano obiekt
+
+		dim nTypeId
+		nTypeId = pPageSuggest.getTypeID()
+
+		dim pObj
+		set pObj = trans_.getobj(nTypeId, nObjectId)
+
+		g_strFldName = "strEmail"
+
+		'Sprawdzamy czy obiekt ma oba pola email wypelnione
+		if (nTypeId <> TYPEID_N5KLIENT) then
+			
+			if ((pObj.strEmail<>"" and pObj.strEmail2<>"") and (pObj.strEmail<>pObj.strEmail2)) then
+			
+				dim nChoice
+				nChoice = messageBoxEx("Wybór adresata" ,"Dwa adresy", "3;4" , "Służbowy;Prywatny" , 0 , "", "plain_text" , nothing , "Wybrany adresat posiada dwa adresy email - email służbowy to " + pObj.strEmail + ", prywatny to "+ pObj.strEmail2 + ". Na ktory chcesz wysłać wiadomość?" )
+
+				if (nChoice = 3) then
+					g_strFldName = "strEmail"
+				elseif (nChoice = 4) then
+					g_strFldName = "strEmail2"
+				else
+					exit function
+				end if
+
+			end if
+
+		end if
+
+		set page_.root.field(strFldName) = pObj
+		g_strEmail = page_.root.wpNadawca.field(g_strFldName)
+		
+		page_.ctrl(ID_REJESTRUJ).disable = false
+		page_.ctrl(ID_REJESTRUJ).tip = "Zaznacza aby zarejestrować wiadomość w zadaniach"
+
+	elseif (nObjectId < 0) then
+
+		'Wpisano ręcznie e-mail
+
+		g_strEmail = pPageSuggest.getCustomEmail()
+		set page_.root.field(strFldName) = nothing
+
+		page_.ctrl(ID_EDIT_TO).value = g_strEmail
+		pRemind.m_bPrzyp = "0"
+
+		page_.ctrl(ID_REJESTRUJ).value = "0"
+		page_.ctrl(ID_REJESTRUJ).disable = true
+		page_.ctrl(ID_REJESTRUJ).tip = "Nie można rejestrować wiadomości wysyłanych na ręcznie podany e-mail"
+
+	end if
+end function
+
+'------------------------------------------------------------------------
+'
+'------------------------------------------------------------------------
+' Obiekt wysyłanego  maila
+'------------------------------------------------------------------------
+function getMailObject()
+  set getMailObject = page_.root
+end function
+
+function set_recipents_email(strEmail)
+	g_strEmail = strEmail
+end function
+
+'------------------------------------------------------------------------
+' Ustaw temat wiadomości
+'------------------------------------------------------------------------
+function setSubject(byval strNewSubject)
+	strEmailSubject=CStr( strNewSubject )
+end function
+
+'------------------------------------------------------------------------
+' Ustaw treść wiadomości
+'------------------------------------------------------------------------
+function setMessage(byval strNewMessage)
+	strEmailMsg=CStr( strNewMessage )
+end function
+
+'------------------------------------------------------------------------
+' Dodaj załącznik - tylko wysyłany
+'------------------------------------------------------------------------
+function addAttachment(byref pAttachment)
+	arrAttachment.Add pAttachment
+end function
+
+'------------------------------------------------------------------------
+' Ustaw dodatkowy tekst dla obiektu zadania
+'------------------------------------------------------------------------
+function setExtraText(byval strText)
+	strExtraMsg=strText
+end function
+
+'------------------------------------------------------------------------
+'wymiana danych z kontrolek do zmiennych
+'------------------------------------------------------------------------
+
+function c##ID_EMAIL_SUBJECT##_ongetdata(byref oCtrl): c##ID_EMAIL_SUBJECT##_ongetdata=true
+	oCtrl.text=strEmailSubject
+end function
+
+function c##ID_EMAIL_SUBJECT##_ondataentered(ctrl, value): c##ID_EMAIL_SUBJECT##_ondataentered=true
+	strEmailSubject=value
+end function
+
+function c##ID_EMAIL_MSG##_ongetdata(byref oCtrl): c##ID_EMAIL_MSG##_ongetdata=true
+	oCtrl.value=CStr(strEmailMsg)
+end function
+
+function c##ID_EMAIL_MSG##_ondataentered(ctrl, value): c##ID_EMAIL_MSG##_ondataentered=true
+	strEmailMsg=value
+end function
+
+function c##ID_EDIT_TO##_ongetdata(byref oCtrl): c##ID_EDIT_TO##_ongetdata=true
+	if (g_strEmail<>"") then
+		oCtrl.text = g_strEmail
+	else
+		oCtrl.text = "<kliknij z prawej>"
+	end if
+end function
+
+function c##ID_EDIT_TO##_ondataentered(ctrl, value)
+	c##ID_EDIT_TO##_ondataentered=true
+end function
+
+
+function c##ID_REJESTRUJ##_ongetdata(byref oCtrl)
+	if (oCtrl.value="1") then
+		page_.ctrl(800).hide = false
+	else
+		page_.ctrl(800).hide = true		
+	end if
+
+	c##ID_REJESTRUJ##_ongetdata=true
+end function
+
+function c##ID_REJESTRUJ##_ondataentered(ctrl, value)
+	c##ID_REJESTRUJ##_ondataentered = true
+end function
+
+function c##ID_EDIT_DATE##_ongetdata(byref oCtrl): c##ID_EDIT_DATE##_ongetdata=true
+	oCtrl.value=cdate(pRemind.m_dDataPrzyp)
+end function
+
+function c##ID_EDIT_DATE##_ondataentered(byref oCtrl, byval newValue)
+	pRemind.m_dDataPrzyp = newValue
+	c##ID_EDIT_DATE##_ondataentered=true
+end function
+
+function c##ID_EDIT_TIME##_ongetdata(byref oCtrl): c##ID_EDIT_TIME##_ongetdata=true
+	oCtrl.value=clng(pRemind.m_tCzasPrzyp)
+end function
+
+function c##ID_EDIT_TIME##_ondataentered(byref oCtrl, byval newValue)
+	pRemind.m_tCzasPrzyp = newValue
+	c##ID_EDIT_TIME##_ondataentered=true
+end function
+
+function c##ID_EDIT_REMIND##_ongetdata(byref oCtrl): c##ID_EDIT_REMIND##_ongetdata=true
+	oCtrl.value=pRemind.m_bPrzyp
+end function
+
+function c##ID_EDIT_REMIND##_ondataentered(byref oCtrl, byval newValue)
+	pRemind.m_bPrzyp = newValue
+	c##ID_EDIT_REMIND##_ondataentered=true
+end function
+
+'todo:spiko Wstawic makra gdzie sie da!
+
+]]></script>
+
+</config>
+<body>
+
+
+QXF_BEGIN
+
+<tr>	
+
+	<td width='min'>
+		QXE_LABEL_REQ_TIP(Do:,Wybierz adresata wiadomości)
+	</td>	
+
+	<td keepline='true'>
+		<edit name='c##ID_EDIT_TO' disable='true'
+			size='50' style='STYLE_CTRL'>
+			<transfer mode='custom' />
+		</edit>	
+
+		XF_PICTURE_ACTION(PICTURE_RECEIPENT, choose_adresat)
+
+	</td>
+
+	<td rowspan='2' width='max'>
+		<picture image='80937' href='varFunction="send"'>
+			Naciśnij aby wysłać wiadomość
+		</picture>
+	</td>
+
+</tr>
+
+<tr>
+	<td width='min' keepline='true'>
+		QXE_LABEL_REQ_TIP(Temat:,Wpisz temat wiadomości)
+	</td>
+	<td keepline='true'>
+		QXE_EDIT_CUSTOM(ID_EMAIL_SUBJECT,53)
+		<t size='1'/>
+	</td>
+</tr>
+
+QXR_SEPARATOR(3)
+
+<tr>
+	<td border='6' linealign='vcenter' colspan='3' keepline='true'  style='STYLE_SECTION'>	
+		<t/>
+		QXE_LABEL(Treść)
+	</td>
+</tr>
+
+QXR_SEPARATOR(3)
+
+<tr>
+	QXC_MULTILINE_CUSTOM(ID_EMAIL_MSG, 12000, HEIGHT_FOR_MULTILINE, 3)
+</tr>
+
+<tr>
+	<td colspan='3'>
+			<grid name='e##ID_GRID_DOCUMENTS' >
+			<transfer mode='grid_list'>
+				<field>listDokumenty</field>
+			</transfer>
+
+			<thead>
+			<tr style='STYLE_DESC_ROW'>
+				QXC_LABEL(LP,1)
+				<td width='max'><t>Załączniki</t></td>
+				QXC_LABEL(,1)
+			</tr>
+			
+			</thead>
+			<tbody>
+				<tr style='STYLE_TABLE_BODY'>
+										
+					SXC_LP
+					SXC_EDIT_REF(-1,40,PICTURE_CHOICE_N5DOKUMENT,listDokumenty,pDokument,strTematDokum,CRSR_DEFAULT)
+					<td>
+						QXE_BUTTON(-1,-1,Edycja,varFunctionHLI="list_edit_element")
+					</td>
+
+				</tr>
+			</tbody>
+
+			</grid>
+			</td>
+		</tr>
+
+		QXR_SEPARATOR(1)
+
+<tr>
+	<td border='6' linealign='vcenter' colspan='3' keepline='true'  style='STYLE_SECTION'>	
+		<t/><t ignoresysdisable='true' >Rejestracja w zadaniach</t>
+	</td>
+</tr>
+
+<tr>
+	QXC_CHECK1_CUSTOM(ID_REJESTRUJ,Zarejestruj,3)
+</tr>
+
+<tr name='t800'>
+	
+	QXC_CHECK1_CUSTOM(ID_EDIT_REMIND,Przypomnij,1)
+
+	<td keepline='true' colspan='2'>
+		<date name='e##ID_EDIT_DATE' style='STYLE_CTRL'>
+			<transfer mode='custom'/>
+		</date>
+		
+		<t/>
+
+		<time name='e##ID_EDIT_TIME' size='5' style='STYLE_CTRL'>
+			<transfer mode='custom'/>
+		</time>
+	</td>
+</tr>
+	
+QXF_END
+
+</body>
+</page>

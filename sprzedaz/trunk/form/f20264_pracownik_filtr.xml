@@ -1,0 +1,211 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+
+<!--
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1240.h"
+#include "h1201.h"
+#include "h1223.h"
+#include "h1224.h"
+#include "h1203.h"
+
+
+#define CTRL_LIST_NAME		1
+#define CTRL_RADIO_NAME		2
+#define CTRL_RAPORT_NAME	3
+
+-->
+
+<page style='10'>
+<config>
+<title>Filtr pracowników</title>
+<startpos>center</startpos>
+<script>
+<![CDATA[
+
+#include "50209"
+#include "50200"
+
+
+function init(byval nDestFiltr , nIdobjFiltr)
+	m_nDestFiltr = nDestFiltr
+	m_nIdobjFiltr = nIdobjFiltr
+end function
+
+dim dummy
+
+dim m_nDestFiltr : m_nDestFiltr = clng(1)
+dim m_nIdobjFiltr : m_nIdobjFiltr = clng(0)
+dim m_strNameFiltr : m_strNameFiltr = ""
+
+WVB_FILTER_RADIO(CTRL_RADIO_NAME,m_nDestFiltr,m_nDestFiltr,m_nIdobjFiltr)
+WVB_FILTER_GETTEXT(2,CTRL_LIST_NAME,m_nDestFiltr,m_nIdobjFiltr,m_strNameFiltr)
+WVB_FILTER_GETTEXT(3,CTRL_RAPORT_NAME,m_nDestFiltr,m_nIdobjFiltr,m_strNameFiltr)
+
+WVB_FILTER_CHOICELIST(TYPEID_N5PRACOWNIK,dummy,m_nIdobjFiltr,m_strNameFiltr)
+WVB_FILTER_CHOICESEARCHTYPE(TYPEID_N5PRACOWNIK,dummy,m_nIdobjFiltr,m_strNameFiltr)
+
+function is_empty
+	if m_nIdobjFiltr=0 then
+		if m_nDestFiltr<>1 then
+			is_empty = true
+		else
+			is_empty = false
+		end if
+	else
+		is_empty = false
+	end if
+end function
+
+function fok
+	if is_empty then
+		trans_.message 1002 , 0 , "Należy wybrać pracowników, dla których chcesz przypisać schemat"
+	else
+		page_.result = true
+		page_.goback		
+	end if
+end function
+
+function fcancel
+	page_.result = false
+	page_.goback
+end function
+
+'--------------------------
+'wybór odpowiedniego filtra
+'--------------------------
+private function get_where() : get_where = ""
+	get_where = doc_.getmodule(60300).bquery_where_for_pracownik_filtr(m_nDestFiltr, m_nIdobjFiltr)				
+end function
+
+'-----------------------------------
+'zwraca cursor aktywnych pracownikow
+'-----------------------------------
+function cursor_for_active_emp(byref pNieob) : set cursor_for_active_emp = nothing
+  dim strWhere : strWhere = get_where
+	if strWhere = "" then
+		exit function
+	end if
+  
+	dim strQuery
+  strQuery = "select 'id_prac'=p.idobj,'id_umowa'=u.idobj from n5pracownik p inner join n5plumowa u on u.pPracownik = p.idobj " +_
+             "where u.dDataOd <= " + trans_.afc.convert.date2SQL(pNieob.dDataOd) + " and (u.dDataDo >= " +_
+             trans_.afc.convert.date2SQL(pNieob.dDataDo) + " or u.dDataDo = " +_ 
+             trans_.afc.convert.date2SQL(trans_.afc.globals.nulldate()) + ") " +_
+             "and p.idobj <> " + CStr(pNieob.pPracownik.idobj) + " and " + strWhere + " order by p.strNazwisko"
+
+	set cursor_for_active_emp = trans_.createadors(strQuery)
+end function
+
+'-----------------------------------------------------
+'tworzy pojedynczy składnik (n5plnieob, n5plpozostale)
+'-----------------------------------------------------
+function create_sklad(byval idOrgSklad, byval idPrac, byval idUmowa, byval nTypeID) : create_sklad = false
+  dim pOpenFormSklad : set pOpenFormSklad = nothing
+  dim pFormSklad : set pFormSklad = nothing
+  
+  set pOpenFormSklad = doc_.getmodule(60129).prepare_form_open_command(nTypeID,0,0)
+  if pOpenFormSklad is nothing then			
+    exit function
+  else
+    set pFormSklad = doc_.getpagehli(pOpenFormSklad)
+    if pFormSklad is nothing then
+      exit function
+    end if
+  end if
+
+  if not fill_sklad(pFormSklad.root,idOrgSklad,idPrac,idUmowa,nTypeID) then
+    trans_.message 7000, 0, "Nie udało się utworzyć dokumentu"
+    exit function
+  end if
+
+  pFormSklad.fsave
+  
+  create_sklad = true
+end function
+
+'----------------------------------
+'wypełnia obiekt pozostały składnik
+'----------------------------------
+function fill_sklad(byref pSklad, byval idOrgSklad, byval idPrac, byval idUmowa, byval nTypeID) : fill_sklad = false
+  'dokument oryginalny
+  dim pOrgSklad : set pOrgSklad = trans_.getobj(nTypeID,idOrgSklad)
+
+  'pracownik i umowa
+  if idPrac > 0 and idUmowa > 0 then
+    set pSklad.pPracownik = trans_.getobj(TYPEID_N5PRACOWNIK,idPrac)
+    set pSklad.pUmowa = trans_.getobj(TYPEID_N5PLUMOWA,idUmowa)
+  else
+    exit function
+  end if
+  
+  'pozostałe dane
+  pSklad.dDataRej = pOrgSklad.dDataRej
+  pSklad.dDataOd = pOrgSklad.dDataOd
+  pSklad.dDataDo = pOrgSklad.dDataDo
+  set pSklad.pUzytRej = pOrgSklad.pUzytRej
+  set pSklad.pUzytModyf = pOrgSklad.pUzytModyf
+  'pola tylko dla n5plnieob
+  if nTypeID = TYPEID_N5PLNIEOB then
+    pSklad.eTyp = pOrgSklad.eTyp
+    pSklad.plni_strKodNieobecnosci = pOrgSklad.plni_strKodNieobecnosci
+    pSklad.plni_strUwagi = pOrgSklad.plni_strUwagi
+  else
+    'n5plpozostale
+    pSklad.plpo_strUwagi = pOrgSklad.plpo_strUwagi  
+  end if
+  
+  'składniki (pozycje)
+  dim pPozSklad, pOrgPozSklad
+  for each pOrgPozSklad in pOrgSklad.listSkladnik
+    if not pOrgPozSklad.pSchemat is nothing then
+      set pPozSklad = pSklad.listSkladnik.addnew()
+      set pPozSklad.pSchemat = pOrgPozSklad.pSchemat
+      pPozSklad.curParam1 = pOrgPozSklad.curParam1
+      pPozSklad.curParam2 = pOrgPozSklad.curParam2
+      set pPozSklad.pTerminNal = pOrgPozSklad.pTerminNal
+      pPozSklad.cConfParam1 = pOrgPozSklad.cConfParam1
+      pPozSklad.cConfParam2 = pOrgPozSklad.cConfParam2
+    end if  
+  next
+  
+  fill_sklad = true
+end function
+
+
+]]>
+</script>
+</config>
+<body>
+
+XFORMMWIZZARDBEGIN(80842)
+
+<tr>
+	<td style='STYLE_TABLE_INFO' colspan='2'>
+		<text>Wybierz pracowników, dla których chcesz dodać schemat</text>
+	</td>
+</tr>
+
+<tr><td colspan='2'><t size='1' /></td></tr>
+<tr>
+	<td colspan='2'>
+		WX_FILTER_BEGIN(CTRL_RADIO_NAME)
+		WX_FILTER_ITEM_FIXED(Wszyscy aktywni)
+		WX_FILTER_ITEM_CHOICELIST(Lista wyboru,CTRL_LIST_NAME)
+		WX_FILTER_ITEM_SEARCHTYPE(Wynik wyszukiwania,CTRL_RAPORT_NAME)
+		WX_FILTER_END
+	</td>
+</tr>
+
+XFORMMWIZZARD_TABLESEND
+
+XFDIALOGBUTTONS
+
+</body>
+</page>

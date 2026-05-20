@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+
+PAGE_MODULE_TIMER
+
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1230.h"
+#include "h1231.h"
+
+-->
+<page>
+<config>
+<script>
+<![CDATA[
+
+'globprofile
+#include "50203"
+
+class CTimerTask
+
+	public m_nGlopProfINX
+	public m_nInterwal
+	public m_nModule
+
+
+	public function run_task()
+
+		'najpierw sprawdzamy, czy minął określony dla funckcji interwał
+		'pobieramy profil
+		dim profile: set profile = getglobprofileObj(m_nGlopProfINX)
+		dim bProcess:bProcess = false
+		if profile.Wartosc = "" then
+			bProcess = true ' nie był założony, czyli można jechać...
+		else
+			'sprawdamy roznice
+
+			'czas i data ostatniego sprawdzenia
+			dim dLastDate:dLastDate = doc_.afc.convert.str2date(split(profile.Wartosc , vbTab)(0))
+			dim tLastTime:tLastTime = doc_.afc.convert.long2time(split(profile.Wartosc , vbTab)(1))
+
+			'czas i data aktualna
+			dim dCurrentDate:dCurrentDate = trans_.var(GVAR_SYSDATE)
+			dim tCurrentTime:tCurrentTime = doc_.afc.convert.long2time(trans_.var(GVAR_SYSTIME))
+
+			'interwały
+			dim interwal_data:interwal_data = DateDiff("d", dLastDate, dCurrentDate )
+			dim interwal_czas:interwal_czas = DateDiff("s", tLastTime, tCurrentTime )
+
+			'interwał całościowy
+			dim interwal_glob:interwal_glob = interwal_data*(86400) + interwal_czas
+
+			'i sprawdzamy
+			if interwal_glob > m_nInterwal then
+				bProcess = true
+			end if
+
+		end if
+
+
+		'update profilu
+		if bProcess then
+			profile.wartosc = doc_.afc.convert.date2str(trans_.var(GVAR_SYSDATE)) + vbTab + cstr(trans_.var(GVAR_SYSTIME))
+			if not trans_.saveobjects() then
+				exit function
+			end if
+		end if
+
+	
+		if  bProcess then
+			dim pModule:set pModule = doc_.getmodule(m_nModule)
+			pModule.run
+		end if		
+
+
+	end function
+
+end class
+
+dim g_pTaskTable: set g_pTaskTable = nothing
+
+sub init()
+
+	set g_pTaskTable = doc_.afc.new_navoarray()
+
+	g_pTaskTable.add new_task(GLOBPROF_SLOWTIMER_REZERWACJE, 60, PAGE_MODULE_CHECK_REZERWACJE)
+
+#ifdef APPCONFIG_POWIADOMIENIA_NOWE_ZAMOWIENIA
+  'pobierz interwał
+  dim nCzas: nCzas = clng(0)
+  dim pGlobProfCzas : set pGlobProfCzas = nx_get_globprofile_obj(GLOBPROF_CZAS_POWIADOMIEN)
+  if not pGlobProfCzas is nothing then
+    if pGlobProfCzas.Wartosc <> cstr(0) then
+      nCzas = clng(pGlobProfCzas.Wartosc)
+      g_pTaskTable.add new_task(GLOBPROF_SLOWTIMER_ZAMOWIENIA, nCzas, PAGE_MODULE_CHECK_ZAMOWIENIA)
+    end if
+  end if
+#endif
+
+end sub
+
+
+
+function run()
+
+	dim iter
+	for iter = 0 to g_pTaskTable.upperIndex
+		g_pTaskTable.value(iter).run_task	
+	next 
+end function
+
+
+function fopen():fopen = false
+#ifndef APPCONFIG_RUN_TASK_SILENT
+	trans_.message 0,0, "Włączanie zadań cyklicznych"
+#endif  
+
+	init
+	run
+
+end function
+
+
+function new_task(byval profile , byval interwal , byval handler)
+
+	dim pTask:set pTask = new CTimerTask
+	with pTask
+		.m_nGlopProfINX = clng(profile)
+		.m_nInterwal = interwal
+		.m_nModule = clng(handler)
+	end with
+	
+	set new_task = pTask
+
+end function
+
+]]>
+</script>
+</config>
+	<body>
+	</body>
+</page>

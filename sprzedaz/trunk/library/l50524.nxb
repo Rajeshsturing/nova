@@ -1,0 +1,439 @@
+#ifndef LIBRARY_50524
+#define LIBRARY_50524
+
+#include "h1231.h"
+'----------------------------------------------------------------------
+' (c) Navo 2002 Ltd.
+' WYLICZANIE CEN Z UWZGLEDNIENIEM PROMOCJI
+'
+' Spikowski Piotr
+' Rewritten: KB 2005
+'----------------------------------------------------------------------
+
+#include "50203"
+#include "50523"
+
+#comment '-----------------------------------------------------------
+#comment ' zwraca numer ceny 1..6 dla zestawu cen 1..7
+#comment '-----------------------------------------------------------
+function nx_normalize_numer_ceny(iNrZestawuCen)
+	if iNrZestawuCen < 7 then
+		nx_normalize_numer_ceny = iNrZestawuCen
+	else
+		dim nPriceSystem: nPriceSystem = getglobprofilelong(GLOBPROF_PRICE_SYSTEM)
+		if nPriceSystem = 0 then
+			nPriceSystem = clng(1)
+		end if
+		nx_normalize_numer_ceny = nPriceSystem
+	end if
+end function
+
+#comment '-----------------------------------------------------------
+#comment ' nx_computer_price
+#comment '-----------------------------------------------------------
+
+function nx_compute_price( _
+	byref oKlient,byref oProdukt,byref oOpak, byval dData,byval curIlosc, byval iNrCeny, _
+	byref oWalutaRes,byval bNettoRes, byref curCenaBazRes, byref curCenaKoncRes)
+	nx_compute_price = false
+	
+	iNrCeny = nx_normalize_numer_ceny(iNrCeny)
+
+	'UCB - uniwersalna cena bazowa
+	dim curUCB : curUCB = oOpak.n5opakowanie_produktu_get_cena_n(iNrCeny,bNettoRes)
+	dim oWalUCB : set oWalUCB = oOpak.n5opakowanie_produktu_get_waluta_ceny_n(iNrCeny)
+	'UCW - uniwersalna cena wynikowa
+	dim curUCW : curUCW = curUCB
+	dim oWalUCW : set oWalUCW = oWalUCB
+	
+	dim oRS : set oRS = trans_.createadors(get_promocje_query(oKlient,oProdukt,dData,curIlosc))
+	
+	if not oRS.EOF then
+		'czy trafilismy juz na jakis rabat
+		dim bFirtRabat: bFirtRabat = true
+		dim iter : iter = 1
+		do while not oRS.EOF
+			dim oPolRab : set oPolRab = trans_.getobj(TYPEID_N5POLRAB,clng(oRS("idobj")))
+
+			'Jezli na szczycie wszystkich priorytetow
+			'trafilismy na cene koncowa netto lub 
+			'cene koncowa brutto to wlasnie ta cena
+			'zastapi nasza UCB pobrana z dostarczonego
+			'opakowania produktu
+			'jezeli trafilismy na taka cene podczas wyliczen
+			'rabatow nie interesuje juz nas ona. liczymy
+			'na podstawie UCB z opakowania
+
+			select case oPolRab.eTyp
+			case N5POLRAB_TYP_CENA_NETTO
+				if (iter = 1) then
+					'Cena koñcowa netto
+					if bNettoRes then
+						curUCW = oPolRab.curCenaRab
+					else
+						curUCW = netto2brutto(oPolRab.curCenaRab,oProdukt.eVAT)
+					end if
+					
+					set oWalUCW = oPolRab.polrab_pWalutaCeny
+					
+					exit do
+				end if
+			case N5POLRAB_TYP_CENA_BRUTTO
+				if (iter = 1) then
+					'Cena koñcowa netto
+					if bNettoRes then
+						curUCW = brutto2netto(oPolRab.curCenaRab,oProdukt.eVAT)
+					else
+						curUCW = oPolRab.curCenaRab
+					end if
+					
+					set oWalUCW = oPolRab.polrab_pWalutaCeny
+					
+					exit do
+				end if
+			case N5POLRAB_TYP_CENA_RABAT_WYL
+				'Rabat wy³¹czny
+				'rabat ten wyliczamy tylko jezeli jest on
+				'pierwszy. wyliczenie tego rabatu powoduje
+				'zakonczenie obliczen - nastepne rabaty nie
+				'sa juz uwzgledniane
+				if (bFirtRabat) then
+					curUCW = rabat(curUCW, oPolRab.curCenaRab,trans_.var(GVAR_PRICE_PREC))
+					exit do
+				end if
+			case N5POLRAB_TYP_CENA_RABAT_DOD
+				'Rabat addytywny
+				'zanaczamy iz wyliczylismy juz rabat - rabat
+				'wylaczny nie bedzie mogl byc juz wyliczony
+				bFirtRabat = false
+				curUCW = rabat(curUCW, oPolRab.curCenaRab,trans_.var(GVAR_PRICE_PREC))
+			end select
+			
+			iter = iter + 1
+			oRS.MoveNext
+		loop
+	end if
+
+	nx_compute_price = true
+
+	'przeliczamy nasza UCB na odpowiednia walute jezeli ktos tego chce
+	'czy pJednDocel<>nothing
+	if not oWalutaRes is nothing then
+		if not kantor(curUCB, oWalUCB, oWalutaRes, dData, N5KURSWALUT_SPRZEDAZY, curUCB) then
+			nx_compute_price = false
+		end if
+		if not kantor(curUCW, oWalUCW, oWalutaRes, dData, N5KURSWALUT_SPRZEDAZY, curUCW) then
+			nx_compute_price = false
+		end if
+	end if
+
+	curCenaBazRes = trans_.afc.convert.roundn(curUCB,trans_.var(GVAR_PRICE_PREC))
+	curCenaKoncRes = trans_.afc.convert.roundn(curUCW,trans_.var(GVAR_PRICE_PREC))
+	
+end function
+
+#comment '-----------------------------------------------------------
+function get_promocje_query(byref oKlient,byref oProdukt,byval dData,byval curIlosc)
+	
+	dim idKlient : idKlient = clng(0)
+	dim idGrupaKlient : idGrupaKlient = clng(0)
+	dim idProdukt : idProdukt = clng(0)
+	dim idGrupaProd : idGrupaProd = clng(0)
+	dim oGrupaProd : set oGrupaProd = nothing
+	
+	if not oKlient is nothing then
+		idKlient = oKlient.idobj
+		idGrupaKlient = oKlient.pGrupaKlient.idobj
+	end if
+	if not oProdukt is nothing then
+		idProdukt = oProdukt.idobj
+		idGrupaProd = oProdukt.pGrupaProd.idobj
+		set oGrupaProd = oProdukt.pGrupaProd
+	end if
+	
+	dim strKlientWhere:strKlientWhere = " (" + _
+		"(wpKlientGrupa_wrt=TYPEID_N5KLIENT and wpKlientGrupa=" + cstr(idKlient) + ") or " + _
+		"(wpKlientGrupa_wrt=TYPEID_N5GRUPAKLIENT and wpKlientGrupa=" + cstr(idGrupaKlient) + ") or " + _
+		"(wpKlientGrupa_wrt=0 and wpKlientGrupa=0)" + _
+		") "
+
+	dim strDateWhere
+	with trans_.afc
+		strDateWhere = " (" + _
+		" (" + .convert.date2SQL(cdate(dData)) + " between dDataOd and dDataDo) or " + _
+		 "(" + .convert.date2SQL(cdate(dData)) + " >= dDataOd and dDataDo = " + .convert.date2SQL(.globals.nulldate()) + ")" + _
+	     ") "
+	end with
+	
+	dim strProdWhere
+	strProdWhere = "(wpProdGrupa_wrt=TYPEID_N5PRODUKT and wpProdGrupa=" + cstr(idProdukt) + ") "
+
+	dim strGrupaWhere
+	strGrupaWhere = " (wpProdGrupa_wrt=0 and wpProdGrupa=0) "
+
+	dim strQuery
+	strQuery = "select nPriorytet*100,* from n5polrab where " + strKlientWhere + _
+	" and " + strDateWhere + " and " + strProdWhere +_
+	"union all select nPriorytet*100,* from n5polrab where  " + strKlientWhere + _
+	" and " + strDateWhere + " and " + strGrupaWhere
+
+	dim iLevel : iLevel = clng(0)
+	
+	do while not oGrupaProd is nothing
+		iLevel = iLevel + 1
+		strGrupaWhere = " (wpProdGrupa_wrt=TYPEID_N5GRUPAPRODUKTOW and wpProdGrupa=" + _
+			cstr(oGrupaProd.IdObj) + ") " 
+		
+		strQuery = strQuery + " union all select nPriorytet*100-" + cstr(iLevel) + _
+		",* from n5polrab where " + strKlientWhere + " and " + strDateWhere + _
+		" and " + strGrupaWhere
+
+		set oGrupaProd = oGrupaProd.pGrupaNadrzedna
+	loop	
+
+	strQuery = strQuery + " order by 1 desc , dDataOd desc, dDataDo desc "
+	
+	get_promocje_query = strQuery
+end function
+
+#comment '-----------------------------------------------------------
+#comment '-----------------------------------------------------------
+
+function computeprice_n(byref pKlient, byref pProdukt, byref pOpak, _
+			byval dData, byref pJednDocel, byval bResInNetto, _
+			byref curResult , byval nCena): computeprice_n = false
+
+	DEBUG_MESSAGE("computeprice_n")
+	
+	dim pfnInformation: set pfnInformation = nothing
+	on error resume next
+	set pfnInformation = getref("computepriceOnNewInfo")
+	on error goto 0
+
+	dim strPrzeliczenia
+	strPrzeliczenia = "Wszystkie przeliczenia bed¹ wykonywane w "
+	if (bResInNetto) then
+		strPrzeliczenia = strPrzeliczenia + "netto."
+	else
+		strPrzeliczenia = strPrzeliczenia + "brutto."
+	end if
+
+	computeprice_info pfnInformation, "Rozpoczynam wyszukiwanie promocji dla """ + pProdukt.strNazwa + """ i klienta """ + pKlient.strNazwa + """. " + strPrzeliczenia
+
+	'Pobieramt grupe produktu i grupe klienta
+	dim pGrupaProd
+	set pGrupaProd = pProdukt.pGrupaProd
+
+
+	dim strWalutaZrodlowa
+	strWalutaZrodlowa = pOpak.pWaluta.strNazwa
+
+	'Wyswietlamy wszystkie promocje, ktore dotycza danego klienta
+	'i produktu i znajduja sie w zadanej dacie
+	
+
+	dim pPromotionCursor
+	set pPromotionCursor = get_cursor_for_promotion(pProdukt,pProdukt.pGrupaProd,pKlient , dData)
+
+	'wyliczamy uniwersalna cene bazow¹ tzn. pobieramy
+	'z naszego opakowania. Na podstawie UCB wykonywane sa
+	'wszystkie obliczenia (rabaty)
+
+	dim curUCB
+	curUCB = get_n_cena (pOpak , nCena , bResInNetto)
+
+	dim pWalUCB
+	set pWalUCB = get_n_waluta_ceny(pOpak,nCena)
+
+	computeprice_info pfnInformation, "Cena bazowa wynosi " + trans_.afc.display.money(curUCB, strWalutaZrodlowa) + " i zosta³a pobrana " + _
+		" z opakowania """ + pOpak.strNazwa + """"
+
+	if (not pPromotionCursor.EOF ) then
+
+		'znalazlem promocje, ktore sa wazne dla danego produktu 
+		'i dla danego klienta - na podany dzien
+
+		'czy trafilismy juz na jakis rabat
+		dim bFirtRabat: bFirtRabat = true
+		
+		'iterujemy sie po naszych promocjach i dokonujemy
+		'odpowiednich obliczen - uwzgledniamy rabaty
+
+		dim n: n = 1
+		dim bContinue: bContinue = true
+		while (not pPromotionCursor.EOF and bContinue)
+
+			dim pPromotion
+			set pPromotion = trans_.getobj(TYPEID_N5POLRAB , clng(pPromotionCursor.fields("idobj").value)   )
+
+			'wynik jest zalezny od rodzaju udzielonej promocji
+			select case pPromotion.eTyp
+
+				'Jezli na szczycie wszystkich priorytetow
+				'trafilismy na cene koncowa netto lub 
+				'cene koncowa brutto to wlasnie ta cena
+				'zastapi nasza UCB pobrana z dostarczonego
+				'opakowania produktu
+				'
+				'jezeli trafilismy na taka cene podczas wyliczen
+				'rabatow nie interesuje juz nas ona. liczymy
+				'na podstawie UCB z opakowania
+
+				case 1
+					if (n=1) then
+						'Cena koñcowa netto
+						if (bResInNetto) then
+							curUCB = pPromotion.curCenaRab
+						else
+							curUCB = netto2brutto(pPromotion.curCenaRab, pProdukt.eVAT)
+						end if
+						set pWalUCB = pPromotion.polrab_pWalutaCeny
+
+						computeprice_info pfnInformation, "Ustalono cene koñcow¹ dla produktu " + trans_.afc.display.money(curUCB, strWalutaZrodlowa) + _
+								" z promocji """ + pPromotion.strNazwaPromocji + """"
+					end if 'n=1
+				
+				case 2
+					if (n=1) then
+						'Cena koñcowa brutto
+						if (bResInNetto) then
+							curUCB = brutto2netto(pPromotion.curCenaRab, pProdukt.eVAT)
+						else
+							curUCB = pPromotion.curCenaRab
+						end if
+						set pWalUCB = pPromotion.polrab_pWalutaCeny
+
+						computeprice_info pfnInformation, "Ustalono cene koñcow¹ dla produktu " + trans_.afc.display.money(curUCB, strWalutaZrodlowa) + _
+								" z promocji """ + pPromotion.strNazwaPromocji + """"
+					end if 'n=1
+
+				case 3
+					'Rabat wy³¹czny
+					'rabat ten wyliczamy tylko jezeli jest on
+					'pierwszy. wyliczenie tego rabatu powoduje
+					'zakonczenie obliczen - nastepne rabaty nie
+					'sa juz uwzgledniane
+					if (bFirtRabat) then
+						curUCB = rabat(curUCB, pPromotion.curCenaRab,trans_.var(GVAR_PRICE_PREC))
+						bContinue = false
+
+						computeprice_info pfnInformation, "Zastosowano rabat wy³¹czny na " + trans_.afc.display.money(pPromotion.curCenaRab, "%") + _
+								" z promocji """ + pPromotion.strNazwaPromocji + """. Cena po zastosowaniu " + _
+								" rabatu wynosi " + trans_.afc.display.money(curUCB, strWalutaZrodlowa)
+
+					end if
+
+				case 4
+					'Rabat addytywny
+					'zanaczamy iz wyliczylismy juz rabat - rabat
+					'wylaczny nie bedzie mogl byc juz wyliczony
+					bFirtRabat = false
+					curUCB = rabat(curUCB, pPromotion.curCenaRab,trans_.var(GVAR_PRICE_PREC))
+
+					computeprice_info pfnInformation, "Zastosowano rabat addytywny na " + trans_.afc.display.money(pPromotion.curCenaRab, "%") + _
+							" z promocji """ + pPromotion.strNazwaPromocji + """. Cena po zastosowaniu " + _
+							" rabatu wynosi " + trans_.afc.display.money(curUCB, strWalutaZrodlowa)
+
+			end select
+
+			n = n + 1
+			pPromotionCursor.movenext
+		wend 
+
+	end if
+
+
+
+
+
+
+	'przeliczamy nasza UCB na odpowiednia walute jezeli ktos tego chce
+	'czy pJednDocel<>nothing
+	if (not pJednDocel is nothing) then
+		if (not kantor(curUCB, pWalUCB, pJednDocel, CDate(dData), N5KURSWALUT_SPRZEDAZY, curUCB)) then
+			computeprice_info pfnInformation, "Nie dua³o siê przeliczyæ cenu na walute """ + pJednDocel.strNazwa + """"
+			exit function
+		end if
+
+		computeprice_info pfnInformation, "Przeliczono cenê na walute """ + pJednDocel.strNazwa + """" + _
+			". Cena po przeliczeniu wynosi " + trans_.afc.display.money(curUCB, pJednDocel.strNazwa)
+	end if
+
+	curResult = trans_.afc.convert.roundn(curUCB,trans_.var(GVAR_PRICE_PREC))
+	computeprice_n = true
+end function
+
+
+
+
+private function get_cursor_for_promotion(byval pProdukt , byval pGrupaProd , byval pKlient , byval dData)
+	set get_cursor_for_promotion = trans_.createadors( doc_.getmodule(60300).bquery_promotion_ado( pProdukt,pProdukt.pGrupaProd,pKlient , dData)  )
+end function
+
+
+
+
+
+
+
+function get_numer_ceny_by_zestaw(nZestaw)
+	if nZestaw < 7 then
+		get_numer_ceny_by_zestaw = 	nZestaw
+	else
+		dim nPriceSystem: nPriceSystem = getglobprofilelong(GLOBPROF_PRICE_SYSTEM)
+		if nPriceSystem = 0 then
+			nPriceSystem = clng(1)
+		end if
+		get_numer_ceny_by_zestaw = nPriceSystem
+	end if
+end function
+
+
+
+
+function get_n_cena( byval pOpak , byval nCena , byval bResInNetto)
+
+	nCena = get_numer_ceny_by_zestaw(nCena)
+
+	get_n_cena = pOpak.n5opakowanie_produktu_get_cena_n(nCena,bResInNetto)
+
+	get_n_cena = trans_.afc.convert.roundn(get_n_cena,trans_.var(GVAR_PRICE_PREC))
+	
+end function
+
+
+
+
+function get_n_waluta_ceny(byval pOpak,byval nCena):set get_n_waluta_ceny = nothing
+
+	nCena = get_numer_ceny_by_zestaw(nCena)
+
+	set get_n_waluta_ceny = pOpak.n5opakowanie_produktu_get_waluta_ceny_n(nCena)
+end function
+
+
+
+
+function computeprice_info(byref pfnInformation, byval strInfoText)
+	if (not pfnInformation is nothing) then
+		pfnInformation strInfoText
+	end if
+end function
+
+'**
+'function computepriceOnNewInfo(byval strInfoText)
+'	view_message1 4114, 0, strInfoText
+'end function
+
+
+
+
+
+
+
+function get_zamiennik(byval pProdukt)
+	set get_zamiennik = pProdukt
+end function
+
+
+#endif

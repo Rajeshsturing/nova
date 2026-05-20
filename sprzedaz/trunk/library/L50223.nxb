@@ -1,0 +1,247 @@
+'///////////////////////////////////////////////////////////////////
+'// (c)2002 NAVO Ltd.											  //
+'// Obsluga zdarzen dla stron dzialajacych na obiektach dzieciach //
+'// Spikowski Piotr												  //
+'///////////////////////////////////////////////////////////////////
+
+
+'-----------------------------------------------------------------------
+' Ten modol zawiera funkcje podstawowe np. list_fnew(), ...
+' Jezeli chcesz by wszystko dzialo sie zupelnie automatycznie to
+' uzywaj library 50224, ktora sama zrobi funkcje fnew a nie tylko
+' doda list_fnew itp.
+'-----------------------------------------------------------------------
+
+#ifndef LIBRARY_50223
+#define LIBRARY_50223
+
+#include "50203"
+
+
+#define NAVO_FETCH_NEXT			01
+#define NAVO_FETCH_PRIOR		02
+#define NAVO_FETCH_FIRST		03
+#define NAVO_FETCH_LAST			04
+#define NAVO_FETCH_CURRENT		05
+
+
+'Numer pola z lista w parent'cie, na ktorym dziala child (czyli
+'obiekt page_.root). Ustawiane z setListName
+dim PARENT_LIST_FLD
+
+
+'Pozycja w liscie - uzywane do symulacji kursora
+dim current_list_pos
+
+
+'------------------------------------------------------------------------
+' Ustaw nazwe pola listy - pochodzi z obiektu ojca - wolane przed
+' zrobieniem domodal dla strony z edycja child'a
+' i startowa pozycje na liscie - aktywny numer wiersza w liscie gdy
+' otwieramy z obiektem istniejacym lub nowym
+'------------------------------------------------------------------------
+function setListName(byval strFieldListName, byval nStartPos)
+
+	dim pTableDef
+	set pTableDef=doc_.stdobjdef.getobjdef( page_.root.parent.type )
+	
+	PARENT_LIST_FLD=CLng( pTableDef.getfieldindex(strFieldListName) )
+	current_list_pos=CLng( nStartPos )
+end function
+
+
+'------------------------------------------------------------------------
+' Zwraca obiekt parenta listy
+'------------------------------------------------------------------------
+function list_getParentList():set list_getParentList=nothing
+	'Dobieramy sie do parenta
+	dim pParent
+	set pParent=page_.root.parent.get_this
+
+	'Dobieramy sie do obiektu listy, do ktorego
+	'nalezymy
+	dim pList
+	set pList=pParent.field( PARENT_LIST_FLD )
+
+	set list_getParentList=pList
+end function
+
+'------------------------------------------------------------------------
+' Usuwamy obiekt page_.root z listy w parent'cie - wolac wolno tylko
+' dla nowych!
+'------------------------------------------------------------------------
+function list_DeleteMeFromList(): list_DeleteMeFromList=false
+	'Dobieramy sie do obiektu listy, do ktorego
+	'nalezymy
+	dim pList : set pList=list_getParentList()
+
+	dim pListElem, iElemIndex: iElemIndex=1
+	for each pListElem in pList
+		if (pListElem.idobj=page_.root.idobj) then
+			
+			pList.Delete iElemIndex
+
+			current_list_pos=(iElemIndex - 1)
+			list_DeleteMeFromList=true
+		end if
+		iElemIndex=iElemIndex+1
+	next
+
+end function
+
+'------------------------------------------------------------------------
+' Przesuwamy sie na obiekt o podanej pozycji w liscie
+'------------------------------------------------------------------------
+function list_FetchScroll(byval nFetchOrientation):list_FetchScroll=false
+
+	'Dobieramy sie do obiektu listy, do ktorego
+	'nalezymy
+	dim pList : set pList=list_getParentList()
+
+	'nowa pozycja
+	dim nNewIndex : nNewIndex = current_list_pos
+
+	select case nFetchOrientation
+		case NAVO_FETCH_NEXT
+			nNewIndex = current_list_pos + 1
+		case NAVO_FETCH_PRIOR
+			nNewIndex = current_list_pos - 1
+		case NAVO_FETCH_FIRST
+			nNewIndex = 1
+		case NAVO_FETCH_LAST
+			nNewIndex = pList.count()
+		case NAVO_FETCH_CURRENT
+			'do nothing
+	end select
+
+	'normalizacja
+	if nNewIndex > pList.count() then
+		nNewIndex = pList.count()
+	end if
+	if nNewIndex < 1 then
+		nNewIndex = 1
+	end if
+
+	'sprawdzamy czy istnieje pozycja do ktorej chcemy sie przesunac
+	if (not pList.exists( nNewIndex )) then
+			'gdy pusta lista (przeanalizuj warunki normalizacji powyzej) to wychodzimy
+			page_.goback
+		exit function
+	end if
+
+	'Zmieniamy root'a 
+	set page_.root = nothing
+	'Ustawiamy nowy obiekt jako ten pobrany z listy
+	set page_.root = pList.Get( nNewIndex )
+
+	'Zapamietaj obecna pozycje
+	current_list_pos=nNewIndex
+	
+	page_.enableedit=true
+	list_FetchScroll=true
+end function
+
+function list_fnew(): list_fnew=false
+
+	
+
+	'Dobieramy sie do obiektu listy, do ktorego
+	'nalezymy
+	dim pList : set pList=list_getParentList()
+
+	'Usuwamy istniejacy obiekt
+	set page_.root = nothing
+	
+	'Ustawiamy nowy obiekt jako ten pobrany z listy
+	set page_.root = pList.AddNew()
+
+	page_.enableedit=true
+	list_fnew=true
+end function
+
+function list_fback()
+	page_.goback()
+	list_fback=true
+end function
+
+function list_fopen()
+	page_.cmdenabled CMD_FIRSTINCURSOR, true
+	page_.cmdenabled CMD_PREVINCURSOR, true
+	page_.cmdenabled CMD_NEXTINCURSOR, true
+	page_.cmdenabled CMD_LASTINCURSOR, true
+	page_.cmdenabled CMD_DELETEFORM, true
+
+	page_.enableedit=true
+
+	list_fopen=true
+end function
+
+function list_fsave()
+	list_fsave=true
+	page_.enableedit=true
+	page_.goback()
+end function
+
+function list_fdelete(): list_fdelete=false
+	if doc_.getmodule(60111).message_box(trans_.var(GVAR_APPLICATION), "Czy na pewno usun¹æ pozycjê listy ?", vbQuestion,vbYesNo) <> vbYes then
+		exit function
+	end if
+
+	list_fdelete=list_DeleteMeFromList()
+	if (list_fdelete) then
+		list_FetchScroll NAVO_FETCH_CURRENT
+	end if
+end function
+
+function list_fnext()
+	list_fnext=list_FetchScroll( NAVO_FETCH_NEXT )
+end function
+
+function list_fprev()
+	list_fprev=list_FetchScroll( NAVO_FETCH_PRIOR )
+end function
+
+function list_ffirst()
+	list_ffirst=list_FetchScroll( NAVO_FETCH_FIRST )
+end function
+
+function list_flast()
+	list_flast=list_FetchScroll( NAVO_FETCH_LAST )
+end function
+
+'wspólna zmienna dla strony rodzica i dziecka
+'dim pBC
+
+
+function std_pozycja_zaawansowane_hli(byref pHLI)
+
+	dim nRow: nRow=CLng(pHli.prop(PROPC_ROW))
+	dim nChildPage : nChildPage = CLng(pHli.prop(1))
+	dim strListName : strListName = cstr(pHli.prop(2))
+
+	if pHli.exists(3) then
+		trans_.var(APPVAR_REJESTR_TYP) = clng(pHli.prop(3))
+	end if
+
+	dim pParent:set pParent=page_.root
+
+	dim pChild
+	if pParent.field(strListName).exists(nRow) then
+		set pChild=pParent.field(strListName).get(nRow)
+	else
+		set pChild=pParent.field(strListName).addnew()
+	end if
+
+	dim pPageZaawansowaneHLI
+	set pPageZaawansowaneHLI = doc_.createhlistr("varCmd=CMD_OPEN_WIZARD_PAGE varDestPage="+cstr(nChildPage)+" varObject=" + CStr(pChild.IdObj))
+	dim pPageZaawansowane : set pPageZaawansowane=doc_.getpagehli(pPageZaawansowaneHLI)
+	if pPageZaawansowane is nothing then
+		exit function
+	end if
+	'ustawn na jakiej liscie opiera sie child (form child'a)
+	pPageZaawansowane.setListName strListName, nRow
+
+	pPageZaawansowane.domodalauto
+end function
+
+#endif

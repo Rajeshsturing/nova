@@ -1,0 +1,292 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1240.h"
+#include "h1231.h"
+#include "h1234.h"
+
+
+
+
+#comment Co by includeo'wac tylko i wyłącznie to co potrzebne
+#define INCLUDE_BULID_CHOICELIST_ROW_PRODUKT_ADVANCED
+-->
+
+<page>
+<config>
+<script>
+<![CDATA[
+'fire_choice_list
+#include "50200"
+
+'getuserprofile
+#include "50203"
+
+'BulidProdRow_Adv
+#include "50634"
+
+'zamiennik
+#include "50621"
+
+'messagebox
+#include "50122"
+
+'funkcje wspomagające edycję produktów,opakowań etc.
+
+'uniwersalny wybór produktu z opcjonalnym filtrowaniem (np. tylko usługi) - zwraca idObj lub 0
+private function choose_produkt_id(byref strWhere,byval strSrchFld) : choose_produkt_id = 0
+	choose_produkt_id = fire_choice_list(TYPEID_N5PRODUKT,"Wybór produktu",strSrchFld,strWhere,strSrchFld,"")
+end function
+
+'uniwersalny wybór produktu z opcjonalnym filtrowaniem - zwraca obiekt lub nothing
+function choose_produkt_obj(byref strWhere , byval strSrchFld , byref lp) : set choose_produkt_obj = nothing
+	lp = 0
+	dim idProdukt : idProdukt = choose_produkt_id(strWhere,strSrchFld)
+	dim lpOpak
+	if idProdukt > 0 then
+		set choose_produkt_obj=trans_.getobj(TYPEID_N5PRODUKT, idProdukt)
+	else ' jezeli mniejsze od zera to znaczy, ze klieknelismy na opakowanie		
+
+		format_idprod_pl idProdukt , lp
+		if idProdukt > 0 then
+			set choose_produkt_obj=trans_.getobj(TYPEID_N5PRODUKT, idProdukt)
+		end if
+	end if
+end function
+
+'wybiera produkt i podstawia do pola obiektu - zwraca czy wybór został dokonany (idobj)
+function choose_produkt_field(byref pObject,byref strFldName,idCursor,byval strSrchFld)
+	dim pCursDef : set pCursDef = doc_.stdobjdef.getobjdef(TYPEID_N5PRODUKT).cursor(idCursor)
+	dim strWhere : strWhere = trans_.applyvars(pCursDef.where)
+	dim lp
+	dim pProdukt : set pProdukt = choose_produkt_obj(strWhere,strSrchFld,lp)
+	if pProdukt is nothing then
+		choose_produkt_field = clng(0)
+	else
+		set pObject.field(strFldName) = pProdukt
+		choose_produkt_field = pProdukt.idObj
+	end if
+end function
+
+
+
+#ifndef APPCONFIG_GRID_CHOOSE_PROD_MODE_2
+'wybiera produkt i podstawia do pola elementu listy - zwraca  czy wybór został dokonany (bool
+'ostatni parametr pDok pozwala na wybór tylko dostępnych produktów (Komopozyty)
+
+function choose_produkt_list_dost(byref pList,byval nRow,byref strProduktFldName,idCursor,byval strSrchFld , byval strProdOrg, byval pDok, bTylkoDoSprzed)
+	set choose_produkt_list_dost = nothing
+
+	dim pCursDef : set pCursDef = doc_.stdobjdef.getobjdef(TYPEID_N5PRODUKT).cursor(idCursor)
+	dim strWhere : strWhere = trans_.applyvars(pCursDef.where)
+  
+  if not pDok is nothing then
+    dim pProdukt_ShowDost : set pProdukt_ShowDost = getuserprofileObj(USERPROF_SHOW_PROD_DOST)
+    if pProdukt_ShowDost.wartosc = "1" then
+      dim idMag : idMag = 0 
+      'pobierz id magazynu -> gdy ustawiono (tylko dokumenty magazynowe)
+      if pDok.type = TYPEID_N5DOKMAG then
+        if not pDok.pMagZrod is nothing then
+          idMag = pDok.pMagZrod.idobj
+        end if
+      end if  
+      if idMag > 0 then
+        strWhere = strWhere + " and n5produkt.idobj in (select gms_pProd from n5gmstan where gms_pMag = " + CStr(idMag) +_
+                              " group by gms_pProd having sum(gms_curIlosc) > 0) "
+      else
+        strWhere = strWhere + " and n5produkt.idobj in (select gms_pProd from n5gmstan group by gms_pProd " +_
+                              " having sum(gms_curIlosc) > 0) "      
+      end if
+    end if
+  end if
+
+#ifdef _AMPLUS
+	strWhere = strWhere + " and t_1.lp = 1"
+#endif
+#ifdef ENABLE_DB11_D
+  #ifdef _ALMA_TREND
+    if bTylkoDoSprzed then
+      strWhere = strWhere + " and n5produkt.prod_cDoSprzed = '1' "
+    end if
+  #endif
+#endif
+
+	dim pM43009 : set pM43009 = doc_.getmodule(43009)
+	pM43009.prepare_multi_selection TYPEID_N5PRODUKT,"Wybór produktu", strWhere, strSrchFld
+
+	dim oNXArray : set oNXArray = pM43009.run_multi_browser()
+  
+	if not oNXArray is nothing then
+		dim idProdukt
+		for each idProdukt in oNXArray
+
+#ifndef APPCONFIG_PRODUKT_ORG
+			strProdOrg = ""
+#endif			
+
+			dim pProdukt:set pProdukt=trans_.getobj(TYPEID_N5PRODUKT, idProdukt)
+			dim pZamiennik:set pZamiennik = nothing
+
+
+				set pZamiennik = FindZamiennik(pProdukt)
+
+
+			dim pObject
+			if pList.exists(nRow) then
+				set pObject = pList.get(nRow)
+			else
+				set pObject = pList.addnew()
+			end if
+
+			if pObject is nothing then
+				choose_produkt_list_dost = clng(0)
+				exit function
+			end if
+
+
+			if not pZamiennik is nothing then
+				if pZamiennik.idobj <> pProdukt.idobj  then
+					if MessageBox ("Dla produktu : "+ pProdukt.text +", znaleziono zamiennik : " + pZamiennik.text + ". Wstawić na pozycje?", "Zamienniki", vbYesNo, vbQuestion) = vbYes then		
+						set pObject.field(strProduktFldName) = pZamiennik
+							if strProdOrg<> "" then
+							set pObject.field(strProdOrg) = pProdukt 
+							end if
+					else
+						set pObject.field(strProduktFldName) = pProdukt
+					end if
+
+					
+				else
+					set pObject.field(strProduktFldName) = pProdukt
+				end if
+			else
+				set pObject.field(strProduktFldName) = pProdukt													
+			end if
+
+			nRow = nRow + 1
+		next
+		set choose_produkt_list_dost = oNXArray
+	end if
+
+end function
+
+
+#else
+
+
+'alternatywny sposób wybierania produktów na pozycje listy
+'wyswietla sie lista produktow, po wybraniu produktu dodawana jest
+'pozycja i od razu edytowana. i tak w kółko
+function choose_produkt_list(byref pList,byval nRow,byref strProduktFldName,idCursor,byval strSrchFld,byref parent_page):choose_produkt_list = 0
+
+	dim pCursDef : set pCursDef = doc_.stdobjdef.getobjdef(TYPEID_N5PRODUKT).cursor(idCursor)
+	dim strWhere : strWhere = trans_.applyvars(pCursDef.where)
+
+	dim g_choicelist
+	set g_choicelist = doc_.getmodule(43001)
+
+	
+
+	if strSrchFld = "strIndeks" then
+
+		init_configurator_profile false
+		g_choicelist.prepare_choice_list TYPEID_N5PRODUKT,"Wybór produktu",strSrchFld,strWhere,"","", getref("BulidProdRow_Adv")
+
+	else
+
+		init_configurator_profile true
+		g_choicelist.prepare_choice_list TYPEID_N5PRODUKT,"Wybór produktu",strSrchFld,strWhere,"","", getref("BulidProdRow_Adv")
+
+	end if
+
+	g_choicelist.set_handler_function(getref("add_pozycja"))
+
+	set g_pList = pList
+	set g_pParentPage = parent_page
+	g_nRow = nRow
+
+	g_choicelist.domodalauto()	
+	set choose_produkt_list = nothing
+end function
+
+dim g_pList:set g_pList = nothing
+dim g_pParentPage:set g_pParentPage = nothing
+dim g_nRow
+dim g_bAdd:g_bAdd = false
+
+
+
+
+function return_id(pHli):return_id = false	
+	pHli.prop(10) = pHli.prop(1)
+end function
+
+
+
+
+function add_pozycja(byref pHli):add_pozycja = false
+
+	dim pPozycja
+
+	if g_pList.exists(g_nRow) then
+		if g_bAdd then
+			g_nRow = g_nRow + 1
+			set pPozycja = g_pList.insertnew(g_nRow)
+		else
+			set pPozycja = g_pList.get(g_nRow)
+			g_bAdd = true
+		end if		
+	else
+		set pPozycja = g_pList.addnew
+		g_nRow = g_nRow + 1
+	end if
+
+
+	pPozycja.pProdukt = trans_.getobj(TYPEID_N5PRODUKT , clng(pHli.prop(1)))
+	if pHli.exists(2) then
+		' to jest lp
+		set pPozycja.pOpak = pPozycja.pProdukt.listOpakowania.get(pHli.prop(2))			
+	end if
+
+
+	dim destPage
+	select case pPozycja.type
+		case TYPEID_N5POZSPRZEDAZ 
+			destPage = clng(PAGE_FORM_POZSPRZEDAZ)
+		case TYPEID_N5POZDOKMAG
+			destPage = clng(PAGE_FORM_POZDOKMAG)
+		case TYPEID_N5POZZAMOWIENIE
+			destPage = clng(PAGE_FORM_POZZAMOWIENIE)
+		case TYPEID_N5POZZAKUP
+			destPage = clng(PAGE_FORM_POZZAKUP)
+		case else
+#ifdef _DEBUG
+			trans_.message 1002 , 0 , "nie znana strona dla obiektu typu " + cstr(pPozycja.type)
+#endif
+			exit function									
+	end select
+	dim pPageZaawansowane : set pPageZaawansowane=doc_.getpagehli(doc_.createhlistr("varCmd=CMD_OPEN_WIZARD_PAGE varDestPage=" + cstr(destPage) + " varObject=" + cstr(pPozycja.idobj)))
+	'pPageZaawansowane.root.pProdukt = trans_.getobj(TYPEID_N5PRODUKT , clng(pHli.prop(1)))
+	pPageZaawansowane.FnewLikeFsave
+	pPageZaawansowane.domodalauto()
+
+	g_pParentPage.updateview
+
+	add_pozycja = true
+end function
+
+
+
+#endif
+
+
+]]>
+</script>
+</config>
+	<body>
+	</body>
+</page>

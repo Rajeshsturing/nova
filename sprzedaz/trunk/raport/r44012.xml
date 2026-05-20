@@ -1,0 +1,687 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1001.h"
+#include "h1004_cmdid.h"
+#include "h1200.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1240.h"
+#include "h1250_raport_macros.h"
+#include "50519"
+
+#define CREATOR_TITLE  Fakturowanie zaległych WZ
+
+#define CTRLID_ROW_BUTTONS      101
+#define CTRLID_RESULT_TABLE      102
+#define CTRLID_REDIRECT_CHKBOX  103
+#define CTRLID_CHOOSE_BUTTON    104
+#define CTRLID_ACTION_TABLE     105
+#define CTRLID_REALIZE_BUTTON   106
+#define CTRLID_ROW_CHECKBOX     107
+
+#define PROP_ROW_IDENT           201
+#define PROP_REC_NUM             202
+
+#define CELL_CHECKBOX    1
+#define ELEM_CHECKBOX    1
+
+#comment pierwsza kolumna
+#define KOL_FIRST              2
+#comment ostatnia kolumna
+#define KOL_LAST               7
+#comment numer parametru Okres rozliczenia
+#defin PARAM_OKRES_ROZLICZENIA 4
+
+
+-->
+<page style='STYLE_PAGE'>
+  <config>
+    <title>
+  CREATOR_TITLE
+  #ifdef _DEBUG
+  [THIS_FILE]
+  #endif
+  </title>
+    <script>
+<![CDATA[
+
+#include "50518"
+#include "50211" 
+#include "50200"
+#include "50122"
+#include "50101"
+#include "50226"
+
+'choose_rejestr_dok
+#include "50517"
+
+'checkUserDirectory
+#include "50212"
+
+'cBuildQuery,cRepDict,cDrawReport
+#include "50526"
+
+dim strSQL, g_oRS
+'wiersz z nagłowkiem tabeli
+dim iRowTabHead
+'zaznacz/odznacz
+dim bChooseAll : bChooseAll = false
+'okres fakturowania False = Miesiąc, True = Tydzień
+dim g_bOkres
+'rejestr dokumentów dla faktury
+dim g_idRejestr: g_idRejestr = clng(0)
+
+
+'-----------------
+'rekord zaznaczony
+'-----------------
+class cSimpleRecord
+  public m_idKlient        'idobj klienta
+  public m_idWZ            'idobj WZ
+  public m_nMiesiac        'numer miesiąca wystawienia WZ
+  public m_nTydzien        'numer tygodnia wystawienia WZ  
+  public m_dDataWyst       'data wystawienia faktury
+  
+  public sub class_initialize()
+    m_idKlient = clng(0)
+    m_idWZ = clng(0)
+    m_nMiesiac = clng(0)
+    m_nTydzien = clng(0)
+    m_dDataWyst = trans_.afc.globals.nulldate()
+  end sub
+  
+  public sub setDataObj(byval idKlient, byval idWZ, byval dDataWyst)
+    m_idKlient = idKlient
+    m_idWZ = idWZ   
+    m_dDataWyst = dDataWyst
+  end sub
+end class
+
+
+'-----------------------------------------------
+'standardowa funkcja wolana przy otwarciu strony
+'-----------------------------------------------
+function fopen : fopen = false
+
+  if not HARUI(CMDID_WIZZARD_WZ_TO_FVAT) then
+    trans_.message 7000, 0, "Nie posiadasz uprawnień do kreatora fakturowania zaległych WZ."
+    exit function
+  end if
+
+  'inicjalizacja obiektów
+  initialObjects 
+ 
+  fRefresh
+
+  fopen = true
+end function
+
+'------------------------------------------------
+'standardowa funkcja wolana na przycisk 'odswiez'
+'------------------------------------------------
+function fRefresh
+  dim pModRapEngine : set pModRapEngine = doc_.getmodule(60108)
+
+  dim pParamArray : set pParamArray = getDefaultParam()
+  if pModRapEngine.show_raport_param_dialog(pParamArray,"CREATOR_TITLE") = 0 then
+    exit function
+  end if
+  dim pPerforming : set pPerforming = doc_.performing("Trwa przygotowanie danych...")
+  
+  'wyczyść zaznaczone elementy
+  g_oRepDict.removeAll   
+  'przycisk zaznacz/odznacz wszystko
+  bChooseAll = false
+  'okres fakturowania domyślnie Miesiąc
+  g_bOkres = false  
+  
+  fillResults pModRapEngine,pParamArray
+end function
+
+'----------------------------------------
+'tworzenie tablicy parametrow dla raportu
+'----------------------------------------
+function getDefaultParam()
+  dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+  
+  'filtr daty wystawienia dokumentu sprzedazy
+  pParamArray.add doc_.afc.rap.param.new_date_range("Data wystawienia").bindexpr("dm.dDataWyst")  
+  
+  'filtr rejestru dokumentów sprzedaży
+  dim pParam: Set pParam= doc_.afc.rap.param.new_choice("Rejestr").bindexpr("dm.pRejestrDok")
+  doc_.afc.rap.param.init_on_query pParam, trans_ ,_
+    "select strNazwa , idobj from n5rejestrdok where eTyp in (N5REJESTRDOK__WZ) order by strNazwa "
+  pParamArray.add pParam  
+  
+  'filtr nazwy/indeksu klienta
+  pParamArray.add doc_.afc.rap.param.new_text("Indeks klienta").bindexpr("k.strIndeks") 
+  pParamArray.add doc_.afc.rap.param.new_text("Nazwa klienta").bindexpr("k.strNazwa")
+  
+  'okres fakturowania
+  dim pParamOkres : set pParamOkres = doc_.afc.rap.param.new_choice("Okres fakturowania").bindexpr("k.strTel3")
+  with pParamOkres
+    .multiple = false
+    .names.add "Miesiąc"
+    .values.add 1
+    .selected.add true
+    .names.add "Tydzień"
+    .values.add 2
+    .selected.add false   
+  end with  
+  pParamArray.add pParamOkres
+
+  set getDefaultParam = pParamArray
+end function
+
+'--------------------
+'wypelnianie wynikami
+'--------------------
+function fillResults(byref pModRapEngine, byref pParamArray)
+  strSQL = "set datefirst 1;select 'k_nazwa'=k.strNazwa,'k_indeks'=k.strIndeks,'k_idobj'=k.IdObj,'dm_idobj'=dm.IdObj,'dm_nrdok'=dm.strNrDok, " + vbNewLine +_
+           "'dm_datawyst'=dm.dDataWyst,'week'=datepart(wk,dm.dDataWyst),'month'=datepart(m,dm.dDataWyst), " + vbNewLine +_
+           "'first_day_of_week'=(DATEADD(dd, 1 - DATEPART(dw, dm.dDataWyst), dm.dDataWyst)), " + vbNewLine +_
+           "'last_day_of_week'=(DATEADD(dd, 1 - DATEPART(dw, dm.dDataWyst) + 6, dm.dDataWyst)), " + vbNewLine +_
+           "'first_day_of_month'=dateadd(m, datediff(m, 0, dm.dDataWyst), 0), " + vbNewLine +_
+           "'last_day_of_month'=dateadd(m, datediff(m, -6, dm.dDataWyst), -1) " + vbNewLine +_
+           "from n5dokmag dm " + vbNewLine +_
+           "inner join n5rejestrdok r on dm.pRejestrDok = r.IdObj " + vbNewLine +_
+           "inner join n5klient k on dm.pKlient = k.IdObj " + vbNewLine +_
+           "where r.eTyp = N5REJESTRDOK__WZ and wrefDokHandl_wrt <> TYPEID_N5SPRZEDAZ " + vbNewLine +_
+           "and %1 and %2 and %3 and %4 and %5 " + vbNewLine +_
+           "order by k.strNazwa,dm.dDataWyst"
+     
+  strSQL = pModRapEngine.query_apply_actual_param(strSQL,pParamArray)
+
+  'okres rozliczenia
+  g_bOkres = pParamArray.value(PARAM_OKRES_ROZLICZENIA).selected.value(1)
+  dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(page_.ctrl(CTRLID_RESULT_TABLE)).removeall
+  
+  set g_oRS = trans_.createadors(strSQL)
+  if g_oRS.RecordCount > 0 then
+    'nagłówek strony
+    drawButtons
+    drawHeader pTB
+    
+    'numery kolejnych rekordów
+    dim iRecNr : iRecNr = 1
+    do while not g_oRS.EOF
+      buildRekord pTB,iRecNr
+      g_oRS.MoveNext
+      iRecNr = iRecNr + 1
+    loop
+    
+    'przycisk
+    drawActionTable
+  else
+    pTB.newrow
+    pTB.row.styleitem = STYLE_TABLE_HEADER
+    pTB.row.fontsize = 4
+    pTB.newcell.addtext "Brak danych spełniających podane kryteria"
+  end if
+           
+end function
+
+'---------------------------------
+'przycisk zaznacz/odznacz wszystko
+'---------------------------------
+sub drawButtons
+  dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(page_.ctrl(CTRLID_ROW_BUTTONS)).removeall
+  pTB.newrow.newcell
+  dim pNewHli
+
+  'button zaznacz/odznacz
+  set pNewHli = doc_.createhli()
+  pNewHli.prop(GVAR_FUNCTIONHLI) = "chooseAll"
+  pNewHli.prop(PROP_ROW_IDENT) = pTB.row.ident    
+  pTB.addctrl CTRL_TYPE_BUTTON, -1
+  with pTB.element
+    .customredirect = clng(CTRLID_CHOOSE_BUTTON)
+    .transfer = page_.createtransfer("custom")
+    set .hli = pNewHli
+    .size = 12
+    .styleitem = STYLE_BUTTON
+  end with  
+  pTB.cell.align = ALIGN_LEFT
+
+end sub
+
+'------------------------
+'zaznacz/odznacz wszystko
+'------------------------
+function chooseAll(pHLI)
+  if bChooseAll then
+    bChooseAll = false
+  else
+    bChooseAll = true
+  end if
+  chooseAllPos bChooseAll
+end function
+
+'-----------------------------------------------------------
+'zaznacza/odznacza wszystkie pozycje w zależności od bOption
+'-----------------------------------------------------------
+function chooseAllPos(byval bOption)
+  dim oRow : set oRow = page_.ctrl(clng(iRowTabHead))
+  set oRow = oRow.nextelement
+  dim nIdWz, strValue
+  do while not oRow is nothing
+    if not oRow.userprop is nothing then
+      nIdWz = oRow.userprop.prop(PROP_ROW_IDENT)
+      'dodaj/usuń ze słownika
+      strValue = oRow.cell(CELL_CHECKBOX).element(ELEM_CHECKBOX).value
+      if bOption then
+        if strValue = "0" then
+          g_oRepDict.add nIdWz, nIdWz
+          strValue = "1"
+        end if
+      else
+        if strValue = "1" then
+          g_oRepDict.removeDictObj nIdWz
+          strValue = "0"
+        end if
+      end if
+      oRow.cell(CELL_CHECKBOX).element(ELEM_CHECKBOX).value = strValue
+      'kolorowanie
+      changeRowColor oRow, strValue
+    end if 
+    set oRow = oRow.nextelement
+  loop
+end function
+
+'---------------
+'naglówek tabeli
+'---------------
+function drawHeader(byval pTB)
+  pTB.newrow
+  pTB.row.styleitem = STYLE_TABLE_HEADER
+  pTB.row.fontsize = 4
+  pTb.newcell
+  pTB.newcell.addtext "Lp"
+  pTB.newcell.addtext("Klient").cell.width = clng(8000)  
+  pTB.newcell.addtext "Data wystawienia"
+  pTB.newcell.addtext("Numer dokumentu").cell.width = clng(4000)
+  
+  'wiersz z nagłowkiem tabeli
+  iRowTabHead = pTB.row.ident  
+end function
+
+'-------------------------
+'wypisanie jednego rekordu
+'-------------------------
+function buildRekord(byref pTB, byval iRecNr)
+    
+  'idobj wyswietlanego dokumentu sprzedazy  
+  dim iIdObj : iIdObj = clng(g_oRS("dm_idobj"))
+ 
+  pTB.newrow
+  'ustawienie właściwości dla wiersza
+  set pTB.row.userprop = doc_.createhli()
+  pTB.row.userprop.prop(PROP_ROW_IDENT) = iIdObj
+  pTB.row.userprop.prop(PROP_REC_NUM) = iRecNr
+  
+  'checkbox 
+  dim pCheckBox
+  pTB.newcell
+  pTB.addctrl CTRL_TYPE_CHECKBOX,-1
+  set pCheckBox = pTB.element
+  with pCheckBox
+    .customredirect = clng(CTRLID_ROW_CHECKBOX)
+    .transfer = page_.createtransfer("custom")
+    .border = 0
+  end with
+  pTB.element.addnew CTRL_TYPE_STATIC, -1
+  
+  pTB.row
+  pTB.newcell.addtext(cstr(iRecNr)).cell.align=ALIGN_RIGHT
+  dim strHLIKlient: strHLIKlient = doc_.afc.convert.Formatter("OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5KLIENT," + cstr(g_oRS("k_idobj")) + ",USAGE_VIEW)").done()
+  pTB.newcell.addtexthli cstr(g_oRS("k_nazwa")),doc_.createhlistr(strHLIKlient)
+  pTB.newcell.addtext(doc_.afc.display.fulldate(g_oRS("dm_datawyst")))
+  dim strHLI: strHLI = doc_.afc.convert.Formatter("OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5DOKMAG," + cstr(iIdObj) + ",USAGE_VIEW)").done()
+  pTB.newcell.addtexthli cstr(g_oRS("dm_nrdok")),doc_.createhlistr(strHLI)
+
+  'właściwości całego wiersza
+  pTB.row.fontsize = 3
+  if iRecNr mod 2 = 0 then
+    pTB.row.backcolor = ROW_COLOR
+  end if
+end function
+
+'--------------------------------------------
+'ustawia kolor dla wiersza w zależności od LP
+'--------------------------------------------
+function setRowColor(iLP)
+  if iLP mod 2 = 0 then
+    setRowColor = ROW_COLOR
+  else
+    setRowColor = WHITE_COLOR
+  end if   
+end function
+
+'-------------------
+'kolorowanie wiersza
+'-------------------
+sub changeRowColor(byref oRow, byval newValue)
+  if newValue = "1" then
+    'wiersz na żółto
+    oRow.backcolor = YELLOW_COLOR
+  else
+    'usuń żółty kolor
+    if oRow.userprop.exists(PROP_REC_NUM) then
+      dim iLP : iLP = oRow.userprop.prop(PROP_REC_NUM)
+      oRow.backcolor = setRowColor(iLP)
+    end if
+  end if
+end sub
+
+'------------
+'tabela akcji
+'------------
+sub drawActionTable
+  dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(page_.ctrl(CTRLID_ACTION_TABLE)).removeall
+  'przyciski
+  pTB.newrow.newcell
+  dim giveButton : set giveButton = new cButton
+  giveButton.newButton pTB, CTRLID_REALIZE_BUTTON, "createFVAT", "Utwórz fakturę", 8, ALIGN_LEFT, false
+  pTB.cell.align = ALIGN_RIGHT
+  pTB.cell.colspan = 4
+end sub 
+
+'------------------------------
+'funkcja tworząca faktury z WZ
+'------------------------------
+function createFVAT: createFVAT = false
+
+  dim oRecArray : set oRecArray = nx_.new_array()
+  dim oFvatArray : set oFvatArray = nx_.new_array()
+  dim oSimRec: set oSimRec = nothing
+  dim nIdKlient, nIdWZ, nIdFvat
+  dim pPerf: set pPerf = doc_.performing("Trwa generowanie dokumentów sprzedaży...")
+  
+  g_oRS.movefirst
+  do while not g_oRS.EOF
+    nIdWZ = clng(g_oRS("dm_idobj").value)
+    if g_oRepDict.exists(nIdWZ) then    
+      nIdKlient = clng(g_oRS("k_idobj").value)
+    
+      if not g_bOkres then
+        'rozliczenie miesięczne
+        set oSimRec = new cSimpleRecord 
+        oSimRec.setDataObj nIdKlient, nIdWZ, cdate(g_oRS("last_day_of_month").value)
+        oSimRec.m_nMiesiac = clng(g_oRS("month").value)
+      
+        if oRecArray.count = 0 then
+          'pierwszy element
+          oRecArray.add oSimRec
+        else
+          'gdy zmieni się klient lub miesiąc
+          if (oSimRec.m_idKlient <> oRecArray(oRecArray.count -1).m_idKlient) or (oSimRec.m_nMiesiac <> oRecArray(oRecArray.count -1).m_nMiesiac) then
+            'utwórz fakturę
+            nIdFvat = CreateDokHandl(oRecArray)
+            
+            'zapamiętaj jej IdObj dla potwierdzenia
+            if nIdFvat > clng(0) then
+              oFvatArray.add nIdFvat
+            end if
+          
+            'wyczyść tabelę
+            set oRecArray = nx_.new_array()          
+          end if
+          oRecArray.add oSimRec
+        end if
+      
+      else
+        'rozliczenie tygodniowe
+        set oSimRec = new cSimpleRecord 
+        oSimRec.setDataObj nIdKlient, nIdWZ, cdate(g_oRS("last_day_of_week").value)
+        oSimRec.m_nTydzien = clng(g_oRS("week").value)
+      
+        if oRecArray.count = 0 then
+          'pierwszy element
+          oRecArray.add oSimRec
+        else
+          'gdy zmieni się klient lub tydzień
+          if (oSimRec.m_idKlient <> oRecArray(oRecArray.count -1).m_idKlient) or (oSimRec.m_nTydzien <> oRecArray(oRecArray.count -1).m_nTydzien) then
+            'utwórz fakturę
+            nIdFvat = CreateDokHandl(oRecArray)
+          
+            'zapamiętaj jej IdObj dla potwierdzenia
+            if nIdFvat > clng(0) then
+              oFvatArray.add nIdFvat
+            end if
+          
+            'wyczyść tabelę
+            set oRecArray = nx_.new_array()          
+          end if
+          oRecArray.add oSimRec
+        end if        
+      
+      end if   
+    end if      
+    g_oRS.MoveNext
+    
+  loop  
+  
+  'ostatnia faktura
+  if oRecArray.count > 0 then
+    nIdFvat = CreateDokHandl(oRecArray)
+    'zapamiętaj jej IdObj dla potwierdzenia
+    if nIdFvat > clng(0) then
+      oFvatArray.add nIdFvat
+    end if
+  end if
+  
+  set pPerf = nothing  
+  
+  'pokaż utworzone dokumenty
+  if oFvatArray.upper_index >= clng(0) then
+    dim pMsgPage: set pMsgPage = doc_.getmodule(PAGE_MODULE_CHECK_FAKTUROWANIE_WZ)
+    pMsgPage.buildPotw oFvatArray
+  end if
+end function
+
+'----------------------------------
+'tworzy fakturę vat na podstawie WZ
+'----------------------------------
+function CreateDokHandl(byref oRecArray): CreateDokHandl = clng(0)
+  if g_idRejestr = clng(0) then
+    g_idRejestr = choose_rejestr_dok("N5REJESTRDOK_FAKT_SP,N5REJESTRDOK_WDT,N5REJESTRDOK_FAKT_EXP,N5REJESTRDOK_PARAGON", true, "Wybierz rejestr dokumentów")
+  end if
+  
+  if g_idRejestr <= 0 then
+    exit function
+  end if
+  trans_.var(APPVAR_REJESTR_DOKUMENTOW) = g_idRejestr
+
+  dim pFaktura: set pFaktura = trans_.newobj(TYPEID_N5SPRZEDAZ)
+  pFaktura.dDataWyst = oRecArray(0).m_dDataWyst
+  pFaktura.dDataSprzed = pFaktura.dDataWyst
+  set pFaktura.pKlient = trans_.getobj(TYPEID_N5KLIENT,oRecArray(0).m_idKlient)
+
+  dim iter, idWZ, pWZ
+  for iter = 0 to oRecArray.upper_index
+    idWZ = oRecArray(iter).m_idWZ
+    set pWZ = trans_.getobj(TYPEID_N5DOKMAG, idWZ)
+    
+    if pFaktura.strUwagi = "" then
+	    pFaktura.strUwagi = pWZ.strUwagi
+    else
+	    pFaktura.strUwagi = pFaktura.strUwagi + ", " + pWZ.strUwagi
+    end if  
+    
+    dim poz_wz,poz_sprzed
+    for each poz_wz in pWZ.listPozycje
+      'wyszukaj takiej samej pozycji lub dodaj nową
+      dim iWynik: iWynik = porownanie(poz_wz, pFaktura)
+      if iWynik > 0 then
+          pFaktura.listPozycje.get(iWynik).curIloscOpak = pFaktura.listPozycje.get(iWynik).curIloscOpak + poz_wz.curIloscOpak
+      else
+        set poz_sprzed = pFaktura.listPozycje.addnew()
+		    poz_sprzed.n5pozsprzedaz_fromWZ(poz_wz)
+
+		    dim curCenaZamowiona
+		    'wyszukujemy cenę z zamówienia
+		    if not pWZ.wrefDokHandl is nothing then
+			    if pWZ.wrefDokHandl.type = TYPEID_N5ZAMOWIENIE then
+				    if cena_z_zamowienia(poz_sprzed,pWZ.wrefDokHandl,curCenaZamowiona) then
+					    poz_sprzed.curCenaNettoWal = curCenaZamowiona
+				    else
+					    trans_.message 1002, 0, "WZ zostało wystawione z zamowienia ale na zamowieniu nie znaleziono odpowiadającej pozycji ("+ poz_sprzed.text +"). Wstawiono ceny domyślne."
+				    end if
+			    end if
+		    end if
+        
+        'uwzględnij promocje
+        poz_sprzed.n5pozsprzedaz_setPrices
+        
+	    end if 	
+    next    
+    
+    'kojarzymy dokumenty
+    'jezeli WZ jest z czegos stworzone
+    if pWZ.wrefDokHandl is nothing then
+	    set pWZ.wrefDokHandl = pFaktura
+    else
+	    if pWZ.wrefDokHandl.type = TYPEID_N5ZAMOWIENIE then
+		    'na pierwszym WZ z zamówieniem przestawiamy zamówienie na fakturę
+		    if idZam = 0 then
+			    idZam = pWZ.wrefDokHandl.idobj
+			    set pFaktura.pZamowienie = trans_.getobj(TYPEID_N5ZAMOWIENIE,idZam)
+			    set pWZ.wrefDokHandl = pFaktura
+		    else
+			    'na kolejnych ustawiamy tylko fakturę
+			    set pWZ.wrefDokHandl = pFaktura
+		    end if
+	    else
+		    'na wszystkich z innymi wrefdokhandl ustawimy fakturę
+		    set pWZ.wrefDokHandl = pFaktura
+	    end if
+    end if    
+    
+  next
+
+  dim bSaved: bSaved = trans_.saveobjects()
+  if bSaved then
+    CreateDokHandl = pFaktura.IdObj
+  else
+    trans_.message 7000, 0, "Nie udało się zapisać dokumentu"
+  end if
+end function
+
+'-----------------------------------------------------------------------------------
+'porównuje pozycję WZ z pozycją faktury, zwraca nr pozycji gdy produkty się zgadzają
+'-----------------------------------------------------------------------------------
+function porownanie(byval poz_wz, byval pFaktura): porownanie = -1
+  dim poz_fak
+  dim iter: iter = 1
+   
+  for each poz_fak in pFaktura.listPozycje
+    if (poz_fak.pProdukt is poz_wz.pProdukt) then
+        porownanie = iter
+        exit function
+    end if
+    iter = iter + 1
+  next  
+end function
+
+'-----------------------------------------------------------------
+'jeżeli z WZ skojarzone jest zamówienie, pobierz cenę z zamówienia
+'-----------------------------------------------------------------
+function cena_z_zamowienia(byval pos, byval zamowienie, byref cena): cena_z_zamowienia = false
+  dim elem
+  for each elem in zamowienie.listPozycje
+	  if (elem.pProdukt.idobj = pos.pProdukt.idobj) and (elem.pOpak.idobj = pos.pOpak.idobj) then
+		  cena = elem.curCenaNettoWal
+		  cena_z_zamowienia = true
+		  exit for
+	  end if
+  next 
+end function
+
+'-------------------------
+'kontrolki dla checkbox'ów
+'-------------------------
+function c##CTRLID_ROW_CHECKBOX##_ongetdata(byref oCtrl) : c##CTRLID_ROW_CHECKBOX##_ongetdata = true
+end function
+
+function c##CTRLID_ROW_CHECKBOX##_ondataentered(byref oCtrl, byval newValue) : c##CTRLID_ROW_CHECKBOX##_ondataentered = false
+  dim nIdWz
+  dim bAddRem : bAddRem = true
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+    nIdWz = oRow.userprop.prop(PROP_ROW_IDENT)
+    'dodaj/usuń ze słownika
+    if newValue = "1" then
+      g_oRepDict.add nIdWz, nIdWz
+    else  
+      g_oRepDict.removeDictObj nIdWz
+    end if
+    if g_oRepDict.getDictionary.Count = g_oRS.RecordCount then
+      bChooseAll = true
+    else
+      bChooseAll = false
+    end if    
+    oCtrl.value = newValue
+    'kolorowanie
+    changeRowColor oRow, newValue
+  end if
+  c##CTRLID_ROW_CHECKBOX##_ondataentered = true
+end function
+
+'------------------------
+'kontrolki dla przycisków
+'------------------------
+function c##CTRLID_REALIZE_BUTTON##_ongetdata(byref oCtrl) : c##CTRLID_REALIZE_BUTTON##_ongetdata = true
+  oCtrl.disable = (g_oRepDict.getDictionary().count = 0)
+end function
+
+function c##CTRLID_CHOOSE_BUTTON##_ongetdata(byref oCtrl) : c##CTRLID_CHOOSE_BUTTON##_ongetdata = true
+  if bChooseAll then
+    oCtrl.text = "Odznacz wszystko"
+  else
+    oCtrl.text = "Zaznacz wszystko"
+  end if  
+end function
+
+
+]]>
+</script>
+  </config>
+  <body>
+    <table>
+      <tbody>
+        <tr>
+          <td>
+            <picture image='80139' tip='Wypełnij raport' width='1000' height='1000' href='varFunction="fRefresh"' />
+          </td>
+          <td>
+            <t fontsize='5' bold='true'>Fakturowanie zaległych WZ</t>
+          </td>
+        </tr>
+        <tr>
+          <td colspan='2'>
+            <table name='CTRLID_ROW_BUTTONS'>
+              <tbody />
+            </table>
+          </td>
+        </tr>        
+        <tr>
+          <td colspan='2'>
+            <table border='1' name='CTRLID_RESULT_TABLE'>
+              <tbody backcolor='white' bordercolor='#006697' />
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td align='right' colspan='2'>
+            <table name='CTRLID_ACTION_TABLE'>
+              <tbody />
+            </table>
+          </td>
+        </tr> 
+      </tbody>
+    </table>
+  </body>
+</page>

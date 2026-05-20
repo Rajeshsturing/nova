@@ -1,0 +1,480 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+RapDef performer
+
+REV2:KB:20030704
+#include "h1000.h"
+-->
+<page>
+<config>
+<script>
+
+<![CDATA[
+'----------------- API -----------------------------------------------
+
+'-------- tworzy dynamicznie template raportu na podstawie pRapDef ---
+' zwraca strumień przeznaczony dla ASPatora 
+function generate_raport_stream(byref pRapDef)
+	dim pTemplateStream : set pTemplateStream = create_asp_template(pRapDef)
+	set generate_raport_stream = doc_.getmodule(60170).raw_asp_raport(pRapDef.params,pTemplateStream)
+end function
+
+function generate_raport_hli(byref pRapDef)
+	dim pOpenHLI : set pOpenHLI = doc_.createhlistr("varCmd = CMD_OPEN_STATIC_PAGE")
+	set pOpenHLI.prop(GVAR_DESTPAGE) = generate_raport_stream(pRapDef)
+	set generate_raport_hli = pOpenHLI
+end function
+
+dim g_bAnySum : g_bAnySum = false
+dim g_nGroupCount : g_nGroupCount = 0
+
+function create_asp_template(byref pRapDef)
+	dim pSO : set pSO = doc_.createstreamobj()
+	
+	'--- collect informations
+	g_bAnySum = is_any_sum(pRapDef)
+	g_nGroupCount = get_group_count(pRapDef)
+
+	create_raport_starter1 pSO,pRapDef
+	create_query pSO,pRapDef
+	create_default_param pSO,pRapDef
+	create_sections pSO,pRapDef
+	create_body_row pSO,pRapDef
+	create_body_header pSO,pRapDef
+	create_body_footer pSO,pRapDef
+	if g_nGroupCount <> 0 then
+		create_section_support pSO
+	end if
+	create_raport_starter2 pSO,pRapDef
+	create_raport_main_entry pSO,pRapDef
+	create_raport_finisher pSO,pRapDef
+
+#ifdef _DEBUG
+	pSO.save "c:\temp\raport_template.txt"
+#endif
+
+	pSO.rewind
+	set create_asp_template = pSO
+end function
+
+function generate_raport_hli_on_searchtype(byval nInternalID)
+	set generate_raport_hli_on_searchtype = nothing
+	dim idObj : idObj = trans_.findobjid(TYPEID_SEARCHTYPE, "nInternalID=" + CStr(nInternalID))
+	if idObj > 0 then
+		dim pSearchTypeObj : set pSearchTypeObj = trans_.getobj(TYPEID_SEARCHTYPE,idObj)
+		dim pRapDef: set pRapDef = trans_.afc.rap.new_rd(pSearchTypeObj.ResultTypeId)
+		pRapDef.LoadSearchType pSearchTypeObj
+		set generate_raport_hli_on_searchtype = generate_raport_hli(pRapDef)
+	end if
+end function
+
+'-----------------implementation -------------------------------------------------
+'-- czy jest jakieś podsumowanie ---
+private function is_any_sum(byref pRapDef)
+	is_any_sum = false
+	dim pRapDefColumn
+	for each pRapDefColumn in pRapDef.columns
+		if pRapDefColumn.isSum then
+			is_any_sum = true
+			exit function
+		end if
+	next
+end function
+
+private function get_group_count(byref pRapDef)
+	dim nCount : nCount = 0
+	dim iter 
+	for iter = 1 to pRapDef.orders.count
+		if pRapDef.orders(iter).group then
+			nCount = nCount + 1
+		end if
+	next
+	get_group_count = nCount
+end function
+
+private function create_query(byref pSO,byref pRapDef)
+	pSO.write "<%" + vbCrLf
+	pSO.write "function query()" + vbCrLf
+	pSO.write "query = """ + pRapDef.create_SqlQuery().SQL + """" + vbCrLf
+	pSO.write "end function" + vbCrLf
+	pSO.write "%>" + vbCrLf
+end function
+
+private function create_date_field(byref pSO, byref pRapDefColumn)
+	pSO.write vbTab + "<td>" + vbCrLf
+	pSO.write vbTab + vbTab + "RXE_DATE(c_"+cstr(pRapDefColumn.ColIndex)+")" + vbCrLf
+	pSO.write  vbTab + "</td>" + vbCrLf
+end function
+
+private function create_time_field(byref pSO, byref pRapDefColumn)
+	pSO.write vbTab + "<td>" + vbCrLf
+	pSO.write vbTab + vbTab + "RXE_TIME(c_"+cstr(pRapDefColumn.ColIndex)+")" + vbCrLf
+	pSO.write  vbTab + "</td>" + vbCrLf
+end function
+
+private function create_currency_field(byref pSO, byref pRapDefColumn)
+	pSO.write vbTab + "<td align='right'>" + vbCrLf
+	pSO.write vbTab + vbTab + "RXE_QUANTITY_CVV(c_"+cstr(pRapDefColumn.ColIndex)+","""",2)" + vbCrLf
+	pSO.write  vbTab + "</td>" + vbCrLf
+end function
+
+private function create_long_field(byref pSO, byref pRapDefColumn)
+	pSO.write vbTab + "<td align='right'>" + vbCrLf
+	pSO.write vbTab + vbTab + "RXE_T(c_"+cstr(pRapDefColumn.ColIndex)+")" + vbCrLf
+	pSO.write  vbTab + "</td>" + vbCrLf
+end function
+
+private function create_enum_field(byref pSO, byref pRapDefColumn,byref pLeavesCollection)
+	pSO.write vbTab + "<td>" + vbCrLf
+	pSO.write vbTab + vbTab + "RXE_ENUM_VVC(" + cstr(pLeavesCollection(1).TypeId) + "," + pLeavesCollection(1).field.name +_
+		",c_"+cstr(pRapDefColumn.ColIndex)+")" + vbCrLf
+	pSO.write  vbTab + "</td>" + vbCrLf
+end function
+
+private function create_text_field(byref pSO, byref pRapDefColumn)
+	pSO.write vbTab + "<td>" + vbCrLf
+	if pRapDefColumn.isLink then
+		pSO.write vbTab + vbTab + "RXE_AUTOTEXT_LINK_FORM_CCC(c_" + cstr(pRapDefColumn.TypeIdColIndex) +_
+		",c_" + cstr(pRapDefColumn.IdObjColIndex) +	",c_" + cstr(pRapDefColumn.ColIndex) + ")" + vbCrLf
+	else
+		pSO.write vbTab + vbTab + "RXE_AUTO_TEXT(c_"+cstr(pRapDefColumn.ColIndex) + ")" + vbCrLf
+	end if
+	pSO.write  vbTab + "</td>" + vbCrLf
+end function
+
+private function create_body_header(byref pSO,byref pRapDef)
+	pSO.write "<%" + vbCrLf
+	pSO.write "function body_header(byref pSection,byref pRec)" + vbCrLf
+#ifdef _DEBUG
+'	pSO.write "so.write ""<p backcolor='yellow'><text><![CD""+""ATA[""+pRapExec.get_final_query() + ""]""+""]></text></p><br/>"" " + vbCrLf
+#endif
+	pSO.write "%>" + vbCrLf
+	pSO.write "<table border='1'>" + vbCrLf
+	pSO.write "<thead>" + vbCrLf
+	pSO.write "<tr style='STYLE_TABLE_HEADER'>" + vbCrLf
+
+	'-wygeneruj wcięcie
+	write_indent pSO,g_nGroupCount
+
+	pSO.write vbTab + "<td width='min'><t>LP</t></td>" + vbCrLf
+	dim pRapDefColumn
+	for each pRapDefColumn in pRapDef.columns
+		dim pPathCracker: set pPathCracker = doc_.afc.rap.new_path_cracker(pRapDefColumn.ComposedPath)
+		if pPathCracker.RaportType = RAPT_TEXT then
+			pSO.write vbTab + "<td width='max'>" + vbCrLf
+		else
+			pSO.write vbTab + "<td width='min'>" + vbCrLf
+		end if
+		pSO.write vbTab + vbTab + "<text><![CD"+"ATA[" + pPathCracker.HumanName + "]"+"]></text>" + vbCrLf
+		pSO.write vbTab + "</td>" + vbCrLf
+	next
+	pSO.write "</tr>" + vbCrLf
+	pSO.write "</thead>" + vbCrLf
+	pSO.write "<tbody>" + vbCrLf
+	pSO.write "<%" + vbCrLf
+	pSO.write "end function" + vbCrLf
+	pSO.write "%>" + vbCrLf
+end function
+
+private function create_body_footer(byref pSO,byref pRapDef)
+	pSO.write "<%" + vbCrLf
+	pSO.write "function body_footer(byref pSection)" + vbCrLf
+	pSO.write "%>" + vbCrLf
+	pSO.write "</tbody>" + vbCrLf
+
+	if g_bAnySum then
+		pSO.write "<tfoot>" + vbCrLf
+		pSO.write "<tr style='STYLE_TABLE_HEADER'>" + vbCrLf
+		create_sum_row pSO,pRapDef,"pRapExec.body",0
+		pSO.write "</tr>" + vbCrLf
+		pSO.write "</tfoot>" + vbCrLf
+	end if
+
+	pSO.write "</table>" + vbCrLf
+	pSO.write "<%" + vbCrLf
+	pSO.write "end function" + vbCrLf
+	pSO.write "%>" + vbCrLf
+end function
+
+private function create_body_row(byref pSO,byref pRapDef)
+	pSO.write "<%" + vbCrLf
+	pSO.write "function body_row(byref pSection,byref pRec)" + vbCrLf
+	pSO.write "if pRapExec.RecNr mod 2 = 0 then" + vbCrLf
+	pSO.write "%>" + vbCrLf
+	pSO.write "<tr bordercolor='white'>" + vbCrLf
+	pSO.write "<%" + vbCrLf
+	pSO.write "else" + vbCrLf
+	pSO.write "%>" + vbCrLf
+	pSO.write "<tr bordercolor='white' style='STYLE_ROW_EVEN'>" + vbCrLf
+	pSO.write "<%" + vbCrLf
+	pSO.write "end if" + vbCrLf
+	pSO.write "%>" + vbCrLf
+
+	'-wygeneruj wcięcie
+	write_indent pSO,g_nGroupCount
+
+	pSO.write "<td align='right'>RXE_LP</td>" + vbCrLf
+
+	dim pRapDefColumn
+	for each pRapDefColumn in pRapDef.columns
+			dim pPathCracker: set pPathCracker = doc_.afc.rap.new_path_cracker(pRapDefColumn.ComposedPath)
+			select case pPathCracker.RaportType
+			case RAPT_CHOICE
+				create_enum_field pSO, pRapDefColumn, pPathCracker.Leaves
+			case RAPT_LONG,RAPT_LP	'long, LP
+				create_long_field pSO, pRapDefColumn
+			case RAPT_DATE	'date
+				create_date_field pSO, pRapDefColumn
+			case RAPT_CURRENCY,RAPT_QTY 'currency - no unit
+				create_currency_field pSO, pRapDefColumn
+			case RAPT_TIME
+				create_time_field pSO, pRapDefColumn
+			case RAPT_TEXT	'text
+				create_text_field pSO, pRapDefColumn
+			end select
+	next
+	
+	pSO.write "</tr>"
+	pSO.write "<%" + vbCrLf
+	pSO.write "end function" + vbCrLf
+	pSO.write "%>" + vbCrLf
+end function
+
+private function create_sum_row(byref pSO,byref pRapDef,byval strSection,byval nSectionLevel)
+	dim nCounter : nCounter = 0
+	dim nColSpan : nColSpan = 1	+ g_nGroupCount - nSectionLevel 'bo obowiązkowe jest RXE_LP
+	
+	write_indent pSO,nSectionLevel
+	dim pRapDefColumn
+	for each pRapDefColumn in pRapDef.columns
+		if pRapDefColumn.isSum then
+			if nColSpan > 0 then
+				pSO.write vbTab + "<td style='STYLE_GROUP_HEADER' colspan='"+cstr(nColSpan)+"' />" + vbCrLf
+			end if
+			nColSpan = 0
+			pSO.write vbTab + "<td style='STYLE_GROUP_HEADER' align='right'>" + vbCrLf
+			pSO.write vbTab + vbTab + "RXE_MONEY_VAR(" + strSection + ".counter(" + cstr(nCounter) + ").result)" + vbCrLf
+			pSO.write vbTab + "</td>" + vbCrLf
+			nCounter = nCounter + 1
+		else
+			nColSpan = nColSpan + 1
+		end if
+	next
+	if nColSpan > 0 then
+		pSO.write vbTab + "<td style='STYLE_GROUP_HEADER' colspan='"+cstr(nColSpan)+"' />" + vbCrLf
+	end if
+end function
+
+private sub create_sections(byref pSO,byref pRapDef)
+	dim nGroupLevel : nGroupLevel = 0
+	dim pOrderBy
+	dim iter
+	for iter = 1 to pRapDef.orders.count
+		set pOrderBy = pRapDef.orders(iter)
+		if pOrderBy.group then
+			pSO.write "<%" + vbCrLf
+			pSO.write "function section_header_" + cstr(iter) + "(byref pSection,byref pRec)" + vbCrLf
+			pSO.write "%>" + vbCrLf
+			pSO.write "<tr userprop='propc_section_start="""+cstr(iter)+""" propc_section_hidden=""0"" propc_section_req=""0""' fontsize='" + cstr(3 + g_nGroupCount - nGroupLevel) +"'>" + vbCrLf
+			'-wygeneruj wcięcie
+			write_indent pSO,nGroupLevel
+
+			pSO.write vbTab + "<td style='STYLE_GROUP_HEADER' colspan='" + cstr(pRapDef.columns.count + g_nGroupCount + 1 - nGroupLevel) + "'>" + vbCrLf
+			pSO.write vbTab + vbTab + "<picture name='<%so.write cstr(nSectionPicCounter)%>' tip='Zwiń' ignoresysdisable='true' image='PICTURE_SMALL_MINUS' width='SIZE_FOR_PLUS' height='SIZE_FOR_PLUS' href='varFunctionHLI=""section_hideshow_hli"" vn100=""<%so.write cstr(nSectionPicCounter)%>""'/>" + vbCrLf
+			if pOrderBy.isLink then
+				pSO.write vbTab + "RXE_AUTOTEXT_LINK_FORM_CCC(c_" + cstr(pOrderBy.TypeIdColIndex) +_
+				",c_" + cstr(pOrderBy.IdObjColIndex) +	",c_" + cstr(pOrderBy.ColIndex) + ")" + vbCrLf
+			else
+				pSO.write vbTab + "RXE_AUTO_TEXT(c_"+cstr(pOrderBy.ColIndex) + ")" + vbCrLf
+			end if
+			pSO.write "</td>" + vbCrLf
+			pSO.write "</tr>" + vbCrLf
+
+			pSO.write "<%" + vbCrLf
+			pSO.write "nSectionPicCounter=nSectionPicCounter+1"+ vbCrLf
+			pSO.write "end function" + vbCrLf
+			pSO.write "%>" + vbCrLf
+			'--footer--
+			pSO.write "<%" + vbCrLf
+			pSO.write "function section_footer_" + cstr(iter) + "(byref pSection)" + vbCrLf
+			pSO.write "%>" + vbCrLf
+			
+			pSO.write "<tr hide='true' userprop='propc_section_end="""+cstr(iter)+"""'><td colspan='" +_
+				cstr(pRapDef.columns.count + g_nGroupCount + 1) + "' /></tr>" + vbCrLf
+			'--- jeśli tak to je wygeneruj ------
+			if g_bAnySum then
+				pSO.write "<tr fontsize='" + cstr(3 + g_nGroupCount - nGroupLevel) +"'>" + vbCrLf
+				create_sum_row pSO,pRapDef,"pSection", nGroupLevel 
+				pSO.write "</tr>" + vbCrLf
+				pSO.write "<tr border='0'><td colspan='" + cstr(pRapDef.columns.count + g_nGroupCount + 1) + "' /></tr>" + vbCrLf
+			end if
+
+			pSO.write "<%" + vbCrLf
+			pSO.write "end function" + vbCrLf
+			pSO.write "%>" + vbCrLf
+			nGroupLevel = nGroupLevel + 1
+		end if
+	next
+end sub
+
+private function bind_sections(byref pSO,byref pRapDef)
+	dim pOrderBy
+	dim iter
+	for iter = 1 to pRapDef.orders.count
+		set pOrderBy = pRapDef.orders(iter)
+		if pOrderBy.group then
+			pSO.write vbTab + ".add_group_section "
+			if g_bAnySum then
+				pSO.write "("
+			end if
+			pSO.write cstr(pOrderBy.ColIndex) + ",getref(""section_header_" + cstr(iter) +_
+			"""),getref(""section_footer_" + cstr(iter) + """)" 
+			if g_bAnySum then
+				pSO.write ")"
+				dim pRapDefColumn
+				for each pRapDefColumn in pRapDef.columns
+					if pRapDefColumn.isSum then
+						pSO.write ".add_sumator(""c_" + cstr(pRapDefColumn.ColIndex) + """)"
+					end if
+				next
+			end if
+			pSO.write vbCrLf
+		end if
+	next
+end function
+
+private function create_default_param(byref pSO,byref pRapDef)
+	'pRapDef.params
+	pSO.write "<%" + vbCrLf
+	pSO.write "function default_param()" + vbCrLf
+	if pRapDef.params.upperIndex > -1 then
+		pSO.write vbTab + "dim pParamArray : set pParamArray = doc_.afc.new_navoarray()" + vbCrLf
+		dim iter 
+		for iter = 0 to pRapDef.params.upperIndex
+			dim pParam : set pParam = pRapDef.params.value(iter)
+			dim strTemp 
+			if pParam.paramtype = RAPT_CHOICE then
+				pSO.write vbTab + "dim pParamFactory" + cstr(iter) + ": set pParamFactory" + cstr(iter) + "= doc_.afc.rap.param" + vbCrLf
+				pSO.write vbTab + "dim pParam" + cstr(iter) + ": Set pParam" + cstr(iter) + "= pParamFactory" + cstr(iter) + ".new_choice(""" +_
+					pParam.ParamName + """).bindexpr(""" + pParam.get_BindExpr() + """)" + vbCrLf
+				
+				pSO.write vbTab + "pParamFactory" + cstr(iter) + ".init_on_enum pParam" + cstr(iter) + ", TYPEID_TODO,eTODO" + vbCrLf
+ 				pSO.write vbTab + "pParamArray.add pParam" + cstr(iter) + vbCrLf
+			else
+				strTemp = vbTab + "pParamArray.add doc_.afc.rap.param."
+				select case pParam.paramtype
+				case RAPT_TEXT
+					strTemp = strTemp + "new_text"
+				case RAPT_DATE
+					strTemp = strTemp + "new_date_range"
+				case RAPT_CURRENCY
+					strTemp = strTemp + "new_currency"
+				case RAPT_LONG
+					strTemp = strTemp + "new_int"
+				end select
+				strTemp = strTemp + "(""" + pParam.ParamName + """).bindexpr(""" +_
+				 pParam.get_BindExpr() + """)"
+				pSO.write strTemp + vbCrLf
+			end if
+		next
+		pSO.write vbCrLf + vbTab + "set default_param = pParamArray" + vbCrLf
+	else
+		pSO.write vbCrLf + vbTab + "set default_param = nothing" + vbCrLf
+	end if
+	pSO.write "end function" + vbCrLf
+	pSO.write "%>" + vbCrLf
+end function
+
+private function create_raport_starter1(byref pSO,byref pRapDef)
+	pSO.write "<?xml version=""1.0"" encoding=""windows-1250"" ?>" + vbCrLf
+	pSO.write "<!--" + vbCrLf
+	pSO.write "#include ""h1220.h""" + vbCrLf
+	pSO.write "#include ""h1240.h""" + vbCrLf
+	pSO.write "#include ""h1250.h""" + vbCrLf
+	pSO.write "#define RAPORT_TITLE " + pRapDef.title  + vbCrLf
+	pSO.write "-->" + vbCrLf
+
+	pSO.write "<page style='36'>" + vbCrLf
+	pSO.write "<config>" + vbCrLf
+	pSO.write "<title>RAPORT_TITLE</title>" + vbCrLf
+	pSO.write "<script>" + vbCrLf
+	pSO.write "<![CD"+"ATA[" + vbCrLf
+
+end function
+
+private function create_raport_starter2(byref pSO,byref pRapDef)
+	pSO.write "]"+"]>" + vbCrLf
+	pSO.write "</script>" + vbCrLf
+	pSO.write "</config>" + vbCrLf
+	pSO.write "<header>" + vbCrLf
+	pSO.write "</header>" + vbCrLf
+	pSO.write "<body>" + vbCrLf
+end function
+
+private function create_raport_finisher(byref pSO,byref pRapDef)
+	pSO.write "</body>" + vbCrLf
+	pSO.write "<footer>" + vbCrLf
+	pSO.write "</footer>" + vbCrLf
+	pSO.write "</page>" + vbCrLf
+end function
+
+private function create_raport_main_entry(byref pSO,byref pRapDef)
+	pSO.write "<p><text fontsize='7'><![CDA"+"TA[RAPORT_TITLE]"+"]></text></p><br/><br/>" + vbCrLf
+	pSO.write "<t fontsize='5' bold='true'>Kryteria selekcji:</t><br/>" + vbCrLf
+	
+	pSO.write "<%" + vbCrLf
+	pSO.write "dim pRapExec : set pRapExec = rapeng_.new_engine()" + vbCrLf
+	pSO.write "with pRapExec" + vbCrLf
+	
+	pSO.write vbTab + ".add_body_ex "
+	if g_bAnySum then
+		pSO.write "("
+	end if
+	pSO.write "getref(""body_header""),getref(""body_footer""),getref(""body_row"")"
+	if g_bAnySum then
+			pSO.write ")"
+			dim pRapDefColumn
+			for each pRapDefColumn in pRapDef.columns
+				if pRapDefColumn.isSum then
+					pSO.write ".add_sumator(""c_" + cstr(pRapDefColumn.ColIndex) + """)"
+				end if
+			next
+		end if
+	pSO.write vbCrLf
+
+	bind_sections pSO,pRapDef
+
+	pSO.write "if .prepare(""RAPORT_TITLE"",rapeng_.get_raport_param(),rapeng_.get_raport_param(),query()) then" + vbCrLf
+	pSO.write "%>" + vbCrLf
+	pSO.write "<%" + vbCrLf
+	pSO.write vbTab + "rapeng_.write_actual_param so,rapeng_.get_raport_param()" + vbCrLf
+	pSO.write vbTab + "if not .perform then" + vbCrLf
+	pSO.write vbTab + "so.write ""<p style='STYLE_TABLE_HEADER'><t>Brak danych spełniających podane kryteria</t></p>""" + vbCrLf
+	pSO.write vbTab + "end if" + vbCrLf
+	pSO.write "%>" + vbCrLf
+	pSO.write "<%" + vbCrLf
+	pSO.write "end if" + vbCrLf
+	pSO.write "end with" + vbCrLf
+	pSO.write "%>" + vbCrLf
+end function
+		
+private function create_section_support(byref pSO)
+	pSO.write "<%dim nSectionPicCounter : nSectionPicCounter = 10000000%>" + vbCrLf
+	pSO.write "function section_hideshow_hli(byref pHLI)" + vbCrLf
+	pSO.write "doc_.afc.formsection.section_hideshow page_, pHLI.prop(100)" + vbCrLf
+	pSO.write "end function" + vbCrLf
+end function
+
+private function write_indent(byref pSO,byval nLevel)
+	do while nLevel > 0
+		pSO.write vbTab + "<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>" + vbCrLf
+		nLevel = nLevel - 1
+	loop
+end function
+
+]]>
+</script>
+</config>
+	<body>
+	</body>
+</page>

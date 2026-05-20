@@ -1,0 +1,2856 @@
+#ifndef LIBRARY_50615
+#define LIBRARY_50615
+
+
+#define STD_DATABASE_NAME_KADRY		navo99_1
+#define STD_DATABASE_NAME_FIRMA		navo_firma
+
+'////////////////////////////////////////////////////////////////////////////
+'// (c) Navo 2002 Ltd.
+'// EXPORT
+'// Konwersja bazy NavoFirma -> ImportExport STREAM
+'//
+'// Spikowski Piotr
+'////////////////////////////////////////////////////////////////////////////
+
+#include "50613"
+
+dim pPrerforming
+set pPrerforming = nothing
+dim strOldText
+
+function Export_CreatePerforming(byref pExpMan, byval strText)
+
+	if (pExpMan is nothing) and (not pPrerforming is nothing) then
+		exit function
+	end if
+
+	if (strText<>"Pracownik" and _
+		strText<>"Urzad" and _
+		strText <> "connectSQL" and _
+		strText <> "connectSQL_TEST" and _
+		strText <> "Jednostka" and _
+		strText <> "Kontrahent" and _
+		strText <> "Konto" and _
+		strText <> "Artykul" and _
+		strText <> "Koñcowy zapis danych" and _
+		strText <> "NAVOUser" and _
+		strText <> "Sprzedaz" and _
+		strText <> "Dekret" and _
+		strText <> "Polecenie" and _
+		strText <> "Analiza danych" and _
+		strText <> "Zamowienie" and _
+		strText <> "stobj" and _
+		strText <> "Zakup" and _
+		strText <> "Recepta" and _
+		strText <> "open_file" and _
+		left(strText, 3) <> "GMA") then
+		exit function
+	end if
+
+	select case strText
+		case "NAVOUser"
+			strText = "U¿ytkownik"
+
+		case "Sprzedaz"
+			strText = "Sprzeda¿"
+
+		case "Artykul"
+			strText = "Artyku³"
+
+		case "Polecenie"
+			strText = "Dowód ksiêgowy"
+
+		case "Zamowienie"
+			strText = "Zamówienie"
+
+		case "stobj"
+			strText = "Kartoteka œrodków trwa³ych"
+
+		case "Urzad"
+			strText = "Urz¹d"
+
+		case else
+			if (left(strText, 3) = "GMA") then
+				strText = "Dokumenty magazynowe"
+			end if
+
+	end select
+
+	dim strToDisplay
+	if (strText = "connectSQL") then
+		strToDisplay = "£¹czenie z baz¹ danych . . ."
+	elseif (strText = "open_file") then
+		strToDisplay = "Otwieranie pliku . . ."
+	elseif (strText = "connectSQL_TEST") then
+		strToDisplay = "Analiza dostêpnych baz danych . . ."
+	else
+		
+		if (not pExpMan is nothing) then
+			dim curLevelPercent: curLevelPercent = CCur(-1)
+			if (pExpMan.m_nRecords>-1) then
+						
+				if (pExpMan.m_nRecords>0) then
+					curLevelPercent = CCur(pExpMan.m_nCurrentRecord * 100) / CCur(pExpMan.m_nRecords)
+				end if
+			end if
+
+			if (curLevelPercent>-1) then
+				if (curLevelPercent>100) then
+					curLevelPercent = 100
+				end if
+				
+				strToDisplay = "Importowanie danych " + CStr(CLng(curLevelPercent)) + "%"
+			else
+				strToDisplay = "Importowanie danych . . . (" + strText + ")"
+			end if
+		else
+			strToDisplay = "Importowanie danych . . . (" + strText + ")"
+		end if
+
+	end if
+	
+	if (strOldText=strToDisplay) then
+		exit function
+	end if
+
+	if (pPrerforming is nothing) then
+		page_.updateview
+		set pPrerforming = doc_.performing( strToDisplay )
+		strOldText=strToDisplay
+		exit function
+	end if
+
+	pPrerforming.text = strToDisplay
+	strOldText=strToDisplay
+end function
+
+function Export_DestroyPerforming(byref pExpMan)
+	set pPrerforming = nothing
+	strOldText = ""
+end function
+
+function Import_DestroyPerforming(byref pImpMan)
+	Export_DestroyPerforming nothing
+end function
+
+function Import_CreatePerforming(byref pExpMan, byval strText)
+	Export_CreatePerforming nothing, "Analiza danych"
+end function
+
+class CImportContainer
+	public pImport
+	public pExport
+	public bMiniFirma
+	public idFirmy
+	public bSybase
+
+	private sub class_initialize()
+		set pImport = new CImportManager
+		bMiniFirma = false
+		bSybase = false
+		idFirmy = 0
+	end sub
+
+	public function import(byref pImportStream)
+		import = pImport.import( pImportStream )
+	end function
+
+	public function end_import()
+
+		if (pImport.isCanceled()) then
+			exit function
+		end if
+
+		if (pExport.isCanceled()) then
+			exit function
+		end if
+
+		pExport.m_nCurrentRecord = pExport.m_nRecords
+		pExport.performing_restore()
+
+		end_import = pImport.end_import()
+	end function
+
+	public function getImportManager()
+		set getImportManager = pImport
+	end function
+
+	public function CheckIfMiniFirma(byref pExpMan)
+		bMiniFirma = false
+		
+		dim pRecordset
+		set pRecordset = pExpMan.getConnection().execute("SELECT ModName FROM navolicence")
+
+		while (not pRecordset.EOF)
+			if (pRecordset.fields("ModName").value = "STARTKIT") then
+				bMiniFirma = true
+				exit function
+			end if
+			pRecordset.MoveNext
+		wend
+	end function
+
+	public function choiceFirma(byref pExpMan): choiceFirma = false
+		
+		dim pNewHli
+		set pNewHli=doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=PAGE_FORM_CHOICE_FIRMA_IMP")
+
+		dim pUserPage
+		set pUserPage=doc_.getpagehli(pNewHli)
+
+		if (pUserPage is nothing) then
+			exit function
+		end if
+
+		dim nRes
+		nRes = pUserPage.read_firmy(pExpMan.getConnection())
+
+		select case nRes
+			case -100 'Wiecej firm
+				pExpMan.performing_destroy
+				idFirmy = pUserPage.domodalauto()
+				pExpMan.performing_show "Analiza danych"
+
+			case -200 'Rezygnacja
+				exit function
+
+			case else
+				idFirmy = CLng(nRes)
+
+		end select
+
+		choiceFirma = (idFirmy > 0)
+	end function
+
+	public function database_logon(byval strLogin, byval strPwd, byval strServerName, byval bSQL, byref pExportManager): database_logon = false
+		if (bSQL) then
+
+			bSybase = false
+			
+			dim bSQLTryAutoLogon: bSQLTryAutoLogon = true
+
+			if (strLogin<>"") then
+				if (pExportManager.connectSQL(strServerName, "STD_DATABASE_NAME_FIRMA", strLogin, strPwd)) then
+					bSQLTryAutoLogon = false
+				end if
+			end if
+
+			if (bSQLTryAutoLogon) then
+				if (not pExportManager.connectSQL(strServerName, "STD_DATABASE_NAME_FIRMA", "dba", "y1410grun")) then
+					if (not pExportManager.connectSQL(strServerName, "STD_DATABASE_NAME_FIRMA", "sa", "")) then
+						view_message 6241, 0
+						exit function
+					end if
+				end if
+			end if
+
+		else 'SQL
+
+			bSybase = true
+
+			dim bSybTryAutoLogon: bSybTryAutoLogon = true
+
+			if (strLogin<>"") then
+				if (not pExportManager.connectDSN("NAVO_FIRMA", strLogin, strPwd)) then
+					if (pExportManager.connectDSN("NAVO_FIRMA37", strLogin, strPwd)) then
+						bSybTryAutoLogon = false
+					end if
+				else
+					bSybTryAutoLogon = false
+				end if
+			end if
+
+			if (bSybTryAutoLogon) then
+				
+				if (pExportManager.connectDSN("NAVO_FIRMA", "", "")) then
+					database_logon = true
+					exit function
+				end if
+
+				if (pExportManager.connectDSN("NAVO_FIRMA", "dba", "y1410grun")) then
+					database_logon = true
+					exit function
+				end if
+
+				if (pExportManager.connectDSN("NAVO_FIRMA", "dba", "mendelejew")) then
+					database_logon = true
+					exit function
+				end if
+				
+				if (pExportManager.connectDSN("NAVO_FIRMA37", "", "")) then
+					database_logon = true
+					exit function
+				end if
+				
+				if (pExportManager.connectDSN("NAVO_FIRMA37", "dba", "y1410grun")) then
+					database_logon = true
+					exit function
+				end if
+				
+				if (pExportManager.connectDSN("NAVO_FIRMA37", "dba", "mendelejew")) then
+					database_logon = true
+					exit function
+				end if
+				
+				view_message 6241, 0
+				exit function
+
+			end if
+
+		end if 'SQL
+
+		database_logon = true
+
+	end function
+
+
+	public function database_logon_kadry(byval strLogin, byval strPwd, byval strServerName, byref pExportManager): database_logon_kadry = false
+
+		bSybase = false
+			
+		dim bSQLTryAutoLogon: bSQLTryAutoLogon = true
+
+		if (strLogin<>"") then
+			if (pExportManager.connectSQL(strServerName, "STD_DATABASE_NAME_KADRY", strLogin, strPwd)) then
+				bSQLTryAutoLogon = false
+			end if
+		end if
+
+		if (bSQLTryAutoLogon) then
+			if (not pExportManager.connectSQL(strServerName, "STD_DATABASE_NAME_KADRY", "dba", "y1410grun")) then
+				if (not pExportManager.connectSQL(strServerName, "STD_DATABASE_NAME_KADRY", "sa", "")) then
+					view_message 6241, 0
+					exit function
+				end if
+			end if
+		end if
+
+		database_logon_kadry = true
+
+	end function
+
+
+
+	public function logon(byval strLogin, byval strPwd, byval strServerName, byval bSQL, byref pExportManager): logon = false
+		pExportManager.setContainer me
+		
+		'import z bazy do bazy - bezposredni
+		pExportManager.directImport getImportManager()
+
+		if (not database_logon(strLogin, strPwd, strServerName, bSQL, pExportManager)) then
+			pExportManager.performing_destroy
+			exit function
+		end if
+
+		dim strChoiceFirma: strChoiceFirma = ""
+
+		if (bSQL) then
+			strChoiceFirma = "SQL=" + strServerName + "="
+		else
+			strChoiceFirma="SYBASE="
+		end if 'SQL
+
+		'Sprawdzamy czy mamy doczynienia z mini firma i jezeli
+		'tak to to zaznaczamy
+		CheckIfMiniFirma pExportManager
+
+		'Dokonujemy wyboru firmy
+		if (not choiceFirma(pExportManager)) then
+			pExportManager.performing_destroy
+			exit function
+		end if
+
+		'Sprawdzamy czy firma jest inna od tej z poprzedniego importu
+		strChoiceFirma = strChoiceFirma + CStr(idFirmy)
+
+		dim strLastFirmaChoice
+		strLastFirmaChoice = getglobprofile(GLOBPROF_LAST_IMPORTED_FIRMA)
+
+		if (strLastFirmaChoice<>"") then
+			if (strLastFirmaChoice<>strChoiceFirma) then
+		
+				pExportManager.performing_destroy
+				if MessageBox("Wybrana baza danych lub firma ró¿ni siê od wybranej przy poprzednim imporcie. Czy mimo to kontynuowaæ? ", "Inna baza", vbYesNo, vbQuestion ) <> vbYes then
+					exit function
+				end if 
+				pExportManager.performing_restore
+
+			end if
+		end if
+
+		'ustaw profil z firma jaka imporujemy i zapisz
+		setglobprofile GLOBPROF_LAST_IMPORTED_FIRMA, strChoiceFirma
+		trans_.saveobjects
+
+		logon = true
+	end function
+
+end class
+
+'..............................................................................
+' Wyspecjalizowane funkcje eksportu
+'..............................................................................
+
+function export_Rejestr(byref pExpMan, byval strWhere)
+	if (strWhere<>"") then
+		strWhere = " and (" + strWhere + ")"
+	end if
+
+	dim strDestWhere
+	strDestWhere = " where Rejestr.Nazwa <> '' and Rejestr.TypRej!='AUTO' and Rejestr.TypRej!='DOKM' and Rejestr.TypRej!='ZAL' and Rejestr.TypRej!='POLE'" + strWhere
+	
+	pExpMan.RecordsetCount "Rejestr", strDestWhere
+
+	export_Rejestr = pExpMan.fromRecordset("select Rejestr.nazwa as unique_id, Rejestr.* from Rejestr" + strDestWhere, "Rejestr")
+end function
+
+function export_GMA_MM(byref pExpMan, byval strWhere)
+	if (strWhere<>"") then
+		strWhere = " and (" + strWhere + ")"
+	end if
+
+	dim strDestWhere
+	strDestWhere = strWhere
+	
+	export_GMA_MM = pExpMan.fromRecordset("select GMA_MM.NrDok as record_id, GMA_MM.* from przesmm as GMA_MM " + _
+		"where GMA_MM.IdTrans in (select GMA_POZMM.IdTrans from pozmm as GMA_POZMM where GMA_POZMM.Ilosc>0)" + strDestWhere, "GMA_MM")
+end function
+
+function export_GMA_RW_PW(byref pExpMan, byval strWhere)
+	if (strWhere<>"") then
+		strWhere = " and (" + strWhere + ")"
+	end if
+
+	dim strDestWhere
+	strDestWhere = strWhere
+	
+	export_GMA_RW_PW = pExpMan.fromRecordset("select GMA_RW_PW.* from RW_PW as GMA_RW_PW " + _
+		"where GMA_RW_PW.IdTrans in (select PozRW_PW.IdTrans from PozRW_PW where PozRW_PW.Ilosc>0)" + strDestWhere, "GMA_RW_PW")
+end function
+
+function export_Recepta(byref pExpMan, byval strWhere)
+	if (strWhere<>"") then
+		strWhere = " where (" + strWhere + ")"
+	end if
+
+	dim strDestWhere
+	strDestWhere = strWhere
+	
+	pExpMan.RecordsetCount "Recepta join Artykul on Artykul.IdArt = Recepta.IdArt", strDestWhere
+
+	export_Recepta = pExpMan.fromRecordset("select Recepta.*, ltrim(rtrim(Artykul.NaszInx)) as ArtykulIndex from Recepta join Artykul on Artykul.IdArt = Recepta.IdArt" + strDestWhere, "Recepta")
+end function
+
+function export_GMA_Sprzedaz(byref pExpMan, byval strWhere)
+	if (strWhere<>"") then
+		strWhere = " and (" + strWhere + ")"
+	end if
+
+	dim strDestWhere
+	strDestWhere = "where GMA_Sprzedaz.IdTrans in (" + "select GMA_PozSprzedaz.IdTrans " + GMA_Sprzedaz_Pozycje_SQL("GMA_Sprzedaz.IdTrans") + ")" + strWhere
+
+	export_GMA_Sprzedaz = pExpMan.fromRecordset("select GMA_Sprzedaz.* from Sprzedaz as GMA_Sprzedaz " + strDestWhere, "GMA_Sprzedaz")
+end function
+
+function export_GMA_Zakup(byref pExpMan, byval strWhere)
+	if (strWhere<>"") then
+		strWhere = " and (" + strWhere + ")"
+	end if
+
+	dim strDestWhere
+	strDestWhere = strWhere
+
+	export_GMA_Zakup = pExpMan.fromRecordset("select GMA_Zakup.* from Zakup as GMA_Zakup " + _
+	"where GMA_Zakup.IdTrans in " + _
+	"(select GMA_PozZakup.IdTrans " + GMA_Zakup_Pozycje_SQL("GMA_Zakup.IdTrans") + ")" + _
+	strDestWhere, "GMA_Zakup")
+end function
+
+function export_Zakup(byref pExpMan, byval strWhere)
+	if (strWhere<>"") then
+		strWhere = " where (" + strWhere + ")"
+	end if
+
+	dim strDestWhere
+	strDestWhere = strWhere
+	
+	pExpMan.RecordsetCount "Zakup", strDestWhere
+
+	export_Zakup = pExpMan.fromRecordset("select Zakup.*, SposobPlat as PLATNOSC_NAZWA from Zakup" + strDestWhere, "Zakup")
+end function
+
+function export_stobj(byref pExpMan, byval strWhere)
+	if (strWhere<>"") then
+		strWhere = " where (" + strWhere + ")"
+	end if
+
+	dim strDestWhere
+	strDestWhere = strWhere
+	
+	pExpMan.RecordsetCount "stobj", strDestWhere
+
+	export_stobj = pExpMan.fromRecordset("select stobj.* from stobj" + strDestWhere, "stobj")
+end function
+
+function export_Zamowienie(byref pExpMan, byval strWhere)
+	if (strWhere<>"") then
+		strWhere = " and (" + strWhere + ")"
+	end if
+
+	dim strDestWhere
+	strDestWhere = " where zamowienie.Typ = 'O' or zamowienie.Typ != 'O'" + strWhere
+	
+	pExpMan.RecordsetCount "zamowienie", strDestWhere
+
+	export_Zamowienie = pExpMan.fromRecordset("select zamowienie.*, zamowienie.SposobPlat as PLATNOSC_NAZWA from zamowienie " + strDestWhere, "Zamowienie")
+end function
+
+function export_Kraj(byref pExpMan, byval strWhere)
+	if (strWhere<>"") then
+		strWhere = " where (" + strWhere + ")"
+	end if
+
+	dim strDestWhere
+	strDestWhere = strWhere
+	
+	pExpMan.RecordsetCount "Kraj", strDestWhere
+
+	export_Kraj = pExpMan.fromRecordset("select * from Kraj" + strDestWhere, "Kraj")
+end function
+
+function export_Magazyn(byref pExpMan, byval strWhere)
+	if (strWhere<>"") then
+		strWhere = " where (" + strWhere + ")"
+	end if
+
+	dim strDestWhere
+	strDestWhere = strWhere
+	
+	pExpMan.RecordsetCount "magazyn", strDestWhere
+
+	export_Magazyn = pExpMan.fromRecordset("select * from magazyn" + strDestWhere, "Magazyn")
+end function
+
+function export_GrupaKontra(byref pExpMan, byval strWhere)
+	if (strWhere<>"") then
+		strWhere = " where (" + strWhere + ")"
+	end if
+
+	dim strDestWhere
+	strDestWhere = strWhere
+	
+	pExpMan.RecordsetCount "GrupaKontra", strDestWhere
+
+	export_GrupaKontra = pExpMan.fromRecordset("select * from GrupaKontra" + strDestWhere, "GrupaKontra")
+end function
+
+function export_Jednostka(byref pExpMan, byval strWhere)
+	if (strWhere<>"") then
+		strWhere = " where (" + strWhere + ")"
+	end if
+
+	dim strDestWhere
+	strDestWhere = strWhere
+	
+	pExpMan.RecordsetCount "Jednostka", strDestWhere
+
+	export_Jednostka = pExpMan.fromRecordset("select * from Jednostka" + strDestWhere, "Jednostka")
+end function
+
+function export_Firma(byref pExpMan, byval strWhere)
+	if (strWhere<>"") then
+		strWhere = " where (" + strWhere + ")"
+	end if
+
+	dim strDestWhere
+	strDestWhere = strWhere
+	
+	pExpMan.RecordsetCount "Firma", strDestWhere
+
+	export_Firma = pExpMan.fromRecordset("select Firma.*, Kod as KOD_POCZTOWY, Miejsc As MIESCOWOSC_NAZWA, KontoBank As BANK_RACHUNEK, Bank As BANK_NAZWA from Firma" + strDestWhere, "Firma")
+end function
+
+function export_NAVOUser(byref pExpMan, byval strWhere)
+	if (strWhere<>"") then
+		strWhere = " where (" + strWhere + ")"
+	end if
+
+	dim strDestWhere
+	strDestWhere = strWhere
+	
+	pExpMan.RecordsetCount "NAVOUser", strDestWhere
+
+	export_NAVOUser = pExpMan.fromRecordset("select * from NAVOUser" + strDestWhere, "NAVOUser")
+end function
+
+function export_DowodKsiegowy(byref pExpMan, byval strWhere)
+	if (strWhere<>"") then
+		strWhere = " where (" + strWhere + ")"
+	end if
+
+	dim strDestWhere
+	strDestWhere = strWhere
+	
+	pExpMan.RecordsetCount "Polecenie", strDestWhere
+
+	export_DowodKsiegowy = pExpMan.fromRecordset("select Polecenie.NrDok as unique_id1, Polecenie.IdPolec as unique_id2, " + _
+		"Polecenie.* from Polecenie" + strDestWhere, "Polecenie")
+end function
+
+function export_Platnosc(byref pExpMan, byval strWhere)
+
+	dim strSprzedZak
+	strSprzedZak = ""
+
+	if (strWhere<>"") then
+		strSprzedZak = " and " + strWhere
+	end if
+
+	if (strWhere<>"") then
+		strWhere = " where (" + strWhere + ") "
+	end if
+
+	'Przed eksportem p³atnoœci musimy wyeksportowaæ
+	'dokumenty sprzedazy powi¹zane z tymi p³atnoœciami
+	'i zakupu. Robimy to po to by zosta³y utworzone 
+	'transakcje dla tych dokumentów. Nie robimy tego
+	'przy eksporcie pozycji platnosci bo dokumenty
+	'te tworza transakcje w befinsert->musza byc 
+	'wczesniej zapisane
+	export_Sprzedaz pExpMan, "Sprzedaz.IdTrans in (" + _
+		"select IdTrans from Kasa " + _
+		"join Rejestr on Rejestr.IdRej = Kasa.IdRej " + _
+		"join PozKasa on PozKasa.IdRapKas = Kasa.IdRapKas " + _
+		"where (TypTrans='S' and IdTrans>0 " + strSprzedZak + ")" + _
+		")"
+
+	export_Zakup pExpMan, "Zakup.IdTrans in (" + _
+		"select IdTrans from Kasa " + _
+		"join Rejestr on Rejestr.IdRej = Kasa.IdRej " + _
+		"join PozKasa on PozKasa.IdRapKas = Kasa.IdRapKas " + _
+		"where (TypTrans='Z' and IdTrans>0 " + strSprzedZak + ")" + _
+		")"
+
+	'Wyslij rzadanie zapisania danych natychmiast
+	pExpMan.save_data
+
+	'Rozpocznij teraz eksportowanie samych p³atnoœci
+	dim strDestWhere
+	strDestWhere = strWhere
+
+	pExpMan.RecordsetCount "Kasa", strDestWhere
+
+	export_Platnosc = pExpMan.fromRecordset("select Kasa.NrDok + ' (' + cast(Kasa.IdRapKas as varchar(64)) + ')' as unique_id, " + _
+		"Kasa.*, Rejestr.nazwa as RejestrUniqueID from Kasa " + _
+		"join Rejestr on Rejestr.IdRej = Kasa.IdRej " + _
+		strDestWhere + _
+		"order by Kasa.DataOd, Kasa.DataDo, Kasa.IdRapKas", "Kasa")
+
+end function
+
+function export_Urzad(byref pExpMan, byval strWhere)
+	if (strWhere<>"") then
+		strWhere = " where (" + strWhere + ")"
+	end if
+
+	dim strDestWhere
+	strDestWhere = strWhere
+	
+	pExpMan.RecordsetCount "Urzad", strDestWhere
+
+	export_Urzad = pExpMan.fromRecordset("select *, Bank as BANK_NAZWA, KontoBank AS BANK_RACHUNEK, Miejsc AS MIESCOWOSC_NAZWA, Kod as KOD_POCZTOWY from Urzad" + strDestWhere, "Urzad")
+end function
+
+function export_Dekret(byref pExpMan, byval strWhere)
+	if (strWhere<>"") then
+		strWhere = " and (" + strWhere + ")"
+	end if
+
+	dim strDestWhere
+	strDestWhere = " where (Dekret.KwotaWn <> 0 or Dekret.KwotaMa <> 0)" + strWhere
+	
+	pExpMan.RecordsetCount "Dekret join Konto on Dekret.IdKonto = Konto.IdKonto ", strDestWhere
+	
+	export_Dekret = pExpMan.fromRecordset("select '" + LIST_ELEMENT_IDENTITY + "' as list_id, Dekret.*, Konto.Symbol as Symbol from Dekret join Konto on Dekret.IdKonto = Konto.IdKonto " + strDestWhere, "Dekret")
+end function
+
+function export_Sprzedaz(byref pExpMan, byval strWhere)
+	if (strWhere<>"") then
+		strWhere = " where (" + strWhere + ")"
+	end if
+
+	dim strDestWhere
+	strDestWhere = strWhere
+	
+	pExpMan.RecordsetCount "Sprzedaz join Kontrahent k on Sprzedaz.IdKontra=k.IdKontra", strDestWhere
+	
+	export_Sprzedaz = pExpMan.fromRecordset("select Sprzedaz.*, k.Nazwa as KONTRAHENT_NAZWA," + _
+	" Sprzedaz.Kod as KOD_POCZTOWY, Sprzedaz.Miejsc As MIESCOWOSC_NAZWA," + _
+	" Cast(DataPlat - DataSprz as int) as PLATNOSC_LICZBA_DNI, SposobPlat as PLATNOSC_NAZWA" + _
+	" from Sprzedaz" + _
+	" join Kontrahent k on Sprzedaz.IdKontra=k.IdKontra" + _
+	" " + strDestWhere, "Sprzedaz")
+end function
+
+function export_Artykul(byref pExpMan, byval strWhere)
+	if (strWhere<>"") then
+		strWhere = " where " + strWhere + ""
+	end if
+
+	dim strDestWhere
+	strDestWhere = strWhere
+	
+	pExpMan.RecordsetCount "artykul", strDestWhere
+	
+	export_Artykul = pExpMan.fromRecordset("select ltrim(rtrim(artykul.NaszInx)), artykul.*, isNull((select sum(Ilosc) from kontrolaSM where IdArt = Artykul.IdArt Group By IdArt ),0.000) as SM from artykul" + strDestWhere, "Artykul")
+end function
+
+function export_GrupaArt(byref pExpMan, byval strWhere)
+	if (strWhere<>"") then
+		strWhere = " AND (" + strWhere + ")"
+	end if
+
+	dim strDestWhere
+	strDestWhere = " WHERE (p.Nazwa <> 'Wszystko')" + strWhere
+	
+	pExpMan.RecordsetCount "GrupaArt p JOIN GrupaArt g ON g.IdGrArt = p.IdParent ", strDestWhere
+	
+	export_GrupaArt = pExpMan.fromRecordset("select p.IdGrArt as G_IdGrArt, p.Nazwa as G_Nazwa, p.IdParent as G_IdParent, g.Nazwa as P_Nazwa FROM GrupaArt p JOIN GrupaArt g ON g.IdGrArt = p.IdParent " + strDestWhere + " order by g.Hierarchia", "GrupaArt")
+end function
+
+function export_Konto(byref pExpMan, byval strWhere)
+	if (strWhere<>"") then
+		strWhere = " where " + strWhere
+	end if
+
+	dim strDestWhere
+	strDestWhere = strWhere
+	
+	pExpMan.RecordsetCount "Konto " + _
+		" LEFT OUTER JOIN kontrakonto kk ON Konto.IdKonto= kk.IdKonto" + _
+		" LEFT OUTER JOIN pracownikkonto pk ON Konto.IdKonto= pk.IdKonto" + _
+		" LEFT OUTER JOIN konto as kparent on Konto.IdParent=kparent.IdKonto ", _
+		strDestWhere
+
+	export_Konto = pExpMan.fromRecordset("select Konto.Symbol as unique_id, Konto.*, isnull(IdPrac,0) as PracID, isnull(IdKontra,0) as KontraID, isNull(kparent.IdKonto, 0) as KontoParentID, isNull(kparent.Symbol, '') as ParentSymbol from Konto" + _
+		" LEFT OUTER JOIN kontrakonto kk ON Konto.IdKonto= kk.IdKonto" + _
+		" LEFT OUTER JOIN pracownikkonto pk ON Konto.IdKonto= pk.IdKonto" + _
+		" LEFT OUTER JOIN konto as kparent on Konto.IdParent=kparent.IdKonto" + strDestWhere, "Konto")
+end function
+
+function export_Pracownik(byref pExpMan, byval strWhere)
+	if (strWhere<>"") then
+		strWhere = " where " + strWhere
+	end if
+
+	dim strDestWhere
+	strDestWhere = strWhere
+	
+	pExpMan.RecordsetCount "Pracownik", strDestWhere
+	
+	export_Pracownik = pExpMan.fromRecordset("select *, Bank as BANK_NAZWA, KontoBank AS BANK_RACHUNEK, Miejsc AS MIESCOWOSC_NAZWA, Wojew As WOJEWODZTWO_NAZWA, Kod as KOD_POCZTOWY from Pracownik" + strDestWhere, "Pracownik")
+end function
+
+function export_Kontrahent(byref pExpMan, byval strWhere)
+	if (strWhere<>"") then
+		strWhere = " where " + strWhere
+	end if
+
+	dim strDestWhere
+	strDestWhere = strWhere
+	
+	pExpMan.RecordsetCount "Kontrahent " + _
+		" left outer JOIN KontraSprz KSP ON Kontrahent.IdKontra = KSP.IdKontra" + _
+		" left outer  JOIN GrupaKontra GK ON KSP.IdGrKontra = GK.IdGrKontra ", _
+		strDestWhere
+
+	export_Kontrahent = pExpMan.fromRecordset("select Kontrahent.*, isNull(KSP.Opis, '') as Opis, GK.IdGrKontra as GRUPA_KONTRAHENTA, " + _
+	"Miejsc AS MIESCOWOSC_NAZWA, Kod as KOD_POCZTOWY from Kontrahent" + _
+		" left outer JOIN KontraSprz KSP ON Kontrahent.IdKontra = KSP.IdKontra" + _
+		" left outer  JOIN GrupaKontra GK ON KSP.IdGrKontra = GK.IdGrKontra" + _
+		strDestWhere, "Kontrahent")
+
+end function
+
+
+'.........................
+' FUNKCJE POMOCNICZE
+'.........................
+
+
+
+'.........................
+' OBIEKTY SYSTEMOWE
+'.........................
+function ExportManager_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	ExportManager_SaveStream = pExpMan.container().import( pStream )
+end function
+
+
+
+'.........................
+' PLATNOSC
+'.........................
+function Kasa_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	pStream.begin_object TYPEID_N5PLATNOSC
+
+	pStream.fields("dDataOper") = pRecord.fields("DataOd").value
+	'Do numeru dokumentu jest dodawany IdObj poniewa¿
+	'w NavoFirma numery dokumentów moga siê powtarzaæ
+	pStream.fields("strNrDok") = CStr(pRecord.fields("NrDok").value) + " (" + CStr(pRecord.fields("IdRapKas").value) + ")"
+
+	dim nNewTyp: nNewTyp = CLng(0)
+	select case trim(pRecord.fields("Typ").value)
+		case "B" 'Wpis bankowy
+			nNewTyp = N5REJESTRDOK_BANKOWY
+
+		case "K" 'Wpis kasowy
+			nNewTyp = N5REJESTRDOK_KASOWY
+	end select
+
+	pStream.extra("TypRejestru") = nNewTyp
+
+	export_Rejestr pExpMan, "Rejestr.IdRej=" + CStr(pRecord.fields("IdRej").value)
+	pStream.virtualfieldref("pRejestrDok", TYPEID_N5REJESTRDOK) = pRecord.fields("RejestrUniqueID").value
+
+	if (not pExpMan.shouldContinue( pStream )) then
+		exit function
+	end if
+
+	'Ustawiamy kwote recznie bo zmiany pozycji ich nie usytawiaj¹
+	pStream.fields("curKwotaPodm") = CCur(pRecord.fields("SumaPrzych").value) - CCur(pRecord.fields("SumaRozch").value)
+
+	Kasa_Convert2Stream = true
+end function
+
+function Kasa_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	pExpMan.start_waiting
+	Kasa_SaveStream = pExpMan.container().import( pStream )
+
+	pExpMan.fromRecordset "select '" + LIST_ELEMENT_IDENTITY + "' as list_id, PozKasa.* from PozKasa where PozKasa.IdRapKas=" + CStr(pRecord.fields("IdRapKas").value), "PozKasa"
+	pExpMan.stop_waiting
+end function
+
+'.........................
+' POZYCJA PLATNOSCI
+'.........................
+function PozKasa_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	pStream.begin_object TYPEID_N5POZPLATNOSC
+	pStream.as_child "listPozycje"
+
+	'Ustawiamy przychod lub rozchod
+	if (CCur(pRecord.fields("Przychod").value)>0) then
+		pStream.fields("curPozKwotaPodm") = pRecord.fields("Przychod").value
+	else
+		pStream.fields("curPozKwotaPodm") = CCur(pRecord.fields("Rozchod").value) * CCur(-1)
+	end if
+
+	'W tym miejscu nie eksportujemy Sprzedazy i Zakupu. Ustawiamy
+	'tylko informacje jakie maja id dla p³atnoœci. Obiekty te by³y
+	'zapisane (wyeksportowane) wczeœniej patrz funkcja export_Platnosc
+	'Potrzebujemy je by skojarzyc dokument z transkacj¹. Jednak obiekty
+	'te tworz¹ transkacje dopiero w befins dlatego wymagane bylo ich
+	'zapisanie
+	select case CStr(pRecord.fields("TypTrans").value)
+		case "S"	'Sprzedaz
+			pStream.extra("idsprzedaz") = CLng(pRecord.fields("IdTrans").value)
+			
+		case "Z"	'Zakup
+			pStream.extra("idzakup") = pRecord.fields("IdTrans").value
+
+	end select
+	
+	'pTransakcja bêdzie ustawiona w AftImport na podstawie zaimportowanego
+	'zakupu lub zaimportowanej sprzedazy
+
+	PozKasa_Convert2Stream = true
+end function
+
+function PozKasa_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	PozKasa_SaveStream = pExpMan.container().import( pStream )
+end function
+
+'.........................
+' REJESTR
+'.........................
+function Rejestr_Convert2Stream(byref pExpMan, byref pRecord, byref pStream): Rejestr_Convert2Stream = false
+	pStream.begin_object TYPEID_N5REJESTRDOK
+
+	pStream.fields("strFormatNumeracji") = strFormat
+	pStream.fields("strNazwa") = pRecord.fields("Nazwa").value
+
+	dim nTyp
+	select case UCase(Trim(pRecord.fields("TypRej").value))
+		case "SPRV"
+			nTyp = N5REJESTRDOK_FAKT_SP
+
+		case "ZAKV"
+			nTyp = N5REJESTRDOK_FAKT_ZAK
+
+'		case "AUTO"
+'			nTyp = N5REJESTRDOK_AUTOM_PRZREK
+'
+'		case "DOKM"
+'			nTyp = N5REJESTRDOK_DOK_MAG
+
+		case "NOTA"
+			nTyp = N5REJESTRDOK_NOTA_ODSETKOWA
+
+		case "POJA"
+			nTyp = N5REJESTRDOK_KARTA_POJAZDU
+
+		case "SRTW"
+			nTyp = N5REJESTRDOK_SRODKI_TRWALE
+
+		case "PL99"
+			nTyp = N5REJESTRDOK_WYNAGR
+
+		case "BNP"
+			nTyp = N5REJESTRDOK_BANKOWY
+			pStream.fields("strNazwa") = pStream.fields("strNazwa") + "/P"
+
+		case "BNR"
+			nTyp = N5REJESTRDOK_BANKOWY
+			pStream.fields("strNazwa") = pStream.fields("strNazwa") + "/R"
+
+		case "KP"
+			nTyp = N5REJESTRDOK_KASOWY
+			pStream.fields("strNazwa") = pStream.fields("strNazwa") + "/P"
+
+		case "KW"
+			nTyp = N5REJESTRDOK_KASOWY
+			pStream.fields("strNazwa") = pStream.fields("strNazwa") + "/R"
+
+'		case "ZAL"
+'			nTyp = N5REJESTRDOK_REJ_ZAL
+
+		case "ZP"
+			nTyp = N5REJESTRDOK_REJ_ZALICZEK
+
+		case "ZR"
+			nTyp = N5REJESTRDOK_REJ_ZALICZEK
+
+'		case "POLE"
+'			nTyp = N5REJESTRDOK_POLEC_KSIEG
+
+		case "KASA"
+			nTyp = N5REJESTRDOK_KASOWY
+		
+		case "BANK"
+			nTyp = N5REJESTRDOK_BANKOWY
+
+		case else
+			view_message1 6252, 0, pRecord.fields("TypRej").value
+			exit function
+
+	end select
+
+	pStream.fields("eTyp") = nTyp
+
+
+	if (not pExpMan.shouldContinue( pStream )) then
+		exit function
+	end if
+
+	dim strFormat: strFormat = Trim( pRecord.fields("FormatInx").value )
+	if (strFormat="") then
+		strFormat = "%n"
+	end if
+
+	pStream.fields("nLicznik") = 1
+	pStream.fields("eAktywny") = N5REJESTRDOK_AKTYWNY
+
+	Rejestr_Convert2Stream = true
+end function
+
+function Rejestr_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	Rejestr_SaveStream = pExpMan.container().import( pStream )
+end function
+
+
+'.........................
+' KRAJ
+'.........................
+function Kraj_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	pStream.begin_object TYPEID_N5JEDNOSTKA
+
+	pStream.fields("strSkrot") = pRecord.fields("Skrot").value
+
+	if (not pExpMan.shouldContinue( pStream )) then
+		exit function
+	end if
+
+	if (pRecord.fields("NWaluty").value <> "") then
+		pStream.fields("strNazwa") = pRecord.fields("NWaluty").value
+	else
+		pStream.fields("strNazwa") = pRecord.fields("SNWaluty").value
+	end if
+
+	'PL jest dla nas rownoznaczne z PLN
+	if (UCase(pStream.fields("strNazwa"))="PL") then
+		pStream.fields("strNazwa") = "PLN"
+	end if
+
+	pStream.fields("nDokladnosc") = 3
+	pStream.fields("eTyp") = N5JEDNOSTKA_WALUTA
+
+	Kraj_Convert2Stream = true
+end function
+
+function Kraj_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	Kraj_SaveStream = pExpMan.container().import( pStream )
+end function
+
+
+'.........................
+' GRUPA ARTYKULOW
+'.........................
+function GrupaArt_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	pStream.begin_object TYPEID_N5GRUPAPRODUKTOW
+
+	pStream.fields("strNazwa") = pRecord.fields("G_Nazwa").value
+
+	if (not pExpMan.shouldContinue( pStream )) then
+		exit function
+	end if
+
+	export_GrupaArt pExpMan, "p.IdGrArt=" + CStr(pRecord.fields("G_IdParent").value)
+
+	pStream.fields("pGrupaNadrzedna") = pRecord.fields("G_IdParent").value
+
+	GrupaArt_Convert2Stream=true
+end function
+
+function GrupaArt_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	GrupaArt_SaveStream = pExpMan.container().import( pStream )
+end function
+
+
+'.........................
+' MAGAZYN
+'.........................
+function Magazyn_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	pStream.begin_object TYPEID_N5MAGAZYN
+
+	pStream.fields("strNazwa") = pRecord.fields("Nazwa").value
+
+	if (not pExpMan.shouldContinue( pStream )) then
+		exit function
+	end if
+
+	'Magazyn podstawowy
+	pStream.fields("eTyp") = N5TYPMAG_PODSTAWOWY
+	
+	'referencje:
+	pExpMan.fromObject "Kraj", "IdKraj", pRecord.fields("IdKrajWaluta").value
+
+	'pola naszego obiektu
+	pStream.fields("pWaluta") = pRecord.fields("IdKrajWaluta").value
+
+	Magazyn_Convert2Stream = true
+end function
+
+function Magazyn_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	Magazyn_SaveStream = pExpMan.container().import( pStream )
+end function
+
+function n5magazyn_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	pStream.begin_object TYPEID_N5MAGAZYN
+
+	pStream.fields("strNazwa") = pRecord.fields("strNazwa").value
+	pStream.fields("nInternalID") = pRecord.fields("nInternalID").value
+	
+	if (not pExpMan.shouldContinue( pStream )) then
+		exit function
+	end if
+
+	n5magazyn_Convert2Stream = true
+end function
+
+function n5magazyn_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	n5magazyn_SaveStream = pExpMan.container().import( pStream )
+end function
+
+
+'.........................
+' GRUPA KONTRA.
+'.........................
+function GrupaKontra_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	pStream.begin_object TYPEID_N5GRUPAKLIENT
+
+	pStream.fields("strNazwa") = pRecord.fields("Nazwa").value
+
+	if (not pExpMan.shouldContinue( pStream )) then
+		exit function
+	end if
+
+	GrupaKontra_Convert2Stream = true
+end function
+
+function GrupaKontra_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	GrupaKontra_SaveStream = pExpMan.container().import( pStream )
+end function
+
+
+'.........................
+' PRACOWNIK
+'.........................
+function Pracownik_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	pStream.begin_object TYPEID_N5PRACOWNIK
+
+	pStream.fields("strNazwisko") = pRecord.fields("Nazwisko").value
+	pStream.fields("strImie") = pRecord.fields("Imie1").value
+
+	if trim(pRecord.fields("PESEL").value)<>"" then
+		pStream.fields("strPESEL") = pRecord.fields("PESEL").value
+	else
+		pStream.fields("strPESEL") = "BRAK" + CStr(pRecord.fields("IdPrac").value)
+	end if
+
+	pStream.fields("strNIP") = pRecord.fields("NIP").value
+
+	if (not pExpMan.shouldContinue( pStream )) then
+		exit function
+	end if
+
+	pStream.fields("strImie2") = pRecord.fields("Imie2").value
+	pStream.fields("dDataUr") = pRecord.fields("DataUr").value
+	pStream.fields("strMiejsceUr") = pRecord.fields("MiejscUr").value
+
+	pStream.fields("ePlec") = doc_.afc.business.imie2plec(trim(pRecord.fields("Imie1").value))
+	pStream.fields("strUlica") = pRecord.fields("Ulica").value
+	pStream.fields("strNrDomu") = pRecord.fields("NrDomu").value
+	pStream.fields("strNrLokalu") = pRecord.fields("NrLokalu").value
+	pStream.fields("strKod") = pRecord.fields("Kod").value
+	pStream.fields("strTel1") = pRecord.fields("Tel1").value
+	pStream.fields("strTel2") = pRecord.fields("Tel2").value
+	pStream.fields("strFax") = pRecord.fields("Fax").value
+	pStream.fields("eTypDT") = 1
+
+	if (CDate(pRecord.fields("DataZwol").value) < CDate(Now)) then
+		pStream.fields("eAktywny") = N5PRACOWNIK_AKTYWNY_NIEAKTYWNY
+	else
+		pStream.fields("eAktywny") = N5PRACOWNIK_AKTYWNY_AKTYWNY
+	end if
+
+	'bark jakiejs nazwy to przy imporcie ustawienie na <brak>
+	if (trim(pRecord.fields("BANK_NAZWA").value) <> "") then
+		pExpMan.fromVirtualObject "Bank", trim(pRecord.fields("BANK_NAZWA").value), pRecord, nothing
+		pStream.virtualfieldref("pBank1", TYPEID_N5BANK) = trim(pRecord.fields("BANK_NAZWA").value)
+	end if
+
+	dim strWojewodztwo
+	strWojewodztwo = doc_.afc.business.zip2area_pl( trim(pRecord.fields("KOD_POCZTOWY").value) )
+
+	if (strWojewodztwo <> "") then
+		pExpMan.fromVirtualObject "Wojewodztwo", strWojewodztwo, pRecord, nothing
+	end if
+
+	if (trim(pRecord.fields("MIESCOWOSC_NAZWA").value) <> "") then
+		pExpMan.fromVirtualObject "Miejscowosc", trim(pRecord.fields("MIESCOWOSC_NAZWA").value), pRecord, nothing
+		pStream.virtualfieldref("pMiejscowosc", TYPEID_N5MIEJSCOWOSC) = trim(pRecord.fields("MIESCOWOSC_NAZWA").value)
+	end if
+
+	Pracownik_Convert2Stream = true
+end function
+
+function Pracownik_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	Pracownik_SaveStream = pExpMan.container().import( pStream )
+end function
+
+
+'.........................
+' BANK
+'.........................
+function Bank_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	pStream.begin_object TYPEID_N5BANK
+
+	pStream.fields("strSkrot") = pRecord.fields("BANK_NAZWA").value
+
+	if (not pExpMan.shouldContinue( pStream )) then
+		exit function
+	end if
+
+	pStream.fields("strNazwa") = pRecord.fields("BANK_NAZWA").value
+	pStream.fields("strOddzial") = "oddzia³"
+
+	dim strRachunek
+	strRachunek = pRecord.fields("BANK_RACHUNEK").value
+	
+	dim strKodRachunku
+	strKodRachunku = ""
+
+	if (strRachunek <> "" and len(strRachunek)=19 and mid(strRachunek, 9, 1) = "-") then
+		strKodRachunku = left(strRachunek, 9)
+	end if
+
+	if (strKodRachunku = "") then
+		strKodRachunku = "KOD ?" + CStr(Year(Now)) + CStr(Month(Now)) + CStr(Day(Now)) + CStr(Hour(Now)) + CStr(Minute(Now)) + CStr(Second(Now)) + "?"
+	end if
+
+	pStream.fields("strKodRach") = 	strKodRachunku
+
+	Bank_Convert2Stream = true
+end function
+
+function Bank_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	Bank_SaveStream = pExpMan.container().import( pStream )
+end function
+
+
+'.........................
+' WOJEWODZTWO
+'.........................
+function Wojewodztwo_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	pStream.begin_object TYPEID_N5WOJEWODZTWO
+
+	pStream.fields("strNazwa") = doc_.afc.business.zip2area_pl(trim(pRecord.fields("KOD_POCZTOWY").value))
+
+	if (not pExpMan.shouldContinue( pStream )) then
+		exit function
+	end if
+
+	Wojewodztwo_Convert2Stream = true
+end function
+
+function Wojewodztwo_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	Wojewodztwo_SaveStream = pExpMan.container().import( pStream )
+end function
+
+
+'.........................
+' MIEJSCOWOSC
+'.........................
+function Miejscowosc_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	pStream.begin_object TYPEID_N5MIEJSCOWOSC
+
+	pStream.fields("strNazwa") = Trim(pRecord.fields("MIESCOWOSC_NAZWA").value)
+
+	if (not pExpMan.shouldContinue( pStream )) then
+		exit function
+	end if
+
+	pStream.fields("eWielkosc") = 7
+	pStream.virtualfieldref("pWojewodztwo", TYPEID_N5WOJEWODZTWO) = doc_.afc.business.zip2area_pl(trim(pRecord.fields("KOD_POCZTOWY").value))
+
+	Miejscowosc_Convert2Stream = true
+end function
+
+function Miejscowosc_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	Miejscowosc_SaveStream = pExpMan.container().import( pStream )
+end function
+
+
+'.........................
+' INSTYTUCJE
+'.........................
+function Urzad_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	pStream.begin_object TYPEID_N5INSTYTUCJA
+
+	pStream.fields("strNazwa") = pRecord.fields("Nazwa").value
+	pStream.fields("strUlica") = pRecord.fields("Ulica").value
+
+	dim strWojewodztwo
+	strWojewodztwo = doc_.afc.business.zip2area_pl( trim(pRecord.fields("KOD_POCZTOWY").value) )
+
+	if (strWojewodztwo <> "") then
+		pExpMan.fromVirtualObject "Wojewodztwo", strWojewodztwo, pRecord, nothing
+	end if
+
+	if (trim(pRecord.fields("MIESCOWOSC_NAZWA").value) <> "") then
+		pExpMan.fromVirtualObject "Miejscowosc", trim(pRecord.fields("MIESCOWOSC_NAZWA").value), pRecord, nothing
+		pStream.virtualfieldref("pMiejscowosc", TYPEID_N5MIEJSCOWOSC) = trim(pRecord.fields("MIESCOWOSC_NAZWA").value)
+	end if
+
+	if (not pExpMan.shouldContinue( pStream )) then
+		exit function
+	end if
+
+	pStream.fields("strSkrot") = pRecord.fields("Nazwa").value
+	pStream.fields("strNrDomu") = pRecord.fields("NrDomu").value
+	pStream.fields("strNrLokalu") = pRecord.fields("NrLokalu").value
+	pStream.fields("strKod") = pRecord.fields("Kod").value
+
+	if (trim(pRecord.fields("BANK_NAZWA").value) <> "") then
+		pExpMan.fromVirtualObject "Bank", trim(pRecord.fields("BANK_NAZWA").value), pRecord, nothing
+		pStream.virtualfieldref("pBank1", TYPEID_N5BANK) = trim(pRecord.fields("BANK_NAZWA").value)
+		pStream.fields("strRachunek1") = pRecord.fields("KontoBank").value
+	end if
+
+	Urzad_Convert2Stream = true
+end function
+
+function Urzad_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	Urzad_SaveStream = pExpMan.container().import( pStream )
+end function
+
+
+'.........................
+' JEDNOSTKA
+'.........................
+function Jednostka_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	pStream.begin_object TYPEID_N5JEDNOSTKA
+
+	pStream.fields("strSkrot") = pRecord.fields("Nazwa").value
+
+	if (not pExpMan.shouldContinue( pStream )) then
+		exit function
+	end if
+	
+	pStream.fields("strNazwa") = pRecord.fields("Nazwa").value
+	pStream.fields("nDokladnosc") = clng(pRecord.fields("Zaokr").value) + 1
+	pStream.fields("eTyp") = N5JEDNOSTKA_MIARY
+
+	Jednostka_Convert2Stream = true
+end function
+
+function Jednostka_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	Jednostka_SaveStream = pExpMan.container().import( pStream )
+end function
+
+
+'.........................
+' KLIENCI
+'.........................
+function Kontrahent_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	pStream.begin_object TYPEID_N5KLIENT
+
+	pStream.fields("strIndeks") = pRecord.fields("Indeks").value
+
+	if (not pExpMan.shouldContinue( pStream )) then
+		exit function
+	end if
+
+	'referencje:
+	dim idGrupaKontra
+	idGrupaKontra = pRecord.fields("GRUPA_KONTRAHENTA").value
+
+	if (isNull(idGrupaKontra)) then
+		idGrupaKontra = 0
+	else
+		pExpMan.fromObject "GrupaKontra", "IdGrKontra", idGrupaKontra
+	end if
+
+	pStream.fields("strNazwa") = pRecord.fields("Nazwa").value
+	pStream.fields("strSkrot") = pRecord.fields("Nazwa").value
+	pStream.fields("strUlica") = pRecord.fields("Ulica").value
+	pStream.fields("strKod") = pRecord.fields("Kod").value
+	pStream.fields("strTel1") = pRecord.fields("Tel1").value
+	pStream.fields("strTel2") = pRecord.fields("Tel2").value
+	pStream.fields("strTel3") = pRecord.fields("Tel3").value
+	pStream.fields("strFax") = pRecord.fields("Fax").value
+	pStream.fields("strEmail") = pRecord.fields("email").value
+
+	dim strNIP
+	strNIP = pRecord.fields("NIP").value
+
+	if (trim(strNIP)<>"") then
+		pStream.fields("strNIP") = strNIP
+	else
+		pStream.fields("strNIP") = "Brak"
+	end if
+
+	dim strRegon
+	strRegon = ""
+
+	pStream.fields("strREGON") = strRegon
+	pStream.fields("eAktywny") = N5KLIENT_AKTYWNY
+	pStream.fields("eKlasaKlienta") = N5KLIENT_SREDNI
+	pStream.fields("dDataUr") = doc_.afc.globals.nulldate()
+	pStream.fields("strUwagi") = pRecord.fields("Opis").value
+	pStream.fields("ePrywat") = N5KLIENT_FIRMA
+	pStream.fields("pGrupaKlient") = idGrupaKontra
+
+	dim strWojewodztwo
+	strWojewodztwo = doc_.afc.business.zip2area_pl( trim(pRecord.fields("KOD_POCZTOWY").value) )
+
+	if (strWojewodztwo <> "") then
+		pExpMan.fromVirtualObject "Wojewodztwo", strWojewodztwo, pRecord, nothing
+	end if
+
+	if (trim(pRecord.fields("MIESCOWOSC_NAZWA").value) <> "") then
+		pExpMan.fromVirtualObject "Miejscowosc", trim(pRecord.fields("MIESCOWOSC_NAZWA").value), pRecord, nothing
+		pStream.virtualfieldref("pMiejscowosc", TYPEID_N5MIEJSCOWOSC) = trim(pRecord.fields("MIESCOWOSC_NAZWA").value)
+	end if
+
+	Kontrahent_Convert2Stream = true
+end function
+
+function Kontrahent_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	Kontrahent_SaveStream = pExpMan.container().import( pStream )
+end function
+
+
+'.........................
+' KONTA
+'.........................
+function Konto_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	pStream.begin_object TYPEID_N5KONTO
+
+	pStream.fields("strSymbol") = pRecord.fields("Symbol").value
+
+	if (not pExpMan.shouldContinue( pStream )) then
+		exit function
+	end if
+
+	export_Konto pExpMan, "Konto.IdKonto=" + CStr(pRecord.fields("KontoParentID").value)
+	
+	pStream.virtualfieldref("pKontoNadrz", TYPEID_N5KONTO) = pRecord.fields("ParentSymbol").value
+	pStream.fields("strNazwa") = pRecord.fields("Nazwa").value
+	pStream.fields("strOpis") = pRecord.fields("Komentarz").value
+	
+	if (export_Pracownik(pExpMan, "Pracownik.IdPrac=" + CStr(pRecord.fields("PracID").value))) then
+		pStream.virtualfieldref("wrefPodmiotRozrach", TYPEID_N5PRACOWNIK) = pRecord.fields("PracID").value
+	end if
+	
+	if (export_Kontrahent(pExpMan, "Kontrahent.IdKontra=" + CStr(pRecord.fields("KontraID").value))) then
+		pStream.virtualfieldref("wrefPodmiotRozrach", TYPEID_N5KLIENT) = pRecord.fields("KontraID").value
+	end if
+	
+	if (pRecord.fields("Syntet").value="S") then
+		pStream.fields("eAnalit") = N5KONTO_SYNTETYCZNE
+	else
+		pStream.fields("eAnalit") = N5KONTO_ANALITYCZNE
+	end if
+
+	if (pRecord.fields("Bilans").value="B") then
+		pStream.fields("eBilans") = N5KONTO_BILANSOWE
+	else
+		pStream.fields("eBilans") = N5KONTO_POZABILANSOWE
+	end if
+
+	pStream.fields("eAktywne") = N5KONTO_AKTYWNE
+
+	Konto_Convert2Stream = true
+end function
+
+function Konto_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	Konto_SaveStream = pExpMan.container().import( pStream )
+end function
+
+
+'.........................
+' Artykul
+'.........................
+function Artykul_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	pStream.begin_object TYPEID_N5PRODUKT
+	
+	pStream.fields("strIndeks") = pRecord.fields("NaszInx").value
+
+	if (not pExpMan.shouldContinue( pStream )) then
+		exit function
+	end if
+
+	pExpMan.start_waiting
+
+	export_GrupaArt pExpMan, "p.IdGrArt=" + CStr(pRecord.fields("IdGrArt").value)
+	pExpMan.fromObject "Jednostka", "IdJedn", pRecord.fields("IdJedn").value
+	
+	pStream.fields("strNazwa") = pRecord.fields("Nazwa").value
+	pStream.fields("strNazwaMiedzynarodowa") = pRecord.fields("NazwaM").value
+	pStream.fields("strKodPKWiU") = pRecord.fields("SWW").value
+	pStream.fields("strOpis") = pRecord.fields("Opis").value
+
+	pStream.fields("eAktywny") = N5PRODUKT_AKTYWNY
+
+	if (trim(pRecord.fields("TowarUsl").value)<>"T") then  
+		pStream.fields("eRodzaj") = N5PRODUKT_USLUGA
+	end if
+
+	'Ustaw pole eVAT na podstawie stawki VAT
+	set_eVAT "VAT", trim(pRecord.fields("Nazwa").value), pRecord, pStream, pExpMan
+
+	pStream.fields("pGrupaProd") = pRecord.fields("IdGrArt").value
+	pStream.fields("pJednostkaEwid") = pRecord.fields("IdJedn").value
+
+	'wymuszamy usuniecie wszyskiego z listy - jezeli cos bylo
+	pStream.fields("listOpakowania") = 0
+
+	Artykul_Convert2Stream = true
+end function
+
+function Artykul_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	Artykul_SaveStream = pExpMan.container().import( pStream )
+
+	'eksportujemy listê
+	pExpMan.fromVirtualObject "Opakowanie", LIST_ELEMENT_IDENTITY, pRecord, nothing
+	pExpMan.stop_waiting
+end function
+
+
+'.........................
+' Opakowanie
+'.........................
+function Opakowanie_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	pStream.begin_object TYPEID_N5OPAKOWANIE_PRODUKTU
+	pStream.as_child "listOpakowania"
+
+	pExpMan.fromObject "Jednostka", "IdJedn", pRecord.fields("IdJedn").value
+
+	pStream.fields("strNazwa") = "Podstawowe"
+	pStream.fields("pJednostkaWagi") = pRecord.fields("IdJedn").value
+
+	if (pRecord.fields("Brutto1").value = "N") then
+		pStream.fields("curCenaNetto1") = pRecord.fields("Cena1").value
+	else
+		pStream.fields("curCenaBrutto1") = pRecord.fields("Cena1").value 
+	end if
+
+	if (pRecord.fields("Brutto2").value = "N") then
+		pStream.fields("curCenaNetto2") = pRecord.fields("Cena2").value
+	else
+		pStream.fields("curCenaBrutto2") = pRecord.fields("Cena2").value 
+	end if
+
+	if (pRecord.fields("Brutto3").value = "N") then
+		pStream.fields("curCenaNetto3") = pRecord.fields("Cena3").value
+	else
+		pStream.fields("curCenaBrutto3") = pRecord.fields("Cena3").value 
+	end if
+
+	if (pRecord.fields("Brutto4").value = "N") then
+		pStream.fields("curCenaNetto4") = pRecord.fields("Cena4").value
+	else
+		pStream.fields("curCenaBrutto4") = pRecord.fields("Cena4").value 
+	end if
+
+	if (pRecord.fields("Brutto5").value = "N") then
+		pStream.fields("curCenaNetto5") = pRecord.fields("Cena5").value
+	else
+		pStream.fields("curCenaBrutto5") = pRecord.fields("Cena5").value 
+	end if
+
+	if (pRecord.fields("Brutto6").value = "N") then
+		pStream.fields("curCenaNetto6") = pRecord.fields("Cena6").value
+	else
+		pStream.fields("curCenaBrutto6") = pRecord.fields("Cena6").value 
+	end if
+
+	Opakowanie_Convert2Stream = true
+end function
+
+function Opakowanie_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	Opakowanie_SaveStream = pExpMan.container().import( pStream )
+end function
+
+
+
+'.........................
+' Firma
+'.........................
+function Firma_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	pStream.begin_object TYPEID_N5FIRMA
+
+	if (not pExpMan.shouldContinue( pStream )) then
+		exit function
+	end if
+
+	dim strWojewodztwo
+	strWojewodztwo = doc_.afc.business.zip2area_pl( trim(pRecord.fields("KOD_POCZTOWY").value) )
+
+	if (strWojewodztwo <> "") then
+		pExpMan.fromVirtualObject "Wojewodztwo", strWojewodztwo, pRecord, nothing
+	end if
+
+	if (trim(pRecord.fields("MIESCOWOSC_NAZWA").value) <> "") then
+		pExpMan.fromVirtualObject "Miejscowosc", trim(pRecord.fields("MIESCOWOSC_NAZWA").value), pRecord, nothing
+		pStream.virtualfieldref("pMiejscowosc", TYPEID_N5MIEJSCOWOSC) = trim(pRecord.fields("MIESCOWOSC_NAZWA").value)
+	end if
+
+	if (trim(pRecord.fields("BANK_NAZWA").value) <> "") then
+		pExpMan.fromVirtualObject "Bank", trim(pRecord.fields("BANK_NAZWA").value), pRecord, nothing
+		pStream.virtualfieldref("pBank1", TYPEID_N5BANK) = trim(pRecord.fields("BANK_NAZWA").value)
+		pStream.fields("strRachunek1") = pRecord.fields("BANK_RACHUNEK").value
+	end if
+
+	pStream.fields("strNazwa") = pRecord.fields("Nazwa").value
+	pStream.fields("strSkrot") = pRecord.fields("Nazwa").value
+	pStream.fields("strUlica") = pRecord.fields("Ulica").value
+	pStream.fields("strKod") = pRecord.fields("Kod").value
+	pStream.fields("strTel1") = pRecord.fields("Tel1").value
+	pStream.fields("strTel2") = pRecord.fields("Tel2").value
+	pStream.fields("strTel3") = pRecord.fields("Tel3").value
+	pStream.fields("strFax") = pRecord.fields("Fax").value
+	pStream.fields("eForma") = 1
+	pStream.fields("strNIP") = pRecord.fields("NIP").value
+	pStream.fields("strREGON") = pRecord.fields("Regon").value
+
+	Firma_Convert2Stream = true
+end function
+
+function Firma_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	Firma_SaveStream = pExpMan.container().import( pStream )
+	pExpMan.save_data
+end function
+
+
+'.........................
+' Uzytkownik
+'.........................
+function NAVOUser_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	pStream.begin_object TYPEID_N5UZYTKOWNIK
+
+	if (trim(pRecord.fields("Name").value)<>"") then
+		pStream.fields("strNazwa") = pRecord.fields("Name").value
+		pStream.fields("strLogin") = pRecord.fields("Name").value
+
+		if (pExpMan.container().bMiniFirma) then
+			if (trim(pRecord.fields("Name").value)="nikt") then
+				pStream.fields("strNazwa") = ADMIN_LOGIN
+				pStream.fields("strLogin") = ADMIN_LOGIN
+			end if
+		end if
+
+	end if
+
+	if (not pExpMan.shouldContinue( pStream )) then
+		exit function
+	end if
+
+	pStream.fields("strHaslo") = pRecord.fields("Password").value
+	pStream.fields("strMail") = pRecord.fields("Contact").value
+	pStream.fields("eAktywny") = 1
+
+	NAVOUser_Convert2Stream = true
+end function
+
+function NAVOUser_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	NAVOUser_SaveStream = pExpMan.container().import( pStream )
+end function
+
+
+
+'.........................
+' SPRZEDAZ
+'.........................
+function Sprzedaz_Convert2Stream(byref pExpMan, byref pRecord, byref pStream): Sprzedaz_Convert2Stream = false
+	pStream.begin_object TYPEID_N5SPRZEDAZ
+
+	if (pRecord.fields("NrDok").value<>"") then
+		pStream.fields("strNrDok") = pRecord.fields("NrDok").value
+	else
+		pStream.fields("strNrDok") = "Brak " + CStr(Year(Now)) + CStr(Month(Now)) + CStr(Day(Now)) + CStr(Hour(Now)) + CStr(Minute(Now)) + CStr(Second(Now))
+	end if
+
+	'Czy mamy dokument zagraniczny
+	dim bZagranica: bZagranica = false
+	if (CLng(pRecord.fields("IdZagr").value)<>CLng(pRecord.fields("IdKraj").value)) then
+		bZagranica = true
+	end if
+
+	dim nNewTyp
+	if (not bZagranica) then
+		select case trim(pRecord.fields("FVATRach").value)
+			case "F" 'Faktura
+				if trim(pRecord.fields("Typ").value) = "S" then
+					nNewTyp = N5REJESTRDOK_FAKT_SP
+				else 'Korekta
+					nNewTyp = N5REJESTRDOK_KOR_FAKT_SP
+				end if
+
+			case "R", "W" 'Rachunek
+				if trim(pRecord.fields("Typ").value) = "S" then
+					nNewTyp = N5REJESTRDOK_RACH
+				else
+					nNewTyp = N5REJESTRDOK_KOR_RACH
+				end if
+
+			case else
+				
+				view_message1 6316, 0, pRecord.fields("FVATRach").value
+
+				#ifdef _DEBUG
+				exit function
+				#endif
+
+				if trim(pRecord.fields("Typ").value) = "S" then
+					nNewTyp = N5REJESTRDOK_FAKT_SP
+				else 'Korekta
+					nNewTyp = N5REJESTRDOK_KOR_FAKT_SP
+				end if
+
+		end select
+	else 
+		if trim(pRecord.fields("Typ").value) = "S" then
+				nNewTyp = N5REJESTRDOK_FAKT_EXP
+			else 'Korekta
+				nNewTyp = N5REJESTRDOK_KOR_FAKT_EXP
+		end if
+	end if 
+
+	pStream.extra("TypRejestru") = nNewTyp
+
+	if (not pExpMan.shouldContinue( pStream )) then
+		exit function
+	end if
+
+	dim nRejestrTyp: nRejestrTyp = -1
+	dim nIdRejestrDok: nIdRejestrDok = -1
+	
+	'W przypadku korekty robimy kopie zmiennych
+	'bo eksport dokumentu org. przestawi
+	'nam te zmienne
+	nRejestrTyp = trans_.var(APPVAR_REJESTR_TYP)
+	nIdRejestrDok = trans_.var(APPVAR_REJESTR_DOKUMENTOW)
+	
+	export_Kontrahent pExpMan, "Kontrahent.IdKontra=" + CStr(pRecord.fields("IdKontra").value)
+
+	pStream.fields("pKlient") = pRecord.fields("IdKontra").value
+	
+	pStream.fields("dDataWyst") = pRecord.fields("DataWyst").value
+	pStream.fields("dDataSprzed") = pRecord.fields("DataSprz").value
+	pStream.fields("dDataPlat") = pRecord.fields("DataPlat").value
+
+	if (Trim(pRecord.fields("PLATNOSC_NAZWA").value)<>"") then
+		pExpMan.fromVirtualObject "Platnosc", Trim(pRecord.fields("PLATNOSC_NAZWA").value), pRecord, nothing
+		pStream.virtualfieldref("pSposobPlatnosci", TYPEID_N5SPOSPLAT) = Trim(pRecord.fields("PLATNOSC_NAZWA").value)
+	end if
+
+	pExpMan.fromObject "NAVOUser", "IdUser", pRecord.fields("IdUser").value
+	pStream.fields("pUzytRej") = pRecord.fields("IdUser").value
+
+	pStream.fields("strUwagi") = pRecord.fields("Opis").value
+	pStream.fields("cAutoCalc") = 1
+
+	if (pRecord.fields("Brutto").value = "T") then
+		pStream.fields("eNettoBrutto") = N5SPRZEDAZ_BRUTTO
+	else
+		pStream.fields("eNettoBrutto") = N5SPRZEDAZ_NETTO
+	end if
+
+	'Sumy na zero bo wyliczane podczas importu
+	pStream.fields("curSumaNetto") = 0
+	pStream.fields("curSumaVAT") = 0
+	pStream.fields("curSumaBrutto") = 0
+
+	if (pRecord.fields("Drukowano").value="0") then
+		pStream.fields("eSposVAT") = 1
+	else
+		pStream.fields("eSposVAT") = 2
+	end if
+
+	if (pRecord.fields("TYP").value="K") then
+		if (export_Sprzedaz(pExpMan, "IdTrans=" + CStr(pRecord.fields("IdTransOrgi").value))) then
+			pStream.fields("pPopSprzed") = pRecord.fields("IdTransOrgi").value
+		else
+			if (CLng(pRecord.fields("IdTransOrgi").value)>0) then
+				view_message2 6254, 0, "Sprzedaz", pRecord.fields("IdTransOrgi").value
+				page_.activate
+			end if
+		end if
+
+	end if
+
+	'Ustaw walute sprzedazy dla dokumentu zagranicznego
+	if (bZagranica) then
+		pExpMan.fromObject "Kraj", "IdKraj", pRecord.fields("IdZagr").value
+		pStream.fields("pWaluta") = pRecord.fields("IdZagr").value
+	end if
+
+	'Odtwarzamy zmienne bo zostaly one przestawione
+	'przez eksport dokumentu org.
+	trans_.var(APPVAR_REJESTR_TYP) = nRejestrTyp
+	trans_.var(APPVAR_REJESTR_DOKUMENTOW) = nIdRejestrDok
+	
+	Sprzedaz_Convert2Stream = true
+end function
+
+function Sprzedaz_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	pExpMan.start_waiting
+	Sprzedaz_SaveStream = pExpMan.container().import( pStream )
+
+	'pozycje sprzedazy - po obiekcie glownym
+	pExpMan.fromRecordset "select '" + LIST_ELEMENT_IDENTITY + "' as list_id, PozSprzedaz.*, S.Brutto as Brutto, S.IdKraj as SIdKraj, S.IdZagr As SIdZagr, ltrim(rtrim(Artykul.NaszInx)) as ArtykulIndex from PozSprzedaz JOIN Sprzedaz S ON S.IdTrans = PozSprzedaz.IdTrans join Artykul on Artykul.IdArt = PozSprzedaz.IdArt where PozSprzedaz.IdTrans=" + CStr(pRecord.fields("IdTrans").value), "PozSprzedaz"
+	pExpMan.stop_waiting
+end function
+
+
+'.........................
+' POZYCJA SPRZEDAZY
+'.........................
+function PozSprzedaz_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	pStream.begin_object TYPEID_N5POZSPRZEDAZ
+	pStream.as_child "listPozycje"
+
+	export_Artykul pExpMan, "IdArt=" + CStr(pRecord.fields("IdArt").value)
+	pStream.virtualfieldref("pProdukt", TYPEID_N5PRODUKT) = pRecord.fields("ArtykulIndex").value
+	
+	pStream.fields("curIloscOpak") = pRecord.fields("ilosc").value
+
+	dim bBrutto: bBrutto = true
+	if (pRecord.fields("Brutto").value="N") then
+		bBrutto = false
+	end if
+
+	dim idKraj
+	idKraj = CLng(pRecord.fields("SIdKraj").value)
+	
+	dim idZagr
+	idZagr = CLng(pRecord.fields("SIdZagr").value)
+
+	dim curStawkaVAT
+	curStawkaVAT = CCur(CCur(CLng(pRecord.fields("VAT").value)) / 100)
+
+	pStream.fields("curRabat") = pRecord.fields("rabat").value
+
+	'Ustalenie ceny brutto i netto
+	dim curCenaBazowaNetto
+	dim curCenaBazowaBrutto
+
+	if (pStream.fields("curRabat")>0 and bBrutto) then
+		curCenaBazowaBrutto = CCur(pRecord.fields("CenaKraj").value)
+		curCenaBazowaBrutto = CCur(CCur(curCenaBazowaBrutto * 100) / CCur(100 - pStream.fields("curRabat")))
+		curCenaBazowaNetto = curCenaBazowaBrutto - doc_.afc.convert.round2(curCenaBazowaBrutto * curStawkaVAT / (1 + curStawkaVAT))
+	else
+		curCenaBazowaNetto = CCur(pRecord.fields("CenaZagr").value)
+
+		'Uwzglêdniamy rabat gdy¿ w przypadku pojawienie siê go
+		'cena netto jest ju¿ o niego pomniejszona
+		if (pStream.fields("curRabat")>0) then
+			curCenaBazowaNetto = CCur(CCur(curCenaBazowaNetto * 100) / CCur(100 - pStream.fields("curRabat")))
+		end if
+
+		if (bBrutto) then
+			curCenaBazowaBrutto = CCur(pRecord.fields("CenaKraj").value)
+		else
+			curCenaBazowaBrutto = CCur(curCenaBazowaNetto) + CCur(doc_.afc.convert.round2(curStawkaVAT * pStream.fields("curCenaNetto")))
+		end if
+	end if
+
+	if (bBrutto) then
+		'mamy cene bazow¹ brutto
+		pStream.fields("curCenaBazBrutto") = curCenaBazowaBrutto
+	else
+		'mamy cene bazow¹ netto
+		pStream.fields("curCenaBazNetto") = curCenaBazowaNetto
+	end if
+
+	if (idKraj<>idZagr) then
+		'Cena zagraniczna zawsze w netto
+		'bazowa rowna sie w walucie bo w Firmie
+		'mamy juz tylko cene po danym kursie
+		'u nas wylaczone jest auto przeliczanie
+		'kursu
+		pStream.fields("curCenaBazowaNettoWal") = curCenaBazowaNetto
+		pStream.fields("curCenaNettoWal") = curCenaBazowaNetto
+		pStream.fields("curWartWal") = pStream.fields("curIloscEwid") * pStream.fields("curCenaBazowaNettoWal")
+	end if
+
+	PozSprzedaz_Convert2Stream = true
+end function
+
+function PozSprzedaz_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	PozSprzedaz_SaveStream = pExpMan.container().import( pStream )
+end function
+
+
+'.........................
+' PLATNOSC
+'.........................
+function Platnosc_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	pStream.begin_object TYPEID_N5SPOSPLAT
+
+	pStream.fields("strNazwa") = pRecord.fields("PLATNOSC_NAZWA").value
+
+	if (not pExpMan.shouldContinue( pStream )) then
+		exit function
+	end if
+
+	if (pStream.extraExists("PLATNOSC_LICZBA_DNI")) then
+		pStream.fields("nDni") = pStream.extra("PLATNOSC_LICZBA_DNI")
+	else
+		pStream.fields("nDni") = pRecord.fields("PLATNOSC_LICZBA_DNI").value
+	end if
+
+	Platnosc_Convert2Stream = true
+end function
+
+function Platnosc_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	Platnosc_SaveStream = pExpMan.container().import( pStream )
+end function
+
+
+
+'.........................
+' DEKRET
+'.........................
+function Dekret_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	pStream.begin_object TYPEID_N5DEKRET
+	pStream.as_child "listDekret"
+
+	export_Konto pExpMan, "Konto.IdKonto=" + CStr(pRecord.fields("IdKonto").value)
+
+	pStream.virtualfieldref("pKonto", TYPEID_N5KONTO) = pRecord.fields("Symbol").value
+
+	pStream.fields("curWn") = pRecord.fields("KwotaWn").value
+	pStream.fields("curMa") = pRecord.fields("KwotaMa").value
+	pStream.fields("strOpis") = pRecord.fields("Opis").value
+
+	Dekret_Convert2Stream = true
+end function
+
+function Dekret_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	Dekret_SaveStream = pExpMan.container().import( pStream )
+end function
+
+
+
+'.........................
+' DOWOD KSIEGOWY
+'.........................
+function Polecenie_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	pStream.begin_object TYPEID_N5DOWODKSIEG
+
+	if (trim(pRecord.fields("NrDok").value)<>"") then
+		pStream.fields("strNrDok") = pRecord.fields("NrDok").value
+	else
+		pStream.fields("strNrDok") = pRecord.fields("IdPolec").value
+	end if
+
+	pStream.extra("TypRejestru") = N5REJESTRDOK_DZIENNIK_NORM
+
+	if (not pExpMan.shouldContinue( pStream )) then
+		exit function
+	end if
+
+	pStream.fields("dDataRej") = pRecord.fields("DataWyst").value
+	pStream.fields("dDataKsieg") = pRecord.fields("DataKsieg").value
+	
+	pStream.fields("eTyp") = 2
+	pStream.fields("eStatus") = 1
+
+	if (trim(pRecord.fields("Uwagi").value)<>"") then
+		pStream.fields("strOpis") = pRecord.fields("Uwagi").value
+	else
+		if (trim(pRecord.fields("NrDok").value)<>"") then
+			pStream.fields("strOpis") = pRecord.fields("NrDok").value
+		else
+			pStream.fields("strOpis") = "<brak opisu>"
+		end if
+	end if
+
+	pExpMan.fromObject "NAVOUser", "IdUser", pRecord.fields("IdUser").value
+	pStream.fields("pUzytRej") = pRecord.fields("IdUser").value
+
+	Polecenie_Convert2Stream = true
+end function
+
+function Polecenie_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	pExpMan.start_waiting
+	Polecenie_SaveStream = pExpMan.container().import( pStream )
+
+	export_Dekret pExpMan, "IdPolec=" + CStr(pRecord.fields("IdPolec").value)
+	pExpMan.stop_waiting
+end function
+
+
+'.........................
+' ZAMOWIENIE
+'.........................
+function Zamowienie_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	pStream.begin_object TYPEID_N5ZAMOWIENIE
+
+	pStream.fields("strNrDok") = pRecord.fields("NrDok").value
+
+	if (not pExpMan.shouldContinue( pStream )) then
+		exit function
+	end if
+	
+	pStream.fields("dDataWyst") = pRecord.fields("DataWyst").value
+
+	dim strPlatnoscNazwa
+	strPlatnoscNazwa = pRecord.fields("PLATNOSC_NAZWA").value
+
+	dim nLiczbaDni: nLiczbaDni = CLng(0)
+	dim i, strLiczba: strLiczba = ""
+	dim bOnLiczba: bOnLiczba = false
+	for i=1 to len(strPlatnoscNazwa)
+		dim strChar
+		strChar = mid(strPlatnoscNazwa, i, 1)
+
+		if (strChar = "1" or _
+			strChar = "2" or _
+			strChar = "3" or _
+			strChar = "4" or _
+			strChar = "5" or _
+			strChar = "6" or _
+			strChar = "7" or _
+			strChar = "8" or _
+			strChar = "9" or _
+			strChar = "0") then
+			
+			strLiczba = strLiczba + strChar
+			bOnLiczba = true
+				
+		else
+			if (bOnLiczba) then
+				exit for
+			end if
+		end if
+	next
+
+	if (isNumeric( strLiczba )) then
+		nLiczbaDni = CLng( strLiczba )
+	end if
+
+	pStream.extra("PLATNOSC_LICZBA_DNI") = nLiczbaDni
+
+	if (Trim(strPlatnoscNazwa)<>"") then
+		pExpMan.fromVirtualObject "Platnosc", Trim(strPlatnoscNazwa), pRecord, pStream
+		pStream.virtualfieldref("pSposobPlatnosci", TYPEID_N5SPOSPLAT) = Trim(strPlatnoscNazwa)
+	end if
+
+	pStream.fields("dDataPlat") = DateSerial(Year(pStream.fields("dDataReal")), Month(pStream.fields("dDataReal")), Day(pStream.fields("dDataReal")) + nLiczbaDni)
+	pStream.fields("dDataReal") = pRecord.fields("DataAkt").value
+
+	export_Kontrahent pExpMan, "Kontrahent.IdKontra=" + CStr(pRecord.fields("IdKontra").value)
+	pStream.fields("pKlient") = pRecord.fields("IdKontra").value
+	
+	'Zerujemy pozycje listy
+	pStream.fields("listPozycje") = 0
+
+	'Sumy wyliczane podczas importu
+	pStream.fields("curSumaNetto")	= 0
+	pStream.fields("curSumaVAT")	= 0
+	pStream.fields("curSumaBrutto") = 0
+
+	'todo:spiko Ustawienie waluty gdy pojawi sie pole waluty
+	'w obiekcie n5zamowienie
+
+	'todo:spiko Czy zamowienie obce czy w³asne itd. Jezeli pojawi
+	'sie typ zamowienia w obiekcie n5zamowienie
+
+	export_NAVOUser pExpMan, "NavoUser.IdUser=" + CStr(pRecord.fields("IdUser").value)
+	pStream.fields("pUzytRej") = pRecord.fields("IdUser").value
+		
+	Zamowienie_Convert2Stream = true
+end function
+
+function Zamowienie_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	pExpMan.start_waiting
+	
+	Zamowienie_SaveStream = pExpMan.container().import( pStream )
+	pExpMan.fromRecordset "select '" + LIST_ELEMENT_IDENTITY + "' as list_id, ltrim(rtrim(Artykul.NaszInx)) as ArtykulIndex, Artykul.Nazwa as ArtNazwa, " + CStr(pRecord.fields("IdKraj").value) + " as IdKraj, " + CStr(pRecord.fields("IdZagr").value) + " as IdZagr, pozzamow.*, '" + CStr(pRecord.fields("Brutto").value) + "' as Brutto from pozzamow join Artykul on Artykul.IdArt = PozZamow.IdArt where pozzamow.IdTrans=" + CStr(pRecord.fields("IdTrans").value), "PozZamow"
+
+	pExpMan.stop_waiting
+end function
+
+
+'.........................
+' POZYCJA ZMOWIENIA
+'.........................
+function PozZamow_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	pStream.begin_object TYPEID_N5POZZAMOWIENIE
+	pStream.as_child "listPozycje"
+
+	export_Artykul pExpMan, "IdArt=" + CStr(pRecord.fields("IdArt").value)
+	pStream.virtualfieldref("pProdukt", TYPEID_N5PRODUKT) = pRecord.fields("ArtykulIndex").value
+
+	pStream.fields("curIloscEwid") = pRecord.fields("Ilosc").value
+	pStream.fields("curIloscOpak") = pRecord.fields("Ilosc").value
+	
+	pStream.fields("curIloscEwidPoz") = CCur(pRecord.fields("Ilosc").value) - CCur(pRecord.fields("IloscZreal").value)
+	pStream.fields("curIloscOpakPoz") = pStream.fields("curIloscEwidPoz")
+	
+	dim curStawkaVAT
+	curStawkaVAT = CCur(CCur(CLng(pRecord.fields("VAT").value)) / 100)
+
+	dim curVAT
+
+	if (trim(pRecord.fields("Brutto").value)="T") then
+		pStream.fields("curCenaBrutto") = pRecord.fields("CenaKraj").value
+		pStream.fields("curCenaNetto") = pStream.fields("curCenaBrutto") - doc_.afc.convert.round2(pStream.fields("curCenaBrutto") * curStawkaVAT / (1 + curStawkaVAT))
+		curVAT = doc_.afc.convert.round2(pStream.fields("curCenaNetto") * curStawkaVAT)
+	else
+		pStream.fields("curCenaNetto") = pRecord.fields("CenaKraj").value
+		curVAT = doc_.afc.convert.round2(pStream.fields("curCenaNetto") * curStawkaVAT)
+		pStream.fields("curCenaBrutto") = pStream.fields("curCenaNetto") + curVAT
+	end if
+
+	'Obecnie ceny bazowe sa rowne naszym cena
+	pStream.fields("curCenaBazNetto") = pStream.fields("curCenaNetto")
+	pStream.fields("curCenaBazBrutto") = pStream.fields("curCenaBrutto")
+
+	pStream.fields("curWartNetto") = pStream.fields("curIloscEwid") * pStream.fields("curCenaNetto")
+	pStream.fields("curWartBrutto") = pStream.fields("curIloscEwid") * pStream.fields("curCenaBrutto")
+	pStream.fields("curVAT") = curVAT * pStream.fields("curIloscEwid")
+
+	'Ustaw pole eVAT na podstawie stawki VAT
+	set_eVAT "VAT", trim(pRecord.fields("ArtNazwa").value), pRecord, pStream, pExpMan
+
+	'Eksport magazynu docelowego
+	export_Magazyn pExpMan, "Magazyn.IdMagazyn=" + CStr(pRecord.fields("IdMag").value)
+	pStream.fields("pMagazyn") = pRecord.fields("IdMag").value
+
+	dim idKraj
+	dim idZagr
+
+	idKraj = pRecord.fields("idKraj").value
+	idZagr = pRecord.fields("idZagr").value
+
+	if (idKraj<>idZagr) then
+		pStream.fields("curCenaNettoWal") = pRecord.fields("CenaZagr").value
+		pStream.fields("curWartWal") = pStream.fields("curCenaNettoWal") * pStream.fields("curIloscEwid")
+	end if
+	
+	PozZamow_Convert2Stream = true
+end function
+
+function PozZamow_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	PozZamow_SaveStream = pExpMan.container().import( pStream )
+end function
+
+
+'.............................
+' KARTOTEKA SRODKOW TRWALYCH
+'.............................
+function stobj_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	pStream.begin_object TYPEID_N5SRTRW
+
+	pStream.fields("strNumEwid") = pRecord.fields("NumerEwid").value
+
+	if (not pExpMan.shouldContinue( pStream )) then
+		exit function
+	end if
+
+	pStream.fields("strNazwa") = pRecord.fields("Nazwa").value
+	pStream.fields("strNumSer") = pRecord.fields("Nr_ser").value
+	pStream.fields("strKRST") = pRecord.fields("SymbolKRST").value
+
+	pStream.fields("strNumDokZak") = pRecord.fields("Nr_fkt").value
+	pStream.fields("eRodzaj") = CLng(pRecord.fields("TypSrodek").value) + CLng(1)
+	
+	stobj_Convert2Stream = true
+end function
+
+function stobj_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	stobj_SaveStream = pExpMan.container().import( pStream )
+end function
+
+'.............................
+' ZAKUP
+'.............................
+function Zakup_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	pStream.begin_object TYPEID_N5ZAKUP
+
+	pStream.fields("strNrDok") = pRecord.fields("NrDok").value
+
+	if (pRecord.fields("Typ").value="K") then
+		pStream.extra("KOREKTA") = "T"
+	end if
+
+	if (not pExpMan.shouldContinue( pStream )) then
+		exit function
+	end if
+
+	dim nRejestrTyp: nRejestrTyp = -1
+	dim nIdRejestrDok: nIdRejestrDok = -1
+
+	'W przypadku istnienia dokumenty powiazanego robimy 
+	'kopie zmiennych bo eksport tego dokumentu przestawi
+	'nam te zmienne
+	nRejestrTyp = trans_.var(APPVAR_REJESTR_TYP)
+	nIdRejestrDok = trans_.var(APPVAR_REJESTR_DOKUMENTOW)
+
+	'reczne liczenie
+	pStream.fields("cAutoCalc") = "0"
+
+	pStream.fields("strNrDokObcy") = pRecord.fields("NrDokObcy").value
+	pStream.fields("dDataWyst") = pRecord.fields("DataWyst").value
+	pStream.fields("dDataOtrzym") = pRecord.fields("DataOtrz").value
+	pStream.fields("dDataZakupu") = pStream.fields("dDataWyst")
+	pStream.fields("dDataPlat") = pStream.fields("DataPlat")
+	
+	dim strPlatnoscNazwa
+	strPlatnoscNazwa = pRecord.fields("PLATNOSC_NAZWA").value
+
+	if (trim(strPlatnoscNazwa)<>"") then
+		dim nLiczbaDni: nLiczbaDni = CLng(0)
+		dim i, strLiczba: strLiczba = ""
+		dim bOnLiczba: bOnLiczba = false
+
+		for i=1 to len(strPlatnoscNazwa)
+			dim strChar
+			strChar = mid(strPlatnoscNazwa, i, 1)
+
+			if (strChar = "1" or _
+				strChar = "2" or _
+				strChar = "3" or _
+				strChar = "4" or _
+				strChar = "5" or _
+				strChar = "6" or _
+				strChar = "7" or _
+				strChar = "8" or _
+				strChar = "9" or _
+				strChar = "0") then
+				
+				strLiczba = strLiczba + strChar
+				bOnLiczba = true
+					
+			else
+				if (bOnLiczba) then
+					exit for
+				end if
+			end if
+		next
+
+		if (isNumeric( strLiczba )) then
+			nLiczbaDni = CLng( strLiczba )
+		end if
+
+		pStream.extra("PLATNOSC_LICZBA_DNI") = nLiczbaDni
+
+		if (Trim(strPlatnoscNazwa)<>"") then
+			pExpMan.fromVirtualObject "Platnosc", Trim(strPlatnoscNazwa), pRecord, pStream
+			pStream.virtualfieldref("pSposobPlatnosci", TYPEID_N5SPOSPLAT) = trim(strPlatnoscNazwa)
+		end if
+
+	end if 'strPlatnoscNazwa<>""
+
+	export_Kontrahent pExpMan, "Kontrahent.IdKontra=" + CStr(pRecord.fields("IdKontra").value)
+	pStream.fields("pDostawca") = pRecord.fields("IdKontra").value
+
+	pStream.fields("listPozycje") = 0
+
+	if (export_Zakup(pExpMan, "Zakup.IdTrans=" + CStr(pRecord.fields("IdTransOrgi").value))) then
+		pStream.fields("pPopZAkup") = pRecord.fields("IdTransOrgi").value
+	else
+		if (CLng(pRecord.fields("IdTransOrgi").value)>0) then
+			view_message2 6254, 0, "Zakup", pRecord.fields("IdTransOrgi").value
+			page_.activate
+		end if
+	end if
+
+	'Sumy zostana wyliczone podczas importu pozycji
+	pStream.fields("curSumaNetto")	= 0
+	pStream.fields("curSumaVAT")	= 0
+	pStream.fields("curSumaBrutto") = 0
+	pStream.fields("curSumaWal")	= 0
+
+	'Ustaw walute zakupu dla dokumentu zagranicznego
+	if (CLng(pRecord.fields("IdZagr").value)<>CLng(pRecord.fields("IdKraj").value)) then
+		pExpMan.fromObject "Kraj", "IdKraj", pRecord.fields("IdZagr").value
+		pStream.fields("pWaluta") = pRecord.fields("IdZagr").value
+	end if
+
+	'Odtwarzamy zmienne bo zostaly one przestawione
+	'przez eksport dokumentu powi¹zanego
+	trans_.var(APPVAR_REJESTR_TYP) = nRejestrTyp
+	trans_.var(APPVAR_REJESTR_DOKUMENTOW) = nIdRejestrDok
+
+	Zakup_Convert2Stream = true
+end function
+
+function Zakup_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	pExpMan.start_waiting
+	Zakup_SaveStream = pExpMan.container().import( pStream )
+
+	pExpMan.fromRecordset "select '" + LIST_ELEMENT_IDENTITY + "' as list_id, " + CStr(pRecord.fields("IdKraj").value) + " as IdKraj, " + CStr(pRecord.fields("IdZagr").value) + " as IdZagr, PozZakup.*, '" + CStr(pRecord.fields("Brutto").value) + "' as Brutto, ltrim(rtrim(Artykul.NaszInx)) as ArtykulIndex from PozZakup join Artykul on Artykul.IdArt = PozZakup.IdArt where PozZakup.IdTrans=" + CStr(pRecord.fields("IdTrans").value), "PozZakup"
+
+	pExpMan.stop_waiting
+end function
+
+
+'.............................
+' POZYCJA ZAKUPU
+'.............................
+function PozZakup_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	pStream.begin_object TYPEID_N5POZZAKUP
+	pStream.as_child "listPozycje"
+
+	export_Artykul pExpMan, "IdArt=" + CStr(pRecord.fields("IdArt").value)
+	pStream.virtualfieldref("pProdukt", TYPEID_N5PRODUKT) = pRecord.fields("ArtykulIndex").value
+
+	pStream.fields("curIloscOpak") = pRecord.fields("Ilosc").value
+
+	dim idKraj, idZagr
+	idKraj = pRecord.fields("idKraj").value
+	idZagr = pRecord.fields("idZagr").value
+
+	dim curStawkaVAT
+	curStawkaVAT = CCur(CCur(CLng(pRecord.fields("VAT").value)) / 100)
+
+	if (pRecord.fields("Brutto").value="T") then
+		pStream.fields("curCenaBrutto") = pRecord.fields("CenaKrajNab").value
+		pStream.fields("curCenaNetto") = pStream.fields("curCenaBrutto") - doc_.afc.convert.round2(pStream.fields("curCenaBrutto") * curStawkaVAT / (1 + curStawkaVAT))
+		pStream.fields("curVAT") = doc_.afc.convert.round2(pStream.fields("curCenaNetto") * curStawkaVAT)
+	else
+		pStream.fields("curCenaNetto") = pRecord.fields("CenaKrajNab").value
+		pStream.fields("curVAT") = doc_.afc.convert.round2(curStawkaVAT * pStream.fields("curCenaNetto"))
+		pStream.fields("curCenaBrutto") = pStream.fields("curCenaNetto") + pStream.fields("curVAT")
+	end if
+	
+	pStream.fields("curVAT") = pStream.fields("curIloscOpak") * pStream.fields("curVAT")
+	pStream.fields("curWartNetto") = pStream.fields("curIloscOpak") * pStream.fields("curCenaNetto")
+	pStream.fields("curWartBrutto") = pStream.fields("curIloscOpak") * pStream.fields("curCenaBrutto")
+
+	if (idKraj<>idZagr) then
+		'Zakup zagraniczny
+		pStream.fields("curCenaNettoWal") = pRecord.fields("CenaZagr").value
+	end if
+
+	PozZakup_Convert2Stream = true
+end function
+
+function PozZakup_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	PozZakup_SaveStream = pExpMan.container().import( pStream )
+end function
+
+
+'.................................................................
+' GMA MM
+'
+' Jeden dokument magazynowy MM jest rozbijany na dwa dokumenty
+' typu MP i MR, gdzie MP ma powiazenie na MR
+'.................................................................
+function GMA_MM_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	pStream.begin_object TYPEID_N5DOKMAG
+
+	pStream.fields("strNrDok") = pRecord.fields("record_id").value
+	pStream.extra("TypRejestru") = N5REJESTRDOK__MM
+	
+	if (not pExpMan.shouldContinue( pStream )) then
+		exit function
+	end if
+
+	dim nRejestrTyp: nRejestrTyp = -1
+	dim nIdRejestrDok: nIdRejestrDok = -1
+
+	'W przypadku istnienia dokumenty powiazanego robimy 
+	'kopie zmiennych bo eksport tego dokumentu przestawi
+	'nam te zmienne
+	nRejestrTyp = trans_.var(APPVAR_REJESTR_TYP)
+	nIdRejestrDok = trans_.var(APPVAR_REJESTR_DOKUMENTOW)
+
+	'Nie przeliczaj wartoœci automatycznie
+	'Pola sum zostan¹ wype³nione przy imporcie dzieci
+	pStream.fields("cAutoCalc")		="0"
+	pStream.fields("curSumaMag")	= 0	'Suma w walucie magazynu
+	pStream.fields("curSumaEwid")	= 0	'Suma w walucie ewidencji
+
+	'Wype³niamy reszte pol
+	pStream.fields("dDataWyst") = pRecord.fields("DataOp").value
+	pStream.fields("listPozycje") = 0
+	pStream.fields("nNumOper") = 0
+
+	'Odtwarzamy zmienne bo zostaly one przestawione
+	'przez eksport dokumentu powi¹zanego
+	trans_.var(APPVAR_REJESTR_TYP) = nRejestrTyp
+	trans_.var(APPVAR_REJESTR_DOKUMENTOW) = nIdRejestrDok
+
+	GMA_MM_Convert2Stream = true
+end function
+
+function GMA_MM_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	pExpMan.start_waiting
+	
+	'Eksportuj tylko pozycje z iloœci¹ > 0
+	GMA_MM_SaveStream = pExpMan.container().import( pStream )
+	pExpMan.fromRecordset "select '" + LIST_ELEMENT_IDENTITY + "' as list_id, ltrim(rtrim(Artykul.NaszInx)) as ArtykulIndex, " + CStr(pRecord.fields("IdMagFrom").value) + " as IdMagFrom, " + CStr(pRecord.fields("IdMagTo").value) + " as IdMagTo, GMA_POZMM.* from pozmm as GMA_POZMM join Artykul on Artykul.IdArt = GMA_POZMM.IdArt where GMA_POZMM.Ilosc>0 and GMA_POZMM.IdTrans = " + CStr(CStr(pRecord.fields("IdTrans").value)) + " and upper(rtrim(ltrim(Artykul.TowarUsl))) = 'T' order by GMA_POZMM.LP asc", "GMA_POZMM"
+
+	pExpMan.stop_waiting
+	pExpMan.save_data
+end function
+
+function GMA_POZMM_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	
+	pStream.begin_object TYPEID_N5POZDOKMAG
+	pStream.as_child "listPozycje"
+
+	export_Artykul pExpMan, "IdArt=" + CStr(pRecord.fields("IdArt").value)
+	pStream.virtualfieldref("pProdukt", TYPEID_N5PRODUKT) = pRecord.fields("ArtykulIndex").value
+
+	pStream.fields("nTypDok") = N5REJESTRDOK__MM
+	
+	dim idMagazyn
+
+	idMagazyn = pRecord.fields("IdMagFrom").value
+	export_Magazyn pExpMan, "Magazyn.IdMagazyn=" + CStr(idMagazyn)
+	pStream.fields("pMagZrod") = idMagazyn
+
+	idMagazyn = pRecord.fields("IdMagTo").value
+	export_Magazyn pExpMan, "Magazyn.IdMagazyn=" + CStr(idMagazyn)
+	pStream.fields("pMagDocel") = idMagazyn
+
+	pStream.fields("curIloscOpak") = pRecord.fields("Ilosc").value
+	pStream.fields("curIloscEwid") = pRecord.fields("Ilosc").value
+
+	pStream.fields("curCenaMag") = pRecord.fields("Cena").value
+	pStream.fields("curCenaEwid") = pStream.fields("curCenaMag")
+
+	pStream.fields("curWartMag") = pStream.fields("curCenaMag") * pStream.fields("curIloscEwid")
+	pStream.fields("curWartEwid") = pStream.fields("curCenaEwid") * pStream.fields("curIloscEwid")
+
+	GMA_POZMM_Convert2Stream = true
+end function
+
+function GMA_POZMM_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	GMA_POZMM_SaveStream = pExpMan.container().import( pStream )
+end function
+
+'todo:spiko IMPORT Paragonów z RW_PW -> n5sprzedaz z odpowiednim typem
+'todo:spiko Odpowiednie zaimportowanie zakupu zagranicznego jako 
+'			faktury importowaej zagranica ? ? ? 
+
+'.............................
+' GMA RW_PW
+'.............................
+function GMA_RW_PW_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	pStream.begin_object TYPEID_N5DOKMAG
+
+	pStream.fields("strNrDok") = pRecord.fields("NrDok").value
+
+	if (pRecord.fields("Typ").value="P") then
+		pStream.extra("TypRejestru") = N5REJESTRDOK__PW
+	else
+		pStream.extra("TypRejestru") = N5REJESTRDOK__RW
+	end if
+
+	if (not pExpMan.shouldContinue( pStream )) then
+		exit function
+	end if
+
+	'Nie przeliczaj wartoœci automatycznie
+	'Pola sum zostan¹ wype³nione przy imporcie dzieci
+	pStream.fields("cAutoCalc") = "0"
+	pStream.fields("curSumaMag") = 0	'Suma w walucie magazynu
+	pStream.fields("curSumaEwid") = 0	'Suma w walucie ewidencji
+
+	'Wype³niamy reszte pol
+	pStream.fields("dDataWyst") = pRecord.fields("DataOp").value
+	pStream.fields("listPozycje") = 0
+	pStream.fields("nNumOper") = 0
+
+	GMA_RW_PW_Convert2Stream = true
+end function
+
+function GMA_RW_PW_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	pExpMan.start_waiting
+
+	'Eksportuj tylko pozycje z iloœci¹ > 0
+	GMA_RW_PW_SaveStream = pExpMan.container().import( pStream )
+	pExpMan.fromRecordset "select '" + LIST_ELEMENT_IDENTITY + "' as list_id, ltrim(rtrim(Artykul.NaszInx)) as ArtykulIndex, GMA_PozRW_PW.*, '" + pRecord.fields("Typ").value + "' as Typ from PozRW_PW as GMA_PozRW_PW join Artykul on Artykul.IdArt = GMA_PozRW_PW.IdArt where GMA_PozRW_PW.Ilosc>0 and GMA_PozRW_PW.IdTrans=" + CStr(pRecord.fields("IdTrans").value) + " and upper(rtrim(ltrim(Artykul.TowarUsl))) = 'T' order by GMA_PozRW_PW.LP asc", "GMA_PozRW_PW"
+
+	pExpMan.stop_waiting
+	pExpMan.save_data
+end function
+
+function GMA_PozRW_PW_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	pStream.begin_object TYPEID_N5POZDOKMAG
+	pStream.as_child "listPozycje"
+
+	export_Artykul pExpMan, "IdArt=" + CStr(pRecord.fields("IdArt").value)
+	pStream.virtualfieldref("pProdukt", TYPEID_N5PRODUKT) = pRecord.fields("ArtykulIndex").value
+
+	export_Magazyn pExpMan, "Magazyn.IdMagazyn=" + CStr(pRecord.fields("IdMag").value)
+
+	if (pRecord.fields("Typ").value="P") then
+		pStream.fields("nTypDok") = N5REJESTRDOK__PW
+		pStream.fields("pMagDocel") = pRecord.fields("IdMag").value
+	else
+		pStream.fields("nTypDok") = N5REJESTRDOK__RW
+		pStream.fields("pMagZrod") = pRecord.fields("IdMag").value
+	end if
+	
+	pStream.fields("curIloscOpak") = pRecord.fields("Ilosc").value
+	pStream.fields("curIloscEwid") = pRecord.fields("Ilosc").value
+
+	pStream.fields("curCenaMag") = pRecord.fields("Cena").value
+	pStream.fields("curCenaEwid") = pStream.fields("curCenaMag")
+
+	pStream.fields("curWartMag") = pStream.fields("curCenaMag") * pStream.fields("curIloscEwid")
+	pStream.fields("curWartEwid") = pStream.fields("curCenaEwid") * pStream.fields("curIloscEwid")
+
+	GMA_PozRW_PW_Convert2Stream = true
+end function
+
+function GMA_PozRW_PW_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	GMA_PozRW_PW_SaveStream = pExpMan.container().import( pStream )
+end function
+
+'.............................
+' GMA SPRZEDAZ
+'.............................
+'todo:spiko Uzwglednic korekte, dla korekt zezwolic na ilosc 0
+function GMA_Sprzedaz_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	pStream.begin_object TYPEID_N5DOKMAG
+
+	pStream.fields("strNrDok") = pRecord.fields("NrDok").value
+
+	if (pRecord.fields("Typ").value="S") then
+		pStream.extra("TypRejestru") = N5REJESTRDOK__WZ
+	else
+		pStream.extra("TypRejestru") = N5REJESTRDOK__ZZ
+	end if
+
+	if (not pExpMan.shouldContinue( pStream )) then
+		exit function
+	end if
+
+	dim nRejestrTyp: nRejestrTyp = -1
+	dim nIdRejestrDok: nIdRejestrDok = -1
+
+	'W przypadku istnienia dokumenty powiazanego robimy 
+	'kopie zmiennych bo eksport tego dokumentu przestawi
+	'nam te zmienne
+	nRejestrTyp = trans_.var(APPVAR_REJESTR_TYP)
+	nIdRejestrDok = trans_.var(APPVAR_REJESTR_DOKUMENTOW)
+
+	'Nie przeliczaj wartoœci automatycznie
+	'Pola sum zostan¹ wype³nione przy imporcie dzieci
+	pStream.fields("cAutoCalc") = "0"
+	pStream.fields("curSumaMag") = 0	'Suma w walucie magazynu
+	pStream.fields("curSumaEwid") = 0	'Suma w walucie ewidencji
+
+	'Wype³niamy reszte pol
+	pStream.fields("dDataWyst") = pRecord.fields("DataWyst").value
+	pStream.fields("listPozycje") = 0
+	pStream.fields("nNumOper") = 0
+
+	export_Sprzedaz pExpMan, "Sprzedaz.IdTrans=" + CStr(pRecord.fields("IdTrans").value)
+	pStream.virtualfieldref("wrefDokHandl", TYPEID_N5SPRZEDAZ) = pRecord.fields("IdTrans").value
+
+	'todo:spiko Dokument oryginalny (korekta, korekty). Obecnie pokazuje
+	'na korekte ale tak siê nie zapisze. Jak ma pokazywaæ ? ? ?
+	'Jak to jest dla sprzeda¿y?
+	if (export_GMA_Sprzedaz(pExpMan, "GMA_Sprzedaz.IdTrans=" + CStr(pRecord.fields("IdTransOrgi").value))) then
+		pStream.fields("pDokMag") = pRecord.fields("IdTransOrgi").value
+	else
+		if (CLng(pRecord.fields("IdTransOrgi").value)>0) then
+			view_message2 6254, 0, "GMA_Sprzedaz", pRecord.fields("IdTransOrgi").value
+			page_.activate
+		end if
+	end if
+
+	'Odtwarzamy zmienne bo zostaly one przestawione
+	'przez eksport dokumentu powi¹zanego
+	trans_.var(APPVAR_REJESTR_TYP) = nRejestrTyp
+	trans_.var(APPVAR_REJESTR_DOKUMENTOW) = nIdRejestrDok
+
+	if (export_Kontrahent(pExpMan, "Kontrahent.IdKontra=" + CStr(pRecord.fields("IdKontra").value))) then
+		pStream.virtualfieldref("pKlient", TYPEID_N5KLIENT) = pRecord.fields("IdKontra").value
+	end if
+
+	GMA_Sprzedaz_Convert2Stream = true
+end function
+
+#define Ilosc_Korekta_Sprzedaz "((select isNull(sum(Ilosc), 0) from PozSprzedaz as PozSprzedaz2 " + _ \
+		"join Sprzedaz as Sprzedaz2 on Sprzedaz2.IdTRans = PozSprzedaz2.IdTrans " + _ \
+		"where Sprzedaz2.IdTrans = Sprzedaz.IdTransOrgi and PozSprzedaz2.Lp = GMA_PozSprzedaz.LP) - GMA_PozSprzedaz.Ilosc)"
+
+'Interesuja nas tylko pozycje sprzedazy z iloscia wieksza od zera
+'lub w przypadku korekty z iloscia uwgledniajaca poprzednie dokumenty
+'rowniez wieksza od zera. W przypadku dokumentów magazynowych interesuja
+'nas tylko zmiany ilosci a nie np. ceny
+function GMA_Sprzedaz_Pozycje_SQL(byval strIdTrans)
+	GMA_Sprzedaz_Pozycje_SQL = _
+	"from PozSprzedaz as GMA_PozSprzedaz " + _
+	"" + _
+	"join Artykul on Artykul.IdArt = GMA_PozSprzedaz.IdArt " + _ 
+	"join Sprzedaz on Sprzedaz.IdTrans = GMA_PozSprzedaz.IdTrans " + _
+	"" + _
+	"where ((GMA_PozSprzedaz.Ilosc>0 and Sprzedaz.Typ!='K') or (Sprzedaz.Typ='K' and " + Ilosc_Korekta_Sprzedaz + ">0)) and " + _
+	"GMA_PozSprzedaz.IdTrans=" + CStr(strIdTrans) + _
+	" and upper(rtrim(ltrim(Artykul.TowarUsl))) = 'T' "
+end function
+
+function GMA_Sprzedaz_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	pExpMan.start_waiting
+
+	'Eksportuj tylko pozycje z iloœci¹ > 0 lub w przypadku korekty
+	'z iloscia uzglêdniaj¹c¹ poprzednie dokumenty te¿ > 0
+	GMA_Sprzedaz_SaveStream = pExpMan.container().import( pStream )
+	pExpMan.fromRecordset "select '" + LIST_ELEMENT_IDENTITY + "' as list_id, ltrim(rtrim(Artykul.NaszInx)) as ArtykulIndex, GMA_PozSprzedaz.*, '" + _
+		CStr(pRecord.fields("Brutto").value) + "' as Brutto, '" + _
+		pRecord.fields("Typ").value + "' as Typ, " + _
+		" " + _
+		Ilosc_Korekta_Sprzedaz + " as IloscKorekta " + _
+		" " + GMA_Sprzedaz_Pozycje_SQL(pRecord.fields("IdTrans").value) + _
+		" " + _
+		"order by GMA_PozSprzedaz.LP asc", "GMA_PozSprzedaz"
+		
+	pExpMan.stop_waiting
+	pExpMan.save_data
+end function
+
+function GMA_PozSprzedaz_Convert2Stream(byref pExpMan, byref pRecord, byref pStream): GMA_PozSprzedaz_Convert2Stream = false
+	pStream.begin_object TYPEID_N5POZDOKMAG
+	pStream.as_child "listPozycje"
+
+	export_Artykul pExpMan, "IdArt=" + CStr(pRecord.fields("IdArt").value)
+	pStream.virtualfieldref("pProdukt", TYPEID_N5PRODUKT) = pRecord.fields("ArtykulIndex").value
+
+	export_Magazyn pExpMan, "Magazyn.IdMagazyn=" + CStr(pRecord.fields("IdMag").value)
+
+	dim bKorekta: bKorekta = false
+	if (pRecord.fields("Typ").value="S") then
+		pStream.fields("nTypDok") = N5REJESTRDOK__WZ
+		pStream.fields("pMagZrod") = pRecord.fields("IdMag").value
+	else
+		bKorekta = true
+		pStream.fields("nTypDok") = N5REJESTRDOK__ZZ
+		pStream.fields("pMagDocel") = pRecord.fields("IdMag").value
+	end if
+	
+	if (not bKorekta) then
+		pStream.fields("curIloscOpak") = pRecord.fields("Ilosc").value
+		pStream.fields("curIloscEwid") = pRecord.fields("Ilosc").value
+	else
+		'todo:spiko Sprawdzenie IloscKorekta Jezeli < 0 to jaki komunikat
+		'czy cos?? Gdy IloscKorekta < 0 to mamy korekte, które powinna byæ
+		'dokumentem typu WZ a nie ZZ.
+		pStream.fields("curIloscOpak") = pRecord.fields("IloscKorekta").value
+		pStream.fields("curIloscEwid") = pRecord.fields("IloscKorekta").value
+	end if
+
+#ifdef _DEBUG
+	if (CCur(pStream.fields("curIloscOpak"))=0) then
+		debug_now
+	end if
+#endif
+
+	'! Nie ustalamy cen i wartosci. Cena i wartosc sprzedazy nie
+	'! interesuja nas w przypadku dokumentow magazynowych. Interesuja
+	'! nas tylko ceny zakupu
+'	if (pRecord.fields("Brutto").value="T") then
+'		dim curStawkaVAT
+'		curStawkaVAT = CCur(CCur(CLng(pRecord.fields("VAT").value)) / 100)
+'		pStream.fields("curCenaMag") = CCur(pRecord.fields("CenaKraj").value) / CCur((1 + curStawkaVAT))
+'	else
+'		pStream.fields("curCenaMag") = pRecord.fields("CenaKraj").value
+'	end if
+
+'	pStream.fields("curCenaEwid") = pStream.fields("curCenaMag")
+'	pStream.fields("curWartMag") = pStream.fields("curCenaMag") * pStream.fields("curIloscEwid")
+'	pStream.fields("curWartEwid") = pStream.fields("curCenaEwid") * pStream.fields("curIloscEwid")
+
+	GMA_PozSprzedaz_Convert2Stream = true
+end function
+
+function GMA_PozSprzedaz_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	GMA_PozSprzedaz_SaveStream = pExpMan.container().import( pStream )
+end function
+
+
+'.............................
+' GMA ZAKUP
+'.............................
+'todo:spiko Korekta zakupu z uwzglêdnieniem odpowidnim iloœci i typów
+'dokumentów
+function GMA_Zakup_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	pStream.begin_object TYPEID_N5DOKMAG
+
+	pStream.fields("strNrDok") = pRecord.fields("NrDok").value
+
+	dim nDokType
+	if (pRecord.fields("Typ").value="K") then
+		nDokType = N5REJESTRDOK__ZZ
+	else
+		nDokType = N5REJESTRDOK__PZ
+	end if
+
+	pStream.extra("TypRejestru") = nDokType
+	pStream.fields("nTypDok") = nDokType
+			
+	if (not pExpMan.shouldContinue( pStream )) then
+		exit function
+	end if
+
+	dim nRejestrTyp: nRejestrTyp = -1
+	dim nIdRejestrDok: nIdRejestrDok = -1
+
+	'W przypadku istnienia dokumenty powiazanego robimy 
+	'kopie zmiennych bo eksport tego dokumentu przestawi
+	'nam te zmienne
+	nRejestrTyp = trans_.var(APPVAR_REJESTR_TYP)
+	nIdRejestrDok = trans_.var(APPVAR_REJESTR_DOKUMENTOW)
+
+	'Nie przeliczaj wartoœci automatycznie
+	'Pola sum zostan¹ wype³nione przy imporcie dzieci
+	pStream.fields("cAutoCalc") = "0"
+	pStream.fields("curSumaMag") = 0	'Suma w walucie magazynu
+	pStream.fields("curSumaEwid") = 0	'Suma w walucie ewidencji
+
+	'Wype³niamy reszte pol
+	pStream.fields("dDataWyst") = pRecord.fields("DataWyst").value
+	pStream.fields("listPozycje") = 0
+	pStream.fields("nNumOper") = 0
+
+	export_Zakup pExpMan, "Zakup.IdTrans=" + CStr(pRecord.fields("IdTrans").value)
+	pStream.virtualfieldref("wrefDokHandl", TYPEID_N5ZAKUP) = pRecord.fields("IdTrans").value
+
+	if (export_GMA_Zakup(pExpMan, "GMA_Zakup.IdTrans=" + CStr(pRecord.fields("IdTransOrgi").value))) then
+		pStream.fields("pDokMag") = pRecord.fields("IdTransOrgi").value
+	else
+		if (CLng(pRecord.fields("IdTransOrgi").value)>0) then
+			view_message2 6254, 0, "GMA_Zakup", pRecord.fields("IdTransOrgi").value
+			page_.activate
+		end if
+	end if
+
+	if (export_Kontrahent(pExpMan, "Kontrahent.IdKontra=" + CStr(pRecord.fields("IdKontra").value))) then
+		pStream.virtualfieldref("pKlient", TYPEID_N5KLIENT) = pRecord.fields("IdKontra").value
+	end if
+
+	'Odtwarzamy zmienne bo zostaly one przestawione
+	'przez eksport dokumentu powi¹zanego
+	trans_.var(APPVAR_REJESTR_TYP) = nRejestrTyp
+	trans_.var(APPVAR_REJESTR_DOKUMENTOW) = nIdRejestrDok
+	
+	GMA_Zakup_Convert2Stream = true
+end function
+
+#define Ilosc_Korekta_Zakup	"((" + _ \
+	"select isNull(sum(Ilosc), 0) from PozZakup as pz " + _ \
+	"join zakup as z2 on z2.idtrans = pz.idtrans " + _ \
+	"where z2.idtrans = Zakup.idtransorgi and pz.LP = GMA_PozZakup.LP " + _ \
+	") - GMA_PozZakup.Ilosc)"
+
+'Interesuja nas tylko pozycje sprzedazy z iloscia wieksza od zera
+'lub w przypadku korekty z iloscia uwgledniajaca poprzednie dokumenty
+'rowniez wieksza od zera. W przypadku dokumentów magazynowych interesuja
+'nas tylko zmiany ilosci a nie np. ceny
+function GMA_Zakup_Pozycje_SQL(byval strIdTrans)
+	GMA_Zakup_Pozycje_SQL = _
+	"from PozZakup as GMA_PozZakup " + _
+	"" + _
+	"join Artykul on Artykul.IdArt = GMA_PozZakup.IdArt " + _
+	"join Zakup on Zakup.IdTrans = GMA_PozZakup.IdTrans " + _
+	"" + _
+	"where ((GMA_PozZakup.Ilosc>0 and Zakup.Typ!='K') or (Zakup.Typ='K' and " + Ilosc_Korekta_Zakup + ">0)) and GMA_PozZakup.IdTrans=" + CStr(strIdTrans) + " and upper(rtrim(ltrim(Artykul.TowarUsl))) = 'T' "
+end function
+
+function GMA_Zakup_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	pExpMan.start_waiting
+
+	'Eksportuj tylko pozycje z iloœci¹ > 0 lub w przypadku korekty
+	'z iloscia uzglêdniaj¹c¹ poprzednie dokumenty te¿ > 0
+	GMA_Zakup_SaveStream = pExpMan.container().import( pStream )
+	pExpMan.fromRecordset "select '" + LIST_ELEMENT_IDENTITY + "' as list_id, ltrim(rtrim(Artykul.NaszInx)) as ArtykulIndex, GMA_PozZakup.*, '" + CStr(pRecord.fields("Brutto").value) + "' as Brutto, '" + pRecord.fields("Typ").value + "' as Typ, " + Ilosc_Korekta_Zakup + " as IloscKorekta, " + _
+		"Zakup.Typ as TypDok " + _
+		GMA_Zakup_Pozycje_SQL(pRecord.fields("IdTrans").value) + _
+		" " + _
+		"order by GMA_PozZakup.LP asc", "GMA_PozZakup"
+
+	pExpMan.stop_waiting
+	pExpMan.save_data
+end function
+
+function GMA_PozZakup_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	pStream.begin_object TYPEID_N5POZDOKMAG
+	pStream.as_child "listPozycje"
+
+	export_Artykul pExpMan, "IdArt=" + CStr(pRecord.fields("IdArt").value)
+	pStream.virtualfieldref("pProdukt", TYPEID_N5PRODUKT) = pRecord.fields("ArtykulIndex").value
+
+	export_Magazyn pExpMan, "Magazyn.IdMagazyn=" + CStr(pRecord.fields("IdMag").value)
+
+	pStream.fields("pMagDocel") = pRecord.fields("IdMag").value
+
+	dim bKorekta: bKorekta = false
+	if (pRecord.fields("TypDok").value="K") then
+		bKorekta = true
+		pStream.fields("nTypDok") = N5REJESTRDOK__ZZ
+	else
+		pStream.fields("nTypDok") = N5REJESTRDOK__PZ
+	end if
+
+	'todo:spiko Sprawdzenie IloscKorekta Jezeli < 0 to jaki komunikat
+	'czy cos?? Gdy IloscKorekta < 0 to mamy korekte, które powinna byæ
+	'dokumentem typu PZ a nie ZZ.
+	if (bKorekta) then
+		pStream.fields("curIloscOpak") = pRecord.fields("IloscKorekta").value
+		pStream.fields("curIloscEwid") = pRecord.fields("IloscKorekta").value
+	else
+		pStream.fields("curIloscOpak") = pRecord.fields("Ilosc").value
+		pStream.fields("curIloscEwid") = pRecord.fields("Ilosc").value
+	end if
+
+	'Wartosci na magazyn trafiaja zawsze jako netto
+	if (pRecord.fields("Brutto").value="T") then
+		dim curStawkaVAT
+		curStawkaVAT = CCur(CCur(CLng(pRecord.fields("VAT").value)) / 100)
+
+		pStream.fields("curCenaMag") = CCur(pRecord.fields("CenaKrajZak").value) / CCur((1 + curStawkaVAT))
+		pStream.fields("curCenaEwid") = CCur(pRecord.fields("CenaZagr").value) / CCur((1 + curStawkaVAT))
+	else
+		pStream.fields("curCenaMag") = pRecord.fields("CenaKrajZak").value
+		pStream.fields("curCenaEwid") = pRecord.fields("CenaZagr").value
+	end if
+
+	pStream.fields("curWartMag") = pStream.fields("curCenaMag") * pStream.fields("curIloscEwid")
+	pStream.fields("curCenaEwid") = pStream.fields("curCenaMag")
+	pStream.fields("curWartEwid") = pStream.fields("curCenaEwid") * pStream.fields("curIloscEwid")
+
+	GMA_PozZakup_Convert2Stream = true
+end function
+
+function GMA_PozZakup_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	GMA_PozZakup_SaveStream = pExpMan.container().import( pStream )
+end function
+
+'.............................
+' RECEPTA
+'.............................
+function Recepta_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	pStream.begin_object TYPEID_N5RECEPTA
+
+	pStream.fields("strNazwa") = pRecord.fields("Nazwa").value
+
+	if (not pExpMan.shouldContinue( pStream )) then
+		exit function
+	end if
+
+	pStream.fields("strNorma") = pRecord.fields("Norma").value
+	pStream.fields("strOpis") = pRecord.fields("Opis").value
+	pStream.fields("curIloscOpak") = pRecord.fields("Ilosc").value
+
+	export_Artykul pExpMan, "IdArt=" + CStr(pRecord.fields("IdArt").value)
+	pStream.virtualfieldref("pWyrob", TYPEID_N5PRODUKT) = pRecord.fields("ArtykulIndex").value
+
+	Recepta_Convert2Stream = true
+end function
+
+function Recepta_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	pExpMan.start_waiting
+	
+	Recepta_SaveStream = pExpMan.container().import( pStream )
+	pExpMan.fromRecordset "select '" + LIST_ELEMENT_IDENTITY + "' as list_id, ltrim(rtrim(Artykul.NaszInx)) as ArtykulIndex, PozRecepta.* from PozRecepta join Artykul on Artykul.IdArt = PozRecepta.IdTowRec where PozRecepta.IdRecepta=" + CStr(pRecord.fields("IdRecepta").value) + " and Status='A'", "PozRecepta"
+	pExpMan.fromRecordset "select '" + LIST_ELEMENT_IDENTITY + "' as list_id, ltrim(rtrim(Artykul.NaszInx)) as ArtykulIndex, PozRecepta2.* from PozRecepta as PozRecepta2 join Artykul on Artykul.IdArt = PozRecepta2.IdTowRec where PozRecepta2.IdRecepta=" + CStr(pRecord.fields("IdRecepta").value) + " and Status <> 'A'", "PozRecepta2"
+
+	pExpMan.stop_waiting
+end function
+
+function PozRecepta_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	pStream.begin_object TYPEID_N5POZRECEPTA
+	pStream.as_child "listSurowce"
+
+	export_Artykul pExpMan, "IdArt=" + CStr(pRecord.fields("IdTowRec").value)
+	pStream.virtualfieldref("pProdukt", TYPEID_N5PRODUKT) = pRecord.fields("ArtykulIndex").value
+	pStream.fields("curIloscOpak") = pRecord.fields("Ilosc").value
+	
+	PozRecepta_Convert2Stream = true
+end function
+
+function PozRecepta_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	PozRecepta_SaveStream = pExpMan.container().import( pStream )
+end function
+
+function PozRecepta2_Convert2Stream(byref pExpMan, byref pRecord, byref pStream)
+	pStream.begin_object TYPEID_N5POZRECEPTA
+	pStream.as_child "listCzynnosci"
+
+	export_Artykul pExpMan, "IdArt=" + CStr(pRecord.fields("IdTowRec").value)
+	pStream.virtualfieldref("pProdukt", TYPEID_N5PRODUKT) = pRecord.fields("ArtykulIndex").value
+	pStream.fields("curIloscOpak") = pRecord.fields("Ilosc").value
+	
+	PozRecepta2_Convert2Stream = true
+end function
+
+function PozRecepta2_SaveStream(byref pExpMan, byref pStream, byref pRecord)
+	PozRecepta2_SaveStream = pExpMan.container().import( pStream )
+end function
+
+
+#endif

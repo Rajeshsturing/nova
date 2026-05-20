@@ -1,0 +1,353 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+RAPTEMPLATE_STAN_MAG_ILOSC_SZCZEGOLY
+
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1250.h"
+
+#define RAPORT_TITLE Stany ilościowe - szczegóły
+
+#ifdef APPCONFIG_RAPORT_BY_PROD_INX
+#define C_FIELD_FIRST_EXPR		t_2.p_strIndeks
+#define C_FIELD_SECOND_EXPR		t_2.p_strNazwa
+#define C_FIELD_FIRST_HUMANNAME Indeks
+#define C_FIELD_SECOND_HUMANNAME Nazwa
+#else
+#define C_FIELD_FIRST_EXPR		t_2.p_strNazwa
+#define C_FIELD_SECOND_EXPR		t_2.p_strIndeks
+#define C_FIELD_FIRST_HUMANNAME		Nazwa
+#define C_FIELD_SECOND_HUMANNAME	Indeks
+#endif
+
+#macro RXE_TEXT_VALUE(_val_col_)									<text><![CDATA[<%so.write cstr(_val_col_)%>]]></text>
+
+
+-->
+<page style='36'>
+<config>
+<title>RAPORT_TITLE</title>
+<script>
+<![CDATA[
+VB_PRINT_PORTRAIT_GRAYSCALE
+VB_PRINTPREV_PORTRAIT_GRAYSCALE
+
+<%
+'podsumowanie w jednostkach miary
+dim pListSumaOpak: set pListSumaOpak = doc_.afc.new_navoarray()   'podsumowanie całego raportu ilość opakowań
+dim pListSumaEwid: set pListSumaEwid = doc_.afc.new_navoarray()   'podsumowanie całego raportu ilość ewid.
+dim pListJedn: set pListJedn = doc_.afc.new_navoarray() 'kolejne jednostki w całym raporcie
+
+function query()
+      query = "select 'c_mag' = t_1.strNazwa,'c_cecha1'=max(t_prod.strCecha1),'c_cecha2'=max( t_prod.strCecha2) "+_
+      " ,'c_field_second' = C_FIELD_SECOND_EXPR,'c_field_first'= C_FIELD_FIRST_EXPR,'c_prod_idobj'=max(t_2.p_idObj),'c_opak' = t_2.c_strNazwa,"+_
+      " 'c_jedn_opak' = max(t_4.strSkrot),'c_prec_opak' = max(t_4.nDokladnosc), 'c_jedn_ewid' = max(t_5.strSkrot),"+_
+      " 'c_prec_ewid' = max(t_5.nDokladnosc), 'c_ilosc_opak' = isnull(sum(t_0.gmo_curIlosc),0),"+_
+      "'c_ilosc_ewid' = isnull(sum(t_0.gmo_curIlosc * t_2.c_currKrotnosc),0) , 'c_ilosc_max' = max(t_2.c_curIloscMax), "+_
+      "'c_ilosc_min' = max(t_2.c_curIloscMin),'t_prac'=10109,'prac_idobj'=max(t_prac.idobj), " +_
+      "'c_klob_type'=TYPEID_N5KLIENT_OBIEKT,'c_klob_idobj'=max(t_klob.idobj),'c_klob_klient'=max(t_klob.klob_pKlient), 'c_wartosc' = isnull(sum(t_0.gmo_curWartosc),0) " +_
+      ",'c_dostawca_type'=TYPEID_N5KLIENT,'c_dostawca_idobj'=max(t_dost.idobj) " +_
+      " from vlist_n5produkt_listOpakowania as t_2  " +_
+      " inner join n5jednostka as t_4 on t_2.c_pJednOpak = t_4.IdObj " +_
+      " inner join n5jednostka as t_5 on t_2.p_pJednostkaEwid = t_5.IdObj " +_
+      " inner join n5produkt as t_prod on t_prod.idobj = t_2.p_idobj  "+_
+      " cross join n5magazyn as t_1 " +_
+      " left outer join n5gmop as t_0 on t_2.p_idobj =  t_0.gmo_pProd and t_0.gmo_pMag = t_1.idobj "+_
+      " and t_2.c_idobj = t_0.gmo_pOpak " +_
+      " inner join n5dokmag as t_dokmag on t_dokmag.nnumoper =  t_0.gmo_nnumop "+_
+      " left outer join n5pracownik as t_prac on t_prac.idobj = t_dokmag.ppracownik "+_
+      " left outer join n5klient_obiekt as t_klob on t_klob.idobj = t_dokmag.pObiektKlienta "+_
+      " left outer join n5klient as t_dost on t_prod.prod_pDostawca = t_dost.idobj " +_
+      " where t_prod.pGrupaProd in (select tmp_group_idobj from #tmp_prod_hierarchy) "+_
+      " and %1 and %3 and %4 and %6 and %8 and NUMOPBORDER and t_prod.eRodzaj=1 and %9 and %10 and %11 and %13 and %14 " +_
+      " group by t_1.strNazwa,t_2.p_strNazwa,t_2.p_strIndeks,t_2.c_strNazwa " +_
+      " having %7 and %12 " +_
+      " order by c_mag,c_field_first,c_field_second,c_opak"
+end function
+%>
+<%
+
+dim g_ModuleRapCustom:set g_ModuleRapCustom = doc_.getmodule(43025)
+dim g_ParamCustom
+
+dim pRaportMomentParam
+
+dim utilProdHierarchy : set utilProdHierarchy = doc_.getmodule(60246)
+dim pProdHierarchy : set pProdHierarchy = utilProdHierarchy.new_prod_hierarchy()
+
+dim pParamArray
+dim pGrupaParam
+
+function default_param()
+	set pParamArray = doc_.afc.new_navoarray()
+
+	pParamArray.add doc_.getmodule(43025).new_filtr_magazyn("t_1.idobj","N5TYPMAG_PODSTAWOWY,N5TYPMAG_ZWROTY,N5TYPMAG_PRODUKCJAWTOKU,N5TYPMAG_REZERWACJE")
+
+	set pRaportMomentParam = doc_.afc.rap.param.new_date("Analizowany moment").bindexpr("")
+	if trans_.isvar(APPVAR_RAPORT_FROM_OUTSIDE) then
+		pRaportMomentParam.first_value = trans_.var(1007)
+		pRaportMomentParam.mode = clng(1)
+	end if
+	pParamArray.add pRaportMomentParam
+
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwa produktu").bindexpr("t_2.p_strNazwa")
+	pParamArray.add doc_.afc.rap.param.new_text("Indeks produktu").bindexpr("t_2.p_strIndeks")
+	
+	set pGrupaParam = doc_.afc.rap.param.new_text("Grupa produktów").bindexpr("strNazwa")
+	pParamArray.add pGrupaParam
+
+	
+	dim pParamSTATUS: Set pParamSTATUS= doc_.afc.rap.param.new_choice("Dostępność").bindexpr("t_2.p_eAktywny")
+	doc_.afc.rap.param.init_on_enum pParamSTATUS, TYPEID_N5PRODUKT,"eAktywny"
+	pParamArray.add pParamSTATUS
+	pParamSTATUS.selected.value(1) = false
+
+	pParamArray.add doc_.afc.rap.param.new_currency("Ilość opakowań").bindexpr("isnull(sum(t_0.gmo_curIlosc),0)")	
+   
+	dim pParamOPAK: set pParamOPAK = doc_.afc.rap.param.new_text("Nazwa opakowania").bindexpr("t_2.c_strNazwa")
+	pParamOPAK.mode = PARAM_TEXT_MODE_ANY_TEXT
+	pParamArray.add pParamOPAK
+
+
+  pParamArray.add doc_.afc.rap.param.new_text("Imie pracownika").bindexpr("isnull(t_prac.strImie,'')")
+  pParamArray.add doc_.afc.rap.param.new_text("Nazwisko pracownika").bindexpr("isnull(t_prac.strNazwisko,'')")
+  pParamArray.add doc_.afc.rap.param.new_text("Nazwa obiektu").bindexpr("isnull(t_klob.klob_strNazwa,'')")
+  
+  set g_ParamCustom = g_ModuleRapCustom.new_custom("Stany magazynowe").bindexpr("isnull(sum(t_0.gmo_curIlosc),0)").BindExprRight("t_2")
+	pParamArray.add g_ParamCustom
+
+  pParamArray.add doc_.afc.rap.param.new_text("Nazwa dostawcy").bindexpr("isnull(t_dost.strNazwa,'')")
+  pParamArray.add doc_.afc.rap.param.new_text("Indeks dostawcy").bindexpr("isnull(t_dost.strIndeks,'')")  
+  
+	set default_param = pParamArray
+end function
+%>
+<%
+function write_actual_param(byref pActualParam)
+dim iter
+dim bAnyWritten : bAnyWritten = false
+if not pActualParam is nothing then
+for iter = 0 to pActualParam.upperIndex
+if pActualParam.value(iter).get_desc() <> "" then 
+bAnyWritten = true
+	so.write "<t size='5' /><text fontsize='4'><![CD"+"ATA[" + pActualParam.value(iter).get_desc() + "]"+"]></text><br/>"
+end if
+next
+end if
+if not bAnyWritten then 
+	so.write "<t fontsize='4'>brak</t><br/>"
+end if
+	so.write "<br/>"
+end function
+%>
+<%
+function JednostkaSlownie(byval strSkrot)
+  JednostkaSlownie = strSkrot
+  select case strSkrot
+    case "kg"
+      JednostkaSlownie = "ilość kilogramów"
+    case "m"
+      JednostkaSlownie = "ilość metrów"
+    case "szt"
+      JednostkaSlownie = "ilość sztuk"
+    case "kpl"
+      JednostkaSlownie = "ilość kompletów"
+    case "mb"
+      JednostkaSlownie = "ilość metrów bieżących"
+    case "l"
+      JednostkaSlownie = "ilość litrów"
+    case "T"
+      JednostkaSlownie = "ilość ton"
+    case "Q"
+      JednostkaSlownie = "ilość kwintali"
+    case "JED"
+      JednostkaSlownie = "ilość jednostek"
+    case "M2"
+      JednostkaSlownie = "ilość metrów kwadratowych"
+    case "M3"
+      JednostkaSlownie = "ilość metrów sześciennych"      
+  end select
+end function
+%>
+<%
+function GetIndexOpak(byref pListJedn, byval strSkrot): GetIndexOpak = -1
+  dim iter
+  for iter = 0 to pListJedn.upperIndex
+    if pListJedn.value(iter) = strSkrot then
+      GetIndexOpak = iter
+      exit for
+    end if
+  next
+end function
+%>
+<%
+function body_row(byref pSection,byref pRec)
+  dim strSkrot: strSkrot = pRec("c_jedn_opak").value
+  dim curIloscOpak: curIloscOpak = ccur(pRec("c_ilosc_opak").value)
+  dim curIloscEwid: curIloscEwid = ccur(pRec("c_ilosc_ewid").value)
+  
+  dim nIndex: nIndex = -1
+  nIndex = GetIndexOpak(pListJedn, strSkrot)
+  if nIndex > -1 then
+    pListSumaOpak.value(nIndex) = pListSumaOpak.value(nIndex) + curIloscOpak
+    pListSumaEwid.value(nIndex) = pListSumaEwid.value(nIndex) + curIloscEwid
+  else
+    pListJedn.add strSkrot
+    pListSumaOpak.add curIloscOpak
+    pListSumaEwid.add curIloscEwid  
+  end if 
+
+if pRapExec.RecNr mod 2 = 0 then 
+%>
+<tr bordercolor='white'> 
+<% else %>
+<tr bordercolor='white' style='37'>
+<% end if %>
+  <td align='right'>RXE_LP</td>
+	<td>
+		RXE_TEXT_LINK_FORM_VCC(TYPEID_N5PRODUKT,c_prod_idobj,c_field_first)
+	</td>
+	<td>
+		RXE_AUTO_TEXT(c_field_second)
+	</td>
+	<td>
+		RXE_TEXT(c_cecha1)
+	</td>  
+	<td>
+		RXE_TEXT(c_cecha2)
+	</td>   
+	<td>
+		RXE_TEXT(c_mag)
+	</td>
+  RXC_QUANTITY_CVV(c_wartosc,"",2)
+	<td align='right'>
+		RXE_QUANTITY_CCC(c_ilosc_ewid,c_jedn_ewid,c_prec_ewid)
+	</td>
+</tr><%
+end function
+%>
+<%
+function body_header(byref pSection,byref pRec)
+%>
+<table border='1'>
+<thead>
+<tr style='21'>
+	<td width='min'><t>LP</t></td>
+	<td width='max'>
+		<text><![CDATA[C_FIELD_FIRST_HUMANNAME]]></text>
+	</td>
+	<td width='max'>
+		<text><![CDATA[C_FIELD_SECOND_HUMANNAME]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Cecha 1]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Cecha 2]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Magazyn]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Wartość]]></text>
+	</td>  
+	<td width='min'>
+		<text><![CDATA[Ilość w j.ewid.]]></text>
+	</td>
+</tr>
+</thead>
+<tbody>
+<%
+end function
+%>
+<%
+function body_footer(byref pSection)
+%>
+<tr hide='true' userprop='propc_section_end="1"'><td colspan='8' /></tr>
+<%
+  'podsumowanie w jednostkach
+  dim iter
+  for iter = 0 to pListJedn.upperIndex
+    %>
+    <tr fontsize='6'>
+	    <td style='27' colspan='3' />
+	    <td style='27' align='right' colspan='3'>
+		    RXE_TEXT_VALUE(JednostkaSlownie(pListJedn.value(iter)))
+	    </td>      
+	    <td style='27' align='right'>
+		    RXE_MONEY_VAR(pListSumaOpak.value(iter))
+	    </td>
+	    <td style='27' align='right'>
+		    RXE_MONEY_VAR(pListSumaEwid.value(iter))
+	    </td>
+    </tr>  
+    <%
+  next
+%>   
+<tr border='0'><td colspan='8' /></tr>
+</tbody>
+</table>
+<%
+end function
+%>
+
+<%dim nSectionPicCounter : nSectionPicCounter = 10000000%>
+function section_hideshow_hli(byref pHLI)
+doc_.afc.formsection.section_hideshow page_, pHLI.prop(100)
+end function
+]]>
+</script>
+</config>
+<header>
+</header>
+<body>
+<p><text fontsize='7'><![CDATA[RAPORT_TITLE]]></text></p><br/><br/>
+<t fontsize='5' bold='true'>Kryteria selekcji:</t><br/>
+<%
+dim pRapExec : set pRapExec = rapeng_.new_engine()
+  with pRapExec
+  .add_body_ex (getref("body_header"),getref("body_footer"),getref("body_row")).add_sumator("c_wartosc")
+
+  if .prepare("RAPORT_TITLE",default_param(),rapeng_.get_raport_param(),query()) then
+  %>
+  <%
+
+
+	dim pPerf : set pPerf = doc_.performing("Trwa przygotowywanie wyników...")
+		pProdHierarchy.fill_on_prodgrupa_param pGrupaParam
+	set pPerf = nothing
+
+	write_actual_param rapeng_.get_raport_param()
+
+	dim nDummy
+		
+  #ifdef APPCONFIG_GM_RAPORT_BY_DATE
+
+      .ReplaceQueryParam "NUMOPBORDER", _
+      "t_0.gmo_nNumOp  in (select om2.gmo_nNumOp from view_operacje_magazynowe om2 where om2.dDataOp <= START_DATE ) "
+        .ReplaceQueryParam "START_DATE",trans_.afc.convert.date2SQL(pRaportMomentParam.first_value)
+  #else
+        .ReplaceQueryParam "NUMOPBORDER", _
+        "t_0.gmo_nNumOp " + doc_.getmodule(43025).rap_param_date_2_gm_num_oper_where(pRaportMomentParam,nDummy)
+
+  #endif
+
+    if not .perform then
+    so.write "<p style='21'><t>Brak danych spełniających podane kryteria</t></p>"
+	end if
+%>
+<%
+end if
+end with
+
+pProdHierarchy.manual_done() : set pProdHierarchy = nothing
+set utilProdHierarchy = nothing
+
+%>
+</body>
+<footer>
+</footer>
+</page>

@@ -1,0 +1,285 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1201.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1230.h"
+
+#define CTRLID_LEFT_PANE		1001
+#define CTRLID_RIGHT_PANE		1002
+
+-->
+<page style='STYLE_PAGE'>
+<config>
+	<title>
+Karta pracownika
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+<typeid>TYPEID_N5PRACOWNIK</typeid>
+<script>
+      <![CDATA[
+
+'CCardBuilder
+#include "50131"
+'GetMenu
+#include "50506"
+'section_*
+#include "50222"
+'std_openform_field_hli
+#include "50610"
+'fire_choicelist
+#include "50200"
+
+'add_to_choicelist
+'delete_from_choicelist_hli
+#include "50102"
+
+'popraw dane
+#include "50609"
+
+#include "50101"
+
+dim g_bLocalMode : g_bLocalMode = true
+dim g_idRoot : g_idRoot = 0
+dim g_ShowAllBar: g_ShowAllBar = false
+
+function get_root_obj()
+	if g_bLocalMode then
+		set get_root_obj = page_.root
+	else
+		set get_root_obj = trans_.getobj(TYPEID_N5KLIENT,get_root_obj_idobj())
+	end if
+end function
+
+function get_root_obj_idobj()
+	if g_bLocalMode then
+		get_root_obj_idobj = page_.rootidobj
+	else
+		get_root_obj_idobj = g_idRoot
+	end if
+end function
+
+
+dim g_pCardBuilder : set g_pCardBuilder = nothing
+
+function fopen : fopen = false
+	
+	if not HARUI(UOR_READ(TYPEID_N5PRACOWNIK)) then
+		exit function
+	end if
+
+#ifdef APPCONFIG_SHOW_ALL_NALICZENIA
+  trans_.var(GVAR_SELECTED_TAB_KARTA_PRAC) = 0
+  trans_.var(GVAR_EMPLOYEE_CARD_LAST_12_MONTHS) = 0  
+#endif  
+
+	trans_.var(GVAR_CURRENT_EMPLOYEE) = clng(page_.root.idobj)
+
+	set g_pCardBuilder = new CCardBuilder
+
+	g_pCardBuilder.prepare_framework_ex page_.topelement,false,true,true,CTRLID_LEFT_PANE,CTRLID_RIGHT_PANE
+
+	build_menu
+	rebuild_contents
+
+	section_fopen THIS_FILE
+
+	fopen = true
+end function
+
+'called once to build menu
+sub build_menu
+	'dodajemy menu items
+	with g_pCardBuilder.menu
+
+		.add_item "Popraw dane", "varFunction=""popraw_dane"""
+		.add_item "Nowa umowa", "varFunction=""nowa_umowa"""
+		.add_item "Nowa choroba", "varFunction=""nowa_choroba"""
+		.add_item "Nowa nieobecność", "varFunction=""nowa_nieobecnosc"""
+		.add_item "Nowy inny składnik", "varFunction=""nowy_inny"""
+    .add_item "Dodaj do listy wyboru","varFunctionHLI=""add_to_choicelist"" vs100=""TYPEID_N5PRACOWNIK"" vs101=""" + cstr(get_root_obj().idobj) + """ "
+    .add_item "Usuń z listy wyboru","varFunctionHLI=""delete_from_choicelist_hli"" vs100=""0"" vs101=""0"" vs102=""TYPEID_N5PRACOWNIK"" "
+	end with
+end sub
+
+dim g_pPlugFactory : set g_pPlugFactory = nothing
+
+'called on every root object change (including fopen)
+sub rebuild_contents
+	set g_pPlugFactory = doc_.getmodule(60172)
+	with g_pCardBuilder
+		.reset_framework
+	
+		'title
+		.title = Ucase(page_.root.strImie + " " + page_.root.strNazwisko)
+
+		g_pPlugFactory.plug_pracownik_podstawowe .new_section(.fixedpane, "Informacje podstawowe"), page_.rootidobj
+		g_pPlugFactory.plug_pracownik_adresy .new_section(.fixedpane, "Adres korespondecji/zameldowania"), page_.rootidobj
+
+#ifdef _IOW
+    if not g_ShowAllBar then
+	    dim pPlugInTable : set pPlugInTable = .new_section(.fixedpane, "Pokaż szczegóły dotyczące naliczeń").addnew(CTRL_TYPE_TABLE,-1)
+	    pPlugInTable.styleitem = STYLE_TABLE_BODY
+	    dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(pPlugInTable)
+     
+      pTB.newrow
+      pTB.row.border = 0
+      pTB.newcell
+      pTB.addctrl CTRL_TYPE_BUTTON,-1
+      with pTB.element
+        .styleitem = STYLE_BUTTON
+        .text = "Pokaż"
+        set .hli = doc_.createhli()
+        .hli.prop(GVAR_FUNCTIONHLI) = "ShowAllBar"
+      end with
+    
+    else
+		  g_pPlugFactory.plug_pracownik_naliczenia .new_section(.leftpane, "Naliczenia"), page_.rootidobj
+		
+		  .new_section .leftpane,"Transakcje"
+		  .new_section .leftpane,"Płatności"
+		  .new_section .leftpane,"Kalendarz"
+    end if
+#else
+
+		g_pPlugFactory.plug_pracownik_naliczenia .new_section(.leftpane, "Naliczenia"), page_.rootidobj
+		
+		.new_section .leftpane,"Transakcje"
+		.new_section .leftpane,"Płatności"
+		.new_section .leftpane,"Kalendarz"
+#endif    
+
+		g_pPlugFactory.plug_pracownik_pic .new_section(.rightpane, "Zdjęcie"), page_.rootidobj
+		.new_section .rightpane,"Konta"
+		.new_section .rightpane,"Umowy"
+		.new_section .rightpane,"Nieobecności"
+		.new_section .rightpane,"Choroby"
+	end with
+end sub
+
+sub ShowAllBar(pHLI)
+  dim pModule60106: set pModule60106 = doc_.getmodule(60106)
+  g_ShowAllBar = pModule60106.FindRightForShowAllBar()
+  if not g_ShowAllBar then
+    trans_.message 7000, 0, "Nie posiadasz uprawnień do wyświetlenia szczegółów dotyczących naliczeń."
+  end if
+  frefresh
+end sub
+
+function fclose
+#ifdef APPCONFIG_SHOW_ALL_NALICZENIA
+  trans_.var(GVAR_SELECTED_TAB_KARTA_PRAC) = -1
+  trans_.var(GVAR_EMPLOYEE_CARD_LAST_12_MONTHS) = -1
+#endif
+	section_fclose THIS_FILE
+	set g_pCardBuilder = nothing
+end function
+
+function frefresh
+	rebuild_contents
+end function
+
+#ifdef APPCONFIG_SHOW_ALL_NALICZENIA
+sub ShowAllNalicz(pHLI)
+  if pHLI.exists(100) then
+    trans_.var(GVAR_SELECTED_TAB_KARTA_PRAC) = pHLI.prop(100)
+  end if
+  if pHLI.exists(101) then
+    trans_.var(GVAR_EMPLOYEE_CARD_LAST_12_MONTHS) = pHLI.prop(101)
+  end if  
+  frefresh
+  'ustaw się na wybranej zakładce
+  page_.ctrl(CTRLID_LEFT_PANE).activeitem = trans_.var(GVAR_SELECTED_TAB_KARTA_PRAC)
+end sub
+#endif
+
+
+'----------------------------------------------------------------
+function c##CTRLID_LEFT_PANE##_ongetdata(byref oCtrl)
+	c##CTRLID_LEFT_PANE##_ongetdata = true
+#ifdef APPCONFIG_SHOW_ALL_NALICZENIA
+  RefreshLeftPanel oCtrl
+#endif  
+end function
+
+function RefreshLeftPanel(byref oTabCtrl)
+  dim nActiveItem: nActiveItem = trans_.var(GVAR_SELECTED_TAB_KARTA_PRAC)
+	select case nActiveItem
+	case 2
+		g_pPlugFactory.plug_pracownik_transakcje oTabCtrl.element(nActiveItem), page_.rootidobj
+	case 3
+		g_pPlugFactory.plug_pracownik_platnosci oTabCtrl.element(nActiveItem), page_.rootidobj
+	case 4
+		g_pPlugFactory.plug_pracownik_kalendarz oTabCtrl.element(nActiveItem), page_.rootidobj,trans_.var(GVAR_TODAY)
+	end select
+  trans_.var(GVAR_SELECTED_TAB_KARTA_PRAC) = 0
+  trans_.var(GVAR_EMPLOYEE_CARD_LAST_12_MONTHS) = 0
+end function
+
+function c##CTRLID_LEFT_PANE##_ontabitemactivate(oTabCtrl,nActiveItem,bFirstTime)
+	if not bFirstTime then
+		exit function
+	end if
+
+	select case nActiveItem
+	case 2
+		g_pPlugFactory.plug_pracownik_transakcje oTabCtrl.element(nActiveItem), page_.rootidobj
+	case 3
+		g_pPlugFactory.plug_pracownik_platnosci oTabCtrl.element(nActiveItem), page_.rootidobj
+	case 4
+		g_pPlugFactory.plug_pracownik_kalendarz oTabCtrl.element(nActiveItem), page_.rootidobj,trans_.var(GVAR_TODAY)
+	end select
+end function
+
+function c##CTRLID_RIGHT_PANE##_ongetdata(byref oCtrl)
+	c##CTRLID_RIGHT_PANE##_ongetdata = true
+end function
+function c##CTRLID_RIGHT_PANE##_ontabitemactivate(oTabCtrl,nActiveItem,bFirstTime)
+	if not bFirstTime then
+		exit function
+	end if
+
+	select case nActiveItem
+	case 2
+		g_pPlugFactory.plug_pracownik_konta oTabCtrl.element(nActiveItem), page_.rootidobj
+	case 3
+		g_pPlugFactory.plug_pracownik_umowy oTabCtrl.element(nActiveItem), page_.rootidobj
+	case 4
+		g_pPlugFactory.plug_pracownik_nieobecnosci oTabCtrl.element(nActiveItem), page_.rootidobj
+	case 5
+		g_pPlugFactory.plug_pracownik_choroby oTabCtrl.element(nActiveItem), page_.rootidobj
+	end select
+end function
+'----------------------------------------------------------------
+function nowa_umowa
+	doc_.postcommand "OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5PLUMOWA,0,USAGE_ZAWARCIE)"
+end function
+
+function nowa_choroba
+	doc_.postcommand "OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5PLCHOROBA,0,USAGE_EDIT)"
+end function
+
+function nowa_nieobecnosc
+	doc_.postcommand "OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5PLNIEOB,0,USAGE_EDIT)"
+end function
+
+function nowy_inny
+	doc_.postcommand "OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5PLPOZOSTALE,0,USAGE_EDIT)"
+end function
+
+]]></script>
+</config>
+<header>
+</header>
+<body>
+
+</body>
+<footer>
+</footer>
+</page>
+

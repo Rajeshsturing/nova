@@ -1,0 +1,599 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+
+EDI ORDERS
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1231.h"
+
+
+#define EDI_REF_NUM		"UNH_URN"
+#define EDI_DATA_WYD	"DTM_137"
+#define EDI_DATA_DOST	"DTM_200"
+#define EDI_LINE		"LIN_LNU"
+#define EDI_EAN			"LIN_INU"
+#define EDI_ILOSC		"QTY_000"
+#define EDI_NR			"BGM_ONU"
+#define EDI_NIP			"REF_SG2"
+#define EDI_PRICE				"PRI_000"
+#define EDI_NRTOW_ODBIORCA		"PIA_INU"
+#define EDI_NAZWATOWARU			"IMD_000"
+#define EDI_NAZWATOWARU2		"IMD_002"
+
+
+#define EDI_SUP					"NAD_SUP"
+#define EDI_BUY					"NAD_BUY"
+#define EDI_DELPAR				"NAD_DPA"
+#define EDI_FAKTUROWANE_NA		"NAD_SFR"
+#define EDI_ODBIORCA			"NAD_UDE"
+
+#define EDI_OS_KON				"CTA_UDE"
+
+-->
+<page>
+<config>
+<script>
+<![CDATA[
+
+'if this_.pProdukt.prod_cWyrob <> "1" and this_.pProdukt.prod_cSurowiec <> "1" then
+
+function get_position_by_ean(byval strEan , byref pPosition)
+	get_position_by_ean = get_position_by_ean_ex(strEan,pPosition,pPosition.type)
+end function
+
+
+function get_position_by_ean_ex(byval strEan , byref pPosition,byval iType):get_position_by_ean_ex = false	
+	dim rs,pProd
+#ifndef _TORAL	
+	'najpierw po obcych
+	set rs = trans_.createadors("select * from vlist_n5klient_produkt_klpr_listOpakowania where c_klop_strEan like '" + trans_.afc.convert.DoubleApostrophe(strEan) + "'")
+	if rs.recordCount > 1 then
+		trans_.message 1002 , 0 , "Klient-produkt: kilka pozycji dla podanego kodu EAN: " + strEAN
+	elseif rs.recordCount < 1 then
+		trans_.message 1002 , 0 , "Klient-produkt: nie potrafie znaleźć pozycji dla podanego kodu EAN: " + strEAN
+	else
+		set pProd = trans_.getobj(TYPEID_N5PRODUKT , clng(rs("p_klpr_pprodukt")) )
+
+		if not pProd is nothing then
+
+			if pProd.eRodzaj <> N5PRODUKT_TOWAR then
+				if iType = TYPEID_N5POZDOKMAG then
+					trans_.message 1002 , 0 , "Na dokument magazynowy możemy wstawiać tylko towary. Znaleziony produkt ("+pProd.text+") to usługa."
+					exit function
+				end if
+			end if
+
+			if pProd.prod_cWyrob <> "1" and pProd.prod_cSurowiec <> "1" then
+				if iType = TYPEID_N5POZREALPROD then
+					trans_.message 1002 , 0 , "Na realizację produkcji możemy wstawiqć tylko surowce lub wyroby. Znaleziony produkt ("+pProd.text+") nie spelnia tych warunków."
+					exit function
+				end if
+			end if
+
+
+		end if
+
+		set pPosition.pProdukt = pProd
+#ifdef _GRAJEWSCY
+		set pPosition.pOpak = pPosition.pProdukt.listOpakowania.get(1)
+#else
+		set pPosition.pOpak = pPosition.pProdukt.listOpakowania.get(clng(rs("coll_lp")) )
+#endif
+
+		get_position_by_ean_ex = true
+		exit function
+	end if
+#endif
+
+
+	set rs = trans_.createadors("select * from vlist_n5produkt_listopakowania where c_strEan like '" + trans_.afc.convert.DoubleApostrophe(strEan) + "'")
+
+	if rs.recordCount > 1 then
+		trans_.message 1002 , 0 , "Produkt: kilka pozycji dla podanego kodu EAN: " + strEAN
+		exit function
+	elseif rs.recordCount < 1 then
+		trans_.message 1002 , 0 , "Produkt: nie potrafie znaleźć pozycji dla podanego kodu EAN: " + strEAN
+		exit function
+	else
+		set pProd = trans_.getobj(TYPEID_N5PRODUKT , clng(rs("p_idobj")) )
+
+		if not pProd is nothing then
+
+			if pProd.eRodzaj <> N5PRODUKT_TOWAR then
+				if iType = TYPEID_N5POZDOKMAG then
+					trans_.message 1002 , 0 , "Na dokument magazynowy możemy wstawiqć tylko towary. Znaleziony produkt ("+pProd.text+") to usługa."
+					exit function
+				end if
+			end if
+
+			if pProd.prod_cWyrob <> "1" and pProd.prod_cSurowiec <> "1" then
+				if iType = TYPEID_N5POZREALPROD then
+					trans_.message 1002 , 0 , "Na realizację produkcji możemy wstawiqć tylko surowce lub wyroby. Znaleziony produkt ("+pProd.text+") nie spelnia tych warunków."
+					exit function
+				end if
+			end if
+
+
+		end if
+
+		set pPosition.pProdukt = pProd
+#ifdef _GRAJEWSCY
+		set pPosition.pOpak = pPosition.pProdukt.listOpakowania.get(1)
+#else
+		set pPosition.pOpak = pPosition.pProdukt.listOpakowania.get(clng(rs("coll_lp")) )
+#endif
+		get_position_by_ean_ex = true
+	end if
+
+end function
+
+'------------
+function wytnijPoY(byval strVal)
+	dim iDl,i,iter
+	iter = 1
+	iDl = len(strVal)
+	for i=idl to 1 step -1
+		if mid(strVal,i,1) = "Y" then
+			wytnijPoY = mid(strVal,1,i-1)
+			exit function
+		end if
+	next
+	wytnijPoY = strVal
+end function
+
+function get_prac_by_nrewid(byval strNrEwidPrac,byref pPozDokMag): get_prac_by_nrewid = false
+  if strNrEwidPrac <> "" then
+    dim idPrac: idPrac = trans_.findobjid(TYPEID_N5PRACOWNIK,"strFax = '" + CStr(strNrEwidPrac) + "'")
+    if idPrac > clng(0) then
+      dim pPrac: set pPrac = trans_.getobj(TYPEID_N5PRACOWNIK,idPrac)
+      pPozDokMag.strUwagi = pPrac.strNazwisko + " " + pPrac.strImie 
+      if pPrac.strFax <> "" then
+        pPozDokMag.curExtra4 = ccur(pPrac.strFax)
+      end if
+      get_prac_by_nrewid = true
+    end if
+  end if
+end function
+
+function get_position_by_indeks(byval strIndeks , byref pPosition)
+	get_position_by_indeks = get_position_by_indeks_ex(strIndeks,pPosition,pPosition.type)
+end function
+
+function get_position_by_indeks_ex(byval strIndeks , byref pPosition, byval iType):get_position_by_indeks_ex = false	
+	dim rs,pProd
+	set rs = trans_.createadors("select * from vlist_n5produkt_listopakowania where p_strIndeks like '" + trans_.afc.convert.DoubleApostrophe(strIndeks) + "'")
+	if rs.recordCount < 1 then
+			if inStr(strIndeks,"Y")>0 then
+				trans_.message 0, 0, "Indeks nie został znaleziony. Odcinam kod po Y....."
+			end if
+
+		strIndeks  = wytnijPoY(strIndeks)
+		set rs = trans_.createadors("select * from vlist_n5produkt_listopakowania where p_strIndeks like '" + trans_.afc.convert.DoubleApostrophe(strIndeks) + "'")
+	end if
+	
+	if rs.recordCount > 1 then
+		trans_.message 1002 , 0 , "Produkt: kilka pozycji dla podanego Indeksu: " + strIndeks
+		exit function
+	elseif rs.recordCount < 1 then
+		trans_.message 1002 , 0 , "Produkt: nie potrafie znaleźć pozycji dla podanego Indeksu: " + strIndeks
+		exit function
+	else
+		set pProd = trans_.getobj(TYPEID_N5PRODUKT , clng(rs("p_idobj")) )
+
+		if not pProd is nothing then
+
+			if pProd.eRodzaj <> N5PRODUKT_TOWAR then
+				if iType = TYPEID_N5POZDOKMAG then
+					trans_.message 1002 , 0 , "Na dokument magazynowy możemy wstawiqć tylko towary. Znaleziony produkt ("+pProd.text+") to usługa."
+					exit function
+				end if
+			end if
+
+			if pProd.prod_cWyrob <> "1" and pProd.prod_cSurowiec <> "1" then
+				if iType = TYPEID_N5POZREALPROD then
+					trans_.message 1002 , 0 , "Na realizację produkcji możemy wstawiqć tylko surowce lub wyroby. Znaleziony produkt ("+pProd.text+") nie spelnia tych warunków."
+					exit function
+				end if
+			end if
+
+
+		end if
+
+		set pPosition.pProdukt = pProd
+		set pPosition.pOpak = pPosition.pProdukt.listOpakowania.get(clng(rs("coll_lp")) )
+		get_position_by_indeks_ex = true
+	end if
+
+end function
+'------------
+
+
+function get_position_by_indeks_and_oznacz_prod(byval strIndeks, byval strOznaczProd, byref pPosition)
+	get_position_by_indeks_and_oznacz_prod = get_position_by_indeks_and_oznacz_prod_ex(strIndeks,strOznaczProd,pPosition,pPosition.type)
+end function
+
+
+function get_position_by_indeks_and_oznacz_prod_ex(byval strIndeks, byval strOznaczProd, byref pPosition, byval iType):get_position_by_indeks_and_oznacz_prod_ex = false	
+	dim rs,pProd
+  
+  'wyszukaj po indeksie
+	set rs = trans_.createadors("select * from vlist_n5produkt_listopakowania where p_strindeks like '" + trans_.afc.convert.DoubleApostrophe(strIndeks) + "'")
+
+	if rs.recordCount > 1 then
+		trans_.message 1002 , 0 , "Produkt: kilka pozycji dla podanego indeksu: " + strIndeks
+		exit function
+	end if
+  if rs.recordCount < 1 then    
+    'wyszukaj po oznaczeniu producenta
+    set rs = trans_.createadors("select * from vlist_n5produkt_listopakowania where p_strcecha1 like '" + trans_.afc.convert.DoubleApostrophe(strIndeks) + "'")
+    
+	  if rs.recordCount > 1 then
+		  trans_.message 1002 , 0 , "Produkt: kilka pozycji dla podanego oznaczenia producenta: " + strIndeks
+		  exit function
+	  end if    
+    
+    if rs.recordCount < 1 then
+      trans_.message 1002 , 0 , "Produkt: nie potrafie znaleźć pozycji dla podanego indeksu oraz oznaczenia producenta: " + strIndeks + " ( " + strOznaczProd + " )"
+		  exit function
+    end if  
+	end if
+  
+	set pProd = trans_.getobj(TYPEID_N5PRODUKT , clng(rs("p_idobj")) )
+
+	if not pProd is nothing then
+
+		if pProd.eRodzaj <> N5PRODUKT_TOWAR then
+			if iType = TYPEID_N5POZDOKMAG then
+				trans_.message 1002 , 0 , "Na dokument magazynowy możemy wstawiqć tylko towary. Znaleziony produkt ("+pProd.text+") to usługa."
+				exit function
+			end if
+		end if
+
+		if pProd.prod_cWyrob <> "1" and pProd.prod_cSurowiec <> "1" then
+			if iType = TYPEID_N5POZREALPROD then
+				trans_.message 1002 , 0 , "Na realizację produkcji możemy wstawiqć tylko surowce lub wyroby. Znaleziony produkt ("+pProd.text+") nie spelnia tych warunków."
+				exit function
+			end if
+		end if
+
+
+	end if
+
+	set pPosition.pProdukt = pProd
+	set pPosition.pOpak = pPosition.pProdukt.listOpakowania.get(clng(rs("coll_lp")) )
+	get_position_by_indeks_and_oznacz_prod_ex = true
+
+end function
+'------------------------
+
+
+private function get_prefix(byval strLine , byref strData)
+
+	strData = ""
+	get_prefix = ""
+	
+	dim nCursorPosition
+
+	if strLine <> "" then
+		nCursorPosition = InStr(strLine, "^")
+		if nCursorPosition > 0 then
+			get_prefix = Left(strLine, nCursorPosition - CLng(1))
+			strData = Mid(strLine, nCursorPosition + CLng(1))	
+		end if
+	end if
+
+end function
+
+function f_zamienNaInteger(byval strIlosc)
+  dim str
+
+  if instr(strIlosc,".")>0 then
+      str = left(strIlosc,instr(strIlosc,".")-1)
+  else
+      str = strIlosc
+  end if
+  f_zamienNaInteger = str
+end function
+
+function zamowienie_from_EDI_Comarch(byref pZamowienie , byref pPage , byval pInputStream, byval strplik):zamowienie_from_EDI_Comarch = true
+
+	dim item,i,j
+  dim intOpcja    'jesli intOpcja=1 wtedy my jestesmy sprzedawca a jesli intOpcja=2 to my kupujemy
+  
+	dim xmlDoc :		set xmlDoc = CreateObject("microsoft.xmldom")
+	dim result: result = xmlDoc.load(strplik)
+
+	if not result then		'czy dokument poprawnie sie zaladowal
+		exit function		'blad
+	end if
+	dim objNodeList :	set objNodeList = xmlDoc.getElementsByTagName("Document-Order")
+
+	dim id
+	dim pPozyc:set pPozyc=nothing
+	set item = objNodeList.item(0)
+	if item is nothing then
+		trans_.message 0, 0,"Niepoprawny format importowanego pliku "
+	else
+
+	id = trans_.findobjid(TYPEID_N5SPOSPLAT,"strNazwa like '%przelew%'" )
+	if id>0 then
+		set pZamowienie.pSposobPlatnosci = trans_.getobj(TYPEID_N5SPOSPLAT , id)   'ustaw sposob platnosci na przelew
+	else
+		id = trans_.findobjid(TYPEID_N5SPOSPLAT,"strNazwa like '%przelew 14 dni%'" )
+		if id>0 then
+			set pZamowienie.pSposobPlatnosci = trans_.getobj(TYPEID_N5SPOSPLAT , id)   'ustaw sposob platnosci na przelew 14dni
+		else
+			id = trans_.findobjid(TYPEID_N5SPOSPLAT,"strNazwa like '%gotówka%'" )
+			if id>0 then
+				set pZamowienie.pSposobPlatnosci = trans_.getobj(TYPEID_N5SPOSPLAT , id)   'ustaw sposob platnosci na gotowke
+			else
+					trans_.message 0, 0,"Nie ustawiono sposobu płatności"
+			end if
+		end if		
+	end if
+
+
+'pierwsza sekcja <Order-Header></Order-Header>
+	if item.firstChild.nodeName="Order-Header" then
+	dim itemS : set	itemS = item.childNodes.item(0)
+			if itemS.childNodes.item(0).nodeName="OrderNumber" then
+				pZamowienie.zam_strNrDokObcy = itemS.childNodes.item(0).text
+			end if
+			if itemS.childNodes.item(1).nodeName="OrderDate" then
+				pZamowienie.dDataWyst = CDate(itemS.childNodes.item(1).text)
+			end if
+			if itemS.childNodes.item(2).nodeName="ExpectedDeliveryDate" then
+				pZamowienie.dDataReal = CDate(itemS.childNodes.item(2).text)
+			end if
+			if itemS.childNodes.item(3).nodeName="DocumentFunctionCode" then
+				'<documentFunctionCode>O - oryginal itd</documentFunctionCode>
+			end if			
+	end if
+	
+'druga sekcja <Order-Parties></Order-Parties>
+	if item.childNodes.item(1).nodeName="Order-Parties" then
+		set	itemS = item.childNodes.item(1)
+			if itemS.childNodes.item(0).nodeName="Buyer" then
+				id = trans_.findobjid(TYPEID_N5KLIENT,"kli_strILN='" + Cstr(itemS.childNodes(0).childNodes(0).text) + "'" )
+				if id>0 then
+					set pZamowienie.pKlient = trans_.getobj(TYPEID_N5KLIENT , id)	'<Buyer> <ILN></ILN>
+          intOpcja=1
+          if itemS.childNodes.item(3).nodeName="DeliveryPoint" then
+            id = trans_.findobjid(TYPEID_N5_KLIENT_JEDN_ORG,"kjo_strILN='" + Cstr(itemS.childNodes(3).childNodes(0).text) + "'" )
+            if id>0 then
+              set pZamowienie.pKlient_JO=trans_.getobj(TYPEID_N5_KLIENT_JEDN_ORG, id) '<DeliveryPoint> <ILN></ILN>
+              intOpcja=1
+				    else
+       				trans_.message 0, 0,"Próba importu jednostki klienta nie występującego w bazie. Indeks klienta:" + Cstr(itemS.childNodes.item(0).text)
+            end if
+          else
+            if itemS.childNodes.item(2).nodeName="DeliveryPoint" then
+              id = trans_.findobjid(TYPEID_N5_KLIENT_JEDN_ORG,"kjo_strILN='" + Cstr(itemS.childNodes(2).childNodes(0).text) + "'" )
+              if id>0 then
+               set pZamowienie.pKlient_JO=trans_.getobj(TYPEID_N5_KLIENT_JEDN_ORG, id) '<DeliveryPoint> <ILN></ILN>
+               intOpcja=1
+				      else
+       			  	trans_.message 0, 0,"Próba importu jednostki klienta nie występującego w bazie. Indeks klienta:" + Cstr(itemS.childNodes.item(0).text)
+             end if
+          end if
+        end if  
+        else 
+          intOpcja=2
+          if itemS.childNodes.item(1).nodeName="Seller" then
+             id = trans_.findobjid(TYPEID_N5KLIENT,"kli_strILN='" + Cstr(itemS.childNodes.item(1).childNodes(0).text) + "'" )
+               if id>0 then
+                 set pZamowienie.pKlient = trans_.getobj(TYPEID_N5KLIENT , id) '<Seller> <ILN></ILN> 
+               else
+                	trans_.message 0, 0,"Próba importu nazwy dostawcy nie występującego w bazie. Indeks dostawcy:" + Cstr(itemS.childNodes.item(0).text)
+               end if
+             'pZamowienie.dDataWyst = itemS.childNodes.item(1).text			'<Seller> <ILN></ILN> 
+				     'pZamowienie.strNrDok = itemS.childNodes.item(1).childNodes.item(1).text '<Seller> <codeByBuyer></codeByBuyer>
+          else
+              if itemS.childNodes.item(2).nodeName="Seller" then
+                id = trans_.findobjid(TYPEID_N5KLIENT,"kli_strILN='" + Cstr(itemS.childNodes.item(1).childNodes(0).text) + "'" )
+                 if id>0 then
+                    set pZamowienie.pKlient = trans_.getobj(TYPEID_N5KLIENT , id) '<Seller> <ILN></ILN> 
+                 else
+                   id = trans_.findobjid(TYPEID_N5_KLIENT_JEDN_ORG,"kjo_strILN='" + Cstr(itemS.childNodes(0).childNodes(0).text) + "'" )
+                   if id>0 then
+                      set pZamowienie.pKlient_JO=trans_.getobj(TYPEID_N5_KLIENT_JEDN_ORG, id) '<Buyer> <ILN></ILN>
+                      set pZAmowienie.pKlient=trans_.getobj(TYPEID_N5KLIENT,pZamowienie.pKlient_JO.pKlient.idobj) '<Buyer> <ILN></ILN>
+				          else
+             				trans_.message 0, 0,"Próba importu nazwy dostawcy nie występującego w bazie. Indeks dostawcy:" + Cstr(itemS.childNodes.item(0).text)
+                  end if
+                end if
+             end if
+             'pZamowienie.dDataWyst = itemS.childNodes.item(1).text			'<Seller> <ILN></ILN> 
+				     'pZamowienie.strNrDok = itemS.childNodes.item(1).childNodes.item(1).text '<Seller> <codeByBuyer></codeByBuyer>
+			    end if
+         end if 
+			end if
+	end if	
+
+dim iwz 'ileWierszyZaimportowano
+iwz=0
+
+'trzecia sekcja <order-lines></order-lines>
+	if item.childNodes.item(2).nodeName="Order-Lines" then
+		set	itemS = item.childNodes.item(2)
+    for i=0 to item.childNodes.item(2).childNodes.length-1
+				set itemS = item.childNodes.item(2).childNodes.item(i).firstChild.childnodes
+				if intOpcja=1 then
+					id = trans_.findobjid(TYPEID_N5PRODUKT,"strIndeks='" + Cstr(itemS.item(3).text) + "'" )
+					if id >0 then				
+						set pPozyc = pZamowienie.listPozycje.addnew()
+						pPozyc.pProdukt = trans_.getobj(TYPEID_N5PRODUKT,id)
+						iwz=iwz+1
+					else
+              trans_.message 0, 0,"Importowany produkt nr " + Cstr(itemS.item(0).text) +" nie ma przypisanego w bazie indeksu. Indeks produktu:" + Cstr(itemS.item(3).text) + ". Nazwa: " + Cstr(itemS.item(4).text)
+               id = trans_.findobjid(TYPEID_N5KLIENT_PRODUKT,"klpr_strIndeks='" + Cstr(itemS.item(2).text) + "'" )
+			        	if id >0 then	
+				        	dim pomoc1: set pomoc1 = trans_.getobj(TYPEID_N5KLIENT_PRODUKT,id)
+				         	dim idpr1: idpr1=(pomoc.klpr_pProdukt.idobj)
+				        	id = trans_.findobjid(TYPEID_N5PRODUKT,"idobj=" + cstr(idpr) + "")
+				        	set pPozyc = pZamowienie.listPozycje.addnew()
+				        	pPozyc.pProdukt = trans_.getobj(TYPEID_N5PRODUKT,id)
+				        	iwz=iwz+1	
+				          else
+                        dim oOpakProd1 : set oOpakProd1 = trans_.createadors("select p_idobj,c_strEan from vlist_n5produkt_listOpakowania where c_strEan = '" + Cstr(itemS.item(1).text) + "'")
+                        if (not oOpakProd1.BOF ) then
+                          set pPozyc = pZamowienie.listPozycje.addnew()
+						              pPozyc.pProdukt = trans_.getobj(TYPEID_N5PRODUKT,oOpakProd1.fields("p_idobj").value)
+                          iwz=iwz+1
+                     else
+ 					             trans_.message 0, 0,"Importowany produkt nr " + Cstr(itemS.item(1).text) +" nie ma przypisanego w bazie kodu EAN. Indeks produktu:" + Cstr(itemS.item(3).text) + ". Nazwa: " + Cstr(itemS.item(4).text)               
+				        end if
+               end if
+          end if
+        end if
+        
+        if intOpcja=2 then
+
+        id = trans_.findobjid(TYPEID_N5KLIENT_PRODUKT,"klpr_strIndeks='" + Cstr(itemS.item(3).text) + "'" )
+				if id >0 then	
+					dim pomoc2: set pomoc2 = trans_.getobj(TYPEID_N5KLIENT_PRODUKT,id)
+					dim idpr2: idpr2=(pomoc.klpr_pProdukt.idobj)
+					id = trans_.findobjid(TYPEID_N5PRODUKT,"idobj=" + cstr(idpr) + "")
+					set pPozyc = pZamowienie.listPozycje.addnew()
+					pPozyc.pProdukt = trans_.getobj(TYPEID_N5PRODUKT,id)
+					iwz=iwz+1	
+				else
+               trans_.message 0, 0,"Importowany produkt nr " + Cstr(itemS.item(0).text) +" nie ma przypisanego w bazie indeksu OBCEGO. Indeks OBCY produktu:" + Cstr(itemS.item(2).text) + ". Nazwa " + Cstr(itemS.item(4).text)
+               	id = trans_.findobjid(TYPEID_N5PRODUKT,"strIndeks='" + Cstr(itemS.item(2).text) + "'" )
+					      if id >0 then				
+						      set pPozyc = pZamowienie.listPozycje.addnew()
+					      	pPozyc.pProdukt = trans_.getobj(TYPEID_N5PRODUKT,id)
+					      	iwz=iwz+1
+					        else
+                    trans_.message 0, 0,"Importowany produkt nr " + Cstr(itemS.item(0).text) +" nie ma przypisanego w bazie indeksu. Indeks produktu:" + Cstr(itemS.item(3).text) + ". Nazwa: " + Cstr(itemS.item(4).text)
+                        dim oOpakProd:set oOpakProd = trans_.createadors("select p_idobj,c_strEan from vlist_n5produkt_listOpakowania where c_strEan = '" + Cstr(itemS.item(1).text) + "'")
+                      if (not oOpakProd.BOF) then
+                        set pPozyc = pZamowienie.listPozycje.addnew()
+                        
+						            pPozyc.pProdukt = trans_.getobj(TYPEID_N5PRODUKT,oOpakProd.fields("p_idobj").value)
+                        iwz=iwz+1
+                      else
+ 					               trans_.message 0, 0,"Importowany produkt nr " + Cstr(itemS.item(0).text) +" nie ma przypisanego w bazie kodu EAN. Indeks produktu:" + Cstr(itemS.item(3).text) + ". Nazwa: " + Cstr(itemS.item(4).text)               
+                      end if   
+				        end if
+        end if
+ end if
+                  'szukaj znacznika <OrderedQuantity>
+                      dim iFindZnacz
+                      for iFindZnacz = 0 to itemS.length
+                        if itemS.item(iFindZnacz).nodeName = "OrderedQuantity" then
+                            if (not ppozyc is nothing) then
+                              pPozyc.curIloscOpak = ccur(f_zamienNaInteger(itemS.item(iFindZnacz).text) )
+                            end if
+                          exit for
+                        end if
+                      next
+				   
+		
+			next
+		end if
+	
+'czwarta sekcja <Order-Summary></Order-Summary>
+	if item.childNodes.item(3).nodeName="Order-Summary" then
+		set	itemS = item.childNodes.item(3)
+	end if		
+
+	if itemS.firstChild.text<>cStr(iwz) then
+		trans_.message 0, 0," Nie zaimportowano wszystkich produktów."
+	else
+		pPage.updateview
+	end if
+end if
+end function
+
+
+function zamowienie_from_EDI(byref pZamowienie , byref pPage , byval pInputStream):zamowienie_from_EDI = true
+	
+	dim pInputRows:set pInputRows = doc_.afc.new_navoarray()
+	dim strTmp:strTmp = pInputStream.getstring
+
+	pInputRows.separate strTmp , vbNewLine
+
+	dim iter
+	dim strData
+	dim pPozycja
+
+	dim perf: set perf = doc_.performing( "Import zamówienia z pliku .... " )
+
+	for iter = 0 to pInputRows.upperIndex
+
+		select case get_prefix (pInputRows.value(iter) , strData)
+			'case EDI_REF_NUM:
+			'	pZamowienie.zam_strNrDokObcy = strData
+			case EDI_DATA_WYD
+				pZamowienie.dDataWyst = dateserial(mid(strData,1,4),mid(strData,5,2),mid(strData,7,2))
+			case EDI_DATA_DOST
+				pZamowienie.dDataReal = dateserial(mid(strData,1,4),mid(strData,5,2),mid(strData,7,2))
+			case EDI_LINE
+				set pPozycja = pZamowienie.listPozycje.addnew()
+			case EDI_ILOSC
+				pPozycja.curIloscOpak = ccur(strData)
+				set pPozycja = nothing
+			case EDI_NR
+				pZamowienie.zam_strNrDokObcy = strData				
+			case EDI_NIP
+				'todo - wyszukaj klienta po nipie
+				msgbox strData
+			case EDI_EAN
+				if pPozycja is nothing then
+					trans_.message 1002 , 0 , "Nieprawidłowa kolejność pól pozycji zamównia w importowanym pliku"
+				else
+					if not get_position_by_ean (strData , pPozycja) then
+						'jesli nie znalezlismy produktu to mozemy usunac pozycje
+						pZamowienie.listPozycje.delete(pZamowienie.listPozycje.count())						
+					end if
+				end if
+			case EDI_PRICE
+				pPozycja.curCenaNetto = ccur(strData)
+			case EDI_NRTOW_ODBIORCA
+				'numer towaru - kod wg odbiorcy
+			case EDI_NAZWATOWARU,EDI_NAZWATOWARU2
+				perf.text = "Import zamówienia z pliku .... - " + strData
+			case EDI_SUP
+				'adres dostawcy - ILN - TODO
+			case EDI_BUY
+				'adres nabywcy - ILN TODO
+				set pZamowienie.pKlient = find_customer_by_ILN(strData)
+			case EDI_FAKTUROWANE_NA
+				'fakturowane na - ILN TODO
+			case EDI_DELPAR
+				'adres miejsca dostawy - ILN TODO
+			case EDI_ODBIORCA
+				'odbiorca koncowy - ILN TODO
+			case else
+#ifdef _DEBUG
+			trans_.message 1002 , 0 , "Nie obslugiwany prefix: " + get_prefix (pInputRows.value(iter) , strData ) + ", dane: " + strData
+#endif				
+		end select
+	next
+
+	set perf = nothing
+
+end function
+
+
+public function find_customer_by_ILN(byval strILN):set find_customer_by_ILN = nothing
+	dim id: id = trans_.findobjid(TYPEID_N5KLIENT , "kli_strILN like '" + trans_.afc.convert.DoubleApostrophe(strILN) + "'")
+	if id > 0 then
+		set find_customer_by_ILN = trans_.getobj(TYPEID_N5KLIENT , id)
+	elseif id < 0 then
+		trans_.message 1002 , 0 , "W bazie znajduje sie kilku klientów o kodzie ILN = " + strILN
+	else
+		trans_.message 1002 , 0 , "W bazie nie ma klienta o kodzie ILN = " + strILN
+	end if
+end function
+
+
+
+]]>
+</script>
+</config>
+<body />
+</page>

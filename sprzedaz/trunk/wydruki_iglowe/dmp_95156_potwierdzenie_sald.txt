@@ -1,0 +1,494 @@
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1250.h"
+
+#define RAPORT_TITLE Potwierdzenie sald
+
+#comment print-as-dmp		=WAZNY MARKER STERUJACY SPOSOBEM WYDRUKU (NORMALNIE/IGLA)=
+
+#comment -------------------------------------------------------------------
+#comment TOPM - skip # lines at top
+#comment LEFTM - left margin (# chars)
+#comment RIGHTM - right margin (#chars)
+#comment COLS - numer of columns (total, including margins)
+#comment PAGELINES - number of lines on page
+
+#define TOPM			0
+#define LEFTM			0
+#define RIGHTM			2
+#define COLS			80
+#define PAGELINES		63
+
+#define EMPTY_PART_LINES	22
+#comment -------------------------------------------------------------------
+
+#define MIDCOL			50
+#define EXTRA_LINES_ADR	 1
+
+<%
+dim curWn : curWn = 0.0
+dim curMa : curMa = 0.0
+
+dim klient_nazwa
+dim klient_ulica
+dim klient_nrdomu
+dim klient_nrlokalu
+dim klient_kod
+dim klient_poczta
+dim klient_miejscowosc
+
+dim pRaportMomentParam
+
+function query()
+query="select "+_
+"'c_symbol'=(t_konto.strSymbol),'c_idkonto'=max(t_konto.IdObj), "+_
+"'c_konto_nazwa'=max(t_konto.strNazwa), "+_
+"'klient'=max(t_klient.idobj),"+_
+"'klient_nazwa'=max(t_klient.strNazwa), "+_
+" 'klient_ulica'=max(t_klient.strUlica),'klient_nrdomu'=max(t_klient.strNrDomu), "+_
+" 'klient_nrlokalu'=max(t_klient.strNrLokalu),'klient_kod'=max(t_klient.strKod), "+_
+" 'klient_poczta'=max(t_klient.strPoczta), "+_ 
+" 'klient_miejscowosc'=(select strNazwa from n5miejscowosc where n5miejscowosc.idobj = max(t_klient.pMiejscowosc)), "+_ 
+" 'c_wn'=sum(t_dekret.curWn),'c_ma'=sum(t_dekret.curMa)   "+_
+" from n5konto as t_konto "+_
+"left outer join n5klient t_klient on t_konto.wrefPodmiotRozrach = t_klient.idobj   "+_
+"and  t_konto.wrefPodmiotRozrach_wrt = TYPEID_N5KLIENT "+_
+"inner join n5dekret as t_dekret on t_dekret.pKonto = t_konto.IdObj    "+_
+"left outer join n5transakcja as t_trans on t_dekret.pTransakcja = t_trans.IdObj  "+_ 
+" where %1 and %2 and %3  and t_klient.idobj is not null "+_
+" group by t_konto.strSymbol "+_
+" having  sum(t_dekret.curWn) <> sum(t_dekret.curMa)"
+
+end function
+
+function default_param()
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+	pParamArray.add doc_.afc.rap.param.new_text("Symbol").bindexpr("t_konto.strSymbol")
+
+	set pRaportMomentParam = doc_.afc.rap.param.new_date("Analizowany moment").bindexpr("t_dekret.dDataKsieg")
+	pParamArray.add pRaportMomentParam
+
+	pParamArray.add doc_.afc.rap.param.new_currency("Kwota").bindexpr("(abs(t_dekret.curWn - t_dekret.curMa))")
+
+	set default_param = pParamArray
+end function
+
+public function body_header_(byref pSection,byref pRec)
+end function
+
+public function body_footer_(byref pSection)
+end function
+
+function body_row_(byref pSection,byref pRec)
+end function
+
+public function section_header_1_(byref pSection,byref pRec)
+	oGenerator.section_header_1 pSection,pRec
+end function
+
+public function section_footer_1_(byref pSection)
+	oGenerator.section_footer_1 pSection
+end function
+
+class ctabwriter
+	public sub init(byref oGenerator)
+		set m_oGenerator = oGenerator
+		m_oTabs(0) = LEFTM
+	end sub
+
+	public sub make_col(iCol,iWidth)
+		m_oTabs(iCol) = iWidth
+	end sub
+	public sub write(iCol,strText)
+		m_oGenerator.page.writeat get_pos(iCol),strText
+	end sub
+	public sub rwrite(iCol,strText)
+		m_oGenerator.page.rwriteat get_pos(iCol+1)-1,strText
+	end sub
+	public sub box(iCol,strText)
+		m_oGenerator.page.box get_pos(iCol),m_oTabs(iCol),strText
+	end sub
+
+	public function get_pos(iCol)
+		dim iPos : iPos = 0
+		dim iter
+		for iter = 0 to iCol - 1
+			iPos = iPos + m_oTabs(iter) + 1
+		next
+		get_pos = iPos
+	end function
+
+	private m_oTabs(50)
+	private m_oGenerator
+end class
+
+
+class cgenerator
+	public sub run()
+		set m_pRapExec = rapeng_.new_engine()
+
+		if not prepare_param() then
+			trans_.var(178) = false
+			exit sub
+		end if
+
+		if not m_pRapExec.perform then
+			trans_.var(178) = false
+		end if
+	end sub
+	
+	public function prepare_param()
+		prepare_param = false
+		
+		with m_pRapExec
+			.add_body_ex getref("body_header_"),getref("body_footer_"),getref("body_row_")
+			.add_group_section 0,getref("section_header_1_"),getref("section_footer_1_")
+			if .prepare("RAPORT_TITLE",default_param(),rapeng_.get_raport_param(),query()) then
+				.ReplaceQueryParam "t_dekret.dDataKsieg = ","t_dekret.dDataKsieg <= "
+				prepare_param = true
+			end if
+		end with
+	end function
+	public sub generate_body()
+		newlines TOPM
+	end sub
+
+	public function section_header_1(byref pSection,byref pRec)
+		if not m_bVeryFirst then
+			ff
+		end if
+
+		dim iItems : iItems = generate_one_side(pRec,true)
+
+		'-- nigdy sie nie zmienisci na jednej stronie
+		'if clng((PAGELINES/2) - EMPTY_PART_LINES - iItems) <= 0 then
+			ff
+		'else
+		'	newlines clng((PAGELINES/2) - EMPTY_PART_LINES - iItems)
+		'end if
+		
+		generate_one_side pRec,false
+		m_bVeryFirst = false
+	end function
+	
+	private function generate_one_side(byref pRec,bPartA)
+		generate_one_side = 0
+		dim oRecordset
+		dim klient_ulica_nr
+		dim klient_kod_poczta
+		dim where_str : where_str = pRaportMomentParam.get_where_part(trans_)
+		dim data
+
+		if where_str <> "" then 
+			where_str= Replace(where_str,"t_dekret.dDataKsieg = ","t_dekret.dDataKsieg <= ")
+		end if
+			
+		data = Replace(where_str,"t_dekret.dDataKsieg <= ","")
+		data = Replace(data,"(","")
+		data = Replace(data,")","")
+		data = Replace(data,"{d '","")
+		data = Replace(data,"'}","")
+
+		where_str = where_str + " and t_dekret.dDataKsieg between " +_
+			trans_.afc.convert.date2SQL(util_.RokKsiegowy_Poczatek()) + " and " +_
+			trans_.afc.convert.date2SQL(util_.RokKsiegowy_Koniec())
+
+		dim info1 : info1 = "W przypadku stwierdzenia niezgodnoœci powy¿szego salda z zapisami w Pañstwa ksiêgach prosimy o przes³anie niezbêdnych wyjaœnieñ."
+		set oRecordset=trans_.createadors( "select sum(t_dekret.curWn), sum(t_dekret.curMa), 'c_trans_id'=max(t_trans.idobj), "+_
+			" 'c_trans'=isnull(t_trans.strSymTrans,''), 'c_trans_dataRazp' = max(isnull(t_trans.dDataRozp,'')) "+_
+			" from n5dekret t_dekret "+_
+			" left outer join n5transakcja t_trans On t_dekret.pTransakcja = t_trans.idobj"+_
+			" where pKonto=" + cstr(pRec("c_idkonto")) +_
+			" and " + cstr(where_str) +_		
+			" group by t_trans.strSymTrans "+_
+			" having  sum(t_dekret.curWn) <> sum(t_dekret.curMa)" )
+
+		klient_nazwa = pRec("klient_nazwa")
+		klient_ulica = pRec("klient_ulica")
+		klient_nrdomu = pRec("klient_nrdomu")
+		klient_nrlokalu = pRec("klient_nrlokalu")
+		klient_kod = pRec("klient_kod")
+		klient_poczta = pRec("klient_poczta")
+		klient_miejscowosc = pRec("klient_miejscowosc")
+
+		trans_.message 0,0,klient_nazwa
+
+		if klient_nrlokalu<>" " then 
+			klient_ulica_nr = klient_ulica + " " + klient_nrdomu + "/" + klient_nrlokalu
+		else
+			klient_ulica_nr = klient_ulica + " " + klient_nrdomu
+		end if
+		if trim(klient_poczta) = "" then
+			klient_kod_poczta = klient_kod + " " + klient_miejscowosc
+		else
+			klient_kod_poczta = klient_kod + " " + klient_poczta
+		end if
+
+		dim iter
+		iter = 1
+		curWn = 0.0
+		curMa = 0.0
+
+		'-------------
+		if bPartA then
+			page.rwriteat COLS-RIGHTM,util_.Firma_Miasto + "," + util_.Biezaca_Data
+		else
+			page.rwriteat COLS-RIGHTM,klient_miejscowosc + "," + util_.Biezaca_Data
+		end if
+		newlines 4
+		'page.double_width true
+		page.double_height true
+		page.writeat LEFTM, "Potwierdzenie salda na dzieñ " + doc_.afc.display.fulldate(pRaportMomentParam.first_value)
+		page.double_height false
+		'page.double_width false
+		newlines 2
+
+		newlines EXTRA_LINES_ADR
+
+		page.writeat LEFTM,"Nadawca"
+		page.writeat MIDCOL,"Adresat"
+		newlines 2
+		if bPartA then
+			page.writeat LEFTM,util_.Firma_Nazwa
+			page.writeat MIDCOL,klient_nazwa
+		else
+			page.writeat LEFTM,klient_nazwa
+			page.writeat MIDCOL,util_.Firma_Nazwa
+		end if
+		nl
+		if bPartA then
+			page.writeat LEFTM,util_.Firma_Ulica
+			page.writeat MIDCOL,klient_ulica_nr
+		else
+			page.writeat LEFTM,klient_ulica_nr
+			page.writeat MIDCOL,util_.Firma_Ulica
+		end if
+		nl
+		if bPartA then
+		page.writeat LEFTM,util_.Firma_Kod_Miasto
+		page.writeat MIDCOL,klient_kod_poczta
+		else
+		page.writeat LEFTM,klient_kod_poczta
+		page.writeat MIDCOL,util_.Firma_Kod_Miasto
+		end if
+		newlines 4
+		if bPartA then
+			page.box LEFTM,75,"Na podstawie art. 26 ustawy z 29 wrzeœnia 1994 r. o rachunkowoœci (j.t. Dz.U. z 2002 r. Nr 76, poz. 694) prosimy o potwierdzenie zgodnoœci sald figuruj¹cych w naszych ksiêgach na dzieñ "+  cstr(data)+"."
+		else
+			page.box LEFTM,75,"Na podstawie art. 26 ustawy z 29 wrzeœnia 1994 r. o rachunkowoœci (j.t. Dz.U. z 2002 r. Nr 76, poz. 694) potwierdzamy zgodnoœæ sald figuruj¹cych w naszych ksiêgach na dzieñ "+  cstr(data)+"."
+		end if
+		nl
+		nl
+		if bPartA then
+			page.writeat LEFTM,"Nasze konto:" + cstr(pRec("c_symbol"))
+		end if
+		nl
+		nl
+		page.writeat LEFTM,"Na saldo sk³adaj¹ siê nastêpuj¹ce kwoty:"
+		nl
+		'-------------
+		generate_table_header
+
+		while not oRecordset.eof
+			curWn = curWn + ccur(oRecordset(0).value)
+			curMa = curMa + ccur(oRecordset(1).value)
+			generate_table_line iter,oRecordset,bPartA
+			iter = iter + 1
+			oRecordset.movenext
+		wend
+		generate_one_side = iter
+		
+		if bPartA then
+			generate_table_footer curWn,curMa
+		else
+			generate_table_footer curMa,curWn
+		end if
+
+		newlines 6
+				
+		page.set_cpi 12
+		page.condensed true
+		'kropki
+		hline_ex LEFTM,44,"."
+		nl
+		page.box LEFTM,44,"Imiê i nazwisko osoby upowa¿nionej do sporz¹dzenia potwierdzenia sald"
+		page.condensed false
+		page.set_cpi 10
+	end function
+
+	private sub generate_table_header()
+		'page.set_cpi 15
+		'----------------------
+		'-- write header
+		hline1 : nl
+		m_oPozTW.write  1,"LP"
+		m_oPozTW.write  2,"Dowód ksiêgowy"
+		m_oPozTW.write  3,"Data ksiêg."
+		m_oPozTW.rwrite 4,"Kwota Wn"
+		m_oPozTW.rwrite 5,"Kwota Ma"
+		nl : hline2 : nl
+	end sub
+
+	private sub generate_table_footer(curWn,curMa)
+		hline2 : nl
+		'if curWn <> ccur(0.0) then
+			m_oPozTW.rwrite	4,money(curWn)
+		'end if
+		'if curMa <> ccur(0.0) then
+			m_oPozTW.rwrite	5,money(curMa)
+		'end if
+	end sub
+
+	private sub generate_table_line(byval iLP,byref oRecordset,bPartA)
+		m_oPozTW.write	1,cstr(iLP)
+		m_oPozTW.write	2,cstr(oRecordset(3).value)
+
+		if doc_.afc.display.fulldate(oRecordset(4).value)="1900-01-01" then 
+			m_oPozTW.write 3,"brak" 
+		else 
+			m_oPozTW.write 3,doc_.afc.display.fulldate(oRecordset(4).value) 
+		end if
+
+		dim curPosWn
+		dim curPosMa
+		if bPartA then
+			 curPosWn = ccur(oRecordset(0).value)
+		else
+			 curPosWn = ccur(oRecordset(1).value)
+		end if
+		if bPartA then
+			curPosMa = ccur(oRecordset(1).value)
+		else
+			curPosMa = ccur(oRecordset(0).value)
+		end if
+		if curPosWn > curPosMa then
+			curPosWn = curPosWn - curPosMa
+			curPosMa = ccur(0.0)
+		else
+			curPosMa = curPosMa - curPosWn
+			curPosWn = ccur(0.0)
+		end if
+
+		'if curPosWn <> ccur(0.0) then
+			m_oPozTW.rwrite	4,money(curPosWn)
+		'end if
+		'if curPosMa <> ccur(0.0) then
+			m_oPozTW.rwrite	5,money(curPosMa)
+		'end if
+		nl
+	end sub
+		
+
+	public function section_footer_1(byref pSection)
+	end function
+
+	public sub on_page_footer()
+'		hline1 : nl
+'		page.condensed true
+'		page.write "Potwierdzenie sald,Strona nr " + cstr(m_iPageNr)
+'		page.condensed false
+
+		m_oESC.new_page().footer_line = PAGELINES
+		
+		m_iPageNr = m_iPageNr + 1
+	end sub
+
+#comment '-------------------------------------------------------------------
+#comment '-- common part (version 1)
+#comment '-------------------------------------------------------------------
+
+	public sub init(byref oESC)
+		m_bVeryFirst = true
+		set m_oESC = oESC
+		m_iPageNr = 1
+		page.set_cpi 10
+		page.footer_line = PAGELINES
+		newlines TOPM
+		
+		'--- define columns ---
+		set m_oPozTW = new ctabwriter : m_oPozTW.init Me
+		m_oPozTW.make_col 1,3	'lp
+		m_oPozTW.make_col 2,25-LEFTM	'dowod
+		m_oPozTW.make_col 3,16	'data
+		m_oPozTW.make_col 4,12	'wn
+		m_oPozTW.make_col 5,12	'ma
+	end sub 
+
+	public property get page
+		set page = m_oESC.page
+	end property
+
+	public sub ff()
+		m_oESC.new_page
+	end sub
+
+#comment '-------------------------------------------------------------------
+#comment 'print iCount empty lines
+#comment '-------------------------------------------------------------------
+	private sub newlines(iCount)
+		if iCount > 0 then
+			page.nextline
+			iCount = iCount - 1
+			do while iCount > 0
+				page.newline
+				iCount = iCount - 1
+			loop
+		end if
+	end sub
+
+	private sub nl
+		newlines 1
+	end sub
+
+#comment '-------------------------------------------------------------------
+#comment 'print horizontal separator
+#comment '-------------------------------------------------------------------
+	private sub hline_ex(iFrom,iCount,cChar)
+		page.writeat iFrom,string(iCount,cChar)
+	end sub
+
+	private sub hline1
+		hline_ex LEFTM,COLS-LEFTM-RIGHTM,"-"
+	end sub
+	
+	private sub hline2
+		hline_ex LEFTM,COLS-LEFTM-RIGHTM,"="
+	end sub
+
+#comment '-------------------------------------------------------------------
+#comment ' formatting helpers
+#comment '-------------------------------------------------------------------
+	private function fulldate(dData)
+		fulldate = doc_.afc.display.fulldate(dData)
+	end function
+	private function money(curValue)
+		money = doc_.afc.display.money(curValue,"")
+	end function
+	private function qty_unit(curValue,pUnit)
+		qty_unit = qty(curValue,pUnit.strSkrot,pUnit.nDokladnosc-1)
+	end function
+	private function qty(curValue,strUnit,iPrec)
+		qty = doc_.afc.display.quantity(curValue,strUnit,iPrec)
+	end function
+
+#comment '-------------------------------------------------------------------
+#comment ' members
+#comment '-------------------------------------------------------------------
+	private m_oESC
+	private m_oPozTW
+	private m_bInTable
+	private m_iPageNr
+	private m_pRapExec
+	private m_bVeryFirst
+end class
+
+dim oGenerator : set oGenerator = new cgenerator
+oGenerator.init esc_
+esc_.set_callback oGenerator
+oGenerator.run
+
+%>

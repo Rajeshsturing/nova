@@ -1,0 +1,244 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+Konto księgowe
+
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1201.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1222.h"
+#include "h1200.h"
+#include "h1232.h"
+
+#define FORM_SPAN					3
+#define RCELL_SPAN					2
+
+#define CTRLID_LBL_ROZRACHUNKI		1
+
+
+#define CTRLID_RADIO				3
+#define CTRLID_EDIT_NADGRUPA		4
+#define CTRLID_OPIS					5
+#define CTRLID_SUBLEN				15
+#define CTRLID_BUDZET				16
+
+#define SECID_ADVANCED				1001
+
+-->
+<page style='STYLE_PAGE' border='0'>
+<config>
+	<title>
+Konto księgowe 
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+<typeid>TYPEID_N5KONTO</typeid>
+<script><![CDATA[
+'programmer's script
+#include "50203"
+#include "50516"
+
+'fire_choice_list
+#include "50200"
+
+'messageBoxEx
+#include "50122"
+
+
+function fopen
+	if not std_fopen() then
+		fopen = false
+		exit function
+	end if
+
+	section_fopen THIS_FILE
+end function
+
+function fclose
+	section_fclose THIS_FILE
+end function
+
+function fsave()
+	dim bSave: bSave=std_fsave()
+
+	if not bSave then
+		section_fsave THIS_FILE
+	end if
+	fsave = bSave
+end function
+
+
+#include "50222"
+
+
+'ograniczamy wybór, ale w taki sposob ze nie da sie tego zrobic z kursora
+function choose_konto_nadrzedne
+
+	dim strWhere:strWhere = "(eAnalit=N5KONTO_SYNTETYCZNE and eAktywne=N5KONTO_AKTYWNE)"
+	dim strWherePart:strWherePart="1=1"
+	'konstrukcja whera dla podanego symbolu
+	if page_.root.strSymbol<>"" then
+		strWhere = strWhere + " and (%1)"
+		dim arr:arr = split(page_.root.strSymbol,"-")
+		'jezeli wprowadzony symbol nie ma myslnika
+		dim iter
+		'to symbol konta nadrzednego moze miec postac wszystkich podciagow
+		' zawierajacych wpisany symbol (np dla 2010 bedzie to 2,20,201)
+		for iter=1 to len(page_.root.strSymbol)-1
+			'ostatni znak nie moze byc "-"
+			if iter=len(page_.root.strSymbol)-1 then
+				if mid(page_.root.strSymbol,1,iter)="-" then
+					exit for
+				end if
+			end if
+			if iter=1 then
+				strWherePart = "(strSymbol like '"+ trans_.afc.convert.str2SQL(mid(page_.root.strSymbol,1,1))+"')"
+			else
+				strWherePart = strWherePart + " or (strSymbol like '"+ trans_.afc.convert.str2SQL(mid(page_.root.strSymbol,1,iter))+"')"
+			end if
+		next			
+	end if
+
+	strWhere = replace(strWhere,"%1",strWherePart)
+	std_choice_list_s page_.root, "pKontoNadrz" , "", "", strWhere , "" , ""
+end function
+
+
+function budget
+	if not fsave() then
+		exit function
+	end if
+
+	trans_.var(APPVAR_KONTO) = page_.root.idobj
+
+	dim bNew
+	dim idChoice : idChoice = fire_choice_list_is_new(TYPEID_N5KONTO_BUDZET,"Budżety konta","","pKonto=" + cstr(page_.root.idobj),"","",bNew)
+	if idChoice > 0 and not bNew then
+		doc_.postcommand doc_.getmodule(60108).href_open_form_proxy(TYPEID_N5KONTO_BUDZET,idChoice)
+	end if
+end function
+
+
+QVE_REF_OPEN_FORM(CTRLID_LBL_ROZRACHUNKI,wrefPodmiotRozrach)
+
+
+QVX_HIERARCHY_CHOICE(CTRLID_RADIO,CTRLID_EDIT_NADGRUPA,pKontoNadrz)
+
+function c##CTRLID_SUBLEN##_ongetdata(byref oCtrl) : c##CTRLID_SUBLEN##_ongetdata = true
+	oCtrl.value = page_.root.nSubLen
+	oCtrl.disable = (page_.root.eAnalit <> N5KONTO_SYNTETYCZNE)
+end function
+
+function c##CTRLID_SUBLEN##_ondataentered(byref oCtrl, byval newValue)
+	c##CTRLID_SUBLEN##_ondataentered = (newValue >= 0)
+	page_.root.nSubLen = newValue
+end function
+
+]]></script>
+</config>
+<header>
+</header>
+<body>
+
+
+XFBEGIN
+QXR_EDIT_FIELD_REQ(Symbol,-1,20,strSymbol,RCELL_SPAN)
+
+<tr>																				
+	<td colspan='FORM_SPAN'>																
+		<radio name='CTRLID_RADIO' colspan='2' linealign='vcenter'>
+			<transfer mode='custom'/>												
+			<t>bez konta nadrzędnego</t>
+			<p keepline='true' border='0'>
+				QXE_LABEL(konto nadrzędne&nbsp;,1)
+				QXE_EDIT_REF(CTRLID_EDIT_NADGRUPA,10,pKontoNadrz,strSymbol,CRSR_N5KONTO_ANALIT_AKTYW)
+				QXE_PICTURE_ACTION(-1,PICTURE_CHOICE_N5KONTO,varFunction="choose_konto_nadrzedne",)
+			</p>
+		</radio>																	
+	</td>																			
+</tr>
+
+
+
+QXR_EDIT_FIELD_REQ(Nazwa,-1,40,strNazwa,RCELL_SPAN)
+QXR_EDIT_REF(Jednostka,-1,SIZE_FOR_JEDNOSTKA,PICTURE_CHOICE_N5JEDNOSTKA,pJednostka,strSkrot,CRSR_DEFAULT,RCELL_SPAN)
+
+<tr>
+	<td width='min'>
+		<t>Analityczne</t>
+	</td>
+	<td keepline='true'>
+		<radio name='e10' colspan='2'>
+			<transfer mode='edit_field'>
+				<field>eAnalit</field>
+			</transfer>
+			
+			<t>Analityczne</t>
+			<t>Syntetyczne</t>
+		</radio>
+		
+	</td>
+</tr>
+
+<tr>
+	<td width='min'>
+		<t>Bilansowe</t>
+	</td>
+	<td colspan='RCELL_SPAN'>
+		<radio name='e11'  colspan='2'>
+			<transfer mode='edit_field'>
+				<field>eBilans</field>
+			</transfer>
+			
+			<t>Bilansowe</t>
+			<t>Pozabilansowe</t>
+		</radio>
+	</td>
+</tr>
+
+<tr>
+	<td width='min'>
+		<t>Aktywne</t>
+	</td>
+	<td colspan='RCELL_SPAN'>
+		<radio name='e12' colspan='2'>
+			<transfer mode='edit_field'>
+				<field>eAktywne</field>
+			</transfer>
+			
+			<t>Aktywne</t>
+			<t>Nieaktywne</t>
+		</radio>
+	</td>
+</tr>
+
+QXR_EDIT_WILDREF_OPEN_REQ(Powiązane z,CTRLID_LBL_ROZRACHUNKI,-1,40,PICTURE_WYBOR,wrefPodmiotRozrach,strNazwa;strNazwisko;strNazwa;strNazwa,;eAktywny=1;;,RCELL_SPAN)
+
+QXS_BEGIN_OPT(SECID_ADVANCED,Zaawansowane,FORM_SPAN)
+<tr>
+	<td colspan='2'>
+		<text>Ilość znaków segmentu konta podrzędnego</text>
+	</td>
+	<td>
+		<intedit name='CTRLID_SUBLEN' size='3'>
+			<transfer mode='custom' />
+		</intedit>
+	</td>
+</tr>
+QXS_END_OPT(FORM_SPAN)
+
+XFOPTMULTILINEFIELD(CTRLID_OPIS,Opis,FORM_SPAN,strOpis) 
+XFEND
+
+
+XFTABLEBUTTON(CTRLID_BUDZET,Budżety,budget)
+
+</body>
+<footer>
+</footer>
+</page>

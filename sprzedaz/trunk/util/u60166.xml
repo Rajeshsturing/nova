@@ -1,0 +1,1558 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!-- 
+REV:KB:20030212
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1001.h"
+#include "h1240.h"
+#include "h1231.h"
+#include "h1230.h"
+#include "h1220.h"
+-->
+<page>
+<config>
+<script>
+<!--
+	Wspólne pluginy
+-->
+<![CDATA[
+
+'------------------------------------------------------------------
+' prosze nie dodawac funkcji fopen tutaj bo ta strona jest wykorzystywana
+' jako template do generowania wynikow importu (bo ma pusty XML)
+'------------------------------------------------------------------
+
+'enum2str
+#include "50100"
+'getCurrentFirma
+#include "50203"
+
+'wyswietlanie listy wz na podstawie dostarczonego kursora
+sub plug_wz(byref pContainer , byval cursor , nLimit )
+
+	if not cursor.exists(1) then
+		exit sub
+	end if
+
+	dim pPlugInTable : set pPlugInTable = pContainer.addnew(CTRL_TYPE_TABLE,-1)
+	pPlugInTable.border = 0
+	dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(pPlugInTable)
+
+	pTB.newrow
+	pTB.row.styleitem = STYLE_TABLE_HEADER
+	pTB.row.border = 0
+	pTB.newcell.addtext("Nr dok.").element.bold = true		
+	pTB.newcell.addtext("Data wyst.").element.bold = true	
+
+	dim elem,strHli
+	dim iter:iter = 0
+
+	for each elem in cursor
+		iter = iter + 1
+		if iter > nLimit and nLimit > 0  then
+			exit sub
+		end if
+
+		pTB.newrow
+		pTB.newcell.addtexthli elem.text , doc_.createhlistr("varFunctionHLI='std_openform_object_hli' vn1='"+cstr(elem.type)+"' vn2='"+cstr(elem.idobj)+"'")		
+		pTB.newcell.addtext(trans_.afc.display.fulldate(elem.dDataWyst))		
+	next
+
+end sub
+
+
+
+'wyswietlanie listy faktur na podstawie dostarczonego kursora
+sub plug_faktury(byref pContainer , byval cursor , nLimit )
+	if not cursor.exists(1) then
+		exit sub
+	end if
+
+	dim pFirma:set pFirma = getcurrentFirma()
+
+	dim pPlugInTable : set pPlugInTable = pContainer.addnew(CTRL_TYPE_TABLE,-1)
+	pPlugInTable.border = 0
+	dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(pPlugInTable)
+
+#ifdef APPCONFIG_SHOW_ALL_DOKUM_SPRZEDAZ
+  if trans_.isvar(GVAR_SELECTED_TAB_ITEM) then
+    if trans_.var(GVAR_SELECTED_TAB_ITEM) <> -1 then
+      if trans_.var(GVAR_SELECTED_TAB_ITEM) = 1 then
+	      nLimit = 9999
+      end if
+      
+      pTB.newrow
+      pTB.newcell
+      pTB.addctrl CTRL_TYPE_BUTTON,-1
+	    with pTB.element
+        .styleitem = STYLE_BUTTON
+        .text = "Wszystkie"
+        set .hli = doc_.createhli()
+        .hli.prop(GVAR_FUNCTIONHLI) = "ShowAllDok"
+        .hli.prop(100) = 1
+      end with  
+	  
+#ifdef _ABAKOSTEEL
+      pTB.newcell
+      pTB.addctrl CTRL_TYPE_BUTTON,-1
+	  with pTB.element
+        .styleitem = STYLE_BUTTON
+        .text = "12 m-cy"
+        set .hli = doc_.createhli()
+        .hli.prop(GVAR_FUNCTIONHLI) = "ShowAllDok"
+        .hli.prop(100) = 1
+		.hli.prop(101) = 1
+      end with
+#endif	  
+	  
+    end if  
+  end if
+#endif
+
+	pTB.newrow
+	pTB.row.styleitem = STYLE_TABLE_HEADER
+	pTB.row.border = 0
+	pTB.newcell.addtext("Numer dok.").element.bold = true	
+	pTB.newcell.addtext("Data wyst.").element.bold = true	
+	pTB.newcell.addtext("Netto").element.bold = true
+	pTB.cell.align=ALIGN_CENTER
+	pTB.newcell.addtext("Brutto").element.bold = true
+	with pTB.cell
+		.align=ALIGN_CENTER
+		.colspan = 2
+	end with
+#ifdef APPCONFIG_KARTA_KLIENTA_ORG_SPRZEDAZ
+	'dokument oryginalny
+	pTB.newcell.addtext("Dok. oryginalny").element.bold = true
+#endif
+
+	dim pFaktura,strHli,curNetto,curBrutto,curWaluta
+	dim iter:iter = 0
+	for each pFaktura in cursor
+		iter = iter + 1
+		if iter > nLimit and nLimit > 0  then
+			exit sub
+		end if
+		pTB.newrow
+
+		pTB.newcell.addtexthli pFaktura.text , doc_.createhlistr("varFunctionHLI='std_openform_object_hli' vn1='"+cstr(pFaktura.type)+"' vn2='"+cstr(pFaktura.idobj)+"'")
+		pTB.cell.styleitem = STYLE_OPTION_PAD
+		pTB.newcell.addtext(trans_.afc.display.fulldate(pFaktura.dDataWyst))
+		
+		if not pFaktura.pPopSprzed is nothing then
+			curBrutto = pFaktura.curSumaBrutto - pFaktura.pPopSprzed.curSumaBrutto
+			curWaluta = pFaktura.curSumaWal - pFaktura.pPopSprzed.curSumaWal
+			curNetto = pFaktura.curSumaNetto - pFaktura.pPopSprzed.curSumaNetto
+		else
+			curBrutto = pFaktura.curSumaBrutto
+			curWaluta = pFaktura.curSumaWal
+			curNetto = pFaktura.curSumaNetto
+		end if
+
+		pTB.newcell.addtext(trans_.afc.display.money(curNetto,pFirma.pWaluta.strSkrot)).cell.align=ALIGN_RIGHT
+		pTB.cell.styleitem = STYLE_OPTION_PAD
+		pTB.newcell.addtext(trans_.afc.display.money(curWaluta,pFaktura.pWaluta.strSkrot)).cell.align=ALIGN_RIGHT
+		pTB.newcell.addtext(trans_.afc.display.money(curBrutto,pFirma.pWaluta.strSkrot)).cell.align=ALIGN_RIGHT
+		pTB.cell.styleitem = STYLE_OPTION_PAD
+#ifdef APPCONFIG_KARTA_KLIENTA_ORG_SPRZEDAZ
+		dim pDokOryg : set pDokOryg = nothing
+		if not pFaktura.pPopSprzed is nothing then
+			if pFaktura.pPopSprzed.IdObj > clng(0) then
+				set pDokOryg = trans_.getobj(TYPEID_N5SPRZEDAZ,pFaktura.pPopSprzed.IdObj)
+				pTB.newcell.addtexthli pDokOryg.text , doc_.createhlistr("varFunctionHLI='std_openform_object_hli' vn1='"+cstr(pDokOryg.type)+"' vn2='"+cstr(pDokOryg.idobj)+"'")
+			end if
+		else
+			pTB.newcell.addtext("")
+		end if
+#endif    
+	next
+end sub
+
+
+'wyswietlanie listy faktur zakupu na podstawie dostarczonego kursora
+sub plug_zakup(byref pContainer , byval cursor , nLimit )
+	if not cursor.exists(1) then
+		exit sub
+	end if
+
+	dim pFirma:set pFirma = getcurrentFirma()
+	dim pPlugInTable : set pPlugInTable = pContainer.addnew(CTRL_TYPE_TABLE,-1)
+	pPlugInTable.border = 0
+	dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(pPlugInTable)
+
+#ifdef APPCONFIG_SHOW_ALL_DOKUM_ZAKUP
+  if trans_.isvar(GVAR_SELECTED_TAB_ITEM) then
+    if trans_.var(GVAR_SELECTED_TAB_ITEM) <> -1 then
+      if trans_.var(GVAR_SELECTED_TAB_ITEM) = 2 then
+	      nLimit = 9999
+      end if
+  
+      pTB.newrow
+      pTB.newcell
+      pTB.addctrl CTRL_TYPE_BUTTON,-1
+	    with pTB.element
+          .styleitem = STYLE_BUTTON
+          .text = "Wszystkie"
+          set .hli = doc_.createhli()
+          .hli.prop(GVAR_FUNCTIONHLI) = "ShowAllDok"
+          .hli.prop(100) = 2
+        end with    
+		
+#ifdef _ABAKOSTEEL
+      pTB.newcell
+      pTB.addctrl CTRL_TYPE_BUTTON,-1
+	  with pTB.element
+        .styleitem = STYLE_BUTTON
+        .text = "12 m-cy"
+        set .hli = doc_.createhli()
+        .hli.prop(GVAR_FUNCTIONHLI) = "ShowAllDok"
+        .hli.prop(100) = 2
+		.hli.prop(101) = 1
+      end with
+#endif		
+		
+    end if
+  end if
+#endif
+
+	pTB.newrow
+	pTB.row.styleitem = STYLE_TABLE_HEADER
+	pTB.row.border = 0
+	pTB.newcell.addtext("Numer dok.").element.bold = true	
+	pTB.newcell.addtext("Data wyst.").element.bold = true	
+	pTB.newcell.addtext("Netto").element.bold = true
+	with pTB.cell
+		.align=ALIGN_CENTER
+		.colspan = 2
+	end with
+	pTB.newcell.addtext("Brutto").element.bold = true
+
+	pTB.cell.align=ALIGN_CENTER
+
+#ifdef APPCONFIG_KARTA_KLIENTA_ORG_ZAKUP
+	'dokument oryginalny
+	pTB.newcell.addtext("Dok. oryginalny").element.bold = true
+#endif
+
+	dim pZakup,strHli,curNetto,curBrutto,curWaluta
+	dim iter:iter = 0
+	for each pZakup in cursor
+		iter = iter + 1
+		if iter > nLimit and nLimit > 0  then
+			exit sub
+		end if
+
+#ifdef APPCONFIG_ZAKUP_OPLATY_ZAGRANICZNE_KARTA_KLIENTA
+		if not pZakup.pPopZakup is nothing then
+			curBrutto = (pZakup.curSumaWal+pZakup.curSumaOplatyZagr) - (pZakup.pPopZakup.curSumaWal+pZakup.pPopZakup.curSumaOplatyZagr) 
+		else
+			curBrutto = pZakup.curSumaWal+pZakup.curSumaOplatyZagr
+		end if
+#else
+		if not pZakup.pPopZakup is nothing then
+      curBrutto = pZakup.curSumaWal - pZakup.pPopZakup.curSumaWal
+		else
+			curBrutto = pZakup.curSumaWal
+		end if
+#endif
+
+		if pZakup.n5zakup_isImportUE() or pZakup.n5zakup_isImportNieUE()  then
+			curNetto = curBrutto
+		else
+			if not pZakup.pPopZakup is nothing then
+				curNetto = pZakup.curSumaNetto - pZakup.pPopZakup.curSumaNetto
+			else
+				curNetto = pZakup.curSumaNetto
+			end if
+		end if
+
+		pTB.newrow
+
+		if not pZakup.pPopZakup is nothing then
+#ifdef APPCONFIG_ZAKUP_OPLATY_ZAGRANICZNE_KARTA_KLIENTA
+      curWaluta = (pZakup.curSumaWal+pZakup.curSumaOplatyZagr) - (pZakup.pPopZakup.curSumaWal+pZakup.pPopZakup.curSumaOplatyZagr) 'pZakup.curSumaWal - pZakup.pPopZakup.curSumaWal
+#else
+      curWaluta = pZakup.curSumaWal - pZakup.pPopZakup.curSumaWal
+#endif
+      curBrutto = pZakup.curSumaBrutto - pZakup.pPopZakup.curSumaBrutto
+			curNetto = pZakup.curSumaNetto - pZakup.pPopZakup.curSumaNetto
+		else
+			curWaluta = curBrutto 'pZakup.curSumaWal			
+      curBrutto = pZakup.curSumaBrutto
+			curNetto = pZakup.curSumaNetto
+		end if
+
+		dim strText
+		if pZakup.strNrDokObcy = "" then
+			strText = pZakup.text
+		else
+			strText = pZakup.strNrDokObcy
+		end if
+		
+		pTB.newcell.addtexthli strText, _
+			doc_.createhlistr("varFunctionHLI='std_openform_object_hli' vn1='"+cstr(pZakup.type)+ _
+				"' vn2='"+cstr(pZakup.idobj)+"'")
+		pTB.cell.styleitem = STYLE_OPTION_PAD
+
+		pTB.newcell.addtext(trans_.afc.display.fulldate(pZakup.dDataWyst))		
+		pTB.newcell.addtext(trans_.afc.display.money(curWaluta,pZakup.pWaluta.strSkrot)).cell.align=ALIGN_RIGHT
+		pTB.cell.styleitem = STYLE_OPTION_PAD
+		pTB.newcell.addtext(trans_.afc.display.money(curNetto,pFirma.pWaluta.strSkrot)).cell.align=ALIGN_RIGHT
+
+		pTB.newcell.addtext(trans_.afc.display.money(curBrutto,pFirma.pWaluta.strSkrot)).cell.align=ALIGN_RIGHT
+		pTB.cell.styleitem = STYLE_OPTION_PAD
+
+#ifdef APPCONFIG_KARTA_KLIENTA_ORG_ZAKUP
+		dim pDokOryg : set pDokOryg = nothing
+		if not pZakup.pPopZakup is nothing then
+			if pZakup.pPopZakup.IdObj > clng(0) then
+				set pDokOryg = trans_.getobj(TYPEID_N5ZAKUP,pZakup.pPopZakup.IdObj)
+				pTB.newcell.addtexthli pDokOryg.text , doc_.createhlistr("varFunctionHLI='std_openform_object_hli' vn1='"+cstr(pDokOryg.type)+"' vn2='"+cstr(pDokOryg.idobj)+"'")
+			end if
+		else
+			pTB.newcell.addtext("")
+		end if
+#endif 
+
+	next
+end sub
+
+sub plug_platnosci(byref pContainer,byval cursor , nLimit , byval bLP , byval bPodmiot , byval bOpis , byval bStatusByFont , byval bSeparateKwoty , byval bPrzedPo , byval bFKView , byref pPage , byval nSDCtrlID , byval nDKCtrlID , byval bSolidBackground , nBorder)
+  doc_.getmodule(60166).plug_platnosci_2 pContainer, cursor , nLimit , bLP , bPodmiot , bOpis , bStatusByFont , bSeparateKwoty , bPrzedPo , bFKView , pPage , nSDCtrlID , nDKCtrlID , bSolidBackground , nBorder, 0
+end sub	
+
+'wyswietlanie listy platnosci na podstawie dostarczonego kursora
+sub plug_platnosci_2(byref pContainer,byval cursor , nLimit , byval bLP , byval bPodmiot , byval bOpis , byval bStatusByFont , byval bSeparateKwoty , byval bPrzedPo , byval bFKView , byref pPage , byval nSDCtrlID , byval nDKCtrlID , byval bSolidBackground , nBorder, byval iTrans)
+	
+  'REV:KB: TODO wypełniać informacją z podziałem na kolumny
+	if not cursor.exists(1) then
+		exit sub
+	end if
+
+	'colspan do kolumny z wpłatą
+	dim colspan:colspan = 0
+	
+	dim pPlugInTable : set pPlugInTable = pContainer.addnew(CTRL_TYPE_TABLE,-1)
+	pPlugInTable.border = 0
+	dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(pPlugInTable)  
+
+#ifdef APPCONFIG_SHOW_ALL_DOKUM_PLATNOSCI
+  'karta klienta
+  if trans_.isvar(GVAR_SELECTED_TAB_ITEM) then
+    if trans_.var(GVAR_SELECTED_TAB_ITEM) <> -1 then
+      if trans_.var(GVAR_SELECTED_TAB_ITEM) = 4 then
+	      nLimit = 9999
+      end if
+      
+      pTB.newrow
+      pTB.newcell
+      pTB.addctrl CTRL_TYPE_BUTTON,-1
+	  with pTB.element
+        .styleitem = STYLE_BUTTON
+        .text = "Wszystkie"
+        set .hli = doc_.createhli()
+        .hli.prop(GVAR_FUNCTIONHLI) = "ShowAllDok"
+        .hli.prop(100) = 4
+      end with       
+	  
+#ifdef _ABAKOSTEEL
+      pTB.newcell
+      pTB.addctrl CTRL_TYPE_BUTTON,-1
+	  with pTB.element
+        .styleitem = STYLE_BUTTON
+        .text = "12 m-cy"
+        set .hli = doc_.createhli()
+        .hli.prop(GVAR_FUNCTIONHLI) = "ShowAllDok"
+        .hli.prop(100) = 4
+		.hli.prop(101) = 1
+      end with
+#endif	  
+	  
+    end if  
+  end if
+#endif
+
+#ifdef APPCONFIG_SHOW_ALL_NALICZENIA  
+  'karta pracownika 
+  if trans_.isvar(GVAR_SELECTED_TAB_KARTA_PRAC) then
+    if trans_.var(GVAR_SELECTED_TAB_KARTA_PRAC) <> -1 then
+      if trans_.var(GVAR_SELECTED_TAB_KARTA_PRAC) = 3 then
+	      nLimit = 9999
+      end if
+
+	  pTB.newrow
+	  pTB.row.border = 0
+	  pTB.newcell
+	  pTB.addctrl CTRL_TYPE_BUTTON,-1
+	  with pTB.element
+		.styleitem = STYLE_BUTTON
+		.text = "Wszystkie"
+		set .hli = doc_.createhli()
+		.hli.prop(GVAR_FUNCTIONHLI) = "ShowAllNalicz"
+		.hli.prop(100) = 3
+	  end with
+  
+#ifdef _ABAKOSTEEL
+	  pTB.newcell
+	  pTB.addctrl CTRL_TYPE_BUTTON,-1
+	  with pTB.element
+		.styleitem = STYLE_BUTTON
+		.text = "12 m-cy"
+		set .hli = doc_.createhli()
+		.hli.prop(GVAR_FUNCTIONHLI) = "ShowAllNalicz"
+		.hli.prop(100) = 3
+		.hli.prop(101) = 1
+	  end with
+#endif	  
+      end if  
+  end if 
+#endif 
+
+	dim pCellPrzed
+	dim pElemPrzed
+	if bPrzedPo then
+		pTB.newrow
+		pTB.row.styleitem = STYLE_TABLE_INFO
+		pTB.row.border = 0		
+		set pCellPrzed = pTb.newcell.cell
+		pTB.addtext ""
+		pTB.newcell.addtext "Stan przed"
+
+		set pElemPrzed = pTB.newcell.addtext("").element
+		pTB.cell.align=ALIGN_RIGHT
+		if bSeparateKwoty then
+			pTB.cell.colspan = 1
+		else
+			pTB.cell.colspan = 1
+		end if
+
+	end if
+	
+
+	pTB.newrow
+	pTB.row.styleitem = STYLE_TABLE_HEADER
+	pTB.row.border = 0
+
+	if bLP then
+		pTB.newcell.addtext("LP").element.bold = true
+		colspan = colspan + 1
+	end if
+
+
+	pTB.newcell.addtext("Data oper.").element.bold = true
+	pTB.newcell.addtext("Numer dok.").element.bold = true
+	colspan = colspan + 2		
+
+	if bPodmiot then
+		pTB.newcell.addtext("Podmiot").element.bold = true
+		colspan = colspan + 1
+	end if
+
+	if bSeparateKwoty then
+		pTB.newcell.addtext("Wpłata").element.bold = true
+		pTB.cell.align=ALIGN_RIGHT
+		pTB.newcell.addtext("Wypłata").element.bold = true
+		pTB.cell.align=ALIGN_RIGHT
+	else
+		pTB.newcell.addtext("Kwota").element.bold = true
+		pTB.cell.align=ALIGN_RIGHT		
+	end if
+
+
+	if bOpis then
+		pTB.newcell
+		pTB.cell.align=ALIGN_CENTER
+		pTB.addtext("Opis").element.bold = true
+		pTb.element.size = clng(12)
+	end if
+
+	if not bStatusByFont then	
+		pTB.newcell.addtext("Status").element.bold = true
+	end if
+
+
+	if bFKView then
+		pTB.newcell.addctrl CTRL_TYPE_STATICEX , -1
+		pTB.element.text = "Schemat dekretacji"
+		pTB.element.bold = true
+
+'		pTB.newcell.addctrl CTRL_TYPE_STATICEX , -1
+'		pTB.element.text = "Dowód księgowy"
+'		pTB.element.bold = true	
+
+	end if
+
+	if bPrzedPo then
+		pCellPrzed.colspan = colspan - 1
+	end if
+			
+
+	dim elem
+	dim strUnit : strUnit = ""
+
+	dim curPrzychody , curRozchody
+	curPrzychody = ccur(0)
+	curRozchody = ccur(0)
+	dim curStanPrzed
+	dim iter:iter = 0
+	for each elem in cursor
+		
+		if elem.pRejestrDok.wrefParam1 is nothing then
+			if not elem.pWalutaPodm is nothing then
+				strUnit = elem.pWalutaPodm.strSkrot
+			end if
+		else
+			if elem.pRejestrDok.wrefParam1.type = TYPEID_N5JEDNOSTKA then
+				strUnit = elem.pRejestrDok.wrefParam1.strSkrot
+			else
+				if not elem.pWalutaPodm is nothing then
+					strUnit = elem.pWalutaPodm.strSkrot
+				end if
+			end if
+		end if
+
+		if bPrzedPo then
+			if iter = 0 then
+				curStanPrzed = elem.n5platnosc_stan(elem.pREjestrDok.idobj,elem.nNumOper)
+				pElemPrzed.text = trans_.afc.display.money(curStanPrzed,strUnit)
+			end if
+		end if
+
+		iter = iter + 1
+		if iter > nLimit and nLimit > 0  then
+			exit sub
+		end if
+
+		pTB.newrow.row.border = nBorder
+		
+		if iter mod 2 = 0 and bSolidBackground then
+			pTB.row.styleitem = STYLE_OPTION_PAD
+		end if
+
+		if bStatusByFont then
+			if elem.eStatus = N5PLATNOSC_PLANOWANA then
+				pTB.row.italic = true
+			else
+				pTB.row.italic = false
+			end if
+		end if
+
+
+		if bLP then
+			pTB.newcell.cell.bold = true
+			pTB.addtext cstr(iter)
+		end if
+
+		pTB.newcell.addtext trans_.afc.display.fulldate(elem.dDataOper)
+		if not bSolidBackground then
+			pTB.cell.styleitem = STYLE_OPTION_PAD
+		end if
+
+
+		pTB.newcell.addtexthli elem.strNrDok , doc_.createhlistr("varFunctionHLI='std_openform_object_hli' vn1='"+cstr(elem.type)+"' vn2='"+cstr(elem.idobj)+"'")				
+
+		'aby kolumny na przemian  mialy inny styl
+		dim pChangeStyle:pChangeStyle = true
+		if bPodmiot then
+			pTB.newcell.addtexthli "   " + elem.wrefPodmiot.text , doc_.createhlistr("varFunctionHLI='std_openform_object_hli' vn1='"+cstr(elem.wrefPodmiot.type)+"' vn2='"+cstr(elem.wrefPodmiot.idobj)+"'")
+			if not bSolidBackground then
+				pTB.cell.styleitem = STYLE_OPTION_PAD
+			end if
+			pChangeStyle = false
+		end if
+
+
+
+		
+		if bSeparateKwoty then
+			if elem.curKwotaStan > 0 then
+				curPrzychody = curPrzychody + elem.curKwotaStan
+				pTB.newcell.addtext trans_.afc.display.money(elem.curKwotaStan,strUnit)
+				pTB.cell.align=ALIGN_RIGHT
+				if pChangeStyle then
+					if not bSolidBackground then
+						pTB.cell.styleitem = STYLE_OPTION_PAP
+					end if
+				end if
+				pTB.newcell.addtext trans_.afc.display.money(ccur(0),strUnit)
+				pTB.cell.align=ALIGN_RIGHT
+				if pChangeStyle then
+					if not bSolidBackground then
+						pTB.cell.styleitem = STYLE_OPTION_PAD
+					end if
+				end if
+			else
+				curRozchody = curRozchody - elem.curKwotaStan
+				pTB.newcell.addtext trans_.afc.display.money(ccur(0),strUnit)
+				pTB.cell.align=ALIGN_RIGHT
+				if pChangeStyle then
+					if not bSolidBackground then
+						pTB.cell.styleitem = STYLE_OPTION_PAD
+					end if
+				end if
+				pTB.newcell.addtext trans_.afc.display.money(- elem.curKwotaStan,strUnit)
+				pTB.cell.align=ALIGN_RIGHT
+				if pChangeStyle then
+					if not bSolidBackground then
+						pTB.cell.styleitem = STYLE_OPTION_PAD
+					end if
+				end if
+			end if
+			if pChangeStyle then
+				pChangeStyle = false
+			else
+				pChangeStyle = true
+			end if			
+		else
+      if iTrans=1 then
+        'pobież kwotę z pozycji płatności
+        dim pozPlat, kwotaPlat
+        for each pozPlat in elem.listPozycje
+      		if pozPlat.pTransakcja.IdObj = pPage.root.idobj then
+            kwotaPlat = pozPlat.curPozKwotaTrans
+            exit for
+    			end if
+    		next
+        	pTB.newcell.addtext trans_.afc.display.money(kwotaPlat,strUnit)
+    else
+        pTB.newcell.addtext trans_.afc.display.money(elem.curKwotaStan,strUnit)
+    end if
+			if pChangeStyle then
+				if not bSolidBackground then
+					pTB.cell.styleitem = STYLE_OPTION_PAD
+				end if
+				pChangeStyle = false
+			else
+				pChangeStyle = true
+			end if
+		end if
+		pTB.cell.align=ALIGN_RIGHT
+
+
+
+		if bOpis then
+			pTB.newcell.addtext "  " + elem.strOpis			
+			if pChangeStyle then
+				if not bSolidBackground then
+					pTB.cell.styleitem = STYLE_OPTION_PAD
+				end if
+				pChangeStyle = false
+			else
+				pChangeStyle = true
+			end if
+		end if
+
+
+
+		if not bStatusByFont then
+			pTB.newcell.addtext enum2str(TYPEID_N5PLATNOSC,ENUMFLDNR_N5PLATNOSC_STATUS,elem.eStatus)
+			if pChangeStyle then
+				if not bSolidBackground then
+					pTB.cell.styleitem = STYLE_OPTION_PAD
+				end if
+				pChangeStyle = false
+			else
+				pChangeStyle = true
+			end if
+		end if
+
+
+		if bFKView then
+
+			dim pUserHli
+
+			'schemat dekretacji
+			pTB.newcell.cell.keepline = true
+			pTB.addctrl CTRL_TYPE_PICTURE , -1
+			pTB.element.image = clng(PICTURE_CHOICE_N5SCHEMATDEKR)
+			set pUserHli = doc_.createhlistr("varFunctionHLI=row_choose_schem_dekre vn1="+cstr(iter)+"")
+			set pTB.element.hli = pUserHli
+
+			pTB.addctrl CTRL_TYPE_EDIT , -1
+#ifdef _IOW
+			pTb.element.size=40
+#else
+			pTb.element.size=15
+#endif      
+			pTb.element.border = 0
+			
+			set pUserHli = doc_.createhli()
+			pUserHli.prop(1) = clng(iter)
+			set pTb.element.userprop = pUserHli
+
+			set pTb.element.transfer = pPage.createtransfer("custom")
+			pTb.element.customredirect CLng(nSDCtrlID)
+
+
+
+
+			'dowód księgowy
+'			pTB.newcell.cell.keepline = true
+'			pTB.addctrl CTRL_TYPE_PICTURE , -1
+'			pTB.element.image = clng(PICTURE_CHOICE_N5SCHEMATDEKR)
+'			set pUserHli = doc_.createhlistr("varFunctionHLI=row_choose_dowod_ksieg vn1="+cstr(iter)+"")
+'			set pTB.element.hli = pUserHli
+'
+'			pTB.addctrl CTRL_TYPE_EDIT , -1
+'			pTb.element.size=15
+'			pTb.element.border = 0
+'
+'			set pUserHli = doc_.createhli()
+'			pUserHli.prop(1) = clng(iter)
+'			set pTb.element.userprop = pUserHli
+
+'			set pTb.element.transfer = pPage.createtransfer("custom")
+'			pTb.element.customredirect CLng(nDKCtrlID)		
+
+		end if
+
+	next
+
+
+	if bSeparateKwoty then
+		'utworz wiersz podsumowania
+		pTB.newrow
+		pTB.row.styleitem = STYLE_TABLE_HEADER
+		pTB.row.border = 0
+		pTB.row.bold = true
+		pTB.newcell
+		pTB.cell.colspan = colspan - 1
+		pTB.addtext "" 
+
+		pTB.newcell.addtext "Razem" 
+		pTB.newcell.addtext trans_.afc.display.money(curPrzychody,strUnit)
+		pTB.cell.align=ALIGN_RIGHT
+		pTB.newcell.addtext trans_.afc.display.money(curRozchody,strUnit)
+		pTB.cell.align=ALIGN_RIGHT
+	end if
+
+
+
+	if bPrzedPo then
+		pTB.newrow
+		pTB.row.styleitem = STYLE_TABLE_INFO
+		pTB.row.border = 0		
+		pTb.newcell.cell.colspan = colspan - 1
+		pTB.addtext ""
+		pTB.newcell.addtext "Stan po"
+
+		pTB.newcell.addtext trans_.afc.display.money(curStanPrzed + curPrzychody - curRozchody ,strUnit)
+		pTB.cell.align=ALIGN_RIGHT
+		if bSeparateKwoty then
+			pTB.cell.colspan = 1
+		else
+			pTB.cell.colspan = 1
+		end if
+
+	end if
+end sub
+
+
+'wyswietlanie listy dekretów na podstawie dostarczonego kursora
+sub plug_dekret(byref pContainer,byval cursor)
+
+	if not cursor.exists(1) then
+		exit sub
+	end if
+
+  dim pDekret, sumaWnAuto, sumaWnRecz, sumaMaAuto, sumaMaRecz, strUnit, bAutomat, bReczny
+  bAutomat = false 
+  bReczny = false
+
+#ifdef _FRAM
+  'gdy nie ma ręcznych dekretów przerwij procedure (FRAM)
+	for each pDekret in cursor
+    if pDekret.cAuto = N5_DEKRET_RECZ then
+      bReczny = true
+      exit for
+    end if
+  next
+  
+  if not bReczny then
+    exit sub
+  end if
+#endif  
+  
+  dim pPlugInTable : set pPlugInTable = pContainer.addnew(CTRL_TYPE_TABLE,-1)
+	pPlugInTable.border = 0
+	dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(pPlugInTable) 
+
+	pTB.newrow
+	pTB.row.styleitem = STYLE_TABLE_HEADER
+	pTB.row.border = 0
+#ifndef _FRAM
+	pTB.newcell.addtext("Data księg.").element.bold = true	
+	pTB.newcell.addtext("Konto").element.bold = true
+#else
+  pTB.newcell.addtext("Nr dokumentu").element.bold = true
+  pTB.newcell.addtext("Data rejestr.").element.bold = true	
+#endif
+	pTB.newcell.addtext("Wn").element.bold = true
+  pTB.cell.align = ALIGN_RIGHT
+	pTB.newcell.addtext("Ma").element.bold = true
+  pTB.cell.align = ALIGN_RIGHT
+  
+#ifndef _FRAM  
+  '----- dekrety automatyczne -----
+	for each pDekret in cursor
+    if pDekret.cAuto = N5_DEKRET_AUTO then
+      bAutomat = true
+      exit for
+    end if
+  next  
+  
+  if bAutomat then
+    pTB.newrow
+    pTB.newcell.addtext("Dekrety automatyczne").element.bold = true
+    with pTB.cell
+      .align = ALIGN_CENTER
+      .colspan = 4
+    end with
+  
+    sumaWnAuto = 0
+    sumaMaAuto = 0
+    for each pDekret in cursor
+      if pDekret.cAuto = N5_DEKRET_AUTO then
+        pTB.newrow
+        pTB.newcell.addtexthli pDekret.dDataKsieg, _
+			    doc_.createhlistr("varFunctionHLI='std_openform_object_hli' vn1='"+cstr(pDekret.type)+ _
+				    "' vn2='"+cstr(pDekret.idobj)+"'")
+		    pTB.cell.styleitem = STYLE_OPTION_PAD
+        pTB.cell.align = ALIGN_LEFT
+		    pTB.newcell.addtext(pDekret.pKonto.strSymbol)		
+		    pTB.cell.align = ALIGN_LEFT
+        pTB.newcell.addtext(trans_.afc.display.money(pDekret.curWn,pDekret.pKonto.pJednostka.strSkrot)).cell.align=ALIGN_RIGHT
+		    pTB.cell.align = ALIGN_RIGHT
+        pTB.cell.styleitem = STYLE_OPTION_PAD
+		    pTB.newcell.addtext(trans_.afc.display.money(pDekret.curMa,pDekret.pKonto.pJednostka.strSkrot)).cell.align=ALIGN_RIGHT
+        pTB.cell.align=ALIGN_RIGHT
+        sumaWnAuto = sumaWnAuto + pDekret.curWn
+        sumaMaAuto = sumaMaAuto + pDekret.curMa
+        strUnit = pDekret.pKonto.pJednostka.strSkrot
+      end if  
+	  next
+       'utworz wiersz podsumowania
+		    pTB.newrow
+		    pTB.row.backcolor = rgb(210,220,250)
+        pTB.row.border = 0
+        pTB.newcell.addtext("Suma").element.bold = true
+        with pTB.cell
+           .align = ALIGN_RIGHT
+           .colspan = 2
+        end with
+		    pTB.newcell.addtext(trans_.afc.display.money(sumaWnAuto,strUnit)).element.bold = true
+		    pTB.cell.align=ALIGN_RIGHT
+		    pTB.newcell.addtext(trans_.afc.display.money(sumaMaAuto,strUnit)).element.bold = true
+		    pTB.cell.align = ALIGN_RIGHT
+  end if      
+#endif
+
+  '----- dekrety ręczne -----
+	for each pDekret in cursor
+    if pDekret.cAuto = N5_DEKRET_RECZ then
+      bReczny = true
+      exit for
+    end if
+  next
+  if bReczny then
+    pTB.newrow
+    pTB.newcell.addtext("Dekrety ręczne").element.bold = true
+    with pTB.cell
+		  .align=ALIGN_CENTER
+		  .colspan = 4
+	  end with
+
+    sumaWnRecz = 0
+    sumaMaRecz = 0
+    for each pDekret in cursor    
+      if pDekret.cAuto = N5_DEKRET_RECZ then
+#ifndef _FRAM      
+        pTB.newrow
+        pTB.newcell.addtexthli pDekret.dDataKsieg, _
+			    doc_.createhlistr("varFunctionHLI='std_openform_object_hli' vn1='"+cstr(pDekret.type)+ _
+				    "' vn2='"+cstr(pDekret.idobj)+"'")
+		    pTB.cell.styleitem = STYLE_OPTION_PAD
+        pTB.cell.align = ALIGN_LEFT
+		    pTB.newcell.addtext(pDekret.pKonto.strSymbol)		
+		    pTB.cell.align = ALIGN_LEFT
+#else
+        dim strQuery : strQuery = "select 'iddok'=p_idobj,'strnrdok'=p_strnrdok,'ddatarej'=p_ddatarej from vlist_n5dowodksieg_listDekret where c_idobj = " + CStr(pDekret.idobj) + " "
+        dim rs : set rs = trans_.createadors(strQuery)
+        while not rs.eof			
+   			   pTB.newrow
+           pTB.newcell.addtexthli rs("strnrdok"), _
+			      doc_.createhlistr("varFunctionHLI='std_openform_object_hli' vn1='TYPEID_N5DOWODKSIEG' vn2='"+cstr(rs("iddok"))+"'")
+		       pTB.cell.styleitem = STYLE_OPTION_PAD
+           pTB.cell.align = ALIGN_LEFT
+		       pTB.newcell.addtext(rs("ddatarej"))		
+		       pTB.cell.align = ALIGN_LEFT
+			    rs.movenext
+		    wend
+#endif
+        pTB.newcell.addtext(trans_.afc.display.money(pDekret.curWn,pDekret.pKonto.pJednostka.strSkrot)).cell.align=ALIGN_RIGHT
+		    pTB.cell.align = ALIGN_RIGHT
+        pTB.cell.styleitem = STYLE_OPTION_PAD
+		    pTB.newcell.addtext(trans_.afc.display.money(pDekret.curMa,pDekret.pKonto.pJednostka.strSkrot)).cell.align=ALIGN_RIGHT
+        pTB.cell.align = ALIGN_RIGHT
+        sumaWnRecz = sumaWnRecz + pDekret.curWn
+        sumaMaRecz = sumaMaRecz + pDekret.curMa
+        strUnit = pDekret.pKonto.pJednostka.strSkrot
+      end if
+	  next
+    'utworz wiersz podsumowania
+		  pTB.newrow
+		  pTB.row.backcolor = rgb(210,220,250)
+		  pTB.row.border = 0
+      pTB.newcell.addtext("Suma").element.bold = true
+      with pTB.cell
+         .align = ALIGN_RIGHT
+         .colspan = 2
+      end with
+		  pTB.newcell.addtext(trans_.afc.display.money(sumaWnRecz,strUnit)).element.bold = true
+		  pTB.cell.align=ALIGN_RIGHT
+		  pTB.newcell.addtext(trans_.afc.display.money(sumaMaRecz,strUnit)).element.bold = true
+		  pTB.cell.align=ALIGN_RIGHT
+  end if
+
+#ifndef _FRAM  
+  'podsumowanie razem
+  dim razemWn, razemMa
+  razemWn = sumaWnAuto + sumaWnRecz
+  razemMa = sumaMaAuto + sumaMaRecz
+  pTB.newrow
+	pTB.row.styleitem = STYLE_TABLE_HEADER
+  pTB.row.border = 0
+  pTB.newcell.addtext "Razem"
+  with pTB.cell
+     .align = ALIGN_RIGHT
+     .colspan = 2
+  end with
+  with pTB.element
+     .bold = true
+     .fontsize = 5
+  end with
+  pTB.newcell.addtext trans_.afc.display.money(razemWn,strUnit)
+  pTB.cell.align=ALIGN_RIGHT
+  with pTB.element
+     .bold = true
+     .fontsize = 5
+  end with
+  pTB.newcell.addtext trans_.afc.display.money(razemMa,strUnit)
+  pTB.cell.align=ALIGN_RIGHT
+    with pTB.element
+     .bold = true
+     .fontsize = 5
+  end with
+#endif
+
+end sub
+
+'-----------------------------------------
+'wyswietlanie listy operacji na transakcji
+'-----------------------------------------
+sub plug_operacja(byref pContainer, byval cursor)
+	if not cursor.exists(1) then
+		exit sub
+	end if
+
+	dim pPlugInTable: set pPlugInTable = pContainer.addnew(CTRL_TYPE_TABLE,-1)
+	pPlugInTable.border = 0
+	dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(pPlugInTable)
+
+#ifdef _IOW
+  dim iter: iter = 0
+  dim nLimit
+  if trans_.isvar(GVAR_SELECTED_TAB_ITEM) then
+    if trans_.var(GVAR_SELECTED_TAB_ITEM) <> -1 then
+      if trans_.var(GVAR_SELECTED_TAB_ITEM) = 5 then
+	    nLimit = 9999
+      end if
+      
+      pTB.newrow
+      pTB.newcell
+      pTB.addctrl CTRL_TYPE_BUTTON,-1
+	    with pTB.element
+        .styleitem = STYLE_BUTTON
+        .text = "Wszystkie"
+        set .hli = doc_.createhli()
+        .hli.prop(GVAR_FUNCTIONHLI) = "ShowAllDok"
+        .hli.prop(100) = 5
+      end with       
+    end if  
+  end if
+#endif
+
+	pTB.newrow
+	pTB.row.styleitem = STYLE_TABLE_HEADER
+	pTB.row.border = 0
+	pTB.newcell.addtext("Data oper.").element.bold = true		
+	pTB.newcell.addtext("Nr dok.").element.bold = true
+	pTB.newcell.addtext("Wn").element.bold = true
+	pTB.newcell.addtext("Ma").element.bold = true
+	pTB.newcell.addtext("Wn rach.").element.bold = true
+	pTB.newcell.addtext("Ma rach.").element.bold = true
+	pTB.newcell.addtext("Kurs").element.bold = true
+
+	dim elem, strHli
+	for each elem in cursor
+		dim strSkrot: strSkrot = ""
+		if not elem.trop_pTransakcja is nothing then
+			if not elem.trop_pTransakcja.pWaluta is nothing then
+				strSkrot = elem.trop_pTransakcja.pWaluta.strSkrot
+			end if
+		end if
+		pTB.newrow
+		pTB.newcell.addtext(trans_.afc.display.fulldate(elem.trop_dDataOp))
+		pTB.cell.styleitem = STYLE_OPTION_PAD
+
+		if not elem.trop_wrefDokument is nothing then
+			dim strText: strText = ""
+			select case elem.trop_wrefDokument.type
+				case TYPEID_N5SPRZEDAZ, TYPEID_N5ZAKUP, TYPEID_N5NOTAODS
+					strText = elem.trop_wrefDokument.strNrDok
+				case TYPEID_N5POZRATA
+					strText = getNrDokPozRata(elem.trop_wrefDokument,elem.trop_pTransakcja)
+				case TYPEID_N5POZPLATNOSC
+					strText = getNrDokPozPlat(elem.trop_wrefDokument,elem.trop_pTransakcja)
+				case TYPEID_N5PLNALICZENIE  
+					if not elem.trop_pTransakcja is nothing then
+						strText = elem.trop_pTransakcja.strSymTrans
+					else
+						strText = elem.text
+					end if
+				case TYPEID_N5DEKRET
+					strText = elem.trop_wrefDokument.strOpis
+				case else
+					strText = elem.text
+				end select
+				pTB.newcell.addtext strText
+		else
+			pTB.newcell.addtext "<brak>"
+		end if
+		
+		'kwoty
+		pTB.newcell.addtext(trans_.afc.display.money(elem.trop_curWn,strSkrot)).cell.align = ALIGN_RIGHT
+		pTB.cell.styleitem = STYLE_OPTION_PAD
+		pTB.newcell.addtext(trans_.afc.display.money(elem.trop_curMa,strSkrot)).cell.align = ALIGN_RIGHT
+		pTB.newcell.addtext(trans_.afc.display.money(elem.trop_curWnEwid,"PLN")).cell.align = ALIGN_RIGHT
+		pTB.cell.styleitem = STYLE_OPTION_PAD
+		pTB.newcell.addtext(trans_.afc.display.money(elem.trop_curMaEwid,"PLN")).cell.align = ALIGN_RIGHT
+		pTB.newcell.addtext(trans_.afc.display.quantity(elem.trop_curKursOp,"",4)).cell.align = ALIGN_RIGHT
+		pTB.cell.styleitem = STYLE_OPTION_PAD
+    
+		'edycja trop'a
+		pTB.newcell
+		with pTB.cell.addnew(CTRL_TYPE_PICTURE,-1)
+			.image=clng(PICTURE_CHOICE_N5POZSPRZEDAZ)
+			.width=Clng(SIZE_FOR_GRID)  
+			.height=Clng(SIZE_FOR_GRID)
+			.tip = "Edytuj"
+			set .hli= doc_.createhli()
+			.hli.prop(GVAR_FUNCTIONHLI) = "editTrop"
+			.hli.prop(100) = CLng(elem.idobj)
+		end with    
+    
+#ifdef _IOW
+		iter = iter + 1
+		if iter >= nLimit and nLimit > 0  then
+			exit sub
+		end if
+#endif
+    
+	next
+end sub
+
+function getNrDokPozRata(pDok,pTrans): getNrDokPozRata = ""
+  if not pDok is nothing and not pTrans is nothing then
+    dim strSQL, oRS
+    if pTrans.eTyp = clng(N5TRANSAKCJA_NALEZNOSC) then
+      strSQL = "select p_strnrdok from vlist_n5sprzedaz_sprzed_listRata where c_idobj = " + cstr(pDok.idobj)
+    else
+      strSQL = "select p_strnrdok from vlist_n5zakup_zak_listRata where c_idobj = " + cstr(pDok.idobj)
+    end if
+    set oRS = trans_.createadors(strSQL)
+    if oRS.recordCount > clng(0) then
+      getNrDokPozRata = cstr(oRS(0).value)
+    end if
+  end if
+end function
+
+function getNrDokPozPlat(pDok,pTrans): getNrDokPozPlat = ""
+  if not pDok is nothing and not pTrans is nothing then
+    dim strSQL, oRS
+    strSQL = "select p_strnrdok from vlist_n5platnosc_listPozycje where c_idobj = " + cstr(pDok.idobj)
+    set oRS = trans_.createadors(strSQL)
+    if oRS.recordCount > clng(0) then
+      getNrDokPozPlat = cstr(oRS(0).value)
+    end if
+  end if  
+end function
+
+
+' funkcja zwracająca whera - listy wybory w ktorych znajduje sie obiekt
+' funkcja do uzycia przy tworzeniu adors 
+function sqlwhere_rs_lists_with_object(byval pObject)
+	sqlwhere_rs_lists_with_object = trans_.afc.convert.Formatter("select p_idobj as IdObj,coll_lp as Lp, p_strNazwa as strNazwa from vlist_choicelist_ListElement where p_ntypeid = %2 and c_idElement = %1").add(cstr(pObject.idobj)).add(cstr(pObject.type )).done
+end function
+
+
+sub plug_listawyboru(byref pContainer,byval pObj,nLimit)
+
+	dim pPlugInTable : set pPlugInTable = pContainer.addnew(CTRL_TYPE_TABLE,-1)
+	pPlugInTable.border = 0
+
+	dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(pPlugInTable)
+
+#ifdef _FRAM
+  if pObj.type = TYPEID_N5PRODUKT then
+    if pObj.prod_iNrFundRolny > 0 then
+      dim oReceptura: set oReceptura = trans_.getobj(TYPEID_N5RECEPTA,pObj.prod_iNrFundRolny)
+      pTB.newrow
+      pTB.row.styleitem = STYLE_TABLE_HEADER
+      pTB.newcell.addtext("Nazwa")
+      pTB.element.bold = true
+      pTB.newrow
+      pTB.newcell.addtexthli oReceptura.strNazwa, doc_.createhlistr("varFunctionHLI='std_openform_object_hli' vn1='" + cstr(oReceptura.type) + "' vn2='" + cstr(oReceptura.idobj) + "'")
+    end if
+  else
+	  dim oRecordset
+	  set oRecordset=trans_.createadors(sqlwhere_rs_lists_with_object(pObj))
+	  if oRecordset.eof then
+		  exit sub
+	  end if
+
+	  pTB.newrow
+	  pTB.newcell.addtext("Nazwa listy").cell.colspan = 2
+	  pTB.element.bold = true
+	  pTB.section_body
+	  dim iter:iter = 0
+
+	  while not oRecordset.eof
+		  iter = iter + 1
+		  if iter > nLimit and nLimit > 0  then
+			  exit sub
+		  end if
+
+		  dim hli
+		  set hli=doc_.createhlistr("varFunctionHLI='delete_from_choiceList_hli'")
+		  hli.prop(100)= CLng(oRecordset.fields(0).value)
+		  hli.prop(101)= CLng(oRecordset.fields(1).value)
+		  hli.prop(102)= CLng(pObj.type)
+
+		  pTB.newrow.newcell.addtexthli Cstr(oRecordset.fields(2).value) , doc_.createhlistr("varFunctionHLI='std_openform_object_hli' vn1='"+cstr(TYPEID_CHOICELIST)+"' vn2='"+cstr(hli.prop(100))+"'")
+		  pTB.newcell.addtexthli "Usuń", hli
+		  pTB.cell.width = CLng(MINIMIZE_SIZE)		
+
+		  oRecordset.movenext
+	  wend  
+  end if
+#else
+
+	dim oRecordset
+	set oRecordset=trans_.createadors(sqlwhere_rs_lists_with_object(pObj))
+	if oRecordset.eof then
+		exit sub
+	end if
+
+	pTB.newrow
+	pTB.newcell.addtext("Nazwa listy").cell.colspan = 2
+	pTB.element.bold = true
+
+
+	pTB.section_body
+
+	dim iter:iter = 0
+
+	while not oRecordset.eof
+
+		iter = iter + 1
+		if iter > nLimit and nLimit > 0  then
+			exit sub
+		end if
+
+		dim hli
+		set hli=doc_.createhlistr("varFunctionHLI='delete_from_choiceList_hli'")
+		hli.prop(100)= CLng(oRecordset.fields(0).value)
+		hli.prop(101)= CLng(oRecordset.fields(1).value)
+		hli.prop(102)= CLng(pObj.type)
+
+		pTB.newrow.newcell.addtexthli Cstr(oRecordset.fields(2).value) , doc_.createhlistr("varFunctionHLI='std_openform_object_hli' vn1='"+cstr(TYPEID_CHOICELIST)+"' vn2='"+cstr(hli.prop(100))+"'")
+		pTB.newcell.addtexthli "Usuń", hli
+		pTB.cell.width = CLng(MINIMIZE_SIZE)		
+
+		oRecordset.movenext
+	wend
+#endif		
+end sub
+
+
+sub plug_konta(byref pContainer,byval cursor)
+
+	if not cursor.exists(1) then
+		exit sub
+	end if	
+
+	dim pPlugInTable : set pPlugInTable = pContainer.addnew(CTRL_TYPE_TABLE,-1)
+	pPlugInTable.border = 0
+	dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(pPlugInTable)
+
+	pTB.newrow
+	pTB.row.styleitem = STYLE_TABLE_HEADER
+	pTB.row.border = 0
+	pTB.newcell.addtext("Symbol").element.bold = true
+	pTB.newcell.addtext("Nazwa").element.bold = true
+	
+	dim elem	
+	for each elem in cursor
+		pTB.newrow
+		pTB.newcell.addtexthli elem.strSymbol , doc_.createhlistr("varFunctionHLI='std_openform_object_hli' vn1='TYPEID_N5KONTO' vn2='"+cstr(elem.idobj)+"'")
+		pTB.cell.styleitem = STYLE_OPTION_PAD
+		pTB.newcell.addtext elem.strNazwa
+	next
+
+end sub
+
+
+sub plug_transakcje(byref pContainer,byval cursor,nLimit)
+
+	if not cursor.exists(1) then
+		exit sub
+	end if
+
+	dim pPlugInTable : set pPlugInTable = pContainer.addnew(CTRL_TYPE_TABLE,-1)
+	pPlugInTable.border = 0
+	dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(pPlugInTable) 
+
+#ifdef APPCONFIG_SHOW_ALL_DOKUM_TRANSAKCJA
+  'karta klienta
+  if trans_.isvar(GVAR_SELECTED_TAB_ITEM) then
+    if trans_.var(GVAR_SELECTED_TAB_ITEM) <> -1 then
+      if trans_.var(GVAR_SELECTED_TAB_ITEM) = 3 then
+	      nLimit = 9999
+      end if
+      
+      pTB.newrow
+      pTB.newcell
+      pTB.addctrl CTRL_TYPE_BUTTON,-1
+	  with pTB.element
+        .styleitem = STYLE_BUTTON
+        .text = "Wszystkie"
+        set .hli = doc_.createhli()
+        .hli.prop(GVAR_FUNCTIONHLI) = "ShowAllDok"
+        .hli.prop(100) = 3
+      end with
+	  
+#ifdef _ABAKOSTEEL
+      pTB.newcell
+      pTB.addctrl CTRL_TYPE_BUTTON,-1
+	  with pTB.element
+        .styleitem = STYLE_BUTTON
+        .text = "12 m-cy"
+        set .hli = doc_.createhli()
+        .hli.prop(GVAR_FUNCTIONHLI) = "ShowAllDok"
+        .hli.prop(100) = 3
+		.hli.prop(101) = 1
+      end with
+#endif		  
+	  
+    end if  
+  end if
+  
+#endif
+
+#ifdef APPCONFIG_SHOW_ALL_NALICZENIA  
+  'karta pracownika 
+  if trans_.isvar(GVAR_SELECTED_TAB_KARTA_PRAC) then
+    if trans_.var(GVAR_SELECTED_TAB_KARTA_PRAC) <> -1 then
+      if trans_.var(GVAR_SELECTED_TAB_KARTA_PRAC) = 2 then
+	      nLimit = 9999
+      end if
+
+	  pTB.newrow
+	  pTB.row.border = 0
+	  pTB.newcell
+	  pTB.addctrl CTRL_TYPE_BUTTON,-1
+	  with pTB.element
+		.styleitem = STYLE_BUTTON
+		.text = "Wszystkie"
+		set .hli = doc_.createhli()
+		.hli.prop(GVAR_FUNCTIONHLI) = "ShowAllNalicz"
+		.hli.prop(100) = 2
+	  end with
+  
+#ifdef _ABAKOSTEEL
+	  pTB.newcell
+	  pTB.addctrl CTRL_TYPE_BUTTON,-1
+	  with pTB.element
+		.styleitem = STYLE_BUTTON
+		.text = "12 m-cy"
+		set .hli = doc_.createhli()
+		.hli.prop(GVAR_FUNCTIONHLI) = "ShowAllNalicz"
+		.hli.prop(100) = 2
+		.hli.prop(101) = 1
+	  end with
+#endif	  
+      end if  
+  end if 
+#endif 
+
+	pTB.newrow
+	pTB.row.styleitem = STYLE_TABLE_HEADER
+	pTB.row.border = 0
+	pTB.newcell.addtext("Symbol").element.bold = true	
+	pTB.newcell.addtext("Termin").element.bold = true	
+	pTB.newcell.addtext("Winien").element.bold = true
+	pTB.cell.align=ALIGN_RIGHT
+	pTB.newcell.addtext("Ma").element.bold = true
+	pTB.cell.align=ALIGN_RIGHT
+
+	pTB.newcell.addtext("Saldo").element.bold = true
+	pTB.cell.align=ALIGN_RIGHT
+
+	dim elem	
+	dim iter:iter = 0
+	for each elem in cursor
+
+		iter = iter + 1
+		if iter > nLimit and nLimit > 0  then
+			exit sub
+		end if
+		
+
+		dim saldo:saldo = elem.curWn - elem.curMa
+
+		pTB.newrow
+		'na czerowno nierozliczone przeterminowane
+		if saldo <> 0 and elem.dDataWym < trans_.var(GVAR_TODAY) then
+			pTB.row.forecolor = RGB(255,0,0)
+		end if
+		'przekreslenie rozliczonych
+		if saldo = 0 then
+			pTB.row.strike = true
+		end if
+
+		pTB.newcell.addtexthli elem.strSymTrans , doc_.createhlistr("varFunctionHLI='std_openform_object_hli' vn1='TYPEID_N5TRANSAKCJA' vn2='"+cstr(elem.idobj)+"'")		
+		pTB.cell.styleitem = STYLE_OPTION_PAD
+		pTB.newcell.addtext trans_.afc.display.fulldate(elem.dDataWym)
+
+		pTB.newcell.addtext(trans_.afc.display.money(elem.curWn,elem.pWaluta.strSkrot)).cell.align=ALIGN_RIGHT
+		pTB.cell.styleitem = STYLE_OPTION_PAD
+		pTB.cell.align=ALIGN_RIGHT
+
+		pTB.newcell.addtext(trans_.afc.display.money(elem.curMa,elem.pWaluta.strSkrot)).cell.align=ALIGN_RIGHT
+		pTB.cell.align=ALIGN_RIGHT
+
+		pTB.newcell.addtext(trans_.afc.display.money(saldo,elem.pWaluta.strSkrot)).cell.align=ALIGN_RIGHT
+		pTB.cell.align=ALIGN_RIGHT
+		pTB.cell.styleitem = STYLE_OPTION_PAD
+	next
+end sub
+
+
+
+sub plug_picture(byref pContainer,byval pFile,byval nWidth,byval nHeight)
+
+	dim pPlugInTable
+	dim pTB
+
+	if not pFile.isempty then
+		set pPlugInTable = pContainer.addnew(CTRL_TYPE_TABLE,-1)
+		pPlugInTable.border = 0
+		set pTB = doc_.afc.new_tb(nothing).attach(pPlugInTable)
+		pTB.newrow.newcell.addctrl CTRL_TYPE_PICTURE, -1
+		with pTB.element
+			.image = pFile 
+			.width = nWidth
+			.height = nHeight
+			.scalingmode = 1
+		end with
+	end if
+
+end sub
+
+
+
+'where do tworzenia kursora po podmiocie (transakcji, platnosci)
+function sqlwhere_for_podmiot(byval pPodmiot , strFld)
+	sqlwhere_for_podmiot = doc_.afc.convert.formatter( _
+	" " + strFld + " = %1 and " + strFld +"_wrt = %2 ") _
+	.add(CStr(pPodmiot.idobj)) _	
+	.add(CStr(pPodmiot.type)) _	
+	.done()
+end function
+
+sub plug_rezerwacje(byref pContainer,byval oCursor, nLimit)
+	if not oCursor.exists(1) then
+		exit sub
+	end if
+
+	dim pPlugInTable : set pPlugInTable = pContainer.addnew(CTRL_TYPE_TABLE,-1)
+	pPlugInTable.border = 0
+	dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(pPlugInTable)
+  
+#ifdef APPCONFIG_SHOW_ALL_DOKUM_REZERWACJE
+  if trans_.isvar(GVAR_SELECTED_TAB_ITEM) then
+    if trans_.var(GVAR_SELECTED_TAB_ITEM) <> -1 then
+      if trans_.var(GVAR_SELECTED_TAB_ITEM) = 7 then
+	    nLimit = 9999
+      end if
+      
+      pTB.newrow
+      pTB.newcell
+      pTB.addctrl CTRL_TYPE_BUTTON,-1
+	    with pTB.element
+        .styleitem = STYLE_BUTTON
+        .text = "Wszystkie"
+        set .hli = doc_.createhli()
+        .hli.prop(GVAR_FUNCTIONHLI) = "ShowAllDok"
+        .hli.prop(100) = 7
+      end with       
+    end if  
+  end if
+#endif  
+	
+	pTB.newrow
+	pTB.row.styleitem = STYLE_TABLE_HEADER
+	pTB.row.border = 0
+	pTB.newcell.addtext("Numer dok.").element.bold = true	
+	pTB.newcell.addtext("Data wyst.").element.bold = true	
+	pTB.newcell.addtext("Data obow.").element.bold = true	
+
+	dim iIter : iIter = 0
+	dim oRezerwacja
+	for each oRezerwacja in oCursor
+		iIter = iIter + 1
+		if iIter > nLimit and nLimit > 0  then
+			exit sub
+		end if
+
+		pTB.newrow
+
+		pTB.newcell.addtexthli oRezerwacja.text , _
+			doc_.createhlistr("varFunctionHLI='std_openform_object_hli' vn1='"+cstr(oRezerwacja.type)+_
+				"' vn2='"+cstr(oRezerwacja.idobj)+"'")
+		pTB.cell.styleitem = STYLE_OPTION_PAD
+		pTB.newcell.addtext(trans_.afc.display.fulldate(oRezerwacja.dDataWyst))
+		pTB.newcell.addtext(trans_.afc.display.fulldate(oRezerwacja.dDataRezerw))
+		pTB.cell.styleitem = STYLE_OPTION_PAD
+	next
+end sub
+
+'wyswietlanie listy zamowien na podstawie dostarczonego kursora
+sub plug_zamowienia(byref pContainer , byval cursor , nLimit )
+	plug_zamowienia_ex pContainer , cursor , nLimit , false
+end sub
+
+
+'wyswietlanie listy zamowien na podstawie dostarczonego kursora
+sub plug_zamowienia_ex(byref pContainer , byval cursor , nLimit , bDoNotCrossEmpty )
+
+	if not cursor.exists(1) then
+		exit sub
+	end if
+
+	dim pPlugInTable : set pPlugInTable = pContainer.addnew(CTRL_TYPE_TABLE,-1)
+	pPlugInTable.border = 0
+	dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(pPlugInTable)
+
+#ifdef APPCONFIG_SHOW_ALL_DOKUM_ZAMOWIENIE
+  if trans_.isvar(GVAR_SELECTED_TAB_ITEM) then
+    if trans_.var(GVAR_SELECTED_TAB_ITEM) <> -1 then
+      if trans_.var(GVAR_SELECTED_TAB_ITEM) = 6 then
+	      nLimit = 9999
+      end if
+      
+      pTB.newrow
+      pTB.newcell
+      pTB.addctrl CTRL_TYPE_BUTTON,-1
+	    with pTB.element
+        .styleitem = STYLE_BUTTON
+        .text = "Wszystkie"
+        set .hli = doc_.createhli()
+        .hli.prop(GVAR_FUNCTIONHLI) = "ShowAllDok"
+        .hli.prop(100) = 6
+      end with   
+	  
+#ifdef _ABAKOSTEEL
+      pTB.newcell
+      pTB.addctrl CTRL_TYPE_BUTTON,-1
+	  with pTB.element
+        .styleitem = STYLE_BUTTON
+        .text = "12 m-cy"
+        set .hli = doc_.createhli()
+        .hli.prop(GVAR_FUNCTIONHLI) = "ShowAllDok"
+        .hli.prop(100) = 6
+		.hli.prop(101) = 1
+      end with
+#endif		  
+	  
+    end if  
+  end if
+#endif
+
+	pTB.newrow
+	pTB.row.styleitem = STYLE_TABLE_HEADER
+	pTB.row.border = 0
+	pTB.newcell.addtext("Numer dok.").element.bold = true	
+	pTB.newcell.addtext("Data wyst.").element.bold = true	
+	pTB.newcell.addtext("Termin").element.bold = true	
+	pTB.newcell.addtext("Wartość").element.bold = true	
+	pTB.newcell.addtext("Pozycje do realizacji").element.bold = true	
+
+	dim pZamowienie,strHli
+	dim iter:iter = 0
+	for each pZamowienie in cursor
+		iter = iter + 1
+		if iter > nLimit and nLimit > 0  then
+			exit sub
+		end if
+		pTB.newrow
+
+		dim nNRealCnt : nNRealCnt = pZamowienie.n5zamowienie_get_niezreal_pozcount()
+
+		'na czerowno niezrealizowanych przeterminowane
+		if nNRealCnt <> 0 and pZamowienie.dDataReal < trans_.var(GVAR_TODAY) then
+			pTB.row.forecolor = RGB(255,0,0)
+		end if
+		
+		'przekreslenie zrealizowanych
+		if nNRealCnt = 0 then
+			pTB.row.strike = true
+			if bDoNotCrossEmpty then
+				if pZamowienie.listPozycje.count = 0 then
+					pTB.row.strike = false
+				end if
+			end if
+		end if
+
+
+		pTB.newcell.addtexthli pZamowienie.text , _
+			doc_.createhlistr("varFunctionHLI='std_openform_object_hli' vn1='"+cstr(pZamowienie.type)+_
+				"' vn2='"+cstr(pZamowienie.idobj)+"'")
+		pTB.cell.styleitem = STYLE_OPTION_PAD
+		pTB.newcell.addtext(trans_.afc.display.fulldate(pZamowienie.dDataWyst))
+		pTB.newcell.addtext(trans_.afc.display.fulldate(pZamowienie.dDataReal))
+		pTB.cell.styleitem = STYLE_OPTION_PAD
+		pTB.newcell.addtext(trans_.afc.display.money(pZamowienie.curSumaWal,pZamowienie.pWaluta.strSkrot)).cell.align=ALIGN_RIGHT
+		pTB.newcell.addtext(cstr(nNRealCnt) + "/" + cstr(pZamowienie.listPozycje.count))
+		pTB.cell.styleitem = STYLE_OPTION_PAD
+		pTB.cell.align=ALIGN_RIGHT
+	next
+end sub
+
+
+
+
+
+
+
+]]>
+</script>
+</config>
+	<body>
+    <p name="1"/>
+	</body>
+</page>
+

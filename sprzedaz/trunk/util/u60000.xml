@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1200.h"
+-->
+<page>
+<config>
+<script>
+<!--
+	Standardowa obsługa copy-paste
+-->
+<![CDATA[
+
+
+#comment '------------------------------------------------------------------------------------
+#comment '	standardowa implementacja kopiowania obiektów (ta sama baza)
+#comment '------------------------------------------------------------------------------------
+
+function std_copy(byref page, byref destStream)	: std_copy = false
+	if page.root is nothing then
+		exit function
+	end if
+
+	dim pEFM : set pEFM = doc_.getmodule(60272)
+	dim pExportFilter : set pExportFilter = pEFM.new_exp_filter()
+	dim pSO : set pSO = doc_.createstreamobj()
+	pSO.attach destStream
+	set pSO = pExportFilter.preprare_export_ex(pSO)
+	pExportFilter.exportobj page.root
+#ifdef _DEBUG
+	pExportFilter.done_export pSO,"c:\temp\copy.txt"
+#endif
+
+	std_copy = true
+end function
+
+
+#comment '------------------------------------------------------------------------------------
+#comment '	standardowa implementacja wklejania obiektów (ta sama baza)
+#comment '------------------------------------------------------------------------------------
+
+function std_paste(byref page,byref srcStream): std_paste=false
+	dim rootobj : set rootobj = page.root
+
+	std_paste = std_paste_obj(rootobj , srcStream)
+
+end function
+
+dim g_nNoMatchTypeId : g_nNoMatchTypeId = 0
+dim g_nMatchIdObj : g_nMatchIdObj = 0
+function paste_object_matcher(byref pImpObject,byref pImportHandler)
+	if pImpObject.typeid = g_nNoMatchTypeId then
+		paste_object_matcher = g_nMatchIdObj
+	else
+		paste_object_matcher = pImpObject.idobj
+	end if
+end function
+
+function paste_environment_helper(byref pImpObject,byval idDestObj,byref pImportHandler)
+	paste_environment_helper = 0
+end function
+function paste_object_importer(byref pImportHandler,byref pImpObject,byref pDestStdObj)
+	
+	select case pDestStdObj.type
+	case TYPEID_N5DOKMAG
+		if g_nNoMatchTypeId = pDestStdObj.type then
+			if pImportHandler.resolve_ref(TYPEID_N5REJESTRDOK,pImpObject("pRejestrDok")).eTyp <> _
+				pDestStdObj.pRejestrDok.eTyp then
+				paste_object_importer = -5
+				exit function
+			end if
+		end if
+	end select
+
+	paste_object_importer = pImportHandler.std_import_object_fields(pImpObject,pDestStdObj)
+	
+end function
+
+dim g_oM60211 : set g_oM60211 = doc_.getmodule(60211)
+dim g_std_field_translator : set g_std_field_translator = g_oM60211.get_translator()
+
+function paste_field_translator(byref pDestStdObj, byref pFieldDef,byref varValue)
+	paste_field_translator = true
+	'nie wklejaj pól unikalnych bo nie ma to sensu
+	if pFieldDef.isunique() then
+		paste_field_translator = false
+	end if
+	
+	'--- filtr na rejestr dokumentow pRejestrDok
+	if pFieldDef.name = "zad_pRejestrDok" or pFieldDef.name = "pRejestrDok" or pFieldDef.name = "raka_pRejestrDok" then
+		paste_field_translator = false
+	end if
+
+	if pDestStdObj.type = TYPEID_N5SPRZEDAZ or pDestStdObj.type = TYPEID_N5ZAKUP then
+		if pFieldDef.name = "pTransakcja" or pFieldDef.name = "pRozlVAT" or pFieldDef.name = "sprzed_pDostawa" then
+			paste_field_translator = false
+		end if
+	end if
+		
+	'--- filtr na użytkownika rejestrującego
+	if pFieldDef.name = "pUzytRej" or pFieldDef.name = "pt4_pUzytRej" or pFieldDef.name = "pt5_pUzytRej" or _
+	   pFieldDef.name = "pt5l_pUzytRej" or pFieldDef.name = "pt11_pUzytRej" or pFieldDef.name = "vtue_pUzytRej" or _
+	   pFieldDef.name = "raka_pUzytRej" or pFieldDef.name = "vat7_pUzytRej" or pFieldDef.name = "istt_pUzytRej" then
+		paste_field_translator = false
+	end if
+
+	'-------------------
+	select case pDestStdObj.type
+	case TYPEID_N5DOWODKSIEG
+		if pFieldDef.name = "nNumDow" then
+			paste_field_translator = false
+		end if
+	end select
+  
+  if paste_field_translator then
+    paste_field_translator = g_std_field_translator(pDestStdObj, pFieldDef, varValue)
+  end if
+end function
+
+function std_paste_obj(byref obj ,byref srcStream): std_paste_obj=false
+
+	if (not obj.isnew) then
+		if (not obj.exlock()) then
+			exit function
+		end if
+	end if
+	
+	dim pImportModule: set pImportModule =  doc_.getmodule(60145)
+	dim pImportHandler : set pImportHandler = pImportModule.new_import_handler()
+
+	pImportHandler.set_field_translator getref("paste_field_translator")
+	pImportHandler.required_init getref("paste_object_matcher"), _
+		getref("paste_environment_helper")
+	pImportHandler.set_object_importer getref("paste_object_importer")
+	g_nNoMatchTypeId = obj.type
+	g_nMatchIdObj = obj.idobj
+	pImportHandler.enablesave = false
+	std_paste_obj = (pImportHandler.go(srcStream) = 0)
+	if not std_paste_obj then
+		trans_.message 0,0,pImportHandler.errordesc
+	end if
+
+end function
+
+
+]]>
+</script>
+</config>
+	<body>
+		<t>Standardowa obsługa copy-paste</t>
+	</body>
+</page>

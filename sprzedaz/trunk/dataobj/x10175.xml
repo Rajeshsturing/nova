@@ -1,0 +1,678 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+REV:KB:WORKING
+#include "h1000.h" 
+#include "h1200.h" 
+#include "h1203.h" 
+#include "h1231.h" 
+#include "h1229.h"
+
+#define _RECALC_TABLENAME_	n5pozzakup
+
+#define MTX_CENAWARTWAL		1
+
+-->
+<class>
+  <identifier>TYPEID_N5POZZAKUP</identifier>
+  <table>n5pozzakup</table>
+  <humanname>Pozycja zakupu</humanname>
+  <child />
+  <hidden />
+  <idobj />
+  <ref>
+    <name>pProdukt</name>
+    <humanname>Produkt</humanname>
+    <typeid>TYPEID_N5PRODUKT</typeid>
+  </ref>
+  <embedded>
+    <name>curIloscOpak</name>
+    <sqltype>SQLqty</sqltype>
+    <humanname>Ilosc opakowań</humanname>
+    <default>1.0</default>
+  </embedded>
+  <ref>
+    <name>pOpak</name>
+    <humanname>Opakowanie produktu</humanname>
+    <typeid>TYPEID_N5OPAKOWANIE_PRODUKTU</typeid>
+  </ref>
+
+  XDF_STAWKAVAT
+
+  <embedded>
+    <name>curCenaBrutto</name>
+    <sqltype>SQLprice</sqltype>
+    <humanname>Cena zakupu brutto</humanname>
+  </embedded>
+  <embedded>
+    <name>curWartNetto</name>
+    <sqltype>SQLcurrency</sqltype>
+    <humanname>Wartość netto</humanname>
+  </embedded>
+  <embedded>
+    <name>curVAT</name>
+    <sqltype>SQLcurrency</sqltype>
+    <humanname>Wartość VAT</humanname>
+  </embedded>
+  <embedded>
+    <name>curWartBrutto</name>
+    <sqltype>SQLcurrency</sqltype>
+    <humanname>Wartość brutto</humanname>
+  </embedded>
+  <embedded>
+    <name>curCenaNettoWal</name>
+    <sqltype>SQLprice</sqltype>
+    <humanname>Cena zakupu netto w walucie</humanname>
+  </embedded>
+  <embedded>
+    <name>curOplatyZagr</name>
+    <sqltype>SQLcurrency</sqltype>
+    <humanname>Opłaty dodatkowe (zagranica)</humanname>
+  </embedded>
+  <embedded>
+    <name>curClo</name>
+    <sqltype>SQLcurrency</sqltype>
+    <humanname>Cło i inne opłaty</humanname>
+  </embedded>
+
+  <embedded>
+    <name>curAkcyza</name>
+    <sqltype>SQLcurrency</sqltype>
+    <humanname>Akcyza</humanname>
+  </embedded>
+
+  <embedded>
+    <name>curOplatyKraj</name>
+    <sqltype>SQLcurrency</sqltype>
+    <humanname>Opłaty dodatkowe (kraj)</humanname>
+  </embedded>
+  <embedded>
+    <name>strUwagi</name>
+    <sqltype>SQLvc512</sqltype>
+    <humanname>Uwagi</humanname>
+  </embedded>
+
+  XDF_EXTRAS
+
+
+  <embedded>
+    <name>pzak_curStCelna</name>
+    <sqltype>SQLprice</sqltype>
+    <humanname>Stawka celna</humanname>
+    <default>0.0</default>
+  </embedded>
+
+  <!-- db8 -->
+
+  XDF_REF_OPT(pzak_pZadanie,TYPEID_N5ZADANIE,Zadanie)
+
+  <embedded>
+    <name>pzak_curWartWal</name>
+    <sqltype>SQLcurrency</sqltype>
+    <humanname>Wartosc w walucie</humanname>
+  </embedded>
+
+
+  <ref>
+    <name>pzak_pObiektKlienta</name>
+    <humanname>Obiekt klienta</humanname>
+    <typeid>TYPEID_N5KLIENT_OBIEKT</typeid>
+    <optional/>
+  </ref>
+
+  <cursors />
+
+  <script>
+    <![CDATA[
+#comment '-------------------------------------------------------------------------------
+#comment ' DB8: przepracowane 2005-09-17
+#comment '-------------------------------------------------------------------------------
+
+'przelicz walute
+#include "50523"
+'computeprice
+#include "50524"
+
+#include "50203"
+
+#comment '-------------------------------------------------------------------------------
+
+'wylicza wartość celną
+function n5pozzakup_wyl_wartosc_celna()
+#ifdef ENABLE_DB14_A
+  if this_.parent.pRejestrDok.eTyp = N5REJESTRDOK_WNT or this_.parent.pRejestrDok.eTyp = N5REJESTRDOK_KOREKTA_WNT or this_.parent.pRejestrDok.eTyp = N5REJESTRDOK_FAKT_IMP or this_.parent.pRejestrDok.eTyp = N5REJESTRDOK_KOR_FAKT_IMP or this_.parent.pRejestrDok.eTyp = N5REJESTRDOK_IMPORT_USLUG or this_.parent.pRejestrDok.eTyp = N5REJESTRDOK_KOR_IMPORT_USLUG then
+#else
+  if this_.parent.pRejestrDok.eTyp = N5REJESTRDOK_WNT or this_.parent.pRejestrDok.eTyp = N5REJESTRDOK_KOREKTA_WNT or this_.parent.pRejestrDok.eTyp = N5REJESTRDOK_FAKT_IMP or this_.parent.pRejestrDok.eTyp = N5REJESTRDOK_KOR_FAKT_IMP then
+#endif
+    n5pozzakup_wyl_wartosc_celna = trans_.afc.convert.round2((this_.pzak_curWartWal + this_.curOplatyZagr) * this_.parent.curExtra4)/CCur(10000)
+  else
+    n5pozzakup_wyl_wartosc_celna = trans_.afc.convert.round2((this_.pzak_curWartWal + this_.curOplatyZagr) * this_.parent.curKurs)
+  end if  
+end function
+
+'wylicza podstawę VAT
+function n5pozzakup_wyl_podst_VAT()
+	n5pozzakup_wyl_podst_VAT = n5pozzakup_wyl_wartosc_celna() + this_.curClo + this_.curAkcyza + this_.curOplatyKraj
+end function
+
+'wylicza podstawę VAT bez oplaty krajowej
+function n5pozzakup_wyl_podst_VAT_bez_Opl_kraj()
+	n5pozzakup_wyl_podst_VAT_bez_Opl_kraj = n5pozzakup_wyl_wartosc_celna() + this_.curClo + this_.curAkcyza
+end function
+
+function n5pozzakup_wyl_wart_calk()
+'  if (this_.parent.n5zakup_isImportNieUE() or this_.parent.n5zakup_isImportUE()) then
+'    n5pozzakup_wyl_wart_calk = trans_.afc.convert.round2(this_.pzak_curWartWal * this_.parent.curExtra4/ccur(10000.0)) +_
+'#ifdef _TAYAMA
+'    trans_.afc.convert.round2(this_.curOplatyZagr * this_.parent.curKurs) +_
+'#else
+'    trans_.afc.convert.round2(this_.curOplatyZagr * this_.parent.curExtra4/ccur(10000.0)) +_
+'#endif
+'      this_.curClo + this_.curAkcyza + this_.curOplatyKraj
+'  else
+    'aby nie wchodzily oplaty krajowe w przypadku zakupu krajowego
+    DEBUG_MESSAGE("Nie uwzglednia oplat krajowych do wartosci Netto pozycji_WNT jedynie dodaje do opłata dodatkowa")
+    n5pozzakup_wyl_wart_calk = n5pozzakup_wyl_podst_VAT() - this_.curOplatyKraj
+'  end if
+end function
+
+#comment '-------------------------------------------------------------------------------
+BEGIN_COMPUTE(curCenaNettoWal)
+	if this_.curIloscOpak = ccur(0.0) then
+		this_.curCenaNettoWal = this_.pzak_curWartWal
+	else
+		this_.curCenaNettoWal = trans_.afc.convert.roundn(this_.pzak_curWartWal / this_.curIloscOpak,trans_.var(GVAR_PRICE_PREC))
+	end if
+END_COMPUTE
+
+BEGIN_COMPUTE(curCenaBrutto)
+  dim bWithoutVat: bWithoutVat = false
+#ifdef ENABLE_DB14_A
+	if this_.parent.pRejestrDok.eTyp = N5REJESTRDOK_WNT or this_.parent.pRejestrDok.eTyp = N5REJESTRDOK_KOREKTA_WNT or this_.parent.pRejestrDok.eTyp = N5REJESTRDOK_FAKT_IMP or this_.parent.pRejestrDok.eTyp = N5REJESTRDOK_KOR_FAKT_IMP or this_.parent.pRejestrDok.eTyp = N5REJESTRDOK_IMPORT_USLUG or this_.parent.pRejestrDok.eTyp = N5REJESTRDOK_KOR_IMPORT_USLUG then
+#else
+  if this_.parent.pRejestrDok.eTyp = N5REJESTRDOK_WNT or this_.parent.pRejestrDok.eTyp = N5REJESTRDOK_KOREKTA_WNT or this_.parent.pRejestrDok.eTyp = N5REJESTRDOK_FAKT_IMP or this_.parent.pRejestrDok.eTyp = N5REJESTRDOK_KOR_FAKT_IMP then
+#endif
+    this_.curCenaBrutto = trans_.afc.convert.roundn( _
+      netto2brutto_ex(this_.curCenaNettoWal * this_.parent.curExtra4/CCur(10000), this_.eVat, bWithoutVat), _
+      trans_.var(GVAR_PRICE_PREC))
+  else
+    this_.curCenaBrutto = trans_.afc.convert.roundn( _
+      netto2brutto_ex(this_.curCenaNettoWal * this_.parent.curKurs, this_.eVat, bWithoutVat), _
+      trans_.var(GVAR_PRICE_PREC))
+  end if
+END_COMPUTE
+
+BEGIN_COMPUTE(pzak_curWartWal)
+	this_.pzak_curWartWal = trans_.afc.convert.round2(this_.curIloscOpak * this_.curCenaNettoWal)
+#ifdef APPCONFIG_FUNDUSZ_ROLNO_SPOZYWCZY
+  wyliczProcent
+#endif
+END_COMPUTE
+
+BEGIN_COMPUTE(curClo)
+  if this_.parent.cNaliczajClo = "1" then
+    this_.curClo = trans_.afc.convert.roundn( _
+      ccur(this_.n5pozzakup_wyl_wartosc_celna() * (this_.pzak_curStCelna / 100.0)),2)
+  else
+    this_.curClo = ccur(0.0)
+  end if
+END_COMPUTE
+
+BEGIN_COMPUTE(curWartNetto)
+	this_.curWartNetto = n5pozzakup_wyl_wart_calk()
+END_COMPUTE
+
+BEGIN_COMPUTE(curVat)
+  if (this_.parent.n5zakup_isImportNieUE() or this_.parent.n5zakup_isImportUE()) then
+	  this_.curVat = netto2vat(n5pozzakup_wyl_podst_VAT(), this_.eVat)
+  else
+    if this_.parent.pRejestrDok.eTyp = N5REJESTRDOK_FAKT_ZAK_RR then
+	    this_.curVat = netto2vat(n5pozzakup_wyl_podst_VAT(), this_.eVat)
+    else
+      if this_.parent.pRejestrDok.eTyp = N5REJESTRDOK_KOR_FAKT_ZAK_RR then
+        dim p_zakup : set p_zakup = trans_.getobj(TYPEID_N5ZAKUP , this_.parent.pPopZakup.idobj)  
+        if p_zakup.dDataWyst <= DateSerial(2008,4,30) then 
+          this_.curVat = netto2vat(n5pozzakup_wyl_podst_VAT(), this_.eVat)
+        else
+#ifdef ENABLE_VAT2011
+         if isModeVAT2011() then
+            this_.curVat = netto2vat(n5pozzakup_wyl_podst_VAT(), STAWKA_VAT_7)        
+         else
+            this_.curVat = netto2vat(n5pozzakup_wyl_podst_VAT(), STAWKA_VAT_6)        
+         end if
+#else         
+          this_.curVat = netto2vat(n5pozzakup_wyl_podst_VAT(), STAWKA_VAT_6)
+#endif
+        end if  
+      else
+        dim bWithoutVat: bWithoutVat = false  
+        this_.curVat = netto2vat_ex(n5pozzakup_wyl_podst_VAT(), this_.eVat, bWithoutVat)
+      end if
+    end if
+  end if
+END_COMPUTE
+
+BEGIN_COMPUTE(curWartBrutto)
+	this_.curWartBrutto = this_.curWartNetto + this_.curVat	
+END_COMPUTE
+#comment '-------------------------------------------------------------------------------
+
+BEGIN_RECALC(pzak_curWartWal)
+#ifdef APPCONFIG_WARTWAL_WG_NETTOWAL
+	dim oMtxCenaWart : set oMtxCenaWart = trans_.holdmutex(this_.type,this_.idobj,MTX_CENAWARTWAL)
+	if not oMtxCenaWart is nothing then
+		COMPUTE(curCenaNettoWal)
+	end if
+#else
+  #ifdef _SIGMA
+	  dim oMtxCenaWart : set oMtxCenaWart = trans_.holdmutex(this_.type,this_.idobj,MTX_CENAWARTWAL)
+	  if not oMtxCenaWart is nothing then
+		  COMPUTE(curCenaNettoWal)
+	  end if    
+  #else
+	  if (this_.parent.n5zakup_zagranica()) then
+		  dim oMtxCenaWart : set oMtxCenaWart = trans_.holdmutex(this_.type,this_.idobj,MTX_CENAWARTWAL)
+		  if not oMtxCenaWart is nothing then
+			  COMPUTE(curCenaNettoWal)
+		  end if
+	  end if
+  #endif  
+#endif  
+
+	COMPUTE(curClo)
+	COMPUTE(curVat)
+	COMPUTE(curWartNetto)
+  
+#ifdef APPCONFIG_FUNDUSZ_ROLNO_SPOZYWCZY
+  wyliczProcent
+#endif
+
+	this_.parent.curSumaWal = this_.parent.curSumaWal + this_.pzak_curWartWal - oldval
+END_RECALC
+
+BEGIN_RECALC(curCenaNettoWal)
+#ifdef APPCONFIG_WARTWAL_WG_NETTOWAL
+		dim oMtxCenaWart : set oMtxCenaWart = trans_.holdmutex(this_.type,this_.idobj,MTX_CENAWARTWAL)	
+		if not oMtxCenaWart is nothing then
+			COMPUTE(pzak_curWartWal)
+		end if  
+#else
+	if not (this_.parent.n5zakup_zagranica()) then	
+		dim oMtxCenaWart : set oMtxCenaWart = trans_.holdmutex(this_.type,this_.idobj,MTX_CENAWARTWAL)	
+		if not oMtxCenaWart is nothing then
+			COMPUTE(pzak_curWartWal)
+		end if
+	end if
+#endif
+
+	COMPUTE(curCenaBrutto)
+
+	n5pozzakup_markcheckprice
+END_RECALC
+
+BEGIN_RECALC(curIloscOpak)
+#ifdef _METROX
+		COMPUTE(pzak_curWartWal)
+#else
+	if (this_.parent.n5zakup_zagranica()) then
+		COMPUTE(curCenaNettoWal)
+	else
+		COMPUTE(pzak_curWartWal)
+	end if
+#endif  
+#ifdef _AMPLUS
+  'rzeczywista waga towaru
+  if not this_.pOpak is nothing then
+    this_.curExtra4 = ccur(this_.curIloscOpak * this_.pOpak.curCenaBrutto6)
+  end if
+  'cena za kilogram
+  if this_.curExtra4 <> ccur(0) then
+    this_.curExtra5 = ccur(this_.curWartNetto / this_.curExtra4)
+  end if
+#endif  
+END_RECALC
+
+BEGIN_RECALC(curOplatyZagr)
+	COMPUTE(curClo)
+	COMPUTE(curVat)
+	COMPUTE(curWartNetto)
+	this_.parent.curSumaOplatyZagr = this_.parent.curSumaOplatyZagr - oldval + this_.curOplatyZagr
+END_RECALC
+
+BEGIN_RECALC(curClo)
+	COMPUTE(curVat)
+	COMPUTE(curWartNetto)	
+	this_.parent.n5zakup_wylicz_suma_clo
+END_RECALC
+
+BEGIN_RECALC(curAkcyza)
+	COMPUTE(curVat)
+	COMPUTE(curWartNetto)	
+	this_.parent.curSumaAkcyza = this_.parent.curSumaAkcyza - oldval + this_.curAkcyza
+END_RECALC
+
+BEGIN_RECALC(pzak_curStCelna)
+	COMPUTE(curClo)
+END_RECALC
+
+BEGIN_RECALC(curOplatyKraj)
+	COMPUTE(curVat)
+	COMPUTE(curWartNetto)	
+	this_.parent.curSumaOplatyKraj = this_.parent.curSumaOplatyKraj - oldval + this_.curOplatyKraj
+END_RECALC
+
+'Zmiana wartości netto
+BEGIN_RECALC(curWartNetto)
+	COMPUTE(curVat)
+	COMPUTE(curWartBrutto)
+	this_.parent.n5zakup_update_Netto_sum this_.curWartNetto - oldval,this_.eVAT
+#ifdef _AMPLUS
+  'cena za kilogram
+  if this_.curExtra4 <> ccur(0) then
+    this_.curExtra5 = ccur(this_.curWartNetto / this_.curExtra4)
+  end if  
+#endif  
+END_RECALC
+
+'Zmiana wartości VAT
+BEGIN_RECALC(curVAT)
+	COMPUTE(curWartBrutto)
+	this_.parent.n5zakup_update_VAT_sum this_.curVAT - oldval,this_.eVAT
+END_RECALC
+
+BEGIN_RECALC(curWartBrutto)
+	this_.parent.curSumaBrutto = this_.parent.curSumaBrutto - oldval + this_.curWartBrutto
+END_RECALC
+
+BEGIN_RECALC(parent_cNaliczajClo)
+	COMPUTE(curClo)
+END_RECALC
+
+BEGIN_RECALC(parent_curKurs)
+	COMPUTE(curCenaBrutto)
+	COMPUTE(curClo)
+	COMPUTE(curVat)
+	COMPUTE(curWartNetto)
+END_RECALC
+
+'Zmiana produktu
+BEGIN_RECALC(pProdukt)
+	dim curOldIloscOpak:curOldIloscOpak = this_.curIloscOpak
+	this_.curIloscOpak = ccur(0.0)
+	
+	if not this_.pProdukt is nothing then
+		'VAT RR -- specjalny sposób traktowania
+		dim eVAT : eVAT = this_.pProdukt.n5produkt_get_eVAT()
+		if this_.pProdukt.prod_cRolny = "1" then
+			if this_.parent.pRejestrDok.eTyp = N5REJESTRDOK_FAKT_ZAK_RR or this_.parent.pRejestrDok.eTyp = N5REJESTRDOK_KOR_FAKT_ZAK_RR then
+				if this_.parent.dDataWyst <= DateSerial(2008,4,30) then
+					eVAT = clng(STAWKA_VAT_5)
+				else
+#ifdef ENABLE_VAT2011
+					if isModeVAT2011() then
+						eVAT = clng(STAWKA_VAT_7)       
+					else
+						eVAT = clng(STAWKA_VAT_6)        
+					end if
+#else          
+					eVAT = clng(STAWKA_VAT_6)
+#endif          
+				end if
+			end if
+		end if
+		
+    set this_.pOpak =this_.pProdukt.listOpakowania.get(1)	'domyślne opakowanie
+    
+    this_.eVAT = eVAT
+#ifdef ENABLE_DB12
+		'gdy nie jest podatnikiem VAT i stawka o.o. => wróć do 23%
+		if not this_.parent.n5zakup_isCzynnyPodatnik() and this_.eVat = clng(STAWKA_VAT_23_OO) then
+			this_.eVAT = clng(STAWKA_VAT_23)
+		end if
+#endif    
+		this_.curIloscOpak = curOldIloscOpak    
+#ifdef _AMPLUS
+    'ustaw w dExtra3 datę umowy z kartoteki klienta 
+    if not this_.parent.pDostawca is nothing then
+      if this_.parent.pDostawca.idobj > 0 then
+        dim oDost : set oDost = trans_.getobj(TYPEID_N5KLIENT,this_.parent.pDostawca.idobj)
+        if this_.parent.dDataWyst >= oDost.dDataUr then
+          this_.dExtra3 = oDost.dDataUr
+        end if
+      end if  
+    end if
+#endif
+		
+		n5pozzakup_markcheckprice
+	else
+		this_.pzak_curWartWal = ccur(0.0)
+#ifdef ENABLE_VAT2011
+		if isModeVAT2011() then
+			this_.eVAT = clng(STAWKA_VAT_23)
+		else
+			this_.eVAT = clng(STAWKA_VAT_22)
+		end if
+#else
+		this_.eVAT = clng(STAWKA_VAT_22)
+#endif
+
+		this_.curIloscOpak = curOldIloscOpak
+		set this_.pOpak = nothing
+    
+#ifdef _AMPLUS
+    'usuń datę z dExtra3
+    this_.dExtra3 = trans_.afc.globals.nulldate()
+#endif    
+    
+	end if
+	
+END_RECALC
+
+'Zmiana opakowania
+BEGIN_RECALC(pOpak)
+	if not this_.pOpak is nothing then
+		this_.pzak_curStCelna = this_.pOpak.curStCelna
+    
+#ifdef _KOMPOZYTY
+		if this_.parent.pRejestrDok.eTyp = N5REJESTRDOK_FAKT_ZAK or this_.parent.pRejestrDok.eTyp = N5REJESTRDOK_KOR_FAKT_ZAK then
+			this_.curExtra5 = this_.pOpak.curCenaNetto1
+		end if
+#endif    
+    
+	end if
+#ifdef APPCONFIG_WSTAWIAJ_CENY_NA_DOK_OBCYCH
+	n5pozzakup_setPrices
+#endif
+END_RECALC
+
+#comment '-------------------------------------------------------------------------------
+function n5pozzakup_befins()
+    n5pozzakup_befins = check_opak_product() and this_.n5pozzakup_check_ilosc_korekta()
+
+end function
+
+function n5pozzakup_befupd()
+	n5pozzakup_befupd = check_opak_product()
+
+end function
+
+
+function check_opak_product()
+	check_opak_product = false
+
+	if this_.pOpak is nothing or this_.pProdukt is nothing then
+		nx_.trace.fatal "FZA001", "Brak produktu na pozycji " + cstr(this_.parent.listPozycje.findonid(this_.idobj))
+		exit function
+	end if
+	
+	check_opak_product = true
+end function
+
+function n5pozzakup_check_ilosc_korekta():n5pozzakup_check_ilosc_korekta = true
+
+	if trans_.var(GVAR_OPERATION_MODE) = clng(OPERATION_MODE_IMPORT) then
+		exit function
+	end if
+
+	if this_.parent.n5zakup_isKorekta then
+		if not this_.parent.pPopZakup is nothing then
+			dim iLP : iLP = this_.parent.listPozycje.findonid(this_.idobj)
+			if this_.parent.pPopZakup.listPozycje.exists(iLP) then
+				dim pOrg:set pOrg = this_.parent.pPopZakup.listPozycje.get(iLP)
+				if this_.curIloscOpak > pOrg.curIloscOpak then
+					nx_.trace.fatal "FZA002", "Ilość na pozycji " + cstr(iLP) + " jest większa niż na dokumencie oryginalnym."
+					n5pozzakup_check_ilosc_korekta = false
+				end if
+			end if
+		end if
+	end if
+end function
+
+function n5pozzakup_markcheckprice()
+	
+	if not this_.pProdukt is nothing then
+		this_.pProdukt.prod_cCheckPrice = "1"
+	end if
+
+end function
+
+
+'Funkcja nadaje cene bazowa z uwzglednieniem rabatu
+'lub tez nie
+function n5pozzakup_setPrices(): n5pozzakup_setPrices = false
+
+	if (this_.pOpak is nothing) then
+		n5pozzakup_setPrices = true
+		exit function
+	end if
+	if (this_.pProdukt is nothing) then
+		n5pozzakup_setPrices = true
+		exit function
+	end if
+	
+	dim pKlient : set pKlient = this_.parent.pDostawca
+
+	dim nNrZestawuCen : nNrZestawuCen = 1
+	if not pKlient is nothing then
+		nNrZestawuCen = clng(pKlient.kli_eZestawCenowy)
+	end if
+
+	dim dData : dData = this_.parent.dDataWyst
+
+	dim curCenaBazowa
+	dim curCenaWynik
+	dim bCPRes : bCPRes = nx_compute_price(pKlient,this_.pProdukt,this_.pOpak,dData,0.0, _
+		nNrZestawuCen, this_.parent.pWaluta,true, _
+		curCenaBazowa,curCenaWynik)
+
+	this_.curCenaNettoWal = curCenaWynik
+	
+	n5pozzakup_setPrices = true
+end function
+
+#comment '-------------------------------------------------------------------------------
+function n5pozzakup_listop(byval nInx)
+	if nInx < 0 then	'usuwanie		
+		this_.pzak_curWartWal = ccur(0.0)
+		this_.curAkcyza = ccur(0.0)
+		this_.curOplatyZagr = ccur(0.0)
+    this_.curOplatyKraj = ccur(0.0)
+	end if
+	n5pozzakup_listop = true
+end function
+
+function n5pozzakup_as_text()
+	dim strText : strText = "Pozycja " + cstr(this_.parent.listPozycje.findonid(this_.idobj)) + ":"
+	if not this_.pProdukt is nothing then
+		strText = this_.pProdukt.text
+	end if
+   n5pozzakup_as_text = strText
+end function
+#comment '-------------------------------------------------------------------------------
+
+function n5pozzakup_copy_from(byval pSourcePoz)
+  this_.recalcenabled = false
+  set this_.pProdukt = pSourcePoz.pProdukt
+	this_.eVat = pSourcePoz.eVat
+	set this_.pOpak = pSourcePoz.pOpak
+
+	this_.curIloscOpak = pSourcePoz.curIloscOpak	
+	this_.curCenaNettoWal = pSourcePoz.curCenaNettoWal
+  this_.pzak_curWartWal = pSourcePoz.pzak_curWartWal
+	this_.curCenaBrutto = pSourcePoz.curCenaBrutto
+	this_.curWartNetto = pSourcePoz.curWartNetto
+	this_.curVat = pSourcePoz.curVat
+	this_.curWartBrutto = pSourcePoz.curWartBrutto
+	
+	this_.strUwagi = pSourcePoz.strUwagi
+	this_.strExtra1 = pSourcePoz.strExtra1
+	this_.strExtra2 = pSourcePoz.strExtra2
+	this_.dExtra3 = pSourcePoz.dExtra3
+	this_.curExtra4 = pSourcePoz.curExtra4
+	this_.curExtra5 = pSourcePoz.curExtra5
+	set this_.pKwalifikatorEx = pSourcePoz.pKwalifikatorEx
+	
+	'importowe
+	this_.curOplatyZagr = pSourcePoz.curOplatyZagr
+	this_.curClo = pSourcePoz.curClo
+	this_.curAkcyza = pSourcePoz.curAkcyza
+	this_.curOplatyKraj = pSourcePoz.curOplatyKraj
+  this_.recalcenabled = true
+end function
+
+function n5pozzakup_fill_from_pozzam(byref source)
+	#ifdef _DEBUG
+	trans_.message 1002 , 0 , "DEBUG: n5pozzakup_fill_from_pozzam"
+	#endif
+	set this_.pProdukt = source.pProdukt
+	set this_.pOpak = source.pOpak
+	'ilosc na zakupie to ilosc pozostala do realizacji
+	this_.curIloscOpak = source.curIloscOpakPoz
+	'ustawiamy ilosc pozostałą do realizacji na zero - bo zrealizowalismy wszystko
+#ifndef _IOW  
+	source.pzam_curIloscOpakZreal = this_.curIloscOpak
+#endif  
+	this_.curCenaNettoWal = source.curCenaNettoWal
+
+	if this_.curIloscOpak = 0 then
+		trans_.message 1002 , 0 , "Ilośc opakowań dla " +this_.text+ " została ustawiona na 0 - oznacza to że pozycja ta musiała zostać już wcześniej zrealizowana lub ilość opakowań dla tej pozycji na zamówieniu wynosi właśnie 0"
+	end if
+
+end function
+
+function n5pozzakup_fill_from_pozdokmag(byref source)
+	set this_.pProdukt = source.pProdukt
+	set this_.pOpak = source.pOpak
+	this_.curIloscOpak = source.curIloscOpak
+	this_.curCenaNettoWal = source.curCenaMag
+  this_.pzak_curWartWal = this_.curIloscOpak * this_.curCenaNettoWal
+end function
+
+#ifdef APPCONFIG_FUNDUSZ_ROLNO_SPOZYWCZY
+function wyliczProcent
+  '0.1% - fundusz promocji produktów rolno-spożywczych
+  if not this_.pProdukt is nothing then
+    if this_.pProdukt.prod_strNazwaObcojezyczna3 <> "" then
+      dim strNrFund : strNrFund = this_.pProdukt.prod_strNazwaObcojezyczna3
+      dim curKwotaProc
+      'automatyczne wyliczenie => numer_funduszu = 7 i typ dokumentu to faktura RR lub numer_funduszu = 6
+      if this_.strExtra2 = "" then
+        if (strNrFund = "6") or (strNrFund = "7" and (this_.parent.pRejestrDok.eTyp = N5REJESTRDOK_FAKT_ZAK_RR or this_.parent.pRejestrDok.eTyp = N5REJESTRDOK_KOR_FAKT_ZAK_RR)) then
+          curKwotaProc = trans_.afc.convert.roundn(this_.pzak_curWartWal * ccur(0.001),2)
+          this_.strExtra2 = cstr(curKwotaProc) + ";" + strNrFund
+        end if
+      else
+        'przelicz ponownie
+        this_.strExtra2 = ""
+        curKwotaProc = trans_.afc.convert.roundn(this_.pzak_curWartWal * ccur(0.001),2)
+        this_.strExtra2 = cstr(curKwotaProc) + ";" + strNrFund        
+      end if
+    else
+      this_.strExtra2 = ""
+    end if  
+  end if
+end function
+#endif
+
+]]>
+  </script>
+</class>

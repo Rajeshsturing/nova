@@ -1,0 +1,705 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+RAPTEMPLATE_POTWIERDZENIE_SALD
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1250.h"
+#define RAPORT_TITLE Potwierdzenie sald
+
+
+#define SYMBOL_KONTA			<% so.write cstr(pRec("c_symbol")) %>
+
+-->
+<page style='36'>
+<config>
+<title>RAPORT_TITLE</title>
+<script>
+<![CDATA[
+<%
+function query()
+
+query="select "+_
+"'c_symbol'=(t_konto.strSymbol),'c_idkonto'=max(t_konto.IdObj), "+_
+"'c_konto_nazwa'=max(t_konto.strNazwa), "+_
+"'klient'=max(t_klient.idobj),"+_
+"'klient_nazwa'=max(t_klient.strNazwa), "+_
+" 'klient_ulica'=max(t_klient.strUlica),'klient_nrdomu'=max(t_klient.strNrDomu), "+_
+" 'klient_nrlokalu'=max(t_klient.strNrLokalu),'klient_kod'=max(t_klient.strKod), "+_
+" 'klient_poczta'=max(t_klient.strPoczta), "+_ 
+" 'klient_miejscowosc'=(select strNazwa from n5miejscowosc where n5miejscowosc.idobj = max(t_klient.pMiejscowosc)), "+_ 
+" 'c_wn'=sum(t_dekret.curWn),'c_ma'=sum(t_dekret.curMa)   "+_
+" from n5konto as t_konto "+_
+"left outer join n5klient t_klient on t_konto.wrefPodmiotRozrach = t_klient.idobj   "+_
+"and  t_konto.wrefPodmiotRozrach_wrt = TYPEID_N5KLIENT "+_
+"inner join n5dekret as t_dekret on t_dekret.pKonto = t_konto.IdObj    "+_
+"left outer join n5transakcja as t_trans on t_dekret.pTransakcja = t_trans.IdObj  "+_ 
+" where %1 and %2   and t_klient.idobj is not null "+_
+#ifdef _INTERCO
+" and t_dekret.dDataKsieg between " + trans_.afc.convert.date2SQL(util_.RokKsiegowy_Poczatek()) + " and " +_
+  trans_.afc.convert.date2SQL(util_.RokKsiegowy_Koniec()) +_
+#endif
+" group by t_konto.strSymbol "+_
+#ifdef _INTERCO
+" having  (sum(t_dekret.curWn) <> sum(t_dekret.curMa) or sum(t_trans.curWn) <> sum(t_trans.curMa)) and %3 "
+#else
+" having  sum(t_dekret.curWn) <> sum(t_dekret.curMa) and %3 "
+#endif
+end function
+%>
+<%
+dim pRaportMomentParam
+
+
+function default_param()
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+	pParamArray.add doc_.afc.rap.param.new_text("Symbol").bindexpr("t_konto.strSymbol COLLATE latin1_general_cs_as")
+
+	set pRaportMomentParam = doc_.afc.rap.param.new_date("Analizowany moment").bindexpr("t_dekret.dDataKsieg")
+	pParamArray.add pRaportMomentParam
+
+	pParamArray.add doc_.afc.rap.param.new_currency("Kwota").bindexpr("(abs(sum(t_dekret.curWn) - sum(t_dekret.curMa)))")
+
+	set default_param = pParamArray
+end function
+%>
+
+
+<%
+function write_actual_param(byref pActualParam)
+dim iter
+dim bAnyWritten : bAnyWritten = false
+if not pActualParam is nothing then
+for iter = 0 to pActualParam.upperIndex
+if pActualParam.value(iter).get_desc() <> "" then 
+bAnyWritten = true
+	so.write "<t size='5' /><text fontsize='3'><![CD"+"ATA[" + pActualParam.value(iter).get_desc() + "]"+"]></text><br/>"
+end if
+next
+end if
+if not bAnyWritten then 
+	so.write "<t fontsize='3'>brak</t><br/>"
+end if
+	so.write "<br/>"
+end function
+%> 
+
+<%
+dim curWn : curWn = 0.0
+dim curMa : curMa = 0.0
+
+dim klient_nazwa
+dim klient_ulica
+dim klient_nrdomu
+dim klient_nrlokalu
+dim klient_kod
+dim klient_poczta
+dim klient_miejscowosc
+
+
+
+dim iter
+
+
+function section_header_1(byref pSection,byref pRec)
+if pRec.Absoluteposition <> 1 then
+%>
+<ff/>
+<%
+end if
+	dim oRecordset
+	dim klient_ulica_nr
+	dim klient_kod_poczta
+	dim where_str : where_str = pRaportMomentParam.get_where_part(trans_)
+	dim data
+	
+	if where_str <> "" then 
+		where_str= Replace(where_str,"t_dekret.dDataKsieg = ","t_dekret.dDataKsieg <= ")
+	end if
+		
+	data = Replace(where_str,"t_dekret.dDataKsieg <= ","")
+	data = Replace(data,"(","")
+	data = Replace(data,")","")
+	data = Replace(data,"{d '","")
+	data = Replace(data,"'}","")
+
+	where_str = where_str + " and t_dekret.dDataKsieg between " +_
+		trans_.afc.convert.date2SQL(util_.RokKsiegowy_Poczatek()) + " and " +_
+		trans_.afc.convert.date2SQL(util_.RokKsiegowy_Koniec())
+	
+	dim info1 : info1 = "W przypadku stwierdzenia niezgodności powyższego salda z zapisami w Państwa księgach prosimy o przesłanie niezbędnych wyjaśnień."
+	set oRecordset=trans_.createadors( "select sum(t_dekret.curWn), sum(t_dekret.curMa), 'c_trans_id'=max(t_trans.idobj), "+_
+		" 'c_trans'=isnull(t_trans.strSymTrans,''), 'c_trans_dataRazp' = max(isnull(t_trans.dDataRozp,'')) "+_
+		" from n5dekret t_dekret "+_
+		" left outer join n5transakcja t_trans On t_dekret.pTransakcja = t_trans.idobj"+_
+		" where pKonto=" + cstr(pRec("c_idkonto")) +_
+		" and " + cstr(where_str) +_		
+		" group by t_trans.strSymTrans "+_
+		" having  sum(t_dekret.curWn) <> sum(t_dekret.curMa)" )
+
+	klient_nazwa = pRec("klient_nazwa")
+	klient_ulica = pRec("klient_ulica")
+	klient_nrdomu = pRec("klient_nrdomu")
+	klient_nrlokalu = pRec("klient_nrlokalu")
+	klient_kod = pRec("klient_kod")
+	klient_poczta = pRec("klient_poczta")
+	klient_miejscowosc = pRec("klient_miejscowosc")
+	
+	
+	if klient_nrlokalu<>" " then 
+	 	klient_ulica_nr = klient_ulica + " " + klient_nrdomu + "/" + klient_nrlokalu
+	else
+		klient_ulica_nr = klient_ulica + " " + klient_nrdomu
+	end if
+	if trim(klient_poczta) = "" then
+		klient_kod_poczta = klient_kod + " " + klient_miejscowosc
+	else
+		klient_kod_poczta = klient_kod + " " + klient_poczta
+	end if
+%>
+
+<table width='max'>
+<tbody>
+<tr  fontsize='3'>
+	<td colspan='3' width='max'><text bold='true'><![CDATA[<% so.write util_.Firma_Nazwa %>]]></text></td>
+	<td colspan='2' width='max' align='right'><t ><![CDATA[<% so.write util_.Firma_Miasto + " " + util_.Biezaca_Data%>]]></t></td>
+</tr>
+<tr  fontsize='3'>
+	<td colspan='5'><text bold='true'><![CDATA[<% so.write util_.Firma_Ulica %>]]></text></td>
+	
+</tr>
+<tr  fontsize='3'>
+	<td colspan='5'><t bold='true'><![CDATA[<% if util_.Firma.strPoczta="" then so.write util_.Firma_Kod_Miasto else if util_.Firma.strPoczta<>"" and util_.Firma.strPoczta<>util_.Firma.pMiejscowosc.strNazwa then so.write util_.Firma.strKod + " " + util_.Firma.strPoczta else if util_.Firma.strPoczta=util_.Firma.pMiejscowosc.strNazwa then so.write util_.Firma_Kod_Miasto end if end if%>]]></t></td>
+	
+</tr>
+<% if (util_.Firma.strPoczta<>"") and (util_.Firma.pMiejscowosc.strNazwa <> util_.Firma.strPoczta) then %>
+<tr  fontsize='3'>
+	<td colspan='5'><t bold='true'><![CDATA[<% so.write util_.Firma.pMiejscowosc.strNazwa %>]]></t><br/></td>
+	
+</tr>
+<%end if%>
+<tr fontsize='3'>
+	<td colspan='5'>
+		<t></t>
+	</td>
+</tr>
+<tr  fontsize='3'>
+	<td colspan='3' width='max'></td>
+	<td colspan='2' width='max' align='left'><text bold='true'><![CDATA[<%so.write klient_nazwa %>]]></text></td>
+</tr>
+<tr  fontsize='3'>
+	<td colspan='3' width='max'></td>
+	<td colspan='2' width='max' align='left'><t bold='true'><![CDATA[<%so.write klient_ulica_nr %>]]></t>	</td>
+</tr>
+<tr  fontsize='3'>
+	<td colspan='3' width='max'></td>
+	<td colspan='2' width='max' align='left'><t bold='true'><![CDATA[<%so.write klient_kod_poczta %>]]></t></td>
+</tr>
+
+<tr fontsize='3'>
+	<td colspan='5'>
+		<t></t>
+	</td>
+</tr>
+
+
+<tr fontsize='5'>
+	<td colspan='5'>
+		<text><![CDATA[<% so.write "Na podstawie art. 26 ustawy z 29 września 1994 r. o rachunkowości (j.t. Dz.U. z 2002 r. Nr 76, poz. 694) prosimy o potwierdzenie zgodności sald figurujących w naszych księgach na dzień "+  cstr(data)+"."%>]]></text>
+		
+	</td>
+</tr>
+<tr>
+	<td colspan='5'>
+		<text fontsize='5'><![CDATA[Nasze konto:]]></text>		
+		<text fontsize='5' bold='true'><![CDATA[SYMBOL_KONTA]]></text>
+	</td>
+</tr>
+
+<tr fontsize='5'>
+	<td colspan='5'>
+		<text><![CDATA[Na saldo składają się następujące kwoty:]]></text>
+		
+	</td>
+</tr>
+
+ 
+
+<tr fontsize='3'>
+	<td colspan='5'>
+		<t></t>
+	</td>
+</tr>
+
+<tr style='STYLE_GROUP_HEADER' fontsize='3'>
+	
+	
+	<td width='min'  bold='true'><t>LP</t></td>
+	<td >
+		<t bold='true'><![CDATA[Dowód księgowy]]></t>
+	</td>
+	<td >
+		<t  bold='true'><![CDATA[Data księgowania]]></t>
+	</td>
+	<td align='right'>
+		<t bold='true'><![CDATA[Kwota Winien]]></t>
+	</td>
+	<td align='right'>
+		<t bold='true'><![CDATA[Kwota Ma]]></t>
+	</td>
+</tr>
+
+<%
+	iter = 1
+	curWn = 0.0
+	curMa = 0.0
+
+	while not oRecordset.eof
+%>
+<tr fontsize='3' bordercolor='transparent' >
+	<td align='right'><t><% so.write cstr(iter)%></t></td>
+	<td align='left'>
+		<t><%so.write cstr(oRecordset(3).value)%></t>
+	</td>
+	<td align='right'>
+		<t><%if doc_.afc.display.fulldate(oRecordset(4).value)="1900-01-01" then so.write "brak" else so.write doc_.afc.display.fulldate(oRecordset(4).value) end if%></t>	
+	</td>
+	<td align='right'>
+	<%
+		dim curPosWn : curPosWn = ccur(oRecordset(0).value)
+		dim curPosMa : curPosMa = ccur(oRecordset(1).value)
+		if curPosWn > curPosMa then
+			curPosWn = curPosWn - curPosMa
+			curPosMa = ccur(0.0)
+		else
+			curPosMa = curPosMa - curPosWn
+			curPosWn = ccur(0.0)
+		end if
+		if curPosWn <> ccur(0.0) then
+	%>
+		RXE_MONEY_VAR(curPosWn)
+	<%
+		end if
+	%>
+	</td>
+	<td align='right'>
+		<%
+		if curPosMa <> ccur(0.0) then
+		%>
+
+		RXE_MONEY_VAR(curPosMa)
+	<%
+		end if
+	%>
+	</td>
+</tr>
+
+
+<%
+		curWn = curWn + ccur(oRecordset(0).value)
+		curMa = curMa + ccur(oRecordset(1).value)
+		iter = iter + 1
+		oRecordset.movenext
+	wend
+
+%>
+
+
+<%
+dim saldo : saldo = 0.0
+saldo = curWn - curMa%>
+<tr bordercolor='white'  fontsize='3' style='STYLE_GROUP_HEADER'>
+	<td></td>
+	<td colspan='2'  >
+		<t>Saldo:</t>
+	</td>
+	<td align='right'  >
+	<%if saldo > 0 then%>
+		RXE_MONEY_VAR(saldo)	
+	<%end if%>
+	</td>
+	<td align='right'  >
+	<%if saldo < 0 then%>
+		RXE_MONEY_VAR(-saldo)	
+	<%end if%>
+	</td>
+
+</tr>
+
+<tr fontsize='5'>
+	<td colspan='5'>
+		<text><![CDATA[W przypadku stwierdzenia niezgodności powyższego salda z zapisami w Państwa księgach prosimy o przesłanie niezbędnych wyjaśnień.]]></text>
+		
+	</td>
+</tr>
+
+<tr fontsize='3'>
+	<td colspan='5'>
+		<t></t>
+	</td>
+</tr>
+<tr fontsize='3'>
+	<td colspan='5'>
+		<t></t>
+	</td>
+</tr>
+<tr>
+	<td></td>
+	<td colspan='3'  >
+		
+	</td>
+	<td align='right'  >
+		<t>	</t>
+	</td>
+</tr>
+
+<tr>
+	<td colspan='5'>
+	<table>
+		<tbody>
+			<tr>
+				
+				<td align='center'>
+				<t><![CDATA[<% so.write util_.Uzytkownik_Nazwa %>]]></t>
+				</td>	
+				<td width='max'/>	
+			</tr>
+
+			<tr>
+				
+				<td align='center'>
+				<t>....................................................................................</t>
+				</td>	
+				<td width='max'/>	
+			</tr>
+			<tr>
+				
+				<td align='center'>
+				<t>Podpis wystawiającego</t>
+				</td>	
+				<td width='max'/>	
+			</tr>
+
+		</tbody>
+	</table>	
+	</td>
+</tr>
+
+
+<tr fontsize='3'>
+	<td colspan='5'>
+		<t></t><br/><br/>
+	</td>
+</tr>
+<tr fontsize='3'>
+	<td colspan='5'>
+		<t></t>
+	</td>
+</tr>
+<tr fontsize='3'>
+	<td colspan='5'>
+		<t></t>
+	</td>
+</tr>
+</tbody>
+</table>
+
+<t>&nbsp;</t><br/><ff/>
+
+<table width='max'>
+<tbody>
+<tr  fontsize='3'>
+	<td colspan='5' width='max' align='left'><t bold='true'><![CDATA[<%so.write klient_nazwa %>]]></t></td>
+</tr>
+<!-- czarna dziura -->
+<tr  fontsize='3'>
+	<td colspan='5' width='max' align='left'><t bold='true'><![CDATA[<%so.write klient_ulica_nr %>]]></t></td>
+	
+</tr>
+<tr  fontsize='3'>
+	<td colspan='5' width='max' align='left'><t bold='true'><![CDATA[<%so.write klient_kod_poczta %>]]></t></td>
+	
+</tr>
+
+<tr fontsize='3'>
+	<td colspan='5'>
+		<t></t>
+	</td>
+</tr>
+
+<tr  fontsize='3'>
+	<td colspan='3' width='max'></td>
+	<td colspan='2' width='max'><text bold='true'><![CDATA[<% so.write util_.Firma_Nazwa %>]]></text></td>
+</tr>
+
+
+<tr  fontsize='3'>
+	<td colspan='3' width='max'></td>
+	<td colspan='2'><text bold='true'><![CDATA[<% so.write util_.Firma_Ulica %>]]></text></td>
+	
+</tr>
+
+<tr  fontsize='3'>
+	<td colspan='3' width='max'></td>
+	<td colspan='2'><t bold='true'><![CDATA[<% if util_.Firma.strPoczta="" then so.write util_.Firma_Kod_Miasto else if util_.Firma.strPoczta<>"" and util_.Firma.strPoczta<>util_.Firma.pMiejscowosc.strNazwa then so.write util_.Firma.strKod + " " + util_.Firma.strPoczta else if util_.Firma.strPoczta=util_.Firma.pMiejscowosc.strNazwa then so.write util_.Firma_Kod_Miasto end if end if%>]]></t></td>
+	
+</tr>
+
+
+<% if (util_.Firma.strPoczta<>"") and (util_.Firma.pMiejscowosc.strNazwa <> util_.Firma.strPoczta) then %>
+<tr  fontsize='3'>
+	<td colspan='3' width='max'></td>
+	<td colspan='2'><t bold='true'><![CDATA[<% so.write util_.Firma.pMiejscowosc.strNazwa %>]]></t></td>
+	
+</tr>
+<%end if%>
+
+<tr fontsize='3'>
+	<td colspan='5'>
+		<t></t>
+	</td>
+</tr>
+
+<tr fontsize='3'>
+	<td colspan='4'>
+		<text><![CDATA[<% so.write "Na podstawie art. 26 ustawy z 29 września 1994 r. o rachunkowości (j.t. Dz.U. z 2002 r. Nr 76, poz. 694) potwierdzamy zgodność sald figurujących w naszych księgach na dzień " +cstr(data) +"."%> ]]></text>
+	</td>
+</tr>
+<tr fontsize='3'>
+	<td colspan='5'>
+		<text><![CDATA[Na saldo składają się następujące kwoty: ]]></text>
+	</td>
+</tr>
+
+
+<tr fontsize='3'>
+	<td colspan='5'>
+		<t></t>
+	</td>
+</tr>
+
+
+<tr style='STYLE_GROUP_HEADER' fontsize='3'>
+	
+	
+	<td width='min'  bold='true'><t>LP</t></td>
+	<td >
+		<t bold='true'><![CDATA[Dowód księgowy]]></t>
+	</td>
+	<td >
+		<t  bold='true'><![CDATA[Data księgowania]]></t>
+	</td>
+	<td align='right'>
+		<t bold='true'><![CDATA[Kwota Winien]]></t>
+	</td>
+	<td align='right'>
+		<t bold='true'><![CDATA[Kwota Ma]]></t>
+	</td>
+</tr>
+<%
+
+
+	dim oRecordset_
+	set oRecordset_=trans_.createadors( _
+		"select sum(t_dekret.curWn), sum(t_dekret.curMa), 'c_trans_id'=max(t_trans.idobj), "+_
+		" 'c_trans'=isnull(t_trans.strSymTrans,''), 'c_trans_dataRazp' = max(isnull(t_trans.dDataRozp,'')) "+_
+		" from n5dekret t_dekret "+_
+		" left outer join n5transakcja t_trans On t_dekret.pTransakcja = t_trans.idobj"+_
+		" where pKonto=" + cstr(pRec("c_idkonto")) +_
+		" and " + cstr(where_str) +_
+		" group by t_trans.strSymTrans "+_
+		" having  sum(t_dekret.curWn) <> sum(t_dekret.curMa)" )
+	iter = 1
+	curWn = 0.0
+	curMa = 0.0
+
+	while not oRecordset_.eof
+%>
+<tr fontsize='3' bordercolor='transparent' >
+	<td align='right'><t><% so.write cstr(iter)%></t></td>
+	<td align='left'>
+		<t><%so.write cstr(oRecordset_(3).value)%></t>
+	</td>
+	<td align='right'>
+		<t><% if doc_.afc.display.fulldate(oRecordset_(4).value)="1900-01-01" then so.write "brak" else so.write doc_.afc.display.fulldate(oRecordset_(4).value) end if%></t>	
+	</td>
+
+	<td align='right'>
+	<%
+		curPosWn = ccur(oRecordset_(1).value)
+		curPosMa = ccur(oRecordset_(0).value)
+		if curPosWn > curPosMa then
+			curPosWn = curPosWn - curPosMa
+			curPosMa = ccur(0.0)
+		else
+			curPosMa = curPosMa - curPosWn
+			curPosWn = ccur(0.0)
+		end if
+		if curPosWn <> ccur(0.0) then
+	%>
+		RXE_MONEY_VAR(curPosWn)
+	<%
+		end if
+	%>
+	</td>
+	<td align='right'>
+		<%
+		if curPosMa <> ccur(0.0) then
+		%>
+
+		RXE_MONEY_VAR(curPosMa)
+	<%
+		end if
+	%>	
+	</td>
+</tr>
+
+
+<%
+		curWn = curWn + ccur(oRecordset_(0).value)
+		curMa = curMa + ccur(oRecordset_(1).value)
+		iter = iter + 1
+		oRecordset_.movenext
+	wend
+
+%>
+
+<%
+saldo = 0.0
+saldo = - (curWn - curMa)%>
+<tr bordercolor='white'  fontsize='3' style='STYLE_GROUP_HEADER'>
+	<td></td>
+	<td colspan='2'  >
+		<t>Saldo:</t>
+	</td>
+	<td align='right'  >
+	<%if saldo > 0 then%>
+		RXE_MONEY_VAR(saldo)	
+	<%end if%>
+	</td>
+	<td align='right'  >
+	<%if saldo < 0 then%>
+		RXE_MONEY_VAR(-saldo)	
+	<%end if%>
+	</td>
+</tr>
+<tr fontsize='3'>
+	<td colspan='5'>
+		<t></t>
+	</td>
+</tr>
+<tr fontsize='3'>
+	<td colspan='5'>
+		<t></t>
+	</td>
+</tr>
+
+<tr>
+	<td colspan='5'>
+	<table>
+		<tbody>
+			<tr>
+				<td width='max'/>	
+				<td align='center'>
+				<t>....................................................................................</t>
+				</td>	
+			</tr>
+			<tr>
+				<td width='max'/>	
+				<td align='center'>
+				<t>Podpis potwierdzającego</t>
+				</td>	
+			</tr>
+
+		</tbody>
+	</table>	
+	</td>
+</tr>
+
+
+<%
+nSectionPicCounter=nSectionPicCounter+1
+end function
+%>
+<%
+function section_footer_1(byref pSection)
+%>
+<tr fontsize='3'>
+	<td colspan='5'>
+		<t></t>
+ 	</td>
+</tr>
+</tbody>
+<tfoot>
+</tfoot>
+</table>
+<t>&nbsp;</t><br/>
+
+<%
+end function
+%>
+
+
+
+<%
+function body_row(byref pSection,byref pRec)
+end function
+%>
+<%
+function body_header(byref pSection,byref pRec)
+%>
+
+<%
+end function
+%>
+<%
+function body_footer(byref pSection)
+%>
+<%
+end function
+%>
+<%dim nSectionPicCounter : nSectionPicCounter = 10000%>
+function section_hideshow_hli(byref pHLI)
+doc_.afc.formsection.section_hideshow page_, pHLI.prop(100)
+end function
+
+
+]]>
+</script>
+</config>
+<header>
+</header>
+<body>
+
+
+
+<%
+dim pRapExec : set pRapExec = rapeng_.new_engine()
+with pRapExec
+	.add_body_ex getref("body_header"),getref("body_footer"),getref("body_row")
+	.add_group_section 0,getref("section_header_1"),getref("section_footer_1")
+
+if .prepare("RAPORT_TITLE",default_param(),rapeng_.get_raport_param(),query()) then
+%>
+<%
+	'rapeng_.write_actual_param so,rapeng_.get_raport_param()
+
+	.ReplaceQueryParam "t_dekret.dDataKsieg = ","t_dekret.dDataKsieg <= "
+
+	if not .perform then
+	so.write "<p style='21'><t>Brak danych spełniających podane kryteria</t></p>"
+	end if
+	
+%>
+<%
+end if
+end with
+%>
+</body>
+<footer>
+</footer>
+</page>

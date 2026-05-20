@@ -1,0 +1,243 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1006.h"
+#include "h1200.h" 
+#include "h1203.h" 
+#inlcude "h1231.h"
+#include "h1229.h" 
+#include "h1240.h"
+-->
+<class>
+	<identifier>TYPEID_N5PROTOKOL_ABAS</identifier>
+	<table>n5protokol_abas</table>
+	<humanname>Protokół</humanname>
+#ifndef _ABAS_INWESTYCJE
+	<hidden/>
+#endif
+	<idobj/>
+  <!-- numer dokumentu -->
+	<embedded>
+		<name>prot_strNrDok</name>
+		<sqltype>SQLvc32</sqltype>
+		<humanname>Numer dokumentu</humanname>
+		<nonempty/>
+	</embedded>
+  <!-- odwołanie do projektu -->
+	<ref>
+		<name>prot_pProjekt</name>
+		<humanname>Projekt</humanname>
+		<typeid>TYPEID_N5PROJEKT_ABAS</typeid>
+		<optional/>
+	</ref>  
+  <!-- numer wewnętrzny protokołu -->
+  <embedded>
+    <name>prot_nNumWew</name>
+    <sqltype>SQLlong</sqltype>
+    <humanname>Wewnętrzny numer protokołu</humanname>
+  </embedded>
+  <!-- data wystawienia protokołu -->
+	<embedded>
+		<name>prot_dDataWyst</name>
+		<sqltype>SQLdate</sqltype>
+		<humanname>Data wystawienia</humanname>
+		<nonempty/>
+	</embedded>  
+  <!-- data akceptacji protokołu -->
+	<embedded>
+		<name>prot_dDataAkcept</name>
+		<sqltype>SQLdate</sqltype>
+		<humanname>Data akceptacji przez klienta</humanname>
+		<default>null</default>
+	</embedded>  
+  <!-- waluta -->
+	<ref>
+		<name>prot_pWaluta</name>
+		<humanname>Waluta</humanname>
+		<typeid>TYPEID_N5JEDNOSTKA</typeid>
+	</ref>    
+  <!-- wartość protokołu -->
+	<embedded>
+		<name>prot_curWartosc</name>
+		<sqltype>SQLcurrency</sqltype>
+		<humanname>Wartość protokołu</humanname>
+	</embedded>
+  <!-- suma zaawansowania prac -->
+  <embedded>
+    <name>prot_curSumaZaaw</name>
+    <sqltype>SQLcurrency</sqltype>
+    <humanname>Suma zaawansowania prac</humanname>
+  </embedded>
+  <!-- suma prac od początku budowy -->
+  <embedded>
+    <name>prot_curSumaPocz</name>
+    <sqltype>SQLcurrency</sqltype>
+    <humanname>Suma prac od początku budowy</humanname>
+  </embedded>
+  <!-- suma prac z poprzedniego protokołu -->
+  <embedded>
+    <name>prot_curSumaPop</name>
+    <sqltype>SQLcurrency</sqltype>
+    <humanname>Suma prac z poprzedniego protokołu</humanname>
+  </embedded>
+  <!-- suma prac w aktualnym okresie -->
+  <embedded>
+    <name>prot_curSumaAkt</name>
+    <sqltype>SQLcurrency</sqltype>
+    <humanname>Suma prac w aktualnym okresie</humanname>
+  </embedded>
+  <!-- odwołanie do pozycji projektu/protokołu -->
+	<list>
+		<name>prot_listPozycje</name>
+		<humanname>Pozycje protokołu</humanname>
+		<typeid>TYPEID_N5POZPROJEKT_ABAS</typeid>
+	</list>
+  <!-- uwagi do protokołu -->
+	<embedded>
+		<name>prot_strUwagi</name>
+		<sqltype>SQLvc1024</sqltype>
+		<humanname>Uwagi</humanname>
+	</embedded>
+  <!-- odwołanie do faktury sprzedaży -->
+	<ref>
+		<name>prot_pFaktura</name>
+		<humanname>Faktura sprzedaży</humanname>
+		<typeid>TYPEID_N5SPRZEDAZ</typeid>
+		<optional/>
+	</ref>
+  
+  <!-- pola użytkownika -->
+  XDF_EXTRAS_OBJ(prot_)
+  
+  <cursors>
+    DEFAULT_CURSOR(wg nr dokumentu,prot_strNrDok)
+    <cursor>
+		  <identifier>CRSR_PROTOKOL_ABAS_WG_DATY_WYST</identifier>
+		  <humanname>wg daty wystawienia</humanname>
+		  <join></join>
+		  <where></where>
+		  <orderby>prot_dDataWyst</orderby>
+	  </cursor>    
+  </cursors>  
+  
+<script>
+<![CDATA[
+
+'getCurrentFirma
+#include "50203"
+
+'procentowe zaawansowanie prac z poprzedniego protokołu
+dim g_curWartZaawPop : g_curWartZaawPop = ccur(0.0)
+
+function n5protokol_abas_initnew()
+
+  if trans_.var(APPVAR_POP_DOKUMENT) > 0 then
+    set this_.prot_pProjekt = trans_.getobj(TYPEID_N5PROJEKT_ABAS,trans_.var(APPVAR_POP_DOKUMENT))
+    set this_.prot_pWaluta = this_.prot_pProjekt.proj_pWaluta
+    
+    'skopiowanie pozycji
+    this_.n5protokol_abas_copy_from_projekt()
+    
+    'wartość robót z poprzedniego protokołu
+    this_.n5protokol_abas_copy_pop_wart()
+  end if
+
+  n5protokol_abas_initnew = true
+end function
+
+function n5protokol_abas_befins()
+  n5protokol_abas_befins = n5protokol_abas_GenerateNextNumWew()
+  n5protokol_abas_befins = n5protokol_abas_GenerateNextNum()
+  
+  dim curWartZaawPoz : curWartZaawPoz = this_.prot_listPozycje.get(1).pproj_curWartZaawPrac
+  if curWartZaawPoz <= g_curWartZaawPop then
+    trans_.message 7000, 0, "Wartość finansowego zaawansowania prac musi być większa od " + CStr(g_curWartZaawPop) + "%"
+    n5protokol_abas_befins = false
+  end if
+end function
+
+function n5protokol_abas_as_text()
+	n5protokol_abas_as_text = this_.prot_strNrDok
+end function
+
+function n5protokol_abas_befupd()
+  n5protokol_abas_befupd = true
+  'kontrola finansowego zaawansowania prac %
+  dim strSQL : strSQL = "select top 1 p_idobj,c_idobj,c_pproj_curwartzaawprac from vlist_n5protokol_abas_prot_listPozycje where p_idobj < " +_
+                        CStr(this_.IdObj) + " order by p_idobj desc"
+  dim oRS: set oRS = trans_.createadors(strSQL)
+  if oRS.recordCount > CLng(0) then
+    dim curWartZaawPoz : curWartZaawPoz = this_.prot_listPozycje.get(1).pproj_curWartZaawPrac
+    if curWartZaawPoz <= CCur(oRS(2).value) then
+      trans_.message 7000, 0, "Wartość finansowego zaawansowania prac musi być większa od " + CStr(oRS(2).value) + "%"
+      n5protokol_abas_befupd = false    
+    end if
+  end if
+end function
+
+function n5protokol_abas_befdel()
+  n5protokol_abas_befdel = true
+end function
+
+function n5protokol_abas_GenerateNextNumWew() : n5protokol_abas_GenerateNextNumWew = false
+  if not this_.prot_pProjekt is nothing then
+    dim strSQL, oRS
+    strSQL = "select isnull(max(prot_nNumWew),0) from n5protokol_abas where prot_pProjekt = " + CStr(this_.prot_pProjekt.IdObj)
+    set oRS = trans_.createadors(strSQL)
+    this_.prot_nNumWew = CLng(oRS(0).value) + 1
+    n5protokol_abas_GenerateNextNumWew = true
+  end if
+end function
+
+function n5protokol_abas_GenerateNextNum() : n5protokol_abas_GenerateNextNum = false
+  if this_.prot_nNumWew > clng(0) then
+    this_.prot_strNrDok = Left(this_.prot_pProjekt.proj_strNazwa,11) + "/" + Right("0" + CStr(this_.prot_nNumWew),2) + "/" +_
+                          CStr(Year(trans_.var(GVAR_TODAY)))
+    n5protokol_abas_GenerateNextNum = true
+  end if
+end function
+
+function n5protokol_abas_copy_from_projekt()
+  dim pProjekt : set pProjekt = this_.prot_pProjekt
+  dim pPoz, pNewPoz
+  for each pPoz in pProjekt.proj_listPozycje
+    set pNewPoz = this_.prot_listPozycje.addnew()
+    with pNewPoz
+      set .pproj_pProdukt = pPoz.pproj_pProdukt
+      set .pproj_pOpak = pPoz.pproj_pOpak
+      .pproj_curIloscOpak = pPoz.pproj_curIloscOpak
+      .pproj_curWartKoszt = pPoz.pproj_curWartKoszt
+    end with
+  next
+  n5protokol_abas_copy_from_projekt = true
+end function
+
+function n5protokol_abas_copy_pop_wart()
+  if not this_.prot_pProjekt is nothing then
+    'znajdź poprzedni protokół
+    dim strSQL : strSQL = "select top 1 idobj from n5protokol_abas where prot_pProjekt = " + CStr(this_.prot_pProjekt.idobj) +_
+                          " order by prot_nNumWew desc"
+    dim oRS: set oRS = trans_.createadors(strSQL)
+    if oRS.recordCount > CLng(0) then
+      dim pPopProt: set pPopProt = trans_.getobj(TYPEID_N5PROTOKOL_ABAS,CLng(oRS(0).value))
+      dim pPopPoz, nLP: nLP = 1
+      for each pPopPoz in pPopProt.prot_listPozycje
+        with this_.prot_listPozycje.get(nLP)
+          .pproj_curWartPop = pPopPoz.pproj_curWartPocz
+          .pproj_curWartZaawPrac = pPopPoz.pproj_curWartZaawPrac
+          if .pproj_curWartZaawPrac <> g_curWartZaawPop then
+            g_curWartZaawPop = .pproj_curWartZaawPrac
+          end if
+        end with
+        nLP = nLP + 1
+      next
+      this_.prot_curSumaPop = pPopProt.prot_curSumaPocz
+    end if
+    n5protokol_abas_copy_pop_wart = true
+  end if
+end function
+
+
+]]>
+</script>	
+</class>

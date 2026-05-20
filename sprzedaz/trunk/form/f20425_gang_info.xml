@@ -1,0 +1,266 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+Produkt - simple - (fast and dirty)
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1231.h"
+
+#define CTRLID_DATE_TODAY	101
+
+#define CTRLID_SALES_CASH	102
+#define CTRLID_SALES_CARD	103
+#define CTRLID_SALES_TOTAL	104
+
+#define CTRLID_QTY_TN		105
+#define CTRLID_QTY_RN		106
+#define CTRLID_QTY_KOS		107
+
+-->
+<page style='STYLE_PAGE'>
+<config>
+	<startpos>center</startpos>
+	<title>
+Informacje
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+<script><![CDATA[
+#include "50122"
+#include "50518"
+
+dim g_dDateToday : g_dDateToday = trans_.var(GVAR_TODAY)
+
+function c##CTRLID_DATE_TODAY##_ongetdata(byref oCtrl)
+	oCtrl.value = g_dDateToday
+end function
+function c##CTRLID_DATE_TODAY##_ondataentered(byref oCtrl,byval newValue)
+	g_dDateToday = newValue
+	c##CTRLID_DATE_TODAY##_ondataentered = true
+end function
+
+function fopen() : fopen = true
+	dim pM60293 : set pM60293 = doc_.getmodule(60293)
+	pM60293.clean_uncomplete_documents
+	display_info
+end function
+
+function display_info()
+	display_info_for_date g_dDateToday
+end function 
+
+function display_info_for_date(byval dDate)	
+	dim curCash
+	dim curCard
+	dim curTotal
+
+	dim strQuery0 : strQuery0 = "select isnull(sum(isnull(t_sprz.curSumaBrutto,0)) - sum(isnull(t_orgsprz.curSumaBrutto,0)),0) " +_
+		"from n5sprzedaz t_sprz left outer join n5sprzedaz t_orgsprz on t_sprz.ppopsprzed = t_orgsprz.idobj " +_
+		"where t_sprz.pRozlVAT<>0 and t_sprz.dDataWyst = %1 "
+	strQuery0 = trans_.afc.convert.Formatter(strQuery0).add(trans_.afc.convert.date2SQL(dDate)).done()
+
+	dim strQuery
+	dim oRS
+	
+	strQuery = strQuery0 +_
+		" and t_sprz.pSposobPlatnosci in (select idobj from n5sposplat where eTyp=N5SPOSPLAT_GOTOWKA)"
+	set oRS = trans_.createadors(strQuery)
+	curCash = ccur(oRS(0).value)
+	
+	strQuery = strQuery0 +_
+		" and t_sprz.pSposobPlatnosci in (select idobj from n5sposplat where eTyp=N5SPOSPLAT_KARTA)"
+	set oRS = trans_.createadors(strQuery)
+	curCard = ccur(oRS(0).value)
+
+	set oRS = trans_.createadors(strQuery0)
+	curTotal = ccur(oRS(0).value)
+
+	page_.ctrl(CTRLID_SALES_CASH).value = doc_.afc.display.money ( ccur(curCash) ,"")
+	page_.ctrl(CTRLID_SALES_CARD).value = doc_.afc.display.money ( ccur(curCard) ,"")
+	page_.ctrl(CTRLID_SALES_TOTAL).value = doc_.afc.display.money ( ccur(curTotal) ,"")
+
+	dim idGrProdTN : idGrProdTN = trans_.findobjid(TYPEID_N5GRUPAPRODUKTOW,"strNazwa='TERRANOVA'")
+	dim idGrProdRN : idGrProdRN = trans_.findobjid(TYPEID_N5GRUPAPRODUKTOW,"strNazwa='RINASCIMENTO'")
+	dim idGrProdKOS : idGrProdKOS = trans_.findobjid(TYPEID_N5GRUPAPRODUKTOW,"strNazwa='KOSMETYKI'")
+
+	if idGrProdTN <= 0 or idGrProdRN <= 0 or idGrProdKOS <= 0 then
+		exit function
+	end if
+	strQuery0 = "select 'c_ilosc' = isnull(sum(isnull(t_0.c_curiloscopak,0) - isnull(t_orgsprz.c_curiloscopak,0)),0) " +_
+	" from vlist_n5sprzedaz_listPozycje t_0 " +_
+	" join n5produkt t_prod on t_0.c_pprodukt = t_prod.idobj " +_
+	" left outer join vlist_n5sprzedaz_listpozycje t_orgsprz on t_0.p_ppopsprzed = t_orgsprz.p_idobj and t_0.coll_lp = t_orgsprz.coll_lp "+_
+	" where t_0.p_ddatawyst = " + trans_.afc.convert.date2SQL(dDate)  +_
+	" and t_0.p_prejestrdok in (select idobj from n5rejestrdok where eTyp in(N5REJESTRDOK_PARAGON,N5REJESTRDOK_KOR_PARAGON))"
+	
+	set oRS = trans_.createadors(strQuery0 + " and t_prod.pGrupaProd = " + cstr(idGrProdTN))
+	dim curQtyTN:  curQtyTN = ccur(oRS("c_ilosc"))
+	set oRS = trans_.createadors(strQuery0 + " and t_prod.pGrupaProd = " + cstr(idGrProdRN))
+	dim curQtyRN : curQtyRN = ccur(oRS("c_ilosc"))
+	set oRS = trans_.createadors(strQuery0 + " and t_prod.pGrupaProd = " + cstr(idGrProdKOS))
+	dim curQtyKOS : curQtyKOS = ccur(oRS("c_ilosc"))
+
+	page_.ctrl(CTRLID_QTY_TN).value = doc_.afc.display.quantity ( ccur(curQtyTN) ,"",0)
+	page_.ctrl(CTRLID_QTY_RN).value = doc_.afc.display.quantity ( ccur(curQtyRN) ,"",0)
+	page_.ctrl(CTRLID_QTY_KOS).value = doc_.afc.display.quantity ( ccur(curQtyKOS) ,"",0)
+end function
+
+function paragon_zbiorczy()
+	paragon_zbiorczy_etc false
+end function
+
+function paragon_zbiorczy_zwroty()
+	paragon_zbiorczy_etc true
+end function
+
+function paragon_zbiorczy_etc(byval bKorekta)
+	dim pResultHLI
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+	dim pRaportMomentParam : set pRaportMomentParam = doc_.afc.rap.param.new_date("Analizowany moment").bindexpr("")
+	pRaportMomentParam.first_value = g_dDateToday
+	pRaportMomentParam.mode = clng(1)
+	pParamArray.add pRaportMomentParam
+	dim oRaportTypeParam : set oRaportTypeParam = doc_.afc.rap.param.new_int("typ").bindexpr("")
+	if bKorekta then
+		oRaportTypeParam.first_value = clng(1)
+	else
+		oRaportTypeParam.first_value = clng(0)
+	end if
+	pParamArray.add oRaportTypeParam
+
+	set pResultHLI = asp_raport_appfile_hli(95171,pParamArray)
+	dim pPage : set pPage = doc_.getpagehli(pResultHLI)
+	pPage.domodalauto()
+end function
+
+function raport_kasowy()
+	dim idOther : idOther = trans_.findobjid(TYPEID_N5RAPKAS,_
+		"raka_dDataDo >= " + trans_.afc.convert.date2SQL(g_dDateToday) + " and " +_
+		trans_.afc.convert.date2SQL(g_dDateToday) + " >= raka_dDataOd")
+	 if idOther > 0 then
+		'dim hli:set hli = doc_.getmodule(60129).prepare_form_open_command(TYPEID_N5RAPKAS , idOther , USAGE_EDIT)
+		'dim form
+		'if not hli is nothing then
+		'	set form = doc_.getpagehli(hli)
+		'	form.domodalauto
+		'	exit function
+		'end if
+
+		dim idDPC : idDPC = trans_.findobjid(TYPEID_N5DPC, "ePubType=" + CStr(N5DPC_PUBTYPE_RAPORT_KASOWY))
+		if idDPC < 1 then
+			idDPC = fire_choice_list( TYPEID_N5DPC , "Wydruk raportu kasowego" ,"strNazwa","ePubType=" + CStr(N5DPC_PUBTYPE_RAPORT_KASOWY) ,"",""	)	
+			if idDPC = 0 then
+				exit function
+			end if
+		end if
+
+		realize_publication idDPC,trans_.getobj(TYPEID_N5RAPKAS,idOther),true,nothing
+		exit function
+	 end if
+
+	MessageBox "Brak raportu kasowego dla podanej daty", "Zła data", vbOKOnly, vbInformation
+end function
+
+function rozl_przych_tn()
+		trans_.var(100) = "TERRANOVA"
+		asp_raport_appfile 95227, nothing
+end function
+
+function rozl_przych_rn()
+		trans_.var(100) = "RINASCIMENTO"
+		asp_raport_appfile 95227, nothing
+end function
+function rozl_przych_in()
+		trans_.var(100) = "KOSMETYKI"
+		asp_raport_appfile 95227, nothing
+end function
+
+]]></script>
+</config>
+<header>
+</header>
+<body >
+	<table fontsize='6'>
+		<tbody>
+			<tr>
+				<td keepline='true'>
+					<t>Data&nbsp;</t>
+					<date name='CTRLID_DATE_TODAY'>
+						<transfer mode='custom' />
+					</date>
+				</td>
+				<td>
+					<button style='STYLE_BUTTON' href='varFunction="display_info"'>Wyswietl</button>
+				</td>
+			</tr>
+			<tr>
+				<td>
+					<t>Sprzedaż gotowkowa</t>
+				</td>
+				<td align='right'>
+					<t name='CTRLID_SALES_CASH' />
+				</td>
+			</tr>
+			<tr>
+				<td>
+					<t>Sprzedaż - karta</t>
+				</td>
+				<td align='right'>
+					<t name='CTRLID_SALES_CARD' />
+				</td>
+			</tr>
+			<tr>
+				<td>
+					<t bold='true'>Sprzedaż - razem</t>
+				</td>
+				<td align='right'>
+					<t bold='true' name='CTRLID_SALES_TOTAL' />
+				</td>
+			</tr>
+			<tr><td><t size='1' /></td></tr>
+			<tr>
+				<td>
+					<t>Terranova - ilość</t>
+				</td>
+				<td align='right'>
+					<t name='CTRLID_QTY_TN' />
+				</td>
+			</tr>
+			<tr>
+				<td>
+					<t>Rinascimento - ilość</t>
+				</td>
+				<td align='right'>
+					<t name='CTRLID_QTY_RN' />
+				</td>
+			</tr>
+			<tr>
+				<td>
+					<t>Kosmetyki - ilość</t>
+				</td>
+				<td align='right'>
+					<t name='CTRLID_QTY_KOS' />
+				</td>
+			</tr>
+			<tr>
+				<td colspan='1'>
+					<button style='STYLE_BUTTON' href='varFunction="paragon_zbiorczy"'>Paragon zbiorczy</button>
+				</td>
+				<td colspan='1'>
+					<button style='STYLE_BUTTON' href='varFunction="raport_kasowy"'>Raport kasowy</button>
+				</td>
+			</tr>
+			<tr>
+				<td colspan='2'>
+					<button style='STYLE_BUTTON' href='varFunction="rozl_przych_tn"'>Rozliczenie przychodów i rozchodów (TERRANOVA)</button>
+					<button style='STYLE_BUTTON' href='varFunction="rozl_przych_rn"'>Rozliczenie przychodów i rozchodów (RINASCIMENTO)</button>
+					<button style='STYLE_BUTTON' href='varFunction="rozl_przych_in"'>Rozliczenie przychodów i rozchodów (KOSMETYKI)</button>
+				</td>
+			</tr>
+		</tbody>
+	</table>
+</body>
+<footer>
+</footer>
+</page>

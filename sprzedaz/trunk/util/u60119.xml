@@ -1,0 +1,1822 @@
+<?xml version="1.0" encoding="windows-1250"?>
+<!--
+#include "h1000.h"
+#include "h1001.h"
+#include "h1004.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1240.h"
+#include "h1201.h"
+
+#define PAGE_FORM_WIZZARD_REAL_ZAM_ZAMOWIENIE		20604
+#define PAGE_FORM_WIZZARD_REAL_ZAM_POZYCJE		20340
+#define PAGE_FORM_WIZZARD_REAL_ZAM_MAGAZYN		20341
+#define PAGE_FORM_WIZZARD_REAL_ZAM_DOKUMENT		20342
+#define PAGE_FORM_WIZZARD_REAL_ZAM_PODSUMOWANIE		20343
+
+
+#if appvar_mode = KREATOR_REAL_ZAM_MODE_ADVANCED
+#define F_MODE	KREATOR_REAL_ZAM_MODE_ADVANCED
+#endif
+
+
+#if appvar_mode = KREATOR_REAL_ZAM_MODE_SIMPLE
+#define F_MODE	KREATOR_REAL_ZAM_MODE_SIMPLE
+#endif
+
+
+#if appvar_mode =	3
+#define F_MODE		3
+#endif
+
+
+#if vn105 = KREATOR_REAL_ZAM_WLASNE
+ #define F2_MODE KREATOR_REAL_ZAM_WLASNE
+#else
+ #define F2_MODE KREATOR_REAL_ZAM_OBCE
+#endif
+
+-->
+<page>
+	<config>
+		<title>Kreator realizacji zamówienia</title>
+		<script>
+<!--
+PAGE_FORM_WIZZARD_REAL_ZAM
+-->
+<![CDATA[
+#include "50209"
+#include "50100"
+#include "50122"
+#include "50517"
+
+'class CProgressPage
+#include "50632"
+
+'harui
+#include "50101"
+
+'get_stan_mag
+#include "50509"
+
+'fire_choice_list
+#include "50200"
+
+#include "50523"
+
+class CRealZam
+	public zam ' obiekt zamowienia
+
+	public lp_tab 'ktory obiekt na liscie
+	public ilosc_tab 'ilosc
+	public poz_tab 'ilosc
+	public str_tab 'ilosc
+	public collector_tab
+
+	public mag 'magazyn
+	public rule ' reguła
+	public fak 'faktura
+	public dok 'dokument
+	public adv
+	public m_iF2Mode ' zminna do sterowania :zamowienia obce/ wlasne
+
+	'chcemy uruchomic tryb zaawansowany
+	public sub run_advanced
+		adv = true
+	end sub
+
+
+
+
+	public function from_collector (byref page)
+
+		set collector_tab = trans_.afc.new_navoarray()
+
+		dim pM60224 : set pM60224 = doc_.getmodule(60224)
+		dim pM60277EDI : set pM60277EDI = doc_.getmodule(60277)
+
+		dim pTransfer : set pTransfer = pM60224.new_Cipher_CPT_711_720_Transfer()
+
+		dim strRecordData
+		dim nRecordNr : nRecordNr = 0
+		dim answer:answer = -100
+
+		dim strKod,curIlosc,curCena,strNazwa,curKrotnosc,strData
+
+		if pTransfer.begin_receive() then
+
+			dim pPP : set pPP = new CProgressPage
+			pPP.init "Pobieranie danych z kolektora"		
+
+			do while pTransfer.receive(nRecordNr,strRecordData)							
+			
+				if not pM60224.crack_cipher_record(strRecordData,strKod, curCena,curIlosc,strNazwa) then
+					exit function
+				end if
+
+				collector_tab.add strRecordData
+			
+				pPP.update "Wczytano rekord nr " + cstr(nRecordNr)
+
+				if pPP.is_broken() then
+					exit function
+				end if
+
+				nRecordNr = nRecordNr + 1
+
+			loop
+
+			pTransfer.end_receive
+			set pPP = nothing
+
+		end if
+
+		dim elem,bFoundKod,bFoundIlosc,iter_zlec,iter_coll,iter_zam
+		bFoundKod = false
+		bFoundIlosc = false
+
+
+		dim lp
+		dim curKrot
+		for iter_zam = 0 to lp_tab.UpperIndex()
+			bFoundKod = false
+			bFoundIlosc = false
+			lp = lp_tab.value(iter_zam)
+			set elem = zam.listPozycje.get(lp)			
+			for iter_coll = 0 to collector_tab.Upperindex
+				strData = collector_tab.value(iter_coll)
+				pM60224.crack_cipher_record strData,strKod, curCena,curIlosc,strNazwa				
+				if strKod = elem.pOpak.strEan then
+					bFoundKod = true
+
+						' i tu zabawa z kartonami
+						'pobieramy krotnosc z ostatniego opakowania
+						
+						curKrot = elem.pProdukt.listOpakowania.get(elem.pProdukt.listOpakowania.count()).currKrotnosc
+						curIlosc = ccur(curIlosc * curKrot)
+
+					if elem.curIloscOpakPoz >= curIlosc  then
+						bFoundIlosc = true	
+					end if
+					exit for
+				end if
+				
+			next
+			
+			if bFoundKod then
+				if bFoundIlosc then
+					ilosc_tab.value(iter_zam) = curIlosc
+				else
+					trans_.message 1002 , 0 , "Ilosc w kolektorze dla pozycji " + elem.text + " jest większa niż pozostała do realizacji na zamównieniu. Wstawiam ilość z zamównienia"
+					ilosc_tab.value(iter_zam) = elem.curIloscOpakPoz
+				end if
+			else
+				trans_.message 1002 , 0 , "Nie znaleziono w kolektorze danych odpowiadających pozycji " + elem.text + ", ustawiam ilosc na 0"
+				ilosc_tab.value(iter_zam) = ccur(0)
+			end if
+			
+		next
+
+		fill_poz_table_from_arrays page , page.ctrl(100) , false
+
+
+
+	end function
+
+
+end class
+
+dim pParamClass
+
+
+#if F_MODE <> 3
+function fopen()
+	if HARUI(UAR_CMDID(CMDID_WIZZARD_REAL_ZAM)) then
+		run_this	'uruchom modul automatycznie
+	end if
+	fopen=false
+end function
+#endif
+
+
+#if F_MODE = 3
+function fopen()
+end function
+#endif
+
+function run_external ( byref pResRequest , byval iter , byval order_idobj) :run_external = false
+
+	set pParamClass = new CRealZam
+	pParamClass.adv = false
+	pParamClass.rule = clng(3)
+	pParamClass.dok = clng(1)
+
+	set pParamClass.lp_tab = trans_.afc.new_navoarray()
+	set pParamClass.ilosc_tab = trans_.afc.new_navoarray()
+	set pParamClass.str_tab = trans_.afc.new_navoarray()
+	set pParamClass.poz_tab = trans_.afc.new_navoarray()
+	set pParamClass.collector_tab = trans_.afc.new_navoarray()
+
+	set pParamClass.zam = trans_.getobj(TYPEID_N5ZAMOWIENIE , order_idobj )
+	set pParamClass.mag = pResRequest.magazyn
+	set pParamClass.fak = nothing		
+
+	
+	
+	fill_arrays_from_resreq pResRequest , iter
+	
+	if pParamClass.poz_tab.count() = 0 then
+		MessageBox "Brak pozycji z dodatnią iloscią do realizacji", "Realizacja zamówienia", vbOkOnly, vbInformation
+		exit function
+	end if
+
+	dim pWizzard
+	set pWizzard=CWizzard(false)
+	pWizzard.add_container pParamClass
+
+
+	pWizzard.add_step PAGE_FORM_WIZZARD_REAL_ZAM_DOKUMENT	
+	pWizzard.add_step PAGE_FORM_WIZZARD_REAL_ZAM_PODSUMOWANIE
+	pWizzard.run
+
+	run_external = true
+
+end function
+
+
+
+'zwraca czy coś jest do realizacji
+function fill_arrays_from_resreq(byval pResRequest , byval iter)
+	dim i,oDetailInfo,elem
+	for i = 0 to pResRequest.m_oItemArray.Value(iter).m_oDetailArray.UpperIndex
+		set oDetailInfo = pResRequest.m_oItemArray.Value(iter).m_oDetailArray.value(i)
+		set elem = pParamClass.zam.listPozycje.get(oDetailInfo.m_nLP)
+
+		if oDetailInfo.m_curAllocQty > ccur(0) then
+			pParamClass.poz_tab.add(elem)
+			pParamClass.lp_tab.add(oDetailInfo.m_nLP)
+			pParamClass.ilosc_tab.add(oDetailInfo.m_curAllocQty)
+			pParamClass.str_tab.add(elem.pProdukt.text + ", " + elem.popak.text )
+		end if
+	next
+end function
+
+
+
+
+function fill_poz_table_from_arrays (page , table , read_only)
+
+	dim tab : set tab = doc_.afc.new_tb(page).attach(table).removeall
+
+	dim iter,row,elem
+	for iter=0 to pParamClass.lp_tab.count - 1
+		tab.newrow.newcell.addtext(pParamClass.str_tab.Value(iter))
+		set elem = pParamClass.poz_tab.value(iter)
+		if not read_only then
+			tab.newcell.addctrl CTRL_TYPE_CURRENCY,iter + 2000			
+			tab.element.size = 10
+		else
+			tab.newcell.addctrl CTRL_TYPE_CURRENCY,iter + 2000
+			tab.element.disable=true
+		end if
+		tab.element.precision = elem.pOpak.pJednOpak.nDokladnosc - 1
+		tab.element.unit = elem.pOpak.pJednOpak.strSkrot
+		tab.element.value = pParamClass.ilosc_tab.Value(iter)
+	next
+end function
+
+function fill_arrays_from_poz_table (page):fill_arrays_from_poz_table = false
+	dim iter
+	for iter = 0 to page.ctrl(100).body.count - 1
+		dim elem:set elem = pParamClass.zam.listPozycje.get(pParamClass.lp_tab.Value(iter))
+		if page.ctrl(iter + 2000).value > elem.curIloscOpakPoz then
+			exit function
+		end if
+		pParamClass.ilosc_tab.Value(iter) = page.ctrl(iter + 2000).value
+	next
+	fill_arrays_from_poz_table = true
+end function
+
+'zwraca czy coś jest do realizacji
+function fill_arrays_from_obj()
+	dim elem,iter
+	iter = 1
+	for each elem in pParamClass.zam.listPozycje
+		if elem.curIloscOpakPoz > 0 then
+			pParamClass.lp_tab.add(iter)
+			pParamClass.ilosc_tab.add(elem.curIloscOpakPoz)
+			pParamClass.str_tab.add(elem.pProdukt.text + ", " + elem.popak.text )
+			pParamClass.poz_tab.add(elem)
+		end if
+		iter = iter + 1
+	next
+	fill_arrays_from_obj = (pParamClass.lp_tab.count > 0)
+end function
+
+
+function run_this()
+#ifdef _DEBUGGGGG
+	dim pM60305 : set pM60305 = doc_.getmodule(60305)
+	dim oZam : set oZam = trans_.getobj(TYPEID_N5ZAMOWIENIE , trans_.var(APPVAR_ZAM_OBJ))
+	dim idMag
+	if oZam.pRejestrDok.wrefParam2 is nothing then
+		'wybierz magazyn
+		idMag = fire_choice_list(TYPEID_N5MAGAZYN,"Magazyn wydania","","eTyp=N5TYPMAG_PODSTAWOWY","","")
+		if idMag = 0 then
+			trans_.message 7000, 0, "Nie wybrano magazynu"
+			exit function
+		end if
+	else
+		idMag = oZam.pRejestrDok.wrefParam2.idobj
+	end if
+  
+	pM60305.initialize_from_dok TYPEID_N5ZAMOWIENIE,trans_.var(APPVAR_ZAM_OBJ)
+	pM60305.apply_initial_mag idMag
+	if pM60305.get_request_prs().count > 0 then
+		pM60305.frefresh
+		if pM60305.domodalauto() <> 1 then
+			exit function
+		end if
+	end if
+	dim oRPRSS
+	dim oNXArrMagPRS
+	set oRPRSS = pM60305.get_request_prs() 
+	set oNXArrMagPRS = pM60305.get_mag_prss()
+
+	dim pM60306 : set pM60306 = doc_.getmodule(60306)
+	dim idWZ : idWZ = clng(0)
+	if pM60306.nx_zo_2_wz(true,idWZ,trans_.var(APPVAR_ZAM_OBJ),oNXArrMagPRS(0),3,0) then
+		trans_.message 0,0,"WZ +"
+	else
+		trans_.message 0,0,"WZ -"
+	end if
+
+	trans_.message 0,0,cstr(oRPRSS.count)
+#endif
+	dim pWizzard
+	set pParamClass = new CRealZam
+
+	pParamClass.adv = false
+
+#if F2_MODE = KREATOR_REAL_ZAM_WLASNE 
+
+	pParamClass.rule = clng(3)
+	pParamClass.m_iF2Mode=F2_MODE
+	
+#else
+
+  #if F_MODE = KREATOR_REAL_ZAM_MODE_SIMPLE
+	pParamClass.rule = clng(2)
+  #endif
+
+  #if F_MODE = KREATOR_REAL_ZAM_MODE_ADVANCED
+	pParamClass.rule = clng(1)
+  #endif
+  
+#endif
+
+
+
+	set pParamClass.lp_tab = trans_.afc.new_navoarray()
+	set pParamClass.ilosc_tab = trans_.afc.new_navoarray()
+	set pParamClass.str_tab = trans_.afc.new_navoarray()
+	set pParamClass.poz_tab = trans_.afc.new_navoarray()
+
+
+	'jezeli zmienna z zamowieniem ustawiona to ustawiamy odpowiedni obiekt
+	if trans_.isvar(APPVAR_ZAM_OBJ) then
+		set pParamClass.zam = trans_.getobj(TYPEID_N5ZAMOWIENIE , trans_.var(APPVAR_ZAM_OBJ) )
+		'i magazyn jesli w rejestrze taki isnieje
+		set pParamClass.mag = pParamClass.zam.pREjestrDok.wrefParam2
+		if not fill_arrays_from_obj() then
+			MessageBox "Zamówienie jest całkowicie zrealizowane", "Brak pozycji do realizacji", vbOkOnly, vbInformation
+			exit function
+		end if
+	else
+		set pParamClass.zam = nothing
+		set pParamClass.mag = nothing
+	end if
+
+	'jezeli uruchomilismy z magazynem to go ustawiamy i nadpisujemy to co z rejestru
+	if trans_.isvar(APPVAR_MAG_OBJ) then
+		set pParamClass.mag = trans_.getobj(TYPEID_N5MAGAZYN , trans_.var(APPVAR_MAG_OBJ) )
+	end if
+
+
+
+	if trans_.isvar(APPVAR_BIEZACA_SPRZEDAZ) then
+#if F2_MODE = KREATOR_REAL_ZAM_OBCE
+		set pParamClass.fak = tran_.getobj(TYPEID_N5SPRZEDAZ,trans_.var(APPVAR_BIEZACA_SPRZEDAZ))
+#else
+		set pParamClass.fak = tran_.getobj(TYPEID_N5ZAKUP,trans_.var(APPVAR_BIEZACA_SPRZEDAZ))
+#endif
+		
+	else
+		set pParamClass.fak = nothing		
+	end if
+
+	pParamClass.dok = clng(1)	
+
+	set pWizzard=CWizzard(false)
+	pWizzard.add_container pParamClass
+
+	'dodawanie kroku - w zalezności od trybu
+#if F_MODE = KREATOR_REAL_ZAM_MODE_ADVANCED
+	if not trans_.isvar(APPVAR_ZAM_OBJ) then
+		pWizzard.add_step PAGE_FORM_WIZZARD_REAL_ZAM_ZAMOWIENIE
+	end if
+	pWizzard.add_step PAGE_FORM_WIZZARD_REAL_ZAM_POZYCJE
+#endif
+
+'jesli wybieramy zamowienie wlasne to nie sprawdzamy stanow magazynowych F2_MODE = kreator zam.obcych
+#if F2_MODE = KREATOR_REAL_ZAM_OBCE 
+'krok wyboru magazynu
+'jezeli tryb prosty to dodajemy ten krok tylko gdy niewypelniony mamy magazyn (wypelnienie z rejestru)
+#if F_MODE = KREATOR_REAL_ZAM_MODE_SIMPLE
+	if pParamClass.mag is nothing then
+		pWizzard.add_step PAGE_FORM_WIZZARD_REAL_ZAM_MAGAZYN
+	end if
+'jezeli tryb zaawansowany to dodajemy go zawsze
+#else
+		pWizzard.add_step PAGE_FORM_WIZZARD_REAL_ZAM_MAGAZYN
+#endif
+#endif
+
+
+
+#if F_MODE = KREATOR_REAL_ZAM_MODE_ADVANCED
+	if not trans_.isvar(APPVAR_BIEZACA_SPRZEDAZ) then
+		pWizzard.add_step PAGE_FORM_WIZZARD_REAL_ZAM_DOKUMENT
+	end if
+#endif
+	pWizzard.add_step PAGE_FORM_WIZZARD_REAL_ZAM_PODSUMOWANIE
+
+#ifdef _TAYAMA
+		pParamClass.dok = clng(3)
+#endif	
+	pWizzard.run
+end function
+
+function onPageEnter(pWizzardPage)
+	select case ( pWizzardPage.m_nPage )
+		case PAGE_FORM_WIZZARD_REAL_ZAM_POZYCJE:
+			fill_poz_table_from_arrays  pWizzardPage.m_pPage , pWizzardPage.m_pPage.ctrl(100) , false
+		case PAGE_FORM_WIZZARD_REAL_ZAM_MAGAZYN:
+		case PAGE_FORM_WIZZARD_REAL_ZAM_DOKUMENT:
+		case PAGE_FORM_WIZZARD_REAL_ZAM_PODSUMOWANIE:
+			fill_poz_table_from_arrays  pWizzardPage.m_pPage , pWizzardPage.m_pPage.ctrl(100) , true
+	end select
+end function
+
+function onPageExit(pWizzardPage)
+
+	onPageExit=PAGE_DEFAULT
+	select case ( pWizzardPage.m_nPage )
+		case PAGE_FORM_WIZZARD_REAL_ZAM_ZAMOWIENIE:
+			if pParamClass.zam is nothing then
+				trans_.message 7000 , 0 , "Musisz wskazać zamówienie, które chcesz realizować"
+				onPageExit=PAGE_DONOTEXIT
+			else
+				set pParamClass.mag = pParamClass.zam.pREjestrDok.wrefParam2
+				if not fill_arrays_from_obj() then
+					MessageBox "Zamówienie jest całkowicie zrealizowane", "Brak pozycji do realizacji", vbOkOnly, vbInformation
+					onPageExit=PAGE_DONOTEXIT
+				end if
+			end if
+		case PAGE_FORM_WIZZARD_REAL_ZAM_POZYCJE:
+
+			onPageExit = fill_arrays_from_poz_table( pWizzardPage.m_pPage)
+			if not onPageExit then
+				MessageBox "Podana ilość jest większa niż ilość pozostała do realizacji na zamówieniu", "Nieprawidłowa sytuacja", vbOkOnly, vbInformation
+				onPageExit = PAGE_DONOTEXIT
+			else
+				onPageExit=PAGE_DEFAULT
+			end if
+			
+		case PAGE_FORM_WIZZARD_REAL_ZAM_MAGAZYN:
+
+			if pWizzardPage.m_pPage.is_empty then
+				MessageBox "Podane informacje sa niekompletne", "Nieprawidłowa sytuacja", vbOkOnly, vbInformation
+				onPageExit=PAGE_DONOTEXIT
+			end if
+
+		case PAGE_FORM_WIZZARD_REAL_ZAM_DOKUMENT:
+			if pWizzardPage.m_pPage.is_empty then
+				MessageBox "Podane informacje sa niekompletne", "Nieprawidłowa sytuacja", vbOkOnly, vbInformation
+				onPageExit=PAGE_DONOTEXIT
+			end if
+		case PAGE_FORM_WIZZARD_REAL_ZAM_PODSUMOWANIE:
+	end select
+end function
+
+function onPageInit(pWizzardPage)
+	select case ( pWizzardPage.m_nPage )
+		case PAGE_FORM_WIZZARD_REAL_ZAM_POZYCJE:			
+		case PAGE_FORM_WIZZARD_REAL_ZAM_MAGAZYN:
+		case PAGE_FORM_WIZZARD_REAL_ZAM_DOKUMENT:
+		case PAGE_FORM_WIZZARD_REAL_ZAM_PODSUMOWANIE:
+	end select
+end function
+
+
+function runAdv():runAdv = false 'uruchomienie trybu zaawansowanego
+	if pParamClass.adv then
+		'onWizzardComplete = true
+		if pParamClass.mag is nothing then
+#ifdef _ALMA_TREND
+			'wybierz magazyn
+			dim idMag: idMag = fire_choice_list(TYPEID_N5MAGAZYN,"Magazyn wydania","","eTyp=N5TYPMAG_PODSTAWOWY","","")
+			if idMag = 0 then
+				message_FAILED(" Brak magazynu ")			
+				message_FAILED(" Spójrz na komunikat poniżej ")
+			else
+				set pParamClass.mag = trans_.getobj(TYPEID_N5MAGAZYN, idMag)
+				doc_.postcommand "varCmd=CMD_OPEN_STATIC_PAGE varDestPage=PAGE_WIZZARD_REALIZACJA_ZAMOWIENIA appvar_mode=KREATOR_REAL_ZAM_MODE_ADVANCED appvar_mag_obj="+cstr(pParamClass.mag.idobj)+" appvar_zam_obj=" + cstr(pParamClass.zam.idobj)
+			end if
+#else
+			message_FAILED(" Brak magazynu ")			
+			message_FAILED(" Spójrz na komunikat poniżej ")
+#endif        
+		else
+			doc_.postcommand "varCmd=CMD_OPEN_STATIC_PAGE varDestPage=PAGE_WIZZARD_REALIZACJA_ZAMOWIENIA appvar_mode=KREATOR_REAL_ZAM_MODE_ADVANCED appvar_mag_obj="+cstr(pParamClass.mag.idobj)+" appvar_zam_obj=" + cstr(pParamClass.zam.idobj)		
+		end if
+		runAdv = true
+	end if
+end function
+
+sub ustaw_zmienne(byref idklient,byref idklientjo,byref idsposplat,byref idzam,byref mag_id)
+	mag_id = clng(0)
+	idzam = pParamClass.zam.idobj
+	if not pParamClass.mag is nothing then
+		mag_id = pParamClass.mag.idobj
+	end if
+	
+	'zabawa z pozycjami
+
+	idklient = pParamClass.zam.pKlient.idobj
+	idklientjo = 0
+	if not pParamClass.zam.pKlient_JO is nothing then
+		idklientjo = pParamClass.zam.pKlient_JO.idobj
+	end if
+	idsposplat = pParamClass.zam.pSposobPlatnosci.idobj
+end sub
+
+function wywolaj_istniejacy_dok_sprzedazy(byref page):wywolaj_istniejacy_dok_sprzedazy = false
+	set page=doc_.getpagehli(doc_.getmodule(60129).prepare_form_open_command(TYPEID_N5SPRZEDAZ,pParamClass.fak.idobj,USAGE_EDIT))
+		if page is nothing then
+			message_FAILED("")
+			exit function	
+		end if
+	wywolaj_istniejacy_dok_sprzedazy = true
+end function
+
+function wywolaj_istniejacy_dok_zakupu(byref page):wywolaj_istniejacy_dok_zakupu = false
+	set page=doc_.getpagehli(doc_.getmodule(60129).prepare_form_open_command(TYPEID_N5ZAKUP,pParamClass.fak.idobj,USAGE_EDIT))
+		if page is nothing then
+			message_FAILED("")
+			exit function	
+		end if
+	wywolaj_istniejacy_dok_zakupu = true
+end function
+
+function wywolaj_nowaFakt_z_ewentualnie_WZ_sprzedaz (byref page,byref idklient, byref idklientjo,byref idsposplat):wywolaj_nowaFakt_z_ewentualnie_WZ_sprzedaz  = false
+	trans_.var(APPVAR_REJESTR_TYP) = clng(0)
+
+	dim hli_fak : set hli_fak = nothing
+	set hli_fak = prepare_foc_sprzedaz(0,USAGE_EDIT)
+		if not hli_fak is nothing then
+			set page=doc_.getpagehli(hli_fak)
+		else
+			set page = nothing
+		end if
+
+	if page is nothing then
+		message_FAILED("")
+		exit function	
+	end if
+
+	set page.root.pKlient = trans_.getobj(TYPEID_N5KLIENT , idklient)
+		if idklientjo > 0 then
+			set page.root.pKlient_JO = trans_.getobj(TYPEID_N5_KLIENT_JEDN_ORG , idklientjo)
+		end if
+	set page.root.pSposobPlatnosci = trans_.getobj(TYPEID_N5SPOSPLAT , idsposplat)	
+	wywolaj_nowaFakt_z_ewentualnie_WZ_sprzedaz = true	
+end function
+
+function wywolaj_faktura_lub_dostawa(byref page,byref idklient, byref idklientjo,byref idsposplat,byval nRejType):wywolaj_faktura_lub_dostawa  = false
+	trans_.var(APPVAR_REJESTR_TYP) = clng(0)
+  if nRejType > clng(0) then
+    trans_.var(APPVAR_REJESTR_TYP) = clng(nRejType)
+  end if
+
+	dim hli_fak : set hli_fak = nothing
+	set hli_fak = prepare_foc_sprzedaz(0,USAGE_EDIT)
+		if not hli_fak is nothing then
+			set page=doc_.getpagehli(hli_fak)
+		else
+			set page = nothing
+		end if
+
+	if page is nothing then
+		message_FAILED("")
+		exit function	
+	end if
+
+	set page.root.pKlient = trans_.getobj(TYPEID_N5KLIENT , idklient)
+		if idklientjo > 0 then
+			set page.root.pKlient_JO = trans_.getobj(TYPEID_N5_KLIENT_JEDN_ORG , idklientjo)
+		end if
+	set page.root.pSposobPlatnosci = trans_.getobj(TYPEID_N5SPOSPLAT , idsposplat)	
+  trans_.var(APPVAR_REJESTR_TYP) = clng(0)
+	wywolaj_faktura_lub_dostawa = true	
+end function
+
+
+function prepare_foc_sprzedaz(byval idObject,byval eUsage)
+
+	set prepare_foc_sprzedaz = nothing
+  
+#ifdef _PAKART
+  if eUsage = USAGE_SP_EDIT_VAT then
+	  if not LicUMUI(EB_MOD_MASK_FINANSE) then
+		  exit function
+	  end if
+  else
+	  if not LicUMUI(EB_MOD_MASK_HANDEL) then
+		  exit function
+	  end if
+  end if
+#else
+  if not LicUMUI(EB_MOD_MASK_HANDEL or EB_MOD_MASK_FINANSE) then
+    exit function
+	end if
+#endif
+
+  dim idForm : idForm = PAGE_FORM_SPRZEDAZ
+	dim pFOC_HLI
+
+  if trans_.isvar(APPVAR_REJESTR_TYP) then
+    if trans_.var(APPVAR_REJESTR_TYP) > clng(0) then
+      set pFOC_HLI = doc_.getmodule(60129).prepare_foc_obj_with_rej(idObject,eUsage,idForm ,CStr(trans_.var(APPVAR_REJESTR_TYP)),TYPEID_N5SPRZEDAZ)
+    else
+      set pFOC_HLI = doc_.getmodule(60129).prepare_foc_obj_with_rej(idObject,eUsage,idForm ,"N5REJESTRDOK_FAKTURA_ZALICZKOWA;N5REJESTRDOK_FAKT_SP;N5REJESTRDOK_PARAGON;N5REJESTRDOK_FAKT_EXP;N5REJESTRDOK_WDT;N5REJESTRDOK_DOSTAWA",TYPEID_N5SPRZEDAZ)
+    end if
+  else
+    set pFOC_HLI = doc_.getmodule(60129).prepare_foc_obj_with_rej(idObject,eUsage,idForm ,"N5REJESTRDOK_FAKTURA_ZALICZKOWA;N5REJESTRDOK_FAKT_SP;N5REJESTRDOK_PARAGON;N5REJESTRDOK_FAKT_EXP;N5REJESTRDOK_WDT;N5REJESTRDOK_DOSTAWA",TYPEID_N5SPRZEDAZ)
+  end if
+
+	if not pFOC_HLI is nothing then
+		pFOC_HLI.prop(GVAR_FORMUSAGE) = clng(eUsage)
+		
+		if trans_.isvar(311) then
+			if trans_.var(311) = 1 then
+				pFOC_HLI.prop(311) = 1
+			else
+				pFOC_HLI.prop(311) = 0
+			end if
+		end if
+	else
+		exit function
+	end if
+
+	pFOC_HLI.prop(APPVAR_POP_DOKUMENT) = clng(0)
+	
+	if idObject = 0 then			
+
+		'jezeli jest to sprzedaz detaliczna to kopiujemy do hli
+		if trans_.isvar(APPVAR_SPRZEDAZ_DETALICZNA) then			
+			pFOC_HLI.prop(APPVAR_SPRZEDAZ_DETALICZNA) = trans_.var(APPVAR_SPRZEDAZ_DETALICZNA)
+		end if
+
+
+		'najpierw sprawdzamy czy to nie korekta
+		dim nTypRej:nTypRej = pFOC_HLI.prop(APPVAR_REJESTR_TYP)
+		if	nTypRej = N5REJESTRDOK_KOR_FAKT_SP or _
+			nTypRej = N5REJESTRDOK_KOR_RACH    or _
+			nTypRej = N5REJESTRDOK_KOREKTA_WDT or _
+			nTypRej = N5REJESTRDOK_KOR_PARAGON or _
+			nTypRej = N5REJESTRDOK_FAKTURA_ZALICZKOWA_KOR or _
+			nTypRej = N5REJESTRDOK_KOR_FAKT_EXP then
+
+			trans_.var(GVAR_CURSOR) = clng(CRSR_N5SPRZEDAZ_KOREKTY)
+
+			'jezeli zmienna srodowiskowa oznaczająca poprzedni dokument jest ustawiona na -1
+			'to znaczy ze korekty chcemy tylko przeglądać
+			'szukamy pierwszej korekty z danrego rejestru i tak ustawiamy IDOBJ
+			if trans_.isvar(APPVAR_POP_DOKUMENT) then
+				if trans_.var(APPVAR_POP_DOKUMENT) < 0 then
+					pFOC_HLI.prop(APPVAR_POP_DOKUMENT) = clng(-1)
+					format_dokhandl_hli pFOC_HLI
+					set prepare_foc_sprzedaz = pFOC_HLI
+					exit function
+				end if
+			end if
+
+
+			'wybierz fakture i ustaw zmienną środowiskową
+			dim strWhere:strWhere = doc_.getmodule(60300).bqry_where_for_pop_for_korekta(nTypRej)
+#ifdef _DEBUG
+			trans_.message 7000 , 0 , "bug w choicelist - przy joinie zle wklada w 'szufladki'"
+#endif
+
+
+			dim choice : choice = clng(0)
+
+			if trans_.isvar(APPVAR_POP_DOKUMENT) then
+				if trans_.var(APPVAR_POP_DOKUMENT) > 0 then
+					choice = trans_.var(APPVAR_POP_DOKUMENT)
+				end if
+			end if
+
+			if choice = 0 then
+					'-- wersja podstawowa (ok, ale ma mało informacji): choice = fire_choice_list_disable_add(TYPEID_N5SPRZEDAZ,"Wybierz dokument do korekty","",strWhere,"","")
+					choice = nx_fire_choice_list(TYPEID_N5SPRZEDAZ,"Wybierz dokument do korekty",strWhere,"")
+			end if 
+
+
+			if choice <> 0 then
+				pFOC_HLI.prop(APPVAR_POP_DOKUMENT) = clng(choice)
+			else
+				exit function
+			end if
+		end if
+	end if
+
+	doc_.getmodule(60129).format_dokhandl_hli pFOC_HLI
+
+	set prepare_foc_sprzedaz = pFOC_HLI
+
+end function
+
+function wywolaj_nowaFakt_z_ewentualnie_PZ_zakup (byref page,byref idklient, byref idklientjo,byref idsposplat):wywolaj_nowaFakt_z_ewentualnie_PZ_zakup  = false
+	trans_.var(APPVAR_REJESTR_TYP) = clng(0)
+
+	dim hli_fak:set hli_fak = doc_.getmodule(60129).prepare_form_open_command(TYPEID_N5ZAKUP,0,USAGE_EDIT)
+		if not hli_fak is nothing then
+			set page=doc_.getpagehli(hli_fak)
+		else
+			set page = nothing
+					message_FAILED("")
+		end if
+
+	if page is nothing then
+		message_FAILED(" brak page'a")
+		exit function	
+	end if
+
+	set page.root.pDostawca = trans_.getobj(TYPEID_N5KLIENT , idklient)
+		if idklientjo > 0 then
+			set page.root.pKlient_JO = trans_.getobj(TYPEID_N5_KLIENT_JEDN_ORG , idklientjo)
+		end if
+	set page.root.pSposobPlatnosci = trans_.getobj(TYPEID_N5SPOSPLAT , idsposplat)	
+	wywolaj_nowaFakt_z_ewentualnie_PZ_zakup = true	
+end function
+
+function WartoscStwakiVat(byval vat):WartoscStwakiVat=1
+ select case vat.eVat 
+	case 1,2,3  WartoscStwakiVat=1
+	case 4		WartoscStwakiVat=1.02
+	case 5		WartoscStwakiVat=1.03
+	case 6		WartoscStwakiVat=1.04
+	case 7		WartoscStwakiVat=1.07
+	case 8		WartoscStwakiVat=1.12
+	case 9		WartoscStwakiVat=1.17
+	case 10		WartoscStwakiVat=1.22
+	case 11		WartoscStwakiVat=1.05
+ end select
+end function	
+
+function funkcja_wypelnienie_faktury_sprzed(byref page,byref idzam,byref mag_id,byref zam,byref bEmpty):funkcja_wypelnienie_faktury_sprzed=false
+  funkcja_wypelnienie_faktury_sprzed = funkcja_wypelnienie_faktury_sprzed_ex(page,idzam,mag_id,zam,bEmpty,0)
+end function
+
+function funkcja_wypelnienie_faktury_sprzed_ex(byref page,byref idzam,byref mag_id,byref zam,byref bEmpty, byref nRejType):funkcja_wypelnienie_faktury_sprzed_ex=false
+
+dim iter, ilosc_real, poz_z,i ,poz_dokhandl,lp_poz_dokhandl,stan
+
+DEBUG_MESSAGE("Realizacja zamowienia - wypelanienie faktury")
+	
+'--------------------
+'nie kopiujemy tego - samo ma sie ustawic
+'			page.root.dDataPlat = zam.dDataPlat
+'--------------------
+#if F2_MODE=KREATOR_REAL_ZAM_OBCE 
+	set page.root.sprzed_pSposobDostawy = zam.zam_pSposobDostawy
+	page.root.eNettoBrutto = zam.eNettoBrutto
+#else
+	set page.root.zak_pSposobDostawy = zam.zam_pSposobDostawy
+#endif
+	set page.root.pWaluta = zam.pWaluta
+	page.root.curKurs = zam.curKurs
+
+#ifdef _ARTECH
+	if not page.root.pRejestrDok is nothing then
+		if page.root.pRejestrDok.eTyp = N5REJESTRDOK_WDT then
+			page.root.n5sprzedaz_wylicz_kurs()
+		end if
+	end if
+#endif
+	
+	if page.root.type = TYPEID_N5ZAKUP then
+		if Len(zam.strUwagi) > 128 then
+			page.root.strUwagi = Left(zam.strUwagi,128)
+		else
+			page.root.strUwagi = zam.strUwagi
+		end if
+	else
+		page.root.strUwagi = zam.strUwagi
+	end if
+  
+#ifdef _IOW
+		page.root.strExtra2 = zam.strExtra2
+#endif
+
+#ifdef ENABLE_DB14
+	if page.root.type = TYPEID_N5SPRZEDAZ then
+		page.root.sprzed_strNazwa_dost = zam.zam_strNazwa_dost
+		page.root.sprzed_strUlica_dost = zam.zam_strUlica_dost
+		page.root.sprzed_strNrDomu_dost = zam.zam_strNrDomu_dost
+		page.root.sprzed_strNrLokalu_dost = zam.zam_strNrLokalu_dost
+		page.root.sprzed_strKod_dost = zam.zam_strKod_dost
+		page.root.sprzed_strPoczta_dost = zam.zam_strPoczta_dost
+		set page.root.sprzed_pMiejscowosc_dost = zam.zam_pMiejscowosc_dost
+		set page.root.sprzed_pKraj_dost = zam.zam_pKraj_dost
+		page.root.sprzed_curSzerGeogr_dost = zam.zam_curSzerGeogr_dost
+		page.root.sprzed_curDlugGeogr_dost = zam.zam_curDlugGeogr_dost
+	end if
+#endif
+
+	set page.root.pZamowienie = zam	
+	
+
+	bEmpty = true ' czy mamy wogole co generowac...
+
+	for iter = 0 to pParamClass.lp_tab.count-1
+		ilosc_real = pParamClass.ilosc_tab.Value(iter)
+		if ilosc_real > 0 then					
+
+			set poz_z = zam.listPozycje.get(pParamClass.lp_tab.Value(iter))
+			i = can_proceed(poz_z.pProdukt.idobj , poz_z.pOpak.idobj , mag_id , ilosc_real , stan)
+			DEBUG_MESSAGE("can_proceed="+cstr(i))
+
+			if i = 3 then
+				'uciekamy bo stany magazynowe sie nie zgadzają
+				message_FAILED("Brakuje towaru w magazynach - "  + poz_z.pProdukt.text + ", " + poz_z.pOpak.text)
+				exit function
+			end if
+
+			if i = 2 then				
+				if stan =< 0 then
+					MessageBox "Pomijam pozycje zamówienia ("+ poz_z.pProdukt.text + ", " + poz_z.pOpak.text +") - brakuje towaru w magazynie", "Nieprawidłowa sytuacja", vbOkOnly, vbInformation
+				else
+					MessageBox "Zmiana ilości dla pozycji ("+ poz_z.pProdukt.text + ", " + poz_z.pOpak.text +") - w magazynie mniej towaru niż na zamówieniu (zamówiono "+ cstr(ilosc_real) +", jest "+ cstr(stan)+")","Nieprawidłowa sytuacja", vbOkOnly, vbInformation
+				end if
+				ilosc_real = stan
+			end if
+
+
+			if i = 1 or (i = 2 and stan > 0)then
+				bEmpty = false								
+				lp_poz_dokhandl = find_poz(poz_z.pProdukt.idobj , poz_z.pOpak.idobj , page.root.listPozycje)
+				if lp_poz_dokhandl = 0 then
+					set poz_dokhandl = page.root.listPozycje.addnew()					
+					set poz_dokhandl.pProdukt = poz_z.pProdukt
+					set poz_dokhandl.pOpak = poz_z.pOpak
+					
+					'kopiowanie pól extra
+					poz_dokhandl.strExtra1 = poz_z.strExtra1
+					poz_dokhandl.strExtra2 = poz_z.strExtra2
+					poz_dokhandl.dExtra3 = poz_z.dExtra3
+					poz_dokhandl.curExtra4 = poz_z.curExtra4
+					poz_dokhandl.curExtra5 = poz_z.curExtra5
+					set poz_dokhandl.pKwalifikatorEx = poz_z.pKwalifikatorEx
+
+					poz_dokhandl.curIloscOpak = ccur(0)
+					if zam.eNettoBrutto = N5SPRZEDAZ_NETTO then
+						poz_dokhandl.curCenaNettoWal = poz_z.curCenaNettoWal
+#if F2_MODE = KREATOR_REAL_ZAM_OBCE
+						poz_dokhandl.curCenaBazowaNettoWal = poz_z.curCenaBazowaNettoWal
+						poz_dokhandl.curCenaBazNetto = poz_z.curCenaBazNetto
+						if poz_dokhandl.curCenaBazNetto = ccur(0) then
+							poz_dokhandl.curCenaNettoWal = poz_z.curCenaNettoWal
+						end if
+						poz_dokhandl.curRabat = poz_z.curRabat
+						poz_dokhandl.curCenaNetto = poz_z.curCenaBrutto
+						poz_dokhandl.curCenaNetto = poz_z.curCenaNetto
+#endif	
+					else
+#if F2_MODE = KREATOR_REAL_ZAM_OBCE
+						poz_dokhandl.curCenaBazowaBruttoWal = poz_z.curCenaBazowaBruttoWal
+#endif
+						poz_dokhandl.curRabat = poz_z.curRabat
+						poz_dokhandl.curCenaBruttoWal = poz_z.curCenaBruttoWal
+						poz_dokhandl.curCenaBazBrutto = poz_z.curCenaBazBrutto
+						poz_dokhandl.curCenaBrutto = poz_z.curCenaBrutto
+					end if
+
+					poz_dokhandl.strUwagi = poz_z.strUwagi
+					
+				else
+					set poz_dokhandl = page.root.listPozycje.get(lp_poz_dokhandl)
+				end if
+
+				poz_dokhandl.curIloscOpak = poz_dokhandl.curIloscOpak + ilosc_real
+				'tylko dostawa aktualizuje ilość zrealizowaną
+
+#ifdef _SWIAT_TOREBEK
+				if pParamClass.dok = 8 or pParamClass.dok = 9 then
+					if nRejType > clng(0) then
+						poz_z.pzam_curIloscOpakZreal = poz_z.pzam_curIloscOpakZreal + poz_dokhandl.curIloscOpak		
+					end if
+				else
+					poz_z.pzam_curIloscOpakZreal = poz_z.pzam_curIloscOpakZreal + poz_dokhandl.curIloscOpak
+				end if
+#else
+#ifdef _ABAS_INWESTYCJE
+				if pParamClass.dok = 9 or pParamClass.dok = 10 then
+					if nRejType > clng(0) then
+						poz_z.pzam_curIloscOpakZreal = poz_z.pzam_curIloscOpakZreal + poz_dokhandl.curIloscOpak		
+					end if
+				else
+					poz_z.pzam_curIloscOpakZreal = poz_z.pzam_curIloscOpakZreal + poz_dokhandl.curIloscOpak
+				end if
+#else
+				if pParamClass.dok = 7 or pParamClass.dok = 8 then
+					if nRejType > clng(0) then
+						poz_z.pzam_curIloscOpakZreal = poz_z.pzam_curIloscOpakZreal + poz_dokhandl.curIloscOpak		
+					end if
+				else
+					poz_z.pzam_curIloscOpakZreal = poz_z.pzam_curIloscOpakZreal + poz_dokhandl.curIloscOpak
+				end if
+#endif
+#endif
+        
+				if poz_z.pzam_curIloscOpakZreal > poz_z.curIloscOpak then
+					poz_z.pzam_curIloscOpakZreal = poz_z.curIloscOpak
+				end if
+				if poz_z.curIloscOpakPoz < ccur(0) then
+					poz_z.curIloscOpakPoz = ccur(0)
+				end if
+
+#ifdef _ALMA_TREND
+        if page.root.pRejestrDok.eTyp = N5REJESTRDOK_WNT or page.root.pRejestrDok.eTyp = N5REJESTRDOK_FAKT_IMP then
+          poz_dokhandl.pzak_curWartWal = poz_z.curWartWal
+        end if
+#endif
+
+			end if
+
+		end if
+
+	next
+	set poz_dokhandl = nothing
+	funkcja_wypelnienie_faktury_sprzed_ex=true
+end function
+
+function wypelnienie_listu_przewozowego(byref page, byref idzam, byref mag_id, byref zam, byref bEmpty) : wypelnienie_listu_przewozowego = false
+
+  dim iter, ilosc_real, poz_z, i, pozListuPrzew, lpPozListuPrzew, stan
+
+  set page.root.pWaluta = zam.pWaluta
+  page.root.curKurs = zam.curKurs
+  page.root.strUwagi = zam.strUwagi
+
+  set page.root.pZamowienie = zam	
+	
+  bEmpty = true ' czy mamy wogole co generowac...
+
+  for iter = 0 to pParamClass.lp_tab.count - 1
+    ilosc_real = pParamClass.ilosc_tab.Value(iter)
+    if ilosc_real > 0 then					
+
+      set poz_z = zam.listPozycje.get(pParamClass.lp_tab.Value(iter))
+      i = can_proceed(poz_z.pProdukt.idobj , poz_z.pOpak.idobj , mag_id , ilosc_real , stan)
+
+      if i = 3 then
+        'uciekamy bo stany magazynowe sie nie zgadzają
+        message_FAILED("Brakuje towaru w magazynach - "  + poz_z.pProdukt.text + ", " + poz_z.pOpak.text)
+        exit function
+      end if
+
+      if i = 2 then				
+        if stan =< 0 then
+          MessageBox "Pomijam pozycje zamówienia ("+ poz_z.pProdukt.text + ", " + poz_z.pOpak.text +") - brakuje towaru w magazynie", "Nieprawidłowa sytuacja", vbOkOnly, vbInformation
+        else
+          MessageBox "Zmiana ilości dla pozycji ("+ poz_z.pProdukt.text + ", " + poz_z.pOpak.text +") - w magazynie mniej towaru niż na zamówieniu (zamówiono "+ cstr(ilosc_real) +", jest "+ cstr(stan)+")","Nieprawidłowa sytuacja", vbOkOnly, vbInformation
+        end if
+        ilosc_real = stan
+      end if
+
+      if i = 1 or (i = 2 and stan > 0) then
+        bEmpty = false								
+        lpPozListuPrzew = find_poz(poz_z.pProdukt.idobj, poz_z.pOpak.idobj, page.root.listPozycje)
+        if lpPozListuPrzew = 0 then
+          set pozListuPrzew = page.root.listPozycje.addnew()
+          with pozListuPrzew
+            set .pProdukt = poz_z.pProdukt
+            set .pOpak = poz_z.pOpak
+            .eVat = poz_z.eVat
+            .curCenaBazNetto = poz_z.curCenaBazNetto
+            .curCenaBazBrutto = poz_z.curCenaBazBrutto
+            .curCenaBazowaNettoWal = poz_z.curCenaBazowaNettoWal		
+            .curRabat = poz_z.curRabat		
+            .curCenaNetto = poz_z.curCenaNetto
+            .curCenaNettoWal = poz_z.curCenaNettoWal
+            .curCenaBrutto = poz_z.curCenaBrutto
+            .curWartNetto = poz_z.curWartNetto
+            .curVAT = poz_z.curVAT
+            .curWartBrutto = poz_z.curWartBrutto
+            .curWartWal = poz_z.curWartWal
+            .strUwagi = poz_z.strUwagi     
+					
+            'kopiowanie pól extra
+            .strExtra1 = poz_z.strExtra1
+            .strExtra2 = poz_z.strExtra2
+            .dExtra3 = poz_z.dExtra3
+            .curExtra4 = poz_z.curExtra4
+            .curExtra5 = poz_z.curExtra5
+            set .pKwalifikatorEx = poz_z.pKwalifikatorEx
+            .curIloscOpak = ccur(0)
+            .strUwagi = poz_z.strUwagi
+          end with
+        else
+          set pozListuPrzew = page.root.listPozycje.get(lpPozListuPrzew)
+        end if
+
+        pozListuPrzew.curIloscOpak = pozListuPrzew.curIloscOpak + ilosc_real
+        poz_z.pzam_curIloscOpakZreal = poz_z.pzam_curIloscOpakZreal + pozListuPrzew.curIloscOpak						
+        if poz_z.pzam_curIloscOpakZreal > poz_z.curIloscOpak then
+          poz_z.pzam_curIloscOpakZreal = poz_z.curIloscOpak
+        end if
+        if poz_z.curIloscOpakPoz < ccur(0) then
+          poz_z.curIloscOpakPoz = ccur(0)
+        end if
+      end if
+		end if
+
+	next
+	set pozListuPrzew = nothing
+  
+	wypelnienie_listu_przewozowego=true
+end function
+
+function faktura_lub_dostawa(byref idklient,byref idklientjo,byref idsposplat,byref idzam,byref mag_id,byref zam,byref oWC, byval nRejType, byval nIdDost): faktura_lub_dostawa = clng(0)
+	dim page
+	dim res	
+	dim poz_z,poz_dokhandl,lp_poz_dokhandl
+	dim iter,i,ilosc_real,stan,bEmpty
+	oWC=false
+
+#if F2_MODE=KREATOR_REAL_ZAM_OBCE 
+	if not wywolaj_faktura_lub_dostawa(page,idklient,idklientjo,idsposplat,nRejType) then exit function
+#endif
+			
+	set zam = trans_.getobj(TYPEID_N5ZAMOWIENIE , idzam )
+	'wypelnienie faktury
+	if not funkcja_wypelnienie_faktury_sprzed_ex(page,idzam,mag_id,zam,bEmpty,nRejType) then exit function
+	'wywolaj_wypelnienie faktury 
+			
+	'--------- raty platnosci ---
+	dim oPozZamRata
+	dim oPozSpRata
+	for each oPozZamRata in zam.zam_listRata
+		set oPozSpRata = page.root.sprzed_listRata.addnew()
+		with oPozSpRata
+			.prat_dDataPlat = oPozZamRata.prat_dDataPlat
+			set .prat_pSposobPlatnosci = oPozZamRata.prat_pSposobPlatnosci
+			set .prat_pPlatnik = oPozZamRata.prat_pPlatnik
+			.prat_curRata = oPozZamRata.prat_curRata
+			set .prat_pTransakcja = oPozZamRata.prat_pTransakcja
+		end with
+	next
+	set oPozSpRata = nothing
+
+	if bEmpty then
+		message_FAILED("Nie stworzono faktury/dostawy - brak pozycji do realizacji lub towaru na magazynie ")
+		trans_.discard
+		exit function
+	end if
+      
+	if nIdDost > clng(0) then
+		dim oDost: set oDost = trans_.getobj(TYPEID_N5SPRZEDAZ,nIdDost)
+		set page.root.sprzed_pDostawa = oDost
+	end if
+
+	page.domodalauto
+
+	res = page.root.isnew or trans_.isdirty
+	if res then
+		if page.root.isnew then
+			page.root.ignore = true
+		end if
+		message_FAILED("Nie zapisano dokumentu faktury/dostawy")					
+		exit function
+	else
+		if trans_.saveobjects then		
+			'udał się zapis faktury/dostawy, możemy tworzyć WZ jesli trzeba...
+			if pParamClass.dok = 6 then 'Nowa dostawa + WZ				
+				if doc_.getmodule(60226).dh2dm_exchange(3,page,N5REJESTRDOK__WZ) then
+					message_OK
+				else
+					message_FAILED("Zapisano dokument faktury/dostawy, ale nie udało się stworzenie WZ")
+					exit function
+				end if
+			else
+				if pParamClass.dok = 7 then 'Faktura + Dostawa
+					if nRejType = clng(0) then
+						message_OK
+					end if
+				else
+					if pParamClass.dok = 8 then 'Faktura + Dostawa + WZ
+						if nRejType > clng(0) then
+							if not doc_.getmodule(60226).dh2dm_exchange(3,page,N5REJESTRDOK__WZ) then
+								message_FAILED("Zapisano dokument faktury/dostawy, ale nie udało się stworzenie WZ")
+								exit function
+							end if   
+						else
+							message_OK
+						end if
+					else
+						message_OK
+					end if
+				end if
+			end if
+			faktura_lub_dostawa = page.root.IdObj
+			oWC=true 'onWizzardComplete = true 'tak bylo gdy onWizzardComplete był w jednej funkcji
+		else
+			message_FAILED("")					
+			exit function
+		end if
+	end if
+end function
+ 
+function Nowa_fakt_dodanie_do_istniejacej_faktury_i_WZ(byref idklient,byref idklientjo,byref idsposplat,byref idzam,byref mag_id,byref zam,byref oWC)
+	dim page
+	dim res	
+	dim poz_z,poz_dokhandl,lp_poz_dokhandl
+	dim iter,i,ilosc_real,stan,bEmpty
+	oWC=false
+			if pParamClass.dok = 2 then		
+#if F2_MODE=KREATOR_REAL_ZAM_OBCE 		
+				if not wywolaj_istniejacy_dok_sprzedazy(page) then exit function
+#else
+				'wywolaj_wyb_zakup()  luki tu dodajemy wybor dla Wlasnych
+				if not wywolaj_istniejacy_dok_zakupu(page) then exit function
+#endif
+			else
+#if F2_MODE=KREATOR_REAL_ZAM_OBCE 
+				if not wywolaj_nowaFakt_z_ewentualnie_WZ_sprzedaz(page,idklient,idklientjo,idsposplat) then exit function
+#else
+				'wywolaj_nowaFakt_zakup() luki tu dodajemy wybor dla wlasnych	
+				if not wywolaj_nowaFakt_z_ewentualnie_PZ_zakup(page,idklient,idklientjo,idsposplat) then exit function
+#endif
+			end if
+			
+		set zam = trans_.getobj(TYPEID_N5ZAMOWIENIE , idzam )
+			'wypelnienie faktury
+				if not funkcja_wypelnienie_faktury_sprzed(page,idzam,mag_id,zam,bEmpty) then exit function
+				'wywolaj_wypelnienie faktury 
+			
+			
+
+			'--------- raty platnosci ---
+			dim oPozZamRata
+			dim oPozSpRata
+			for each oPozZamRata in zam.zam_listRata
+				set oPozSpRata = page.root.sprzed_listRata.addnew()
+				with oPozSpRata
+					.prat_dDataPlat = oPozZamRata.prat_dDataPlat
+					set .prat_pSposobPlatnosci = oPozZamRata.prat_pSposobPlatnosci
+					set .prat_pPlatnik = oPozZamRata.prat_pPlatnik
+					.prat_curRata = oPozZamRata.prat_curRata
+					set .prat_pTransakcja = oPozZamRata.prat_pTransakcja
+				end with
+			next
+			set oPozSpRata = nothing
+
+			if bEmpty then
+				message_FAILED("Nie stworzono faktury - brak pozycji do realizacji lub towaru na magazynie ")
+				trans_.discard
+				exit function
+			end if
+
+			page.domodalauto
+
+						
+			res = page.root.isnew or trans_.isdirty
+			if res then
+				if page.root.isnew then
+					page.root.ignore = true
+				end if
+				message_FAILED("Nie zapisano dokumentu faktury")					
+				exit function
+			else
+				if trans_.saveobjects then
+#if F2_MODE = KREATOR_REAL_ZAM_OBCE				
+					'udał się zapis faktury, możemy tworzyć WZ jesli trzeba...
+					if pParamClass.dok = 3 then ' nowa faktura + wz						
+						if doc_.getmodule(60226).dh2dm_exchange(3,page,N5REJESTRDOK__WZ) then
+							message_OK
+						else
+#else
+					'udał się zapis faktury, możemy tworzyć PZ jesli trzeba...
+					if pParamClass.dok = 3 then ' nowa faktura + pz						
+						if doc_.getmodule(60226).dh2dm_exchange(3,page,N5REJESTRDOK__PZ) then
+							message_OK
+						else
+#endif
+							message_FAILED("Zapisano dokument faktury, ale nie udało się stworzenie WZ")
+							exit function
+						end if
+					else
+						message_OK
+					end if					
+					oWC=true 'onWizzardComplete = true 'tak bylo gdy onWizzardComplete był w jednej funkcji
+				else
+					message_FAILED("")					
+					exit function
+				end if
+			end if
+end function
+
+function create_WZ(byref idklient,byref idklientjo,byref res,byref poz_z,byref poz_dokhandl,byref mag_id,byref stan,byref lp_poz_dokhandl,byref idzam,byref oWC):create_WZ=false
+	oWC=true
+	dim page,zam,bEmpty,iter,ilosc_real,i
+	trans_.var(APPVAR_REJESTR_TYP) = clng(N5REJESTRDOK__WZ)
+	dim hli:set hli = doc_.getmodule(60129).prepare_form_open_command(TYPEID_N5DOKMAG,0,USAGE_EDIT)
+	if not hli is nothing then
+		set page=doc_.getpagehli(hli)
+	else
+		set page = nothing
+	end if
+	if page is nothing then
+		messageFAILED()
+		exit function
+	end if
+	set page.root.pKlient = trans_.getobj(TYPEID_N5KLIENT , idklient)
+
+	if idklientjo > 0 then
+		set page.root.pKlient_JO = trans_.getobj(TYPEID_N5_KLIENT_JEDN_ORG , idklientjo)
+	end if
+	set zam = trans_.getobj(TYPEID_N5ZAMOWIENIE , idzam )
+	set page.root.dm_pSposobDostawy = zam.zam_pSposobDostawy
+	set page.root.wrefDokHandl = zam
+	
+#ifdef ENABLE_DB14
+	page.root.dm_strNazwa_dost = zam.zam_strNazwa_dost
+	page.root.dm_strUlica_dost = zam.zam_strUlica_dost
+	page.root.dm_strNrDomu_dost = zam.zam_strNrDomu_dost
+	page.root.dm_strNrLokalu_dost = zam.zam_strNrLokalu_dost
+	page.root.dm_strKod_dost = zam.zam_strKod_dost
+	page.root.dm_strPoczta_dost = zam.zam_strPoczta_dost
+	set page.root.dm_pMiejscowosc_dost = zam.zam_pMiejscowosc_dost
+	set page.root.dm_pKraj_dost = zam.zam_pKraj_dost
+	page.root.dm_curSzerGeogr_dost = zam.zam_curSzerGeogr_dost
+	page.root.dm_curDlugGeogr_dost = zam.zam_curDlugGeogr_dost
+#endif	
+
+	page.root.strUwagi = zam.strUwagi
+
+	if mag_id > 0 then
+	  set page.root.pMagZrod = trans_.getobj(TYPEID_N5MAGAZYN , mag_id)
+	end if
+	
+	bEmpty = true ' czy mamy wogole co generowac...
+
+	for iter = 0 to pParamClass.lp_tab.count-1
+
+		ilosc_real = pParamClass.ilosc_tab.Value(iter)
+
+		if ilosc_real > 0 then
+
+			set poz_z = zam.listPozycje.get(pParamClass.lp_tab.Value(iter))
+			i = can_proceed(poz_z.pProdukt.idobj , poz_z.pOpak.idobj , mag_id , ilosc_real , stan)
+
+			if i = 3 then
+				'uciekamy bo stany magazynowe sie nie zgadzają
+				message_FAILED("Brakuje towaru w magazynach - "  + poz_z.pProdukt.text + ", " + poz_z.pOpak.text)
+				exit function
+			end if
+
+			if i = 2 then				
+				if stan =< 0 then
+					MessageBox "Pomijam pozycje zamówienia ("+ poz_z.pProdukt.text + ", " + poz_z.pOpak.text +") - brakuje towaru w magazynie", "Nieprawidłowa sytuacja", vbOkOnly, vbInformation
+				else
+					MessageBox "Zmiana ilości dla pozycji ("+ poz_z.pProdukt.text + ", " + poz_z.pOpak.text +") - w magazynie mniej towaru niż na zamówieniu (zamówiono "+ cstr(ilosc_real) +", jest "+ cstr(stan)+")","Nieprawidłowa sytuacja", vbOkOnly, vbInformation
+				end if
+				ilosc_real = stan
+			end if
+
+
+			if i = 1 or (i = 2 and stan > 0)then
+				bEmpty = false				
+				lp_poz_dokhandl = find_poz(poz_z.pProdukt.idobj , poz_z.pOpak.idobj , page.root.listPozycje)
+				if lp_poz_dokhandl = 0 then
+					set poz_dokhandl = page.root.listPozycje.addnew()					
+					set poz_dokhandl.pProdukt = poz_z.pProdukt
+					set poz_dokhandl.pOpak = poz_z.pOpak
+					poz_dokhandl.curIloscOpak = ccur(0)
+					poz_dokhandl.strUwagi = poz_z.strUwagi
+
+					poz_dokhandl.strExtra1 = poz_z.strExtra1
+					poz_dokhandl.strExtra2 = poz_z.strExtra2
+					poz_dokhandl.dExtra3 = poz_z.dExtra3
+					poz_dokhandl.curExtra4 = poz_z.curExtra4
+					poz_dokhandl.curExtra5 = poz_z.curExtra5
+					set poz_dokhandl.pKwalifikatorEx = poz_z.pKwalifikatorEx
+
+
+					
+				else
+					set poz_dokhandl = page.root.listPozycje.get(lp_poz_dokhandl)
+				end if
+
+				poz_dokhandl.curIloscOpak = poz_dokhandl.curIloscOpak + ilosc_real
+				poz_z.pzam_curIloscOpakZreal = poz_z.pzam_curIloscOpakZreal + poz_dokhandl.curIloscOpak						
+				if poz_z.pzam_curIloscOpakZreal > poz_z.curIloscOpak then
+					poz_z.pzam_curIloscOpakZreal = poz_z.curIloscOpak
+				end if
+				if poz_z.curIloscOpakPoz < ccur(0 ) then
+					poz_z.curIloscOpakPoz = ccur(0)
+				end if
+#ifdef _ABAKUS
+				poz_dokhandl.curExtra4 = trans_.afc.convert.roundn(poz_dokhandl.curIloscOpak * poz_dokhandl.pOpak.curWagaNetto / 1000, 4)
+#endif
+
+			end if
+
+
+		end if
+
+	next
+	set poz_dokhandl = nothing
+
+	if bEmpty then
+		message_FAILED("Nie stworzono WZ - brak pozycji do realizacji lub towaru na magazynie ")
+		trans_.discard
+		exit function
+	end if
+
+	page.domodalauto
+		
+	res = page.root.isnew or trans_.isdirty
+	if res then
+		if page.root.isnew then
+			page.root.ignore = true
+		end if
+		message_FAILED("Nie zapisano dokumentu WZ")					
+		exit function
+	else
+	
+#ifdef _INTERCO
+	set zam.pDokStatus = get_status_zam_obce_by_name(STATUS_ZAM_OBCE_W_REALIZACJI)
+#endif
+		
+		if trans_.saveobjects then				
+			message_OK
+			oWC=true 'onWizzardComplete = true 'tak bylo gdy onWizzardComplete był w jednej funkcji
+		else
+			message_FAILED("")					
+			exit function
+		end if
+end if
+
+
+	create_WZ=true
+end function
+
+function create_PZ(byref idklient,byref idklientjo,byref res,byref poz_z,byref poz_dokhandl,byref mag_id,byref stan,byref lp_poz_dokhandl,byref idzam,byref oWC):create_PZ=false
+	oWC=true
+	dim page,zam,bEmpty,iter,ilosc_real,i
+	trans_.var(APPVAR_REJESTR_TYP) = clng(N5REJESTRDOK__PZ)
+	dim hli:set hli = doc_.getmodule(60129).prepare_form_open_command(TYPEID_N5DOKMAG,0,USAGE_EDIT)
+	if not hli is nothing then
+		set page=doc_.getpagehli(hli)
+	else
+		set page = nothing
+	end if
+	if page is nothing then
+		messageFAILED()
+		exit function
+	end if
+	set page.root.pKlient = trans_.getobj(TYPEID_N5KLIENT , idklient)
+
+	if idklientjo > 0 then
+		set page.root.pKlient_JO = trans_.getobj(TYPEID_N5_KLIENT_JEDN_ORG , idklientjo)
+	end if
+	set zam = trans_.getobj(TYPEID_N5ZAMOWIENIE , idzam )
+	set page.root.dm_pSposobDostawy = zam.zam_pSposobDostawy
+	set page.root.wrefDokHandl = zam
+
+#if F2_MODE = KREATOR_REAL_ZAM_OBCE
+	if page.root.pMagZrod is nothing then
+		if mag_id > 0 then
+			set page.root.pMagZrod = trans_.getobj(TYPEID_N5MAGAZYN , mag_id)
+		end if
+	end if	
+#endif
+
+
+	bEmpty = true ' czy mamy wogole co generowac...
+
+	for iter = 0 to pParamClass.lp_tab.count-1
+
+		ilosc_real = pParamClass.ilosc_tab.Value(iter)
+
+		if ilosc_real > 0 then
+
+			set poz_z = zam.listPozycje.get(pParamClass.lp_tab.Value(iter))
+			i = can_proceed(poz_z.pProdukt.idobj , poz_z.pOpak.idobj , mag_id , ilosc_real , stan)
+
+			if i = 3 then
+				'uciekamy bo stany magazynowe sie nie zgadzają
+				message_FAILED("Brakuje towaru w magazynach - "  + poz_z.pProdukt.text + ", " + poz_z.pOpak.text)
+				exit function
+			end if
+
+			if i = 2 then				
+				if stan =< 0 then
+					MessageBox "Pomijam pozycje zamówienia ("+ poz_z.pProdukt.text + ", " + poz_z.pOpak.text +") - brakuje towaru w magazynie", "Nieprawidłowa sytuacja", vbOkOnly, vbInformation
+				else
+					MessageBox "Zmiana ilości dla pozycji ("+ poz_z.pProdukt.text + ", " + poz_z.pOpak.text +") - w magazynie mniej towaru niż na zamówieniu (zamówiono "+ cstr(ilosc_real) +", jest "+ cstr(stan)+")","Nieprawidłowa sytuacja", vbOkOnly, vbInformation
+				end if
+				ilosc_real = stan
+			end if
+
+
+			if i = 1 or (i = 2 and stan > 0)then
+				bEmpty = false				
+				lp_poz_dokhandl = find_poz(poz_z.pProdukt.idobj , poz_z.pOpak.idobj , page.root.listPozycje)
+				if lp_poz_dokhandl = 0 then
+					set poz_dokhandl = page.root.listPozycje.addnew()					
+					set poz_dokhandl.pProdukt = poz_z.pProdukt
+					set poz_dokhandl.pOpak = poz_z.pOpak
+					poz_dokhandl.curIloscOpak = ccur(0)
+					poz_dokhandl.strUwagi = poz_z.strUwagi
+
+					poz_dokhandl.strExtra1 = poz_z.strExtra1
+					poz_dokhandl.strExtra2 = poz_z.strExtra2
+					poz_dokhandl.dExtra3 = poz_z.dExtra3
+					poz_dokhandl.curExtra4 = poz_z.curExtra4
+					poz_dokhandl.curExtra5 = poz_z.curExtra5
+					set poz_dokhandl.pKwalifikatorEx = poz_z.pKwalifikatorEx
+					poz_dokhandl.curCenaMag = poz_z.curCenaBazowaNettoWal	
+				
+					
+				else
+					set poz_dokhandl = page.root.listPozycje.get(lp_poz_dokhandl)
+				end if
+
+				poz_dokhandl.curIloscOpak = poz_dokhandl.curIloscOpak + ilosc_real
+				poz_z.pzam_curIloscOpakZreal = poz_z.pzam_curIloscOpakZreal + poz_dokhandl.curIloscOpak						
+				if poz_z.pzam_curIloscOpakZreal > poz_z.curIloscOpak then
+					poz_z.pzam_curIloscOpakZreal = poz_z.curIloscOpak
+				end if
+				if poz_z.curIloscOpakPoz < ccur(0 ) then
+					poz_z.curIloscOpakPoz = ccur(0)
+				end if
+
+
+			end if
+
+
+		end if
+
+	next
+	set poz_dokhandl = nothing
+
+	if bEmpty then
+		message_FAILED("Nie stworzono PZ - brak pozycji do realizacji lub towaru na magazynie ")
+		trans_.discard
+		exit function
+	end if
+
+	page.domodalauto
+
+				
+	res = page.root.isnew or trans_.isdirty
+	if res then
+		if page.root.isnew then
+			page.root.ignore = true
+		end if
+		message_FAILED("Nie zapisano dokumentu PZ")					
+		exit function
+	else
+		if trans_.saveobjects then				
+			message_OK
+			oWC=true 'onWizzardComplete = true 'tak bylo gdy onWizzardComplete był w jednej funkcji
+		else
+			message_FAILED("")					
+			exit function
+		end if
+end if
+
+
+	create_WZ=true
+end function
+
+
+function onWizzardComplete(pWizzardPage):onWizzardComplete = false
+	dim strmsg
+	dim idklient,idklientjo,idsposplat,idzam,zam,mag_id
+	dim res	
+	dim poz_z,poz_dokhandl,lp_poz_dokhandl
+	dim iter,i,stan,oWC
+	oWC=false
+	
+	'odpalenie trybu zaawansowanego	
+	onWizzardComplete=runAdv()
+	if onWizzardComplete=true then exit function
+
+	ustaw_zmienne idklient,idklientjo,idsposplat,idzam,mag_id
+	
+	'tutaj sprawdzimy czy sa jakiekolwiek pozycje
+	select case pParamClass.dok
+	
+		case 1,3,2 ' nowa faktura, dodanie do faktury lub faktura + WZ	
+				Nowa_fakt_dodanie_do_istniejacej_faktury_i_WZ idklient,idklientjo,idsposplat,idzam,mag_id,zam,oWC
+				onWizzardComplete=oWC
+		case 4 ' tylko WZ
+
+#if F2_MODE=KREATOR_REAL_ZAM_OBCE
+				if not create_WZ(idklient,idklientjo,res,poz_z,poz_dokhandl,mag_id,stan,lp_poz_dokhandl,idzam,oWC) then exit function
+				onWizzardComplete=oWC
+#else
+				if not create_PZ(idklient,idklientjo,res,poz_z,poz_dokhandl,mag_id,stan,lp_poz_dokhandl,idzam,oWC) then exit function
+				onWizzardComplete=oWC
+#endif
+'#ifdef _AMPLUS
+'    case 5
+'        'utwórz list przewozowy
+'        list_przewozowy idklient,idklientjo,idsposplat,idzam,mag_id,zam
+'    case 6
+'        'utwórz list przewozowy i WZ
+'        list_przewozowy idklient,idklientjo,idsposplat,idzam,mag_id,zam 
+'        if not create_WZ(idklient,idklientjo,res,poz_z,poz_dokhandl,mag_id,stan,lp_poz_dokhandl,idzam,oWC) then 
+'          exit function
+'        end if  
+'#endif
+
+#ifdef _SWIAT_TOREBEK
+    case 5
+        'utwórz MM 
+        create_DokMag mag_id, idzam, N5REJESTRDOK__MM
+#ifdef ENABLE_DB12
+	case 6
+		'Nowa dostawa
+		faktura_lub_dostawa idklient,idklientjo,idsposplat,idzam,mag_id,zam,oWC,clng(N5REJESTRDOK_DOSTAWA),0
+		onWizzardComplete=oWC        
+	case 7
+		'Nowa dostawa + WZ
+		faktura_lub_dostawa idklient,idklientjo,idsposplat,idzam,mag_id,zam,oWC,clng(N5REJESTRDOK_DOSTAWA),0
+		onWizzardComplete=oWC        
+	case 8,9
+		'Faktura + Dostawa/Faktura + Dostawa + WZ
+		dim nIdDost: nIdDost = faktura_lub_dostawa(idklient,idklientjo,idsposplat,idzam,mag_id,zam,oWC,clng(N5REJESTRDOK_DOSTAWA),0)
+		dim nIdFakt: nIdFakt = faktura_lub_dostawa(idklient,idklientjo,idsposplat,idzam,mag_id,zam,oWC,clng(0),nIdDost)
+		onWizzardComplete=oWC 
+#endif
+#endif
+
+#ifdef _ABAS_INWESTYCJE
+    case 5
+        'utwórz RW 
+        create_DokMag mag_id, idzam, N5REJESTRDOK__RW
+    case 6
+        'utwórz MM 
+        create_DokMag mag_id, idzam, N5REJESTRDOK__MM
+#ifdef ENABLE_DB12
+	case 7
+		'Nowa dostawa
+		faktura_lub_dostawa idklient,idklientjo,idsposplat,idzam,mag_id,zam,oWC,clng(N5REJESTRDOK_DOSTAWA),0
+		onWizzardComplete=oWC        
+	case 8
+		'Nowa dostawa + WZ
+		faktura_lub_dostawa idklient,idklientjo,idsposplat,idzam,mag_id,zam,oWC,clng(N5REJESTRDOK_DOSTAWA),0
+		onWizzardComplete=oWC        
+	case 9,10
+		'Faktura + Dostawa/Faktura + Dostawa + WZ
+		dim nIdDost: nIdDost = faktura_lub_dostawa(idklient,idklientjo,idsposplat,idzam,mag_id,zam,oWC,clng(N5REJESTRDOK_DOSTAWA),0)
+		dim nIdFakt: nIdFakt = faktura_lub_dostawa(idklient,idklientjo,idsposplat,idzam,mag_id,zam,oWC,clng(0),nIdDost)
+		onWizzardComplete=oWC 
+#endif        
+#endif
+
+#ifndef _SWIAT_TOREBEK
+#ifndef _ABAS_INWESTYCJE
+#ifdef ENABLE_DB12
+	case 5
+		'Nowa dostawa
+		faktura_lub_dostawa idklient,idklientjo,idsposplat,idzam,mag_id,zam,oWC,clng(N5REJESTRDOK_DOSTAWA),0
+		onWizzardComplete=oWC        
+	case 6
+		'Nowa dostawa + WZ
+		faktura_lub_dostawa idklient,idklientjo,idsposplat,idzam,mag_id,zam,oWC,clng(N5REJESTRDOK_DOSTAWA),0
+		onWizzardComplete=oWC        
+	case 7,8
+		'Faktura + Dostawa/Faktura + Dostawa + WZ
+		dim nIdDost: nIdDost = faktura_lub_dostawa(idklient,idklientjo,idsposplat,idzam,mag_id,zam,oWC,clng(N5REJESTRDOK_DOSTAWA),0)
+		dim nIdFakt: nIdFakt = faktura_lub_dostawa(idklient,idklientjo,idsposplat,idzam,mag_id,zam,oWC,clng(0),nIdDost)
+		onWizzardComplete=oWC        
+#endif
+#endif
+#endif
+	end select 	
+
+end function
+
+function list_przewozowy(byref idKlient,byref idKlientJO,byref idSposPlat,byref idZam,byref mag_id,byref zam)
+
+	trans_.var(APPVAR_REJESTR_TYP) = N5REJESTRDOK_ZAP_OFERTOWE_OBCE	
+
+	dim hli : set hli = doc_.getmodule(60129).prepare_form_open_command(TYPEID_N5ZAMOWIENIE, 0, USAGE_EDIT)
+	dim page : set page = nothing
+	if not hli is nothing then
+		set page = doc_.getpagehli(hli)
+	else
+		exit function
+	end if  
+  
+	set page.root.pKlient = trans_.getobj(TYPEID_N5KLIENT, idKlient)
+		if idKlientJO > 0 then
+			set page.root.pKlient_JO = trans_.getobj(TYPEID_N5_KLIENT_JEDN_ORG , idKlientJO)
+		end if
+	set page.root.pSposobPlatnosci = trans_.getobj(TYPEID_N5SPOSPLAT, idSposPlat)
+  
+  dim bEmpty
+  set zam = trans_.getobj(TYPEID_N5ZAMOWIENIE, idZam)
+  if not wypelnienie_listu_przewozowego(page,idZam,mag_id,zam,bEmpty) then
+    exit function
+  end if
+  
+  if bEmpty then
+    message_FAILED("Nie stworzono faktury - brak pozycji do realizacji lub towaru na magazynie ")
+    trans_.discard
+    exit function
+   end if
+   
+   page.domodalauto  
+  
+end function
+
+function create_DokMag(byref idMagZrod, byref idZam, byval nTypDok) : create_DokMag = false
+	dim pPage, bEmpty, iter, ilosc_real, i
+	trans_.var(APPVAR_REJESTR_TYP) = clng(nTypDok)
+
+	dim pHLI : set pHLI = doc_.getmodule(60129).prepare_form_open_command(TYPEID_N5DOKMAG,0,USAGE_EDIT)
+	if not pHLI is nothing then
+		set pPage = doc_.getpagehli(pHLI)
+	else
+		set pPage = nothing
+	end if
+  
+	if pPage is nothing then
+		exit function
+	end if
+
+	dim oZam : set oZam = trans_.getobj(TYPEID_N5ZAMOWIENIE,idZam)
+	set pPage.root.wrefDokHandl = oZam
+
+	if pPage.root.pMagZrod is nothing then
+		if idMagZrod > 0 then
+			set pPage.root.pMagZrod = trans_.getobj(TYPEID_N5MAGAZYN,idMagZrod)
+		end if
+	end if		
+
+	bEmpty = true
+	for iter = 0 to pParamClass.lp_tab.count-1
+		ilosc_real = pParamClass.ilosc_tab.Value(iter)
+		if ilosc_real > 0 then
+			dim stan
+			dim pPozZam : set pPozZam = oZam.listPozycje.get(pParamClass.lp_tab.Value(iter))
+			i = can_proceed(pPozZam.pProdukt.idobj,pPozZam.pOpak.idobj,idMagZrod,ilosc_real,stan)
+
+			if i = 3 then
+				'uciekamy bo stany magazynowe sie nie zgadzają
+				message_FAILED("Brakuje towaru w magazynach - "  + pPozZam.pProdukt.text + ", " + pPozZam.pOpak.text)
+				exit function
+			end if
+
+			if i = 2 then				
+				if stan =< 0 then
+					MessageBox "Pomijam pozycje zamówienia ("+ pPozZam.pProdukt.text + ", " + pPozZam.pOpak.text +") - brakuje towaru w magazynie", "Nieprawidłowa sytuacja", vbOkOnly, vbInformation
+				else
+					MessageBox "Zmiana ilości dla pozycji ("+ pPozZam.pProdukt.text + ", " + pPozZam.pOpak.text +") - w magazynie mniej towaru niż na zamówieniu (zamówiono "+ cstr(ilosc_real) +", jest "+ cstr(stan)+")","Nieprawidłowa sytuacja", vbOkOnly, vbInformation
+				end if
+				ilosc_real = stan
+			end if
+
+			if i = 1 or (i = 2 and stan > 0)then
+				bEmpty = false				
+				dim pPozZamLP : pPozZamLP = find_poz(pPozZam.pProdukt.idobj,pPozZam.pOpak.idobj,pPage.root.listPozycje)
+				if pPozZamLP = 0 then
+					dim pPozDokMag : set pPozDokMag = pPage.root.listPozycje.addnew()					
+					set pPozDokMag.pProdukt = pPozZam.pProdukt
+					set pPozDokMag.pOpak = pPozZam.pOpak
+					pPozDokMag.curIloscOpak = ccur(0)
+				else
+					set pPozDokMag = pPage.root.listPozycje.get(pPozZamLP)
+				end if
+				pPozDokMag.curIloscOpak = pPozDokMag.curIloscOpak + ilosc_real
+				pPozZam.pzam_curIloscOpakZreal = pPozZam.pzam_curIloscOpakZreal + pPozDokMag.curIloscOpak						
+				if pPozZam.pzam_curIloscOpakZreal > pPozZam.curIloscOpak then
+					pPozZam.pzam_curIloscOpakZreal = pPozZam.curIloscOpak
+				end if
+				if pPozZam.curIloscOpakPoz < ccur(0) then
+					pPozZam.curIloscOpakPoz = ccur(0)
+				end if
+			end if
+		end if
+	next
+	set pPozDokMag = nothing
+
+	if bEmpty then
+		dim strDokMag
+		select case nTypDok
+			case N5REJESTRDOK__MM
+				strDokMag = "MM"
+			case N5REJESTRDOK__RW
+				strDokMag = "RW"
+			case else
+				strDokMag = "dokumentu"
+		end select
+		message_FAILED("Nie utworzono " + strDokMag + " - brak pozycji do realizacji lub towaru na magazynie ")
+		trans_.discard
+		exit function
+	end if
+
+	pPage.domodalauto
+
+	create_DokMag = true
+end function
+
+function message_OK
+	MessageBox "Działanie kreatora zakończyło się sukcesem", "Kreator realizacji zamówienia", vbOkOnly, vbInformation
+end function
+
+function message_FAILED(byval strAdditionalDesc)
+	if strAdditionalDesc <> "" then
+		trans_.message 1002 , 0 , strAdditionalDesc
+	end if
+	MessageBox "Działanie kreatora zakończyło się niepowodzeniem. Obejrzyj okno komunikatów", "Kreator realizacji zamówienia", vbOkOnly, vbInformation	
+end function
+
+
+
+
+private function copy_poz()
+end function
+
+
+private function find_poz(idobj_p , idobj_o , lista)
+	dim elem,iter
+	find_poz = 0
+	iter = 0
+	for each elem in lista		
+		iter = iter + 1
+		if not  elem.isnew then
+			if elem.pProdukt.idobj = idobj_p and elem.pOpak.idobj = idobj_o then
+				find_poz = iter
+				exit function
+			end if
+		end if
+	next
+end function
+
+
+'1 jesli mozna dzialac, 2 jesli trzeba pominac rekord i 3 jesli spadamy wogole
+function can_proceed(idobj_p , idobj_o , idobj_mag , ilosc , byref stan)
+	if trans_.getobj(TYPEID_N5PRODUKT ,idobj_p).eRodzaj = N5PRODUKT_USLUGA then
+		can_proceed = 1
+		exit function
+	end if
+	select case pParamClass.rule
+		case 3:
+			can_proceed = 1
+		case 2:
+			stan = get_stan_mag_for_prod_opak_mag( idobj_mag , idobj_p , idobj_o)
+			if  stan < ilosc then
+				can_proceed = 2	
+			else
+				can_proceed = 1
+			end if
+		case 1:
+			stan = get_stan_mag_for_prod_opak_mag( idobj_mag , idobj_p , idobj_o)	
+			if stan < ilosc then
+				can_proceed = 3
+			else
+				can_proceed = 1
+			end if	
+	end select
+end function
+
+
+]]>
+</script>
+	</config>
+	<body></body>
+</page>

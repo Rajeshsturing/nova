@@ -1,0 +1,485 @@
+#ifndef LIBRARY_50523
+#define LIBRARY_50523
+
+#include "50203"
+#include "h1203.h"
+#include "h1231.h"
+
+#comment '------------------------------------------------------------------------
+#comment ' Funkcja przelicza jedna walute na inna po odszukanym kursie
+#comment '
+#comment ' curCurrencyIn - kwota do zamiany podana w walucie wejscia pJednIn
+#comment ' pJednIn - okresla walute kwoty do zamiany - waluta wejscia
+#comment '
+#comment ' pJednOut - waluta na jaka ma byc przeliczona kwota do zamiany
+#comment '
+#comment ' dDataOper - maksymalna data obowiazywania kursu
+#comment ' eKurs - jakiego kursu uzyc - kupna czy sprzedazy 
+#comment '		  (N5KURSWALUT_KUPNA/N5KURSWALUT_SPRZEDAZY)
+#comment '
+#comment ' curCurrencyOut - wynik - kwota w walucie pJednOut wyliczona z waluty wejscia
+#comment ' bOption - true (kurs w dniu dData), false (kurs <= dData)
+#comment '
+#comment ' REZULTAT: TRUE lub FALSE gdy sie uda³o wyliczc lub nie
+#comment '------------------------------------------------------------------------
+function kantor_ex(byval curCurrencyIn, byref pJednIn, byref pJednOut, _
+	byval dDataOper, byval eKurs, byref curCurrencyOut, byval bOption): kantor_ex = false
+
+
+
+	if pJednIn is nothing or pJednOut is nothing then
+		exit function
+	end if
+
+	if (pJednIn.idobj = pJednOut.idobj) then
+		curCurrencyOut = CCur(curCurrencyIn)
+		kantor_ex = true
+		exit function
+	end if
+	
+	dim strZnak: strZnak = "<"
+	if bOption then
+		strZnak = "="
+	end if
+	
+	dim strWhere
+	strWhere = trans_.afc.convert.Formatter("pWalZ=%1 and pWalN=%2 and dData " + strZnak + " %3") _
+		.Add(pJednIn.idobj) _
+		.Add(pJednOut.idobj) _
+		.Add(trans_.afc.convert.date2SQL(dDataOper)) _
+		.Done
+
+	dim pCursor
+	set pCursor = trans_.createrawcursor(TYPEID_N5KURSWALUT,strWhere,"dData desc" , "")
+
+
+	if (not pCursor.exists(1)) then
+		exit function
+	end if
+
+	dim pKurs
+	set pKurs = pCursor.get(1)
+
+	dim curCurs : curCurs = ccur(0.0)
+	
+	select case eKurs
+		case N5KURSWALUT_KUPNA
+			curCurs = pKurs.curKupnoWal
+		case N5KURSWALUT_SPRZEDAZY
+			'before DB14:
+			'curCurs = pKurs.curSprzedWal
+
+			curCurs = pKurs.curAverageWal
+	end select
+
+	if (pKurs.curMnoznik=0) then
+		exit function
+	end if
+
+	curCurrencyOut = trans_.afc.convert.roundn(( (CCur(curCurrencyIn) * curCurs) / (pKurs.curMnoznik) ),4) 'wylicz 4 miejsca po przecinku
+
+	kantor_ex = true
+end function
+
+function kantor(byval curCurrencyIn, byref pJednIn, byref pJednOut, _
+	byval dDataOper, byval eKurs, byref curCurrencyOut): kantor = false
+	kantor = kantor_ex(curCurrencyIn, pJednIn, pJednOut, dDataOper, eKurs, curCurrencyOut, false)
+end function	
+
+#comment '------------------------------------------------------------------------
+#comment ' Funkcja przelicza walute wejsciowa na walute wyjsciawa jedynie
+#comment ' na podstawie dostarczonego kursu waluty
+#comment '------------------------------------------------------------------------
+function przelicz_walute(byval curInCurrency, byval dblKurs)
+	przelicz_walute = trans_.afc.convert.round2(CCur(curInCurrency) * dblKurs)
+end function
+
+function przelicz_walute_n(byval curInCurrency, byval dblKurs,byval nPrec)
+	przelicz_walute_n = trans_.afc.convert.roundn(CCur(curInCurrency) * dblKurs,nPrec)
+end function
+
+#comment '------------------------------------------------------------------------
+#comment ' TWORZENIE, POBIERANIE ROZLICZENIA VAT
+#comment '------------------------------------------------------------------------
+
+private function vat_where_rozliczenie(byval dData)
+	vat_where_rozliczenie = "vat7_dDataOd <=" + trans_.afc.convert.date2sql(dData) + " and vat7_dDataDo >= " + trans_.afc.convert.date2sql(dData)
+end function
+
+private function vat_lookup_rozliczenie(byval dData)
+	vat_lookup_rozliczenie = trans_.findobjid(TYPEID_N5ROZLVAT, vat_where_rozliczenie(dData) )
+end function
+
+private function vat_create_rozliczenie(byval dData)
+	dim idRozlVAT : idRozlVAT = vat_lookup_rozliczenie(dData)
+	if idRozlVAT > 0 then
+		vat_create_rozliczenie = idRozlVAT
+		exit function
+	end if
+	'--create new --
+	idRozlVAT =  clng(0)
+	dim pRozlVAT : set pRozlVAT = nothing
+	dim pSubTrans
+	set pSubTrans = trans_.createsubtran()
+		set pRozlVAT = trans_.newobj(TYPEID_N5ROZLVAT)
+		with pRozlVAT
+			.vat7_dDataOd = dateserial(year(dData) , month(dData) , 1)
+			.vat7_dDataDo = dateserial(year(dData) , month(dData) + 1 , 1) - 1
+		end with
+		idRozlVAT = pRozlVAT.idobj
+		if not trans_.saveobjects then
+			vat_create_rozliczenie =  clng(0)
+			exit function
+		end if
+		trans_.autorollback false
+		set pRozlVAT = nothing
+	set pSubTrans = nothing
+	trans_.autorollback true
+	vat_create_rozliczenie = idRozlVAT
+end function
+
+
+
+
+private function where_raport_kasowy(byval dData,byval idRejDok)
+	where_raport_kasowy = "raka_dDataOd <=" + trans_.afc.convert.date2sql(dData) + " and raka_dDataDo >= " + trans_.afc.convert.date2sql(dData) +_
+		" and raka_pRejestrDok = " + cstr(idRejDok)
+end function
+
+
+private function lookup_raport_kasowy(byref pPlatnosc)
+	lookup_raport_kasowy = trans_.findobjid(TYPEID_N5RAPKAS, where_raport_kasowy(pPlatnosc.dDataOper,pPlatnosc.pRejestrDok.idobj) )
+end function
+
+private function create_raport_kasowy_ex(byval dDataOper, byval idRej)
+	create_raport_kasowy_ex = 0
+
+	dim idRaport : idRaport = trans_.findobjid(TYPEID_N5RAPKAS, where_raport_kasowy(dDataOper, idRej))
+	if idRaport > 0 then	
+		create_raport_kasowy_ex = idRaport
+		exit function
+	end if
+
+	dim oRejestDok : set oRejestDok = trans_.getobj(TYPEID_N5REJESTRDOK, idRej)
+	dim eZasadaRapKas:eZasadaRapKas = oRejestDok.rejdok_eZasadaRapKas
+	trans_.var(APPVAR_REJESTR_DOKUMENTOW) = idRej
+	dim dData:dData = dDataOper
+
+	dim pRapKas
+	dim pSubTrans
+	dim dDataOd,dDataDo
+
+	set pSubTrans = trans_.createsubtran()
+		set pRapKas = trans_.newobj(TYPEID_N5RAPKAS)		
+		compute_dates_for_rapkas eZasadaRapKas , dData , dDataOd , dDataDo
+		with pRapKas
+			.raka_dDataOd = dDataOd
+			.raka_dDataDo = dDataDo
+			idRaport = .idobj
+		end with
+		if not trans_.saveobjects() then 
+			create_raport_kasowy_ex =  clng(0)
+			exit function
+		end if
+		set pRapKas = nothing
+
+	set pSubTrans = nothing
+
+	create_raport_kasowy_ex = idRaport
+end function
+
+private function create_raport_kasowy(byval platnosc):create_raport_kasowy = 0
+	dim idRapKas : idRapKas = lookup_raport_kasowy(platnosc)
+	if idRapKas > 0 then	
+		create_raport_kasowy = 	idRapKas
+		exit function
+	end if
+
+	dim eZasadaRapKas:eZasadaRapKas = platnosc.pRejestrDok.rejdok_eZasadaRapKas
+	trans_.var(APPVAR_REJESTR_DOKUMENTOW) = platnosc.pRejestrDok.idobj
+	dim dData:dData = platnosc.dDataOper
+
+	dim pRapKas
+	dim pSubTrans
+	dim dDataOd,dDataDo
+	set pSubTrans = trans_.createsubtran()
+		set pRapKas = trans_.newobj(TYPEID_N5RAPKAS)		
+		compute_dates_for_rapkas eZasadaRapKas , dData , dDataOd , dDataDo
+		with pRapKas
+			.raka_dDataOd = dDataOd
+			.raka_dDataDo = dDataDo
+			idRapKas = .idobj
+		end with
+		if not trans_.save then 
+			create_raport_kasowy =  clng(0)
+			exit function
+		end if
+		trans_.autorollback false
+		set pRapKas = nothing
+
+	set pSubTrans = nothing
+
+	trans_.autorollback true
+	create_raport_kasowy = idRapKas
+		
+end function
+
+
+private function compute_dates_for_rapkas(byval eZasada , byval dDataOper , byref dDataOd , byref dDataDo)
+	select case eZasada
+		case N5REJESTRDOK_ZASADA_RAPKAS_CODZIENNIE
+			dDataOd = dDataOper
+			dDataDo = dDataOper
+		case N5REJESTRDOK_ZASADA_RAPKAS_COTYDZIEN
+			dDataOd = dateserial(year(dDataOper) , month(dDataOper) , day(dDataOper) )	-  (weekday(dDataOper,vbMonday) - 1)
+			dDataDo = dDataOd + 6
+		case N5REJESTRDOK_ZASADA_RAPKAS_CO10DNI
+			if day(dDataOper) < 11 then
+				dDataOd = dateserial(year(dDataOper) , month(dDataOper) , 1)	
+				dDataDo = dateserial(year(dDataOper) , month(dDataOper) , 10)	
+			end if
+
+			if day(dDataOper) > 10 and day(dDataOper) < 21 then
+				dDataOd = dateserial(year(dDataOper) , month(dDataOper) , 11)	
+				dDataDo = dateserial(year(dDataOper) , month(dDataOper) , 20)	
+			end if
+
+			if day(dDataOper) > 20 then
+				dDataOd = dateserial(year(dDataOper) , month(dDataOper) , 21)
+				dDataDo = dateserial(year(dDataOper) , month(dDataOper) + 1 , 1) - 1		
+			end if
+
+		case N5REJESTRDOK_ZASADA_RAPKAS_COMIESIAC
+			dDataOd = dateserial(year(dDataOper) , month(dDataOper) , 1)
+			dDataDo = dateserial(year(dDataOper) , month(dDataOper) + 1 , 1) - 1		
+	end select 
+end function
+
+
+'==========================================================================================
+
+'---------------------------------------------------------------
+' zwraca opis string zawierajacy slowny opis podanej stawki
+' nVATCode - wartosc predefiniowana(enum) okreslajaca stawke
+'---------------------------------------------------------------
+Public Function vat2name(nVATCode)
+    Select Case nVATCode
+        Case STAWKA_VAT_0:
+            vat2name = "0%"
+        Case STAWKA_VAT_ZWOLNIONY
+            vat2name = "zwolniony"
+        Case STAWKA_VAT_NIE_PODLEGA
+            vat2name = "nie podlega"
+        Case STAWKA_VAT_3
+            vat2name = "3%"
+        Case STAWKA_VAT_7
+            vat2name = "7%"
+        Case STAWKA_VAT_22
+            vat2name = "22%"
+        Case STAWKA_VAT_2
+            vat2name = "2%"
+        Case STAWKA_VAT_4
+            vat2name = "4%"
+        Case STAWKA_VAT_12
+            vat2name = "12%"
+        Case STAWKA_VAT_17
+            vat2name = "17%"
+        Case STAWKA_VAT_5
+            vat2name = "5%"
+        Case STAWKA_VAT_6
+            vat2name = "6%"
+        Case STAWKA_VAT_8
+            vat2name = "8%"
+        Case STAWKA_VAT_23
+            vat2name = "23%" 
+        Case STAWKA_VAT_23_OO
+            vat2name = "o.o."                                                
+        Case Else
+            vat2name = "Nieznany"
+    End Select
+End Function
+
+'---------------------------------------------------------------
+' zwraca wartosc liczbowa stawki potrzebna do obliczen arytmetycznych
+' nVATCode - wartosc predefiniowana(enum) okreslajaca stawke
+'---------------------------------------------------------------
+Public Function vat2val(nVATCode)
+    Select Case nVATCode
+        Case STAWKA_VAT_0:
+            vat2val = 0.00
+        Case STAWKA_VAT_ZWOLNIONY
+            vat2val = 0.00
+        Case STAWKA_VAT_NIE_PODLEGA
+            vat2val = 0.00
+        Case STAWKA_VAT_3
+            vat2val = 0.03
+        Case STAWKA_VAT_7
+            vat2val = 0.07
+        Case STAWKA_VAT_22
+            vat2val = 0.22
+        Case STAWKA_VAT_2
+            vat2val = 0.02
+        Case STAWKA_VAT_12
+            vat2val = 0.12
+        Case STAWKA_VAT_17
+            vat2val = 0.17
+        Case STAWKA_VAT_4
+            vat2val = 0.04
+        Case STAWKA_VAT_5
+            vat2val = 0.05
+        Case STAWKA_VAT_6
+            vat2val = 0.06
+        Case STAWKA_VAT_8
+            vat2val = 0.08
+        Case STAWKA_VAT_23
+            vat2val = 0.23 
+        Case STAWKA_VAT_23_OO
+            vat2val = 0.23                                                
+        Case Else
+			if nVATCode >= 100 then
+				vat2val = ccur(nVATCode) / 10000
+				trans_.message 6501, 0, "vat2val=" + cstr(nVATCode) + "=>" + cstr(vat2val)
+			else
+				vat2val = 0.00
+			end if
+    End Select
+End Function
+
+'---------------------------------------------------------------
+' Wylicza VAT z wartosci brutto
+'---------------------------------------------------------------
+Public Function brutto2vat(ByVal curBrutto, ByVal eKODVat)
+    brutto2vat = brutto2vat_ex(curBrutto, eKODVat, false)
+End Function
+
+'---------------------------------------------------------------
+' Wylicza VAT z wartosci brutto z przelacznikiem bez Vat
+'---------------------------------------------------------------
+Public Function brutto2vat_ex(ByVal curBrutto, ByVal eKODVat, ByVal bWithoutVat)
+    Dim curStawkaVAT : curStawkaVAT = vat2val(eKODVat)
+	if bWithoutVat then
+		curStawkaVAT = ccur(0.00)
+	end if
+    brutto2vat_ex = trans_.afc.convert.round2(curBrutto * curStawkaVAT / (1 + curStawkaVAT))
+End Function
+
+'---------------------------------------------------------------
+' Wylicza VAT z wartosci netto
+'---------------------------------------------------------------
+Public Function netto2vat(ByVal curNetto, ByVal eKODVat)
+    netto2vat = netto2vat_ex(curNetto, eKODVat, false)
+End Function
+
+'---------------------------------------------------------------
+' Wylicza VAT z wartosci netto z przelacznikiem bez Vat
+'---------------------------------------------------------------
+Public Function netto2vat_ex(ByVal curNetto, ByVal eKODVat, ByVal bWithoutVat)
+    Dim curStawkaVAT : curStawkaVAT = vat2val(eKODVat)
+	if bWithoutVat then
+		curStawkaVAT = ccur(0.00)
+	end if
+    netto2vat_ex = trans_.afc.convert.round2(curNetto * curStawkaVAT)
+End Function
+
+'---------------------------------------------------------------
+' Wylicza z wartosci brutto wartosc netto
+'---------------------------------------------------------------
+Public Function brutto2netto(ByVal curBrutto, ByVal eKODVat)
+    brutto2netto = brutto2netto_ex(curBrutto, eKODVat, false)
+End Function
+
+'-----------------------------------------------------------------
+' Wylicza z wartosci brutto wartosc netto z przelacznikiem bez Vat
+'-----------------------------------------------------------------
+Public Function brutto2netto_ex(ByVal curBrutto, ByVal eKODVat, ByVal bWithoutVat)
+    brutto2netto_ex = curBrutto - brutto2vat_ex(curBrutto, eKODVat, bWithoutVat)
+End Function
+
+'---------------------------------------------------------------
+' Wylicza brutto z netto
+'---------------------------------------------------------------
+Public Function netto2brutto(ByVal curNetto, ByVal eKODVat)
+    netto2brutto = netto2brutto_ex(curNetto, eKODVat, false)
+End Function
+
+'---------------------------------------------------------------
+' Wylicza brutto z netto z przelacznikiem bez Vat
+'---------------------------------------------------------------
+Public Function netto2brutto_ex(ByVal curNetto, ByVal eKODVat, ByVal bWithoutVat)
+    netto2brutto_ex = curNetto + netto2vat_ex(curNetto, eKODVat, bWithoutVat)
+End Function
+
+'---------------------------------------------------------------
+' Wylicza wartosc z uwzglednieniem rabatu
+'---------------------------------------------------------------
+Public Function rabat(ByVal curValue, ByVal curRabatProc, ByVal nPrecision)
+    rabat = trans_.afc.convert.roundn(curValue - curValue * curRabatProc / 100, nPrecision)
+End Function
+'==========================================================================================
+
+
+
+#comment '------------------------------------------------------------------------
+#comment ' specjalne 'zaokraglanie' do liczenia liczby opakowan ('kartonow')
+#comment '------------------------------------------------------------------------
+function navo_ceil_ex(byval curValue, byval iPrecision)						
+	if iPrecision = 2 then			
+		curValue = curValue * ccur(100.0)			
+	end if											
+	dim curTmp : curTmp = fix(curValue)				
+	if curTmp <> curValue then						
+	  curTmp = curTmp + ccur(1.0)					
+	end if											
+	if iPrecision = 2 then			
+		navo_ceil_ex = ccur(curTmp/100.0)				
+	else											
+		navo_ceil_ex = ccur(curTmp)					
+	end if											
+end function
+#comment '------------------------------------------------------------------------
+
+
+#define STATUS_ZAM_OBCE_DO_REALIZACJI	"Do realizacji"
+#define STATUS_ZAM_OBCE_BUFOR			"Bufor"
+#define STATUS_ZAM_OBCE_ZREALIZOWANE	"Zrealizowane"
+#define STATUS_ZAM_OBCE_W_REALIZACJI	"W realizacji"
+
+'--------------------------------------------------------
+'Ustawia domyslny status na zamowieniu obcym (Abakosteel)
+'--------------------------------------------------------
+function set_default_status_zam_obce()
+	set set_default_status_zam_obce = get_status_zam_obce_by_name(STATUS_ZAM_OBCE_DO_REALIZACJI)
+end function
+
+'----------------------------------------------------------
+'Wyszukuje status na zamówieniu obcym wg nazwy (Abakosteel)
+'----------------------------------------------------------
+function get_status_zam_obce_by_name(byval strStatusNazwa)
+	set get_status_zam_obce_by_name = nothing
+	dim idDokStatus: idDokStatus = trans_.findobjid(TYPEID_N5DOKSTATUS,"dcs_strNazwa='" + strStatusNazwa + "'")
+	if idDokStatus > 0 then
+		dim oStatus: set oStatus = trans_.getobj(TYPEID_N5DOKSTATUS,idDokStatus)
+		if Mid(oStatus.dcs_strTypDok,9,1) = "1" then
+			set get_status_zam_obce_by_name = oStatus
+		end if
+	end if	
+end function
+
+'------------------------------------------------------------
+'Ustawia status na zamówieniu obcym wg zrealizowanych pozycji
+'------------------------------------------------------------
+function set_status_zam_obce()
+	set set_status_zam_obce = nothing
+	
+	dim iloscPoz: iloscPoz = n5zamowienie_get_niezreal_pozcount()
+	if iloscPoz = 0 then
+		set set_status_zam_obce = get_status_zam_obce_by_name(STATUS_ZAM_OBCE_ZREALIZOWANE)
+	else
+		set set_status_zam_obce = get_status_zam_obce_by_name(STATUS_ZAM_OBCE_DO_REALIZACJI)
+	end if	
+end function
+
+
+#endif
+
+

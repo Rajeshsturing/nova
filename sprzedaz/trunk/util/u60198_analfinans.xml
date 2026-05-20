@@ -1,0 +1,404 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1200_typeid.h"
+
+	XML loader / saver
+-->
+<page>
+<config>
+<script>
+<![CDATA[
+
+'------------------------------- definicja storage, load save -------------------
+class cafd_row
+	private m_strSymbol
+	private m_strNazwa
+	private m_strWyrazenie
+	private m_strJednostka
+	private m_curTmpValue
+	private m_nComputed			'0 - not computed, 1 - computing, 2 - computed
+	
+	public sub class_initialize()
+		m_strSymbol = ""
+		m_strNazwa = ""
+		m_strWyrazenie = ""
+		m_strJednostka = ""
+		
+		reset
+	end sub
+
+	public property get symbol()
+		symbol = m_strSymbol
+	end property
+
+	public property let symbol(strSymbol)
+		m_strSymbol = strSymbol
+	end property
+
+	public property get nazwa()
+		nazwa = m_strNazwa
+	end property
+
+	public property let nazwa(strNazwa)
+		m_strNazwa = strNazwa
+	end property
+
+	public property get wyrazenie
+		wyrazenie = m_strWyrazenie
+	end property
+
+	public property let wyrazenie(strWyrazenie)
+		m_strWyrazenie = strWyrazenie
+	end property
+
+	public property get jednostka()
+		jednostka = m_strJednostka
+	end property
+
+	public property let jednostka(strJednostka)
+		m_strJednostka = strJednostka
+	end property
+
+	public property get computed()
+		computed = (m_nComputed = 2)
+	end property
+
+	public sub mark_computed
+		m_nComputed = 2
+	end sub
+
+	public property get computing()
+		computing = (m_nComputed = 1)
+	end property
+
+	public sub mark_computing
+		m_nComputed = 1
+	end sub
+
+	public property get value
+		value = m_curTmpValue
+	end property
+
+	public property let value(curValue)
+		m_curTmpValue = curValue
+	end property
+
+	public sub reset()
+		m_nComputed = 0
+		m_curTmpValue = ccur(0.0)
+	end sub
+end class
+
+function save_data(byref strName,byref pNAVOArray,byref pDestStream)
+	dim pExporter : set pExporter = doc_.system.activex("navoexpimp.exportpackage")
+	pDestStream.write "<?xml version=""1.0"" encoding=""windows-1250""?>" + vbCrLf
+	pExporter.ostream pDestStream
+
+	dim pMsg : set pMsg = pExporter.newmsg
+	
+	pMsg.header("") = strName
+	pMsg.header.save
+	dim iter 
+	for iter = 0 to pNAVOArray.Count() - 1
+		dim pExpObj: set pExpObj = pMsg.newobj(1,1+iter)
+		pExpObj("symbol") = pNAVOArray.Value(iter).symbol
+		pExpObj("nazwa")  = pNAVOArray.Value(iter).nazwa
+		pExpObj("wyrazenie") = pNAVOArray.Value(iter).wyrazenie
+		'--- DB ver 3 ---
+		pExpObj("jednostka") = pNAVOArray.Value(iter).jednostka
+		pExpObj.save
+	next
+
+	pMsg.save
+	pExporter.save
+end function
+
+class cimportparser
+	private m_strName
+	private m_pNAVOArray
+
+	public sub init(byref pNAVOArray)
+		set m_pNAVOArray = pNAVOArray
+	end sub
+
+	public sub done(byref strName)
+		strName = m_strName
+	end sub
+
+	public sub OnMessageBegin(byref pMsgObj,byref bBreak)
+		m_strName = pMsgObj.header("")
+		m_pNAVOArray.RemoveAll
+	end sub
+
+	public sub OnMessageEnd(pMsgObj,byref bBreak)
+	end sub
+
+	public sub OnObject(pObject,byref bBreak)
+		dim pAFD : set pAFD = new_afd_row()
+		pAFD.symbol = pObject("symbol")
+		pAFD.nazwa = pObject("nazwa")
+		pAFD.wyrazenie = pObject("wyrazenie")
+		'--- DB ver 3 ---
+		if pObject.isfield("jednostka") then
+			pAFD.jednostka = pObject("jednostka")
+		end if
+		m_pNAVOArray.Add(pAFD)
+	end sub
+
+end class
+
+function load_data(byref strName,byref pNAVOArray,byref pSrcStream)
+	dim pImporter : set pImporter = doc_.system.activex("navoexpimp.importpackage")
+	dim pImportParser : set pImportParser = new cimportparser
+	pImportParser.init pNAVOArray
+
+	pImporter.sink = pImportParser
+	pImporter.istream  pSrcStream
+	pImporter.go
+	pImportParser.done strName
+end function
+
+function new_afd_row()
+	set new_afd_row = new cafd_row
+end function
+
+function prepare_err_msg(byval strCode)
+	prepare_err_msg = "Wystąpił błąd skryptu " + cstr(err.Number) + ", opis:" + err.Description + _
+	" dla wyrażenia [" + strCode + "]"
+end function
+
+'------------------------------- obliczenia ------------------------
+class cafec			'analizy finansowe execution context
+	private m_pArrayAFD
+	private m_pKontoInfoMan
+	private m_dDateStart
+	private m_dDateEnd
+	private m_idKwalifikator
+	private m_pDictRelatedCAFEC
+
+	public	m_bSaldoWOkresie
+
+	private sub class_initialize()
+		set m_pArrayAFD = nothing
+		set m_pKontoInfoMan = nothing
+		set m_pDictRelatedCAFEC = doc_.system.activex("Scripting.Dictionary")
+		m_bSaldoWOkresie = false
+	end sub
+	private sub class_terminate()   'TODO
+		set m_pArrayAFD = nothing
+		set m_pKontoInfoMan = nothing
+		set m_pDictRelatedCAFEC = nothing
+	end sub
+
+	private sub compute_zois
+		dim pPM : set pPM  = doc_.getmodule(60159)
+		set m_pKontoInfoMan = pPM.prepare_zois(m_dDateStart,m_dDateEnd,nothing,nothing,nothing,m_idKwalifikator)
+	end sub
+
+	private function findkonto(byval strSymbol)
+		dim idKonto : idKonto = trans_.findobjid(TYPEID_N5KONTO,"strSymbol='" + _
+			trans_.afc.convert.DoubleApostrophe(strSymbol) + "'")
+		if idKonto <= 0 then
+			err.raise 7000,"Nieznane konto: " + strSymbol
+		end if
+		findkonto = idKonto
+	end function
+	
+	public sub init(byref pArrayAFD,dDateStart,dDateEnd,byval idKwalifikator)
+		set m_pArrayAFD = pArrayAFD
+		m_dDateStart = dDateStart
+		m_dDateEnd = dDateEnd
+		m_idKwalifikator = idKwalifikator
+
+		'reset values
+		dim iter
+		for iter = 0 to pArrayAFD.Count - 1
+			pArrayAFD.Value(iter).reset
+		next
+		m_bSaldoWOkresie = false
+	end sub
+	public function bown(byval strSymbol)
+		if m_pKontoInfoMan is nothing then
+			compute_zois
+		end if
+		dim pKontoInfo : set pKontoInfo = m_pKontoInfoMan.kontoinfo(findkonto(strSymbol))
+		bown = pKontoInfo. m_curBO_Wn
+	end function
+	
+	public function boma(byval strSymbol)
+		if m_pKontoInfoMan is nothing then
+			compute_zois
+		end if
+		dim pKontoInfo : set pKontoInfo = m_pKontoInfoMan.kontoinfo(findkonto(strSymbol))
+		boma = pKontoInfo. m_curBO_Ma
+	end function
+	public function saldown(byval strSymbol)
+		if m_pKontoInfoMan is nothing then
+			compute_zois
+		end if
+		dim pKontoInfo : set pKontoInfo = m_pKontoInfoMan.kontoinfo(findkonto(strSymbol))
+		if m_bSaldoWOkresie then
+			saldown = pKontoInfo.m_curSalO_Wn
+		else
+			saldown = pKontoInfo.m_curSalN_Wn
+		end if
+	end function
+
+	public function saldoma(byval strSymbol)
+		if m_pKontoInfoMan is nothing then
+			compute_zois
+		end if
+		dim pKontoInfo : set pKontoInfo = m_pKontoInfoMan.kontoinfo(findkonto(strSymbol))
+		if m_bSaldoWOkresie then
+			saldoma = pKontoInfo.m_curSalO_Ma
+		else
+			saldoma = pKontoInfo.m_curSalN_Ma
+		end if
+	end function
+
+	public function obrotywn(byval strSymbol)
+		if m_pKontoInfoMan is nothing then
+			compute_zois
+		end if
+		dim pKontoInfo : set pKontoInfo = m_pKontoInfoMan.kontoinfo(findkonto(strSymbol))
+		obrotywn = pKontoInfo.m_curObrO_Wn
+	end function
+
+	public function obrotyma(byval strSymbol)
+		if m_pKontoInfoMan is nothing then
+			compute_zois
+		end if
+		dim pKontoInfo : set pKontoInfo = m_pKontoInfoMan.kontoinfo(findkonto(strSymbol))
+		obrotyma = pKontoInfo.m_curObrO_Ma
+	end function
+
+	private function compute_one(byval strWyrazenie)
+		compute_one = ccur(0.0)
+    
+		if trim(strWyrazenie) = "" then
+			exit function
+		end if
+    
+		dim strCode
+
+		strCode = "function wynik(byref pKontekst)" + vbCrLf + _
+		" with pKontekst"+ vbCrLf + _
+		"wynik =_ " + vbCrLf + _
+			strWyrazenie + vbCrLf + _
+		" end with" + vbCrLf + _
+		"end function" + vbCrLf
+
+		on error resume next
+
+		execute strCode
+
+		if err.Number <> 0 then
+			trans_.message 6521, 1,  "Przygotowanie wyrażenia do obliczeń nieudane." + _
+				prepare_err_msg(strCode)
+			exit function
+		end if
+
+		compute_one = wynik(Me)
+
+		if err.Number <> 0 then
+			trans_.message 6522,1,  "Obliczenie wyrażenia nieudane." + _
+				prepare_err_msg(strCode)
+			exit function
+		end if
+
+		on error goto 0
+
+	end function
+
+	public function iif(varCond,varTrue,varFalse)
+		if (varCond) then
+			iif = varTrue
+		else
+			iif = varFalse
+		end if
+	end function
+
+	public function div(varNom,varDenom)
+		if ccur(varDenom) = ccur(0.0) then
+			div = ccur(0.0)
+		else
+			div = ccur(varNom / varDenom)
+		end if
+	end function
+
+	public function sym(byval strSymbol)
+		dim iter
+		for iter = 0 to m_pArrayAFD.Count - 1
+			if m_pArrayAFD.Value(iter).symbol = strSymbol then
+				with m_pArrayAFD.Value(iter)
+					if not .computed then
+						if .computing then
+							err.raise 7000,"Obliczanie wyników","Rekursja w obliczeniach symbolu: " + strSymbol
+						end if
+						.mark_computing
+						'obliczamy
+						.value = compute_one(.wyrazenie)
+						.mark_computed
+					end if
+					sym = .value
+				end with
+				exit function
+			end if
+		next
+		err.raise 7000,"Obliczanie wyników","Nieznany symbol: " + strSymbol
+	end function
+
+	public function zest(byval strNazwa)
+		set zest = nothing
+		if not m_pDictRelatedCAFEC.exists(strNazwa) then
+			dim idAnalFinans : idAnalFinans = trans_.findobjid(TYPEID_N5ANALFINANS,"strNazwa='" + _
+				trans_.afc.convert.DoubleApostrophe(strNazwa) + "'")
+
+			if idAnalFinans > 0 then
+				dim pAnalFinans : set pAnalFinans = trans_.getobj(TYPEID_N5ANALFINANS,idAnalFinans)
+				if not pAnalFinans.fXML.isempty() then
+					dim pArrAFRows : set pArrAFRows = doc_.afc.new_navoarray()
+					dim strDummy
+					load_data strDummy,pArrAFRows,pAnalFinans.fXML
+					dim pCAFEC : set pCAFEC = new cafec
+					pCAFEC.init pArrAFRows,m_dDateStart,m_dDateEnd,m_idKwalifikator
+					
+					m_pDictRelatedCAFEC.Add strNazwa,pCAFEC
+					set zest = pCAFEC
+				end if
+			end if
+		else
+			set zest = m_pDictRelatedCAFEC.Item(strNazwa)
+		end if
+	end function
+
+	public sub compute_all
+		'forces all computations
+		dim iter
+		for iter = 0 to m_pArrayAFD.Count - 1
+			with m_pArrayAFD.Value(iter)
+				.mark_computing
+				.value = compute_one(.wyrazenie)
+				.mark_computed
+			end with
+		next
+	end sub
+end class
+
+sub oblicz_afd(byref pNAVOArray,dDateStart,dDateEnd,byval idKwalifikator)
+	oblicz_afd_ex pNAVOArray,dDateStart,dDateEnd,idKwalifikator,false
+end sub
+
+
+sub oblicz_afd_ex(byref pNAVOArray,dDateStart,dDateEnd,byval idKwalifikator,byval bSaldoWOkresie)
+	dim pCAFEC : set pCAFEC = new cafec
+	pCAFEC.init pNAVOArray,dDateStart,dDateEnd,idKwalifikator
+	pCAFEC.m_bSaldoWOkresie = bSaldoWOkresie
+	pCAFEC.compute_all
+end sub
+
+]]>
+</script>
+</config>
+<body></body>
+</page>

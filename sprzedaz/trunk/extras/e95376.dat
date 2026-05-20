@@ -1,0 +1,207 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+RAPTEMPLATE_FAKTURY_BEZ_DOSTAW
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203_appconfig.h"
+#include "h1220.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1250.h"
+
+
+#define RAPORT_TITLE Faktury bez dostaw
+
+-->
+<page style='36'>
+<config>
+<title>RAPORT_TITLE</title>
+<script>
+<![CDATA[
+<%
+function query()
+query = "select tmp.IdObj,tmp.strNrDok,tmp.dDataWyst,tmp.typ,tmp.zarej from " + vbNewLine +_
+        "(select s.IdObj,s.strNrDok,s.dDataWyst,'id_rejestr'=r.IdObj,'typ'=1, " + vbNewLine +_ 
+        "'zarej'=case when s.strExtra1 = '' then 1 else 2 end " + vbNewLine +_ 
+        "from n5sprzedaz s " + vbNewLine +_ 
+        "inner join n5rejestrdok r on s.pRejestrDok = r.IdObj " + vbNewLine +_ 
+        "where r.eTyp in (1) and s.sprzed_pDostawa = 0 " + vbNewLine +_
+        "union " + vbNewLine +_ 
+        "select s.IdObj,s.strNrDok,s.dDataWyst,'id_rejestr'=r.IdObj,'typ'=2, " + vbNewLine +_ 
+        "'zarej'=case when s.strExtra1 = '' then 1 else 2 end " + vbNewLine +_ 
+        "from n5sprzedaz s " + vbNewLine +_ 
+        "inner join n5rejestrdok r on s.pRejestrDok = r.IdObj " + vbNewLine +_ 
+        "where r.eTyp in (61) and s.IdObj not in (select sprzed_pDostawa from n5sprzedaz)) as tmp " + vbNewLine +_
+#ifdef APPCONFIG_REGIST_NR_DOK
+        "where tmp.dDataWyst >= {d '2014-01-01'} and %1 and %2 and %3 and %4 " + vbNewLine +_
+#else
+        "where tmp.dDataWyst >= {d '2014-01-01'} and %1 and %2 and %3 " + vbNewLine +_
+#endif        
+        "order by tmp.dDataWyst"
+end function
+%>
+<%
+function default_param()
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+  
+  'Data wystawienia
+  pParamArray.add doc_.afc.rap.param.new_date_range("Data wystawienia").bindexpr("tmp.dDataWyst")  
+  
+  'Rejestr dokumentów
+  dim pParamFactory2: set pParamFactory2= doc_.afc.rap.param
+  dim pParam2: Set pParam2= pParamFactory2.new_choice("Rejestr dokumentów").bindexpr("tmp.id_rejestr")
+  doc_.afc.rap.param.init_on_query pParam2, trans_ ,_
+  "select strNazwa , idobj from n5rejestrdok where eTyp in (N5REJESTRDOK_FAKT_SP,N5REJESTRDOK_DOSTAWA) " +_	
+#ifdef _MILOMLYN
+  "and eAktywny = N5REJESTRDOK_AKTYWNY " +_
+#endif  
+  "order by strNazwa "
+  pParamArray.add pParam2
+  
+  'Pokaż bez powiązania
+  dim pBezPowiaz : set pBezPowiaz = doc_.afc.rap.param.new_choice("Pokaż bez powiązania").bindexpr("tmp.typ")
+  with pBezPowiaz
+    .multiple = true
+    .names.add "Faktura sprzedaży"
+    .values.add 1
+    .selected.add true
+    .names.add "Dokument dostawy"
+    .values.add 2
+    .selected.add True
+  end with
+  pParamArray.add pBezPowiaz
+  
+#ifdef APPCONFIG_REGIST_NR_DOK
+  'dokumenty zarejestrowane
+  dim pDokZarej : set pDokZarej = doc_.afc.rap.param.new_choice("Dokumeny zarejestrowane").bindexpr("tmp.zarej")
+  with pDokZarej
+    .multiple = true
+    .names.add "Tak"
+    .values.add 1
+    .selected.add true
+    .names.add "Nie"
+    .values.add 2
+    .selected.add True
+  end with
+  pParamArray.add pDokZarej
+#endif
+
+	set default_param = pParamArray
+end function
+%>
+<%
+'funkcja rekurencyjna zwraca true gdy faktura/korekta ma dostawę
+function IsDostForKor(nIdSprz): IsDostForKor = false
+  dim nIdKor: nIdKor = trans_.findobjid(TYPEID_N5SPRZEDAZ,"pPopSprzed = " + CStr(nIdSprz))
+  if nIdKor > clng(0) then
+    dim oKor: set oKor = trans_.getobj(TYPEID_N5SPRZEDAZ,nIdKor)
+    if not oKor.sprzed_pDostawa is nothing then
+      IsDostForKor = true
+    else
+      IsDostForKor = IsDostForKor(oKor.IdObj)
+    end if
+  end if
+end function
+%>
+<%
+dim iter: iter = 1
+
+function body_row(byref pSection,byref pRec)
+  dim nIdSprz: nIdSprz = clng(pRec("IdObj").value)
+  if not IsDostForKor(nIdSprz) then
+
+if pRapExec.RecNr mod 2 = 0 then
+%>
+<tr bordercolor='white'
+<%
+else
+%>
+<tr bordercolor='white' style='37'
+<%
+end if
+%>
+>
+<td align='right'><t><%so.write cstr(iter)%></t></td>
+	<td>
+		RXE_T_LINK_FORM_VCC(TYPEID_N5SPRZEDAZ,IdObj,strNrDok)
+	</td>
+	<td>
+		RXE_DATE(dDataWyst)
+	</td>  
+</tr><%
+    iter = iter + 1
+  end if
+end function
+%>
+<%
+function body_header(byref pSection,byref pRec)
+%>
+<table border='1'>
+<thead>
+<tr style='21'>
+	<td width='min'><t>LP</t></td>
+	<td width='max'>
+		<text><![CDATA[Numer dokumentu]]></text>
+	</td>
+	<td width='3000'>
+		<text><![CDATA[Data wystawienia]]></text>
+	</td>  
+</tr>
+</thead>
+<tbody>
+<%
+end function
+%>
+<%
+function body_footer(byref pSection)
+%>
+</tbody>
+<tfoot>
+</tfoot>
+</table>
+<%
+end function
+%>
+<%dim nSectionPicCounter : nSectionPicCounter = 10000000%>
+function section_hideshow_hli(byref pHLI)
+doc_.afc.formsection.section_hideshow page_, pHLI.prop(100)
+end function
+]]>
+</script>
+</config>
+<header>
+</header>
+<body>
+<p>
+RAPORT_HEADER(3,0)
+</p>
+
+<p>
+<t size='2'/>
+</p>
+
+<p><text fontsize='7'><![CDATA[RAPORT_TITLE]]></text></p><br/><br/>
+<t fontsize='6' bold='true'>Kryteria selekcji:</t><br/>
+<%
+
+dim pRapExec : set pRapExec = rapeng_.new_engine()
+with pRapExec
+	.add_body_ex getref("body_header"),getref("body_footer"),getref("body_row")
+	
+if .prepare("RAPORT_TITLE",default_param(),rapeng_.get_raport_param(),query()) then
+%>
+<%
+	rapeng_.write_actual_param so,rapeng_.get_raport_param()
+	if not .perform then
+	so.write "<p style='21'><t>Brak danych spełniających podane kryteria</t></p>"
+	end if
+%>
+<%
+end if
+end with
+
+%>
+</body>
+<footer>
+</footer>
+</page>

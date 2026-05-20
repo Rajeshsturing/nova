@@ -1,0 +1,199 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1201.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+
+#define CMD_CONTINUE	3001
+#define CMD_REGISTER	3002
+
+
+#define PAGE_WIZZARD_REGISTER_STEP1				20313
+#define PAGE_WIZZARD_REGISTER_STEP2T			20314
+#define PAGE_WIZZARD_REGISTER_STEP2I			20315
+
+-->
+<page style='STYLE_PAGE' width='12000'>
+<config>
+<title></title>
+<startpos>center</startpos>
+<script>
+<![CDATA[
+'Wizzard....
+#include "50209"
+
+'MessageBox
+#include "50122"
+
+dim pM60137 : set pM60137 = doc_.getmodule(60137)
+'----------------------------------------------------------------------
+'wizzard rejestracji licencji
+'**********************************************************************
+
+class CRegLicence
+	public nRegType		'typ rejestracji 1-internet 2-telefon
+
+	public m_strEnteredKodOdblok	'kod odblokowujacy
+	public m_strDisplayKontrola
+	public bWyrazamZgode 'czy wyraża zgode na przeslanie danych przez
+						 'internet - rejestracja inet
+	public m_bRegisterLic	 'true jezeli licencja zostala zarejestrowana
+
+	private m_pLicenceObj
+	private m_pLicCodec
+	private m_strIdUser
+	private m_nUserCnt
+	private m_strUnlock
+
+	private sub class_initialize()
+		nRegType=clng(2)
+		
+		m_strEnteredKodOdblok = ""
+
+		bWyrazamZgode=false
+		m_bRegisterLic=false
+		
+		set m_pLicenceObj = nothing
+		set m_pLicCodec = nothing
+	end sub
+
+	public property get userid
+		userid = m_strIdUser
+	end property
+
+	public sub init(byref pLicenceObj,byval strUserId,byval nUserCnt)
+		set m_pLicenceObj = pLicenceObj
+		m_strIdUser = strUserId
+		m_nUserCnt = nUserCnt
+		set m_pLicCodec = pM60137.new_licence_codec()
+		m_pLicCodec.init_from_ctrl_str(m_pLicenceObj.strKontrola)
+		m_pLicCodec.usercount = nUserCnt
+		m_pLicCodec.userid = strUserId
+		m_strDisplayKontrola = m_pLicCodec.get_display_key()
+		m_strUnlock = m_pLicCodec.get_unlock_key(m_strDisplayKontrola)
+#ifdef _DEBUG
+		m_strEnteredKodOdblok = m_strUnlock
+#endif
+	end sub
+
+	public function is_valid()
+		is_valid = (ucase(m_strUnlock) = ucase(m_strEnteredKodOdblok))
+	end function
+
+	public function commit_registration()
+		commit_registration = false
+
+		if (not m_pLicenceObj.exlock()) then
+			exit function
+		end if
+
+		m_pLicCodec.unlockcode = m_strUnlock
+		m_pLicCodec.to_licence_obj m_pLicenceObj
+
+		m_bRegisterLic = trans_.saveobjects()
+		commit_registration = m_bRegisterLic
+	end function
+end class
+
+dim pRegLicence		'reprezentuje dane wizzarda
+
+'-----------------------------------------------------------------------
+'uruchomienie calego wizzarda
+'-----------------------------------------------------------------------
+function register_run(byref pSourceLicence,byval strUserId,byval nUserCnt): register_run=false
+	set pRegLicence=new CRegLicence
+
+	pRegLicence.init pSourceLicence,strUserId,nUserCnt
+
+	dim pWizzard
+	set pWizzard=CWizzard(false)
+
+	pWizzard.add_step PAGE_WIZZARD_REGISTER_STEP1
+	pWizzard.add_step PAGE_WIZZARD_REGISTER_STEP2T
+	pWizzard.add_step PAGE_WIZZARD_REGISTER_STEP2I
+
+	pWizzard.add_container pRegLicence
+
+	pWizzard.run
+	register_run=pRegLicence.m_bRegisterLic
+end function
+
+function onPageEnter(pWizzardPage)
+	if pWizzardPage.m_nPage = PAGE_WIZZARD_REGISTER_STEP2T then
+		set_PageButtonsAsLast pWizzardPage.m_pPage
+	end if
+end function
+
+function onPageExit(pWizzardPage)
+	onPageExit=PAGE_DEFAULT
+
+	select case ( pWizzardPage.m_nPage )
+		case PAGE_WIZZARD_REGISTER_STEP1
+			if pWizzardPage.m_pContainer.nRegType=1 then
+				'internet
+				onPageExit=PAGE_WIZZARD_REGISTER_STEP2I
+			end if
+	end select
+end function
+
+function onWizzardComplete(pWizzardPage): onWizzardComplete=false
+	select case ( pWizzardPage.m_nPage )
+
+		case PAGE_WIZZARD_REGISTER_STEP2I
+			if (not pWizzardPage.m_pContainer.bWyrazamZgode) then
+				MessageBox "Aby kontynuować musisz wyrazić zgodę na przesłanie danych.", "Brak zgody", vbOKOnly, vbInformation
+				exit function
+			end if
+
+			dim pInformation
+			set pInformation=doc_.performing("Łączenie z sererwerm licencji . . .")
+
+			dim bLicenceRegistred
+			bLicenceRegistred=doc_.getmodule(60269).request_licence_over_inet( getAppName( pWizzardPage.m_pContainer.nAppType ) )
+
+			set pInformation=nothing
+			if (not bLicenceRegistred) then
+				MessageBox "Rejestracja licencji przez internet się nie udała.", "Nie udało się", vbOKOnly, vbInformation
+				exit function
+			else
+				'Dodaj do profilu informacje o aktualnej wersji aplikacji
+				setglobprofile GLOBPROF_SPRZED_APP_VERSION, getAppName( pWizzardPage.m_pContainer.nAppType )
+
+				if (not trans_.saveobjects()) then
+					MessageBox "Rejestracja licencji się nie udała.", "Nie zarejestrowano", vbOKOnly, vbInformation
+					exit function
+				end if
+
+			
+				pWizzardPage.m_pContainer.bRegisterLic=true
+				MessageBox "Rejestracja licencji zakończyła się pomyślnie.", "Zarejestrowano", vbOKOnly, vbInformation
+			end if
+
+		case PAGE_WIZZARD_REGISTER_STEP2T
+
+			'sprawdzamy czy podany klucz odblokowujacy jest poprawny
+			if not pWizzardPage.m_pContainer.is_valid() then
+					MessageBox "Kod odblokowujący, który podałeś nie jest poprawny.", "Błędny kod", vbOKOnly, vbInformation
+				exit function
+			end if
+
+			if not pWizzardPage.m_pContainer.commit_registration() then
+				MessageBox "Rejestracja licencji się nie udała.", "Nie zarejestrowano", vbOKOnly, vbInformation
+				exit function
+			end if
+			MessageBox "Rejestracja licencji zakończyła się pomyślnie.", "Zarejestrowano", vbOKOnly, vbInformation
+	end select
+	
+	onWizzardComplete=true
+end function
+
+]]>
+</script>
+</config>
+<body>
+</body>
+</page>

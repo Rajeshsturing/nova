@@ -1,0 +1,215 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200.h"
+#include "h1222.h"
+
+#define FORM_SPAN	2
+
+#define _nr_				 0
+#define CTRLID_USERID		13
+#define CTRLID_MODNAME		10
+#define CTRLID_LICTYPE		20
+#define CTRLID_LICCOUNT		30
+#define CTRLID_LICREG		40
+-->
+<page style='STYLE_PAGE'>
+<config>
+<startpos>center</startpos>
+<title>
+	Menedżer licencji
+#ifdef _DEBUG
+	[THIS_FILE]
+#endif
+</title>
+<script><![CDATA[
+'getcurrent
+#include "50203"
+
+dim pM60137 : set pM60137 = doc_.getmodule(60137)
+
+class CLicenceInfo
+	public m_strCode
+	public m_strName
+	public m_nCount
+	public m_nOrgCount
+	public m_strTypeDescription
+	public m_bTemporary
+
+	private sub class_initialize()
+		m_nCount = clng(0)
+		m_nOrgCount = clng(0)
+		m_strTypeDescription = "???"
+		m_bTemporary = true
+	end sub
+end class
+
+dim pArray : set pArray = doc_.afc.new_navoarray()
+dim g_strUserId : g_strUserId = ""
+dim g_pArrLic : set g_pArrLic = nothing
+
+function fopen : fopen = true
+	dim pFirma : set pFirma = getCurrentFirma()
+	if not pFirma is nothing then
+		g_strUserId = pFirma.strNIP
+	end if
+	rebuild_content
+end function
+
+function frefresh
+	rebuild_content
+end function
+
+sub rebuild_content
+	pArray.RemoveAll
+	set g_pArrLic = pM60137.get_create_licence_objects(false)
+	if g_pArrLic is nothing then
+		exit sub
+	end if
+
+	dim pM60106 : set pM60106 = doc_.getmodule(60106)
+
+	dim iter
+	dim nEBModMask : nEBModMask = 1
+	for iter = 0 to g_pArrLic.UpperIndex()
+		dim pLI : set pLI = new CLicenceInfo
+		pArray.Add pLI
+
+		pLI.m_strName= pM60106.LicModuleName(nEBModMask)
+		pLI.m_nCount = g_pArrLic.value(iter).nStanowiska
+		pLI.m_nOrgCount = pLI.m_nCount
+		dim nLicInfo : nLicInfo = pM60137.get_licence_info_and_update(g_pArrLic.value(iter))
+		if nLicInfo < -1 then
+			pLI.m_strTypeDescription = "nieaktualna"
+		else
+			if nLicInfo = 0 then
+				pLI.m_strTypeDescription = "stała"
+				pLI.m_bTemporary = false
+			else
+				if nLicInfo = -1 then
+					pLI.m_strTypeDescription = "tymczasowa, już nie ważna"
+				else
+					pLI.m_strTypeDescription = "tymczasowa, ważna jeszcze " + cstr(nLicInfo) + " dni"
+				end if
+			end if
+		end if
+
+		page_.ctrl(CTRLID_LICREG * 10 + iter).disable = true
+		nEBModMask = nEBModMask + nEBModMask
+	next
+end sub
+
+function c##CTRLID_USERID##_ongetdata(byref oCtrl)
+	c##CTRLID_USERID##_ongetdata=true
+	oCtrl.value = g_strUserId
+end function				
+
+function c##CTRLID_USERID##_ondataentered(byref oCtrl, byval newValue)
+	c##CTRLID_USERID##_ondataentered = true
+	g_strUserId = newValue
+end function
+
+
+#macro VBX_MODULE_LIC_ROW(_nr_)																					\
+function c##CTRLID_MODNAME##_nr_##_ongetdata(byref oCtrl): c##CTRLID_MODNAME##_nr_##_ongetdata=true		\
+	oCtrl.value = pArray.Value(_nr_).m_strName												\
+end function																							\
+function c##CTRLID_LICTYPE##_nr_##_ongetdata(byref oCtrl): c##CTRLID_LICTYPE##_nr_##_ongetdata=true		\
+	oCtrl.value = pArray.Value(_nr_).m_strTypeDescription												\
+end function																							\
+function c##CTRLID_LICCOUNT##_nr_##_ongetdata(byref oCtrl): c##CTRLID_LICCOUNT##_nr_##_ongetdata=true	\
+	oCtrl.value = pArray.Value(_nr_).m_nCount															\
+	with pArray.Value(_nr_)																				\
+		page_.ctrl(CTRLID_LICREG##_nr_).disable = (trim(g_strUserId) = "") or _							\
+		 (not ((.m_nCount > 0) and ((true) or .m_bTemporary)))						\
+	end with																							\
+end function																							\
+function c##CTRLID_LICCOUNT##_nr_##_ondataentered(byref oCtrl, byval newValue): c##CTRLID_LICCOUNT##_nr_##_ondataentered = true		\
+	pArray.Value(_nr_).m_nCount = newValue																\
+end function
+
+#macro QXX_MODULE_LIC_ROW(_nr_)		\
+	<tr>	\
+		QXC_LABEL_CUSTOM(CTRLID_MODNAME##_nr_,20,1)	\
+		<td align='right'>							\
+			QXE_INT_CUSTOM(CTRLID_LICCOUNT##_nr_,5)	\
+		</td>										\
+		QXC_LABEL_CUSTOM(CTRLID_LICTYPE##_nr_,0,1)	\
+		QXC_BUTTON(CTRLID_LICREG##_nr_,0,Zarejestruj,varFunctionHLI="register_licence",1)	\
+	</tr>
+
+VBX_MODULE_LIC_ROW(0)
+VBX_MODULE_LIC_ROW(1)
+VBX_MODULE_LIC_ROW(2)
+VBX_MODULE_LIC_ROW(3)
+VBX_MODULE_LIC_ROW(4)
+VBX_MODULE_LIC_ROW(5)
+
+function register_licence(byref pHLI)
+	dim nModule : nModule = pHLI.prop(PROPC_CONTROL) mod 10
+	trans_.message 0,1, pArray.Value(nModule).m_strName
+	dim pM60123 : set pM60123 = doc_.getmodule(60123)
+	pM60123.register_run g_pArrLic.value(nModule),g_strUserId,clng(pArray.Value(nModule).m_nCount)
+	frefresh
+end function
+
+]]></script>
+</config>
+<header>
+</header>
+<body>
+<table>
+	<tbody>
+		<tr>
+			QXC_LABEL_REQ(NIP (identyfikator użytkownika)&nbsp;,1)
+			<td>
+				<edit name='CTRLID_USERID' size='13' 
+					  tip='Wprowadź NIP, lub w przypadku jego braku identyfikator użytkownika przydzielony przez NAVO'>
+					<transfer mode='custom' />
+				</edit>
+			</td>
+		</tr>
+		QXR_SEPARATOR(FORM_SPAN)
+		<tr>
+			<td colspan='FORM_SPAN'>
+				<table>
+					<thead style='STYLE_TABLE_HEADER'>
+						<tr>
+							<td>
+								<t>Moduł</t>
+							</td>
+							<td>
+								<text>Liczba stanowisk</text>
+							</td>
+							<td>
+								<text>Rodzaj licencji</text>
+							</td>
+							<td>
+								<t>Operacja</t>
+							</td>
+						</tr>
+					</thead>
+					<tbody style='STYLE_TABLE_BODY'>
+						QXX_MODULE_LIC_ROW(0)
+						QXX_MODULE_LIC_ROW(1)
+						QXX_MODULE_LIC_ROW(2)
+						QXX_MODULE_LIC_ROW(3)
+						QXX_MODULE_LIC_ROW(4)
+						QXX_MODULE_LIC_ROW(5)
+					</tbody>
+				</table>
+			</td>
+		</tr>
+		QXR_SEPARATOR(FORM_SPAN)
+		<tr style='STYLE_ROW_BTN'>
+			<td align='right' colspan='FORM_SPAN'>
+				<button style='STYLE_BUTTON' href='varCmd=CMD_GOBACK'>Zamknij</button>
+			</td>
+		</tr>
+	</tbody>
+</table>
+</body>
+<footer>
+</footer>
+</page>

@@ -1,0 +1,1531 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1223.h"
+#include "h1222.h"
+#include "h1224.h"
+#incldue "h1231.h"
+
+#define CREATOR_TITLE           Kreator inwentaryzacji
+
+#define CTRLID_PRODUKT		      1
+#define CTRLID_OPAK			        2
+#define CTRLID_ILOSC		        3
+#define CTRLID_CENA			        4
+#define CTRLID_DATA			        5
+#define CTRLID_ILOSC2		        6
+#define CTRLID_RESULT           7
+#define CTRLID_DATA_INWEN       8
+#define CTRLID_PRODUKTY         9
+#define CTRLID_NARZEDZIA        10
+#define CTRLID_REDIRECT_CHKBOX  11
+#define CTRLID_STAN_FAKTYCZNY   12
+#define CTRLID_CHOOSE_MAGAZYN	  13
+#define CTRLID_ILOSC_FAKTYCZNA  14
+#define CTRLID_DATA_WAZNOSCI    15
+#define CTRL_PREV               16
+#define CTRL_NEXT               17
+#define CTRLID_CENA_DOSTAWY     18
+#define CTRLID_CHANGE_DATE      19
+#define CTRLID_MAGAZYN_PICTURE  30
+
+#define CTRL_RADIO_NAME		      20
+#define CTRL_LIST_NAME	      	21
+#define CTRL_RAPORT_NAME	      22
+#define CTRLID_OPIS_DOK_ROZWIN  23
+#define CTRLID_OPIS_DOK_1       24
+
+#ifdef _ALMA_TREND
+#ifndef APPCONFIG_RAPORT_BY_PROD_INX
+#define APPCONFIG_RAPORT_BY_PROD_INX
+#endif
+#endif
+
+#ifdef APPCONFIG_RAPORT_BY_PROD_INX
+#define C_PRODUKT_ORDER			v1.p_strIndeks
+#else
+#define C_PRODUKT_ORDER			v1.p_strNazwa
+#endif
+
+#define AKTYWNY_MAGAZYN   1       
+#define AKTYWNY_PRODUKT   1       
+#define NULL_DATE         '1899-12-31'
+#define MAX_LINE_IN_PAGE  20
+
+
+#define LINES_COLOR_ZMIENIONY		rgb(255,255,136)
+#define LINES_COLOR1		rgb(250,250,250)
+#define LINES_COLOR2		rgb(232,232,232)
+#define CTRLID_COLOR    rgb(255,255,255)
+
+-->
+
+
+<page style="STYLE_PAGE" >
+  <config>
+
+    <title>
+      CREATOR_TITLE
+      #ifdef _DEBUG
+      [THIS_FILE]
+      #endif
+
+    </title>
+
+    <script>
+      <![CDATA[
+
+'currentFirma
+#include "50203"
+
+'funkcja kantor
+#include "50523"
+
+#include "50209"
+#include "50222"
+#include "50200"
+'MessageBoxCustom
+#include "l50122"
+#include "l50517"
+#include "50516"
+'class CProgressPage
+#include "50632"
+
+
+'------------------------------------------------------------------------------------
+'zmienne globalne
+'------------------------------------------------------------------------------------
+dim pTB             
+dim g_rs_cursor     'globalny kursor wprowadzonych danych
+dim pM60321 : set pM60321 = doc_.getmodule(60321)
+dim g_obecnyPrzedzial 'ktory przedzial jest obecnie wyswietlany
+dim g_bShowOpak         ' czy pokazywac opakowanie
+dim g_pStanMagChange_array    'zmieniono stan magazynu
+dim g_pStanMag_kolektor    'stan magazynu pobrany z kolekora
+dim g_strTypSortNazwa		'sposob sotrowania po nazwie - asc,desc,brak
+dim g_strTypSortIndeks 'sposob sortowania po indeksie -  asc,desc,brak
+
+#ifdef APPCONFIG_RAPORT_BY_PROD_INX
+    g_strTypSortNazwa=""
+    g_strTypSortIndeks="asc"
+#else
+    g_strTypSortNazwa="asc"
+    g_strTypSortIndeks=""
+#endif
+
+
+dim g_dDataInwentaryzacji : g_dDataInwentaryzacji = trans_.var(GVAR_TODAY)
+dim g_strMagazyn      ' nazwa magazynu aktualnie wybranego przez uzytkownika
+dim g_idobjMagazyn    ' idobj magazynu aktualnie wybranego przez uzytkownika
+dim g_oInwentaryzacja
+dim pHli
+dim pModRapEngine : set pModRapEngine = doc_.getmodule(60108)
+dim pParamArray : set pParamArray = doc_.afc.new_navoarray()  'do dodatkowych filtrow nalożonych na kolumny
+dim g_nFiltr        'numer filtru 1-wszystkie aktywne, 2-lista wyboru, 3-wynik wyszukiwania 
+dim g_nIdobjFiltr, g_strNameFiltr  'wypeniane wtedy gdy g_nFiltr>1. zawieraja numer podfiltra i jego nazwe 
+dim g_strWhere
+
+#ifdef _GRAJEWSCY
+dim g_bInwentTymczas : g_bInwentTymczas = false
+#endif
+
+'------------------------------------------------------------------------------------
+'KB: zmienne globalne
+'------------------------------------------------------------------------------------
+dim g_iNumOpMag : g_iNumOpMag = clng(99999999)	'invalid value marker
+'------------------------------------------------------------------------------------
+
+function fopen : fopen = false
+
+  g_nFiltr = 1
+  dim strSQL,oRs
+  
+	dim idRejestr
+	idRejestr = choose_rejestr_dok(CStr( N5REJESTRDOK__IP ), true, "Wybierz rejestr dokumentów")
+
+	if (idRejestr <= 0) then
+		view_message 6322, 0
+		exit function
+	end if
+  
+  idRejestr = choose_rejestr_dok(CStr( N5REJESTRDOK__IR ), true, "Wybierz rejestr dokumentów")
+
+	if (idRejestr <= 0) then
+		view_message 6322, 0
+		exit function
+	end if
+  
+  set g_pStanMagChange_array = doc_.afc.new_navoarray()
+  set g_pStanMag_kolektor = doc_.afc.new_navoarray()
+
+  g_pStanMagChange_array.removeall
+  g_pStanMag_kolektor.removeall
+  strSQL = "select wartosc as wartosc from n5userprof where indeks=USERPROF_PRODCHOICELIST_SHOWOPAK and pn5user="+cstr(GetCurrentUserID)
+  set oRs = trans_.createadors(strSQL)
+  if (not oRs.eof) then
+    g_bShowOpak=ccur(oRS.fields("wartosc").value)
+  else
+    g_bShowOpak = ccur(0)
+  end if
+	set g_oInwentaryzacja =  pM60321.new_CInwentaryzacja
+
+  page_.ctrl(CTRL_PREV).hide = true
+  page_.ctrl(CTRL_NEXT).hide = true
+  
+  build_narzedzia
+  fill_produkty
+  fopen = true
+end function
+
+
+function fclose_window()
+	page_.goback
+end function
+
+'----------------------------------------
+'funkcja wypelnienia formularzu na poczatku podstawownymi danymi-data inwentaryzacji i magazyn
+'----------------------------------------
+function build_narzedzia : build_narzedzia = false
+  dim strSQL : strSQL = "select top 1 'idobj'=idobj,'nazwa'=strnazwa from n5magazyn where etyp=N5TYPMAG_PODSTAWOWY and mag_eAktywny=N5PRODUKT_AKTYWNY"
+  dim oResult : set oResult = trans_.createadors(strSQL)
+
+  if (not oResult.eof) then
+    g_strMagazyn = oResult.fields("nazwa")
+    g_idobjMagazyn= oResult.fields("idobj")
+  end if
+  set g_oInwentaryzacja.m_pMagazyn = trans_.getobj(10160,g_idobjMagazyn)
+  set pTB = doc_.afc.new_tb(nothing).attach(page_.ctrl(CTRLID_NARZEDZIA))
+	pTB.section_head.removeall
+	pTB.newrow
+  pTB.row.styleitem=STYLE_TABLE_HEADER  
+  pTB.newcell.addtext "Magazyn:"
+  pTB.newrow
+  pTB.newcell.addctrl CTRL_TYPE_EDIT, CTRLID_CHOOSE_MAGAZYN
+	with pTB.element
+		.value=cStr(oResult.fields("nazwa"))
+		.size=16
+    .disable=true
+    .bold=false
+	end with
+	pTB.addctrl CTRL_TYPE_PICTURE, CTRLID_MAGAZYN_PICTURE
+	with pTB.element
+		.image=clng(PICTURE_CHOICE_N5MAGAZYN)
+		.width=Clng(HEIGHT_FOR_12PX)
+		.height=Clng(HEIGHT_FOR_12PX)
+		.tip="Wybór z listy"
+		set .hli= doc_.createhli()
+		.hli.prop(GVAR_FUNCTION) = "choose_magazyn"
+	end with
+   
+  pTB.newrow
+  pTB.row.styleitem=STYLE_TABLE_HEADER
+  pTB.newcell.addtext "Data inwentaryzacji: "
+  pTB.newrow
+  pTB.newcell.addctrl CTRL_TYPE_DATE, CTRLID_CHANGE_DATE
+  with pTB.element
+					.border = 1
+					.size=10
+          .value=trans_.var(GVAR_TODAY)
+          .bold=false
+					.customredirect = clng(CTRLID_DATA_INWEN)
+					.transfer = page_.createtransfer("custom")
+   end with
+   
+  set pTB = doc_.afc.new_tb(nothing).attach(page_.ctrl(CTRLID_PRODUKTY))
+  pTB.section_head.removeall
+  pTB.newrow.row.width=clng(15000)
+   pTB.row.styleitem=STYLE_TABLE_HEADER
+   pTB.newcell.addtext "LP"
+    
+   build_head_table pTB, 1, "Filtrowanie wg indeksu" , "Indeks", "sort_strIndeks", 2000
+   build_head_table pTB, 2, "Filtrowanie wg nazwy" , "Nazwa", "sort_strNazwa", 4000
+
+   if g_bShowOpak = 1 then
+      build_head_table pTB, 3, "Filtrowanie wg nazwy opakowania" , "Opakowanie /odmiana", "", 3500
+   end if
+     build_head_table pTB, 4, "Filtrowanie wg stanu w bazie" , "Ilość w bazie", "", 1500
+     build_head_table pTB, 5, "Filtrowanie wg ilości faktycznej" , "Ilość faktyczna", "", 1000
+     build_head_table pTB, 6, "Filtrowanie wg ceny" , "Cena dostawy", "", 1500
+     build_head_table pTB, 7, "Filtrowanie wg daty ważności" , "Data ważności", "", 1500
+
+   pTB.section_body.removeall
+   
+end function
+
+'----------------------------------------
+'funkcja budowy naglowka tabeli inwentaryzacji
+'----------------------------------------
+function build_head_table(byref pTB, byref nr_kolumny, byref strPodpowiedz, byref strNazwaKolumny, byref str_sortowanie, byref intSzerokosc)
+
+   pTB.newcell
+   if nr_kolumny < 5 then
+       pTB.cell.width = CLng(intSzerokosc)
+        with pTB.cell.addnew(CTRL_TYPE_PICTURE,-1)
+		    .image=clng(PICTURE_CHOICE_N5PRODUKT)
+		    .width=Clng(HEIGHT_FOR_12PX)  
+		    .height=Clng(HEIGHT_FOR_12PX)
+		    .tip = cStr(strPodpowiedz)
+		    set .hli= doc_.createhli()
+		    .hli.prop(GVAR_FUNCTIONHLI) = "dodatkowy_filtr"
+		    .hli.prop(110) = CLng(nr_kolumny)
+	    end with
+   end if
+   
+   with pTB.cell.addnew(CTRL_TYPE_STATICEX,-1)
+      .text = cStr(strNazwaKolumny)
+      .width=clng(intSzerokosc)
+      if str_sortowanie <> "" then
+	  	    set .hli= doc_.createhli()
+		      .hli.prop(GVAR_FUNCTIONHLI) = cStr(str_sortowanie)
+     end if
+  end with
+
+end function
+
+function dodatkowy_filtr_text (byval nazwa, byval pole_filtrowane)
+
+    dim pParamArrayExtra : set pParamArrayExtra = doc_.afc.new_navoarray()
+    dim pParam: Set pParam = doc_.afc.rap.param.new_text(nazwa).bindexpr(pole_filtrowane)
+ 	  pParamArrayExtra.add pParam
+    if pModRapEngine.show_raport_param_dialog(pParamArrayExtra,"CREATOR_TITLE") = 0 then
+      exit function
+    end if
+    dim iter
+    for iter=0 to pParamArray.UpperIndex
+        if pParamArray.value(iter).ParamName = nazwa then
+            pParamArray.Remove(iter)
+            exit for
+        end if
+    next
+    pParamArray.add pParam
+    
+    fill_produkty
+    
+end function
+
+function dodatkowy_filtr_currency (byval nazwa, byval pole_filtrowane)
+
+    dim pParamStanBaza : Set pParamStanBaza = doc_.afc.rap.param.new_currency(nazwa).bindexpr(pole_filtrowane)
+    dim pParamArrayExtra : set pParamArrayExtra = doc_.afc.new_navoarray()
+ 	  pParamArrayExtra.add pParamStanBaza
+    dim iter
+    if pModRapEngine.show_raport_param_dialog(pParamArrayExtra,"CREATOR_TITLE") = 0 then
+      exit function
+    end if
+    
+    for iter=0 to pParamArray.UpperIndex
+        if pParamArray.value(iter).ParamName = nazwa then
+            pParamArray.Remove(iter)
+            exit for
+        end if
+    next
+    
+    pParamArray.add pParamStanBaza
+    
+    fill_produkty
+    
+end function
+
+'----------------------------------------
+'funkcja dodatkowych filtrów na kolumny
+'----------------------------------------
+function dodatkowy_filtr(byref pHLI)
+  dim iter
+  dim idKolumny : idKolumny = pHLI.prop(110)
+  dim iParamNr : iParamNr = pParamArray.upperIndex
+  if idKolumny = 1 then   'dodatkowy filtr na kolumne indeks
+    dodatkowy_filtr_text "Indeks produktu", "v1.p_strindeks"
+  end if
+  
+  if idKolumny = 2 then   'dodatkowy filtr na kolumne nazwa
+     dodatkowy_filtr_text "Nazwa produktu", "v1.p_strNazwa" 
+  end if
+
+  if idKolumny = 3 then   'dodatkowy filtr na kolumne opakowanie
+    dodatkowy_filtr_text "Nazwa opakowania", "v1.c_strNazwa" 
+  end if
+  
+  if idKolumny = 4 then   'dodatkowy filtr na kolumne stan w bazie 
+  dim strWhere : strWhere = "isnull((select sum(gmo_curilosc) from n5gmop where gmo_pprod = v1.p_idobj and gmo_pmag=" + cStr(g_idobjMagazyn) +_
+                            " and gmo_nnumop in (select v.p_nnumoper from vlist_n5dokmag_listPozycje as v where v.c_pprodukt=v1.p_idobj and "+_
+                            " v.p_ddatawyst <="+trans_.afc.convert.date2SQL(g_dDataInwentaryzacji)+") ),0)" 
+   dodatkowy_filtr_currency "Stan w bazie",strWhere
+  end if
+  
+  fill_produkty 
+
+end function
+
+'----------------------------------------
+'funkcja cofniecia zmian(usuwamy wszystkie zmiany jakie uzytkownik wprowadzil do tej pory- przed wygenerowaniem dokumentu)
+'----------------------------------------
+function cofnij_zmiany : cofnij_zmiany = true
+  g_pStanMagChange_array.removeall()
+  page_.ctrl(CTRLID_MAGAZYN_PICTURE).disable = false
+  page_.ctrl(CTRLID_CHANGE_DATE).DISABLE = false
+  showCurrentObjects
+end function
+
+'----------------------------------------
+'funkcja ustawienia znacznika sortowania po nazwie
+'----------------------------------------
+function sort_strNazwa(byref pHLI)
+
+dim strIdobjProd : strIdobjProd = ""
+dim iter,jter
+
+if g_strTypSortNazwa = "asc" then
+  g_strTypSortNazwa = "desc"
+  g_strTypSortIndeks = ""
+else
+  g_strTypSortNazwa = "asc"
+  g_strTypSortIndeks = ""
+end if
+
+fill_produkty
+
+end function
+
+
+'----------------------------------------
+'funkcja ustawienia znacznika sortowania po indeksie
+'----------------------------------------
+function sort_strIndeks(byref pHLI)
+
+if g_strTypSortIndeks = "asc" then
+    g_strTypSortIndeks = "desc"
+    g_strTypSortNazwa = ""
+else
+  g_strTypSortIndeks = "asc"
+  g_strTypSortNazwa = ""
+end if
+
+fill_produkty
+
+end function
+
+function new_row (byref pTB, byval intWprowadzony,byval iter)
+
+           pTB.newrow.row.width=clng(8000)
+           if intWprowadzony >=0 then
+              pTB.row.backcolor = LINES_COLOR_ZMIENIONY
+           else
+             if (iter mod 2 ) = 1 then
+              pTB.row.backcolor = LINES_COLOR2
+             else
+              pTB.row.backcolor = LINES_COLOR1
+             end if
+           end if
+           
+end function
+
+function new_cell_text (byref pTB, byref pProdukt, byref pProdOpak, byval iter, byval bShowOpak)  
+
+     pTB.newcell.addtext cStr(iter+1)
+     pTB.cell.align=ALIGN_RIGHT
+     dim strProduktHLI : strProduktHLI = doc_.afc.convert.Formatter("OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5PRODUKT," + cstr(g_rs_cursor.fields("prod_id").value) + ",USAGE_VIEW)").done()
+     pTB.newcell.addtexthli cStr(pProdukt.strIndeks),doc_.createhlistr(strProduktHLI)  
+     pTB.newcell.cell.width = clng(4500)
+     pTB.addctrl(CTRL_TYPE_STATICEX, -1).element.text = cStr(pProdukt.strNazwa)
+     pTB.cell.width = clng(6500)
+     if bShowOpak = 1 then
+          pTB.newcell.addtext cStr(pProdOpak.strNazwa)
+          pTB.cell.width = clng(3000)
+     end if
+     
+end function
+
+function pHLI_prop (byref hli_prop_100, byref hli_prop_101,byref hli_prop_102,byref hli_prop_103,byref hli_prop_104,byref hli_prop_105)
+
+            set pHli = doc_.createhli()
+					  pHli.prop(100) = clng(hli_prop_100)
+					  pHli.prop(101) = clng(hli_prop_101)
+            pHli.prop(102) = clng(hli_prop_102)
+            pHli.prop(103) = hli_prop_103
+            pHli.prop(104) = ccur(hli_prop_104)
+            pHli.prop(105) = hli_prop_105
+            set pHLI_prop = pHli
+            
+end function
+
+'--------------------------
+'dodanie nowej komorki w tabeli typu data
+'--------------------------
+function new_cell_data (byref pTB, byval wartosc,byval wartosc_zm,byref kontrolka,byref hli_prop_100, byref hli_prop_101, byref hli_prop_102, byref hli_prop_103, byref hli_prop_104, byref hli_prop_105,intWprowadzony)
+           pTB.newcell
+           with pTB.addctrl(CTRL_TYPE_DATE,-1).element
+					    .size = 10
+              if intWprowadzony < 0 then
+                .value= wartosc
+                .backcolor = CTRLID_COLOR
+              else
+                .backcolor = LINES_COLOR_ZMIENIONY
+            	  .value = wartosc_zm
+              end if
+              .customredirect = kontrolka
+              .transfer = page_.createtransfer("custom")
+              .tip = "wypełnij"
+              .border=0
+           end with
+					 set pTB.element.userprop = pHLI_prop (hli_prop_100, hli_prop_101, hli_prop_102, hli_prop_103, hli_prop_104, hli_prop_105)
+           if intWprowadzony < 0 then
+               pTB.cell.backcolor = CTRLID_COLOR
+           else
+               pTB.cell.backcolor = LINES_COLOR_ZMIENIONY
+           end if
+           pTB.cell.align=ALIGN_RIGHT
+           
+end function
+
+'--------------------------
+'dodanie nowej komorki w tabeli typu currency
+'--------------------------
+function new_cell_currency (byref pTB, byval wartosc, byval wartosc_zm, byval precyzja, byval jednostka, byref kontrolka, byref hli_prop_100, byref hli_prop_101, byref hli_prop_102, byref hli_prop_103, byref hli_prop_104, byref hli_prop_105, byval intwprowadzony, byval rozmiar, byval iter)
+
+         pTB.newcell.addctrl CTRL_TYPE_CURRENCY , -1
+				 with pTB.element
+				    .size=rozmiar
+            .precision=precyzja
+				    .unit=jednostka
+           if kontrolka = 0 then
+             .disable=true
+				     .value = wartosc
+             if (iter mod 2 ) = 1 then
+               .backcolor = LINES_COLOR2
+             end if
+           else
+              if intWprowadzony < 0 then
+						      .value = wartosc
+              else
+                  .backcolor = LINES_COLOR_ZMIENIONY
+            	    .value = wartosc_zm
+              end if
+   						    .customredirect = clng(kontrolka)
+  						    .transfer = page_.createtransfer("custom")
+           end if
+             .border=0
+				end with
+        if kontrolka > 0 then
+            set pTB.element.userprop = pHLI_prop (hli_prop_100, hli_prop_101, hli_prop_102, hli_prop_103, hli_prop_104, hli_prop_105)
+            if intWprowadzony < 0 then
+               pTB.cell.backcolor = CTRLID_COLOR
+            else
+               pTB.cell.backcolor = LINES_COLOR_ZMIENIONY
+            end if
+        end if
+          pTB.cell.align=ALIGN_RIGHT
+          
+end function
+
+
+'----------------------------------------
+'funkcja wyswietlanie danych z kursora na ekran w ilosci MAX_LINE_IN_PAGE na jednej stronie
+'----------------------------------------
+function showCurrentObjects
+
+dim iter,iter_wprowadzone,intWprowadzony
+dim pProdukt, pProdOpak 
+pTB.section_body.removeall
+  for iter = (((g_obecnyPrzedzial-1)* MAX_LINE_IN_PAGE) + (g_obecnyPrzedzial-1))  to ((((g_obecnyPrzedzial-1)* MAX_LINE_IN_PAGE) + (g_obecnyPrzedzial-1))+20)
+      if not g_rs_cursor.BOF then
+        g_rs_cursor.moveFirst
+        g_rs_cursor.move iter,0
+      end if
+
+
+      if not g_rs_cursor.eof then
+           set pProdukt = trans_.getobj(TYPEID_N5PRODUKT ,clng(g_rs_cursor.fields("prod_id").value))
+           set pProdOpak = pProdukt.listOpakowania.get(clng(g_rs_cursor.fields("lp").value))
+         
+           dim curCenaDostawy, curCenaDostawyPLN
+           
+           'pobranie ceny ostaniej dostawy
+           dim strSQLCena : strSQLCena = "select top 1 gms_curCena as cena from n5gmstan where gms_pprod = "+cStr(g_rs_cursor.fields("prod_id").value) + "and gms_pOpak = "+cStr(pProdOpak.idobj)+" order by idobj desc"
+           
+		         dim oRS : set oRS = trans_.createadors(strSQLCena)
+		         if not oRS.BOF then
+				      curCenaDostawy = ccur(oRS.fields("cena"))
+		         else
+#ifdef _CDNOLAWA
+				'cena ostatniego zakupu
+				strSQLCena = "select top 1 c_curcenanettowal from vlist_n5zakup_listPozycje where c_pprodukt = " + CStr(g_rs_cursor.fields("prod_id").value) +_ 
+						" and c_popak = " + CStr(pProdOpak.idobj) + " order by p_idobj desc"
+				set oRS = trans_.createadors(strSQLCena)
+				if oRS.recordCount > clng(0) then
+					curCenaDostawy = ccur(oRS(0).value)
+				else
+					curCenaDostawy = CCur(0)
+				end if
+#else
+				      curCenaDostawy = CCur(0)
+#endif              
+		         end if
+            
+             curCenaDostawyPLN = curCenaDostawy
+           
+            intWprowadzony = -1
+            for iter_wprowadzone = 0 to g_pStanMagChange_array.UpperIndex
+                if ((g_pStanMagChange_array.value(iter_wprowadzone).m_nProduktIdobj = pProdukt.idobj) and (g_pStanMagChange_array.value(iter_wprowadzone).m_pOpakIdobj = pProdOpak.idobj) and (g_pStanMagChange_array.value(iter_wprowadzone).m_nMagazyn = g_idobjMagazyn)) then
+                  	intWprowadzony = iter_wprowadzone
+                   exit for
+                end if
+            next
+			
+       '----------------------------
+		   'KB: pobranie stanu mag. i zmianie ulegnie g_iNumOpMag dla danego produktu		   
+		   '----------------------------
+		   dim curIloscMag : curIloscMag = get_one_stan_mag (g_idobjMagazyn, pProdukt.idobj, pProdOpak.idobj)
+		   '----------------------------		   
+      
+       new_row pTB, intwprowadzony, iter
+       new_cell_text pTB, pProdukt, pProdOpak, iter, g_bShowOpak
+#ifdef _GRAJEWSCY
+       if not g_bInwentTymczas then
+         new_cell_currency pTB, cCur(curIloscMag), cCur(-1), ccur(pProdOpak.pJednopak.ndokladnosc)-1, pProdOpak.pJednopak.strskrot, 0, 0,0,0,0,0,0,intWprowadzony,10,iter
+       else
+         if intWprowadzony > -1 then
+           new_cell_currency pTB, cCur(curIloscMag)-ccur(g_pStanMagChange_array.value(intWprowadzony).m_curStanFaktyczny), cCur(-1), ccur(pProdOpak.pJednopak.ndokladnosc)-1, pProdOpak.pJednopak.strskrot, 0, 0,0,0,0,0,0,intWprowadzony,10,iter
+         else
+           new_cell_currency pTB, cCur(curIloscMag), cCur(-1), ccur(pProdOpak.pJednopak.ndokladnosc)-1, pProdOpak.pJednopak.strskrot, 0, 0,0,0,0,0,0,intWprowadzony,10,iter       
+         end if
+       end if
+#else
+       new_cell_currency pTB, cCur(curIloscMag), cCur(-1), ccur(pProdOpak.pJednopak.ndokladnosc)-1, pProdOpak.pJednopak.strskrot, 0, 0,0,0,0,0,0,intWprowadzony,10,iter
+#endif
+
+       if intWprowadzony >-1 then
+             new_cell_currency pTB, cCur(curIloscMag), ccur(g_pStanMagChange_array.value(intWprowadzony).m_curStanFaktyczny),_
+                        ccur(pProdOpak.pJednopak.ndokladnosc)-1,pProdOpak.pJednopak.strskrot,CTRLID_ILOSC_FAKTYCZNA,pProdukt.idobj,_
+                        pProdOpak.idobj, g_rs_cursor.fields("lp").value, curIloscMag, ccur(curCenaDostawyPLN), _
+                        g_rs_cursor.fields("data_waznosci").value,intWprowadzony,10,iter  
+                        
+             new_cell_currency pTB, ccur(trans_.afc.convert.roundn(g_pStanMagChange_array.value(intWprowadzony).m_curCena,_
+                      ccur(pProdOpak.pWaluta.ndokladnosc))),ccur(trans_.afc.convert.roundn(g_pStanMagChange_array.value(intWprowadzony).m_curCena,_
+                      ccur(pProdOpak.pWaluta.ndokladnosc))),ccur(pProdOpak.pWaluta.ndokladnosc)-1,getCurrentFirma.pWaluta.strSkrot,_
+                      CTRLID_CENA_DOSTAWY,pProdukt.idobj,pProdOpak.idobj, g_rs_cursor.fields("lp").value, curIloscMag,curIloscMag, _
+                      g_rs_cursor.fields("data_waznosci").value,intWprowadzony,9,iter    
+                      
+             new_cell_data pTB, (g_rs_cursor.fields("data_waznosci").value),(g_pStanMagChange_array.value(intWprowadzony).m_dData),_
+                     CTRLID_DATA_WAZNOSCI,clng(pProdukt.idobj), clng(pProdOpak.idobj), clng(g_rs_cursor.fields("lp").value),curIloscMag, _
+                     ccur(curCenaDostawyPLN), curIloscMag,intWprowadzony
+       else
+             new_cell_currency pTB, cCur(curIloscMag), cCur(curIloscMag),ccur(pProdOpak.pJednopak.ndokladnosc)-1,pProdOpak.pJednopak.strskrot,_
+                      CTRLID_ILOSC_FAKTYCZNA,pProdukt.idobj,pProdOpak.idobj, g_rs_cursor.fields("lp").value, curIloscMag, _
+                      ccur(curCenaDostawyPLN), g_rs_cursor.fields("data_waznosci").value,intWprowadzony,10,iter  
+                      
+             new_cell_currency pTB, cCur(trans_.afc.convert.roundn(curCenaDostawyPLN,ccur(pProdOpak.pWaluta.ndokladnosc))),cCur(0),_
+                      ccur(pProdOpak.pWaluta.ndokladnosc)-1,getCurrentFirma.pWaluta.strSkrot,CTRLID_CENA_DOSTAWY,pProdukt.idobj,_
+                      pProdOpak.idobj, g_rs_cursor.fields("lp").value, curIloscMag,curIloscMag, g_rs_cursor.fields("data_waznosci").value,_
+                      intWprowadzony,9,iter         
+                      
+             new_cell_data pTB, (g_rs_cursor.fields("data_waznosci").value),0,CTRLID_DATA_WAZNOSCI,clng(pProdukt.idobj), clng(pProdOpak.idobj),_
+                      clng(g_rs_cursor.fields("lp").value),curIloscMag, ccur(curCenaDostawyPLN),curIloscMag,intWprowadzony
+       end if
+           page_.ctrl(CTRL_NEXT).hide = false
+      else
+          page_.ctrl(CTRL_NEXT).hide = true
+      end if
+      
+  next
+  
+  
+
+  if g_obecnyPrzedzial = 1 then
+    page_.ctrl(CTRL_PREV).hide = true
+  else
+    page_.ctrl(CTRL_PREV).hide = false
+  end if
+
+end function
+
+'----------------------------------------
+'funkcja ustawienia kursora z ktorego dane wyswietlane sa pozniej na ekran
+'----------------------------------------
+function fill_produkty : fill_produkty = false
+
+dim perf
+dim pStanMagRecord 
+dim iter
+
+if not isEmpty(g_nFiltr) then
+      if g_nFiltr <> 1 then
+        g_strWhere = get_where()
+      else
+        g_strWhere = "p_eaktywny = AKTYWNY_PRODUKT"
+      end if
+      if g_strWhere = "" then
+	      exit function
+      end if
+   		set perf = doc_.performing("Trwa sprawdzanie stanów magazynowych . . .")
+      dim query: query = " select " + _
+		" v1.p_idobj as prod_id  , " + _
+		" v1.p_strNazwa as prod_nazwa  , " + _
+		" v1.c_idobj as opak_id , " + _
+		" v1.p_strindeks as prod_indeks , " +_
+		" v1.c_strNazwa as opak_nazwa , " + _
+		" v1.coll_lp as lp ," + _
+		" jedn.strskrot as waluta, jedn.ndokladnosc as dokl , " +_
+		" 'ilosc'=0, {d NULL_DATE} as data_waznosci, "+_
+		" 'skrot_jedn'=jednostka.strskrot " +_
+		" from vlist_n5produkt_listOpakowania as v1 " + _		
+		" inner join n5jednostka as jedn on jedn.idobj=v1.c_pwaluta " +_
+		" inner join n5jednostka as jednostka on jednostka.idobj = p_pjednostkaewid " +_
+		" where v1.p_erodzaj <>2 and v1.%1 " 
+		query = trans_.afc.convert.Formatter(query).add(g_strWhere).done()
+
+		'KB: tu też można stosować trans_.afc.convert.Formatter.add		
+		for iter=0 to pParamArray.UpperIndex
+			if not isEmpty(pParamArray.value(iter)) then
+				query = query + " and %"+cStr(iter+1)
+			end if
+		next
+		
+		query = pModRapEngine.query_apply_actual_param(query,pParamArray)
+
+		if g_strTypSortNazwa <> "" then
+			query = query + " order by v1.p_strNazwa " + cStr(g_strTypSortNazwa) + ",v1.coll_lp "
+		else
+			query = query + " order by v1.p_strIndeks " + cStr(g_strTypSortIndeks) + ",v1.coll_lp "
+		end if
+
+		set g_rs_cursor = trans_.createadors(query)
+
+    g_obecnyPrzedzial = 1
+    showCurrentObjects
+else
+    trans_.message 6501, 0, "Nie wybrano filtra na produkty"
+end if
+
+fill_produkty = true
+ 
+end function
+
+
+'----------------------------------------
+'funkcja wyboru magazynu
+'----------------------------------------
+function choose_magazyn()
+  dim oldIdobjMagazyn
+	dim strSQL
+	dim pM43009 : set pM43009 = doc_.getmodule(43009)
+	pM43009.prepare_single_selection TYPEID_N5MAGAZYN, "Wybór magazynu", "", "strNazwa"
+	choose_magazyn = pM43009.run_browser()
+	set strSQL= trans_.createadors("select 'strMagazyn'=strNazwa from n5magazyn where idobj="+cStr(choose_magazyn))
+
+	if not strSQL.BOF then
+    oldIdobjMagazyn = g_idobjMagazyn
+    g_idobjMagazyn= choose_magazyn
+	  page_.ctrl(CTRLID_CHOOSE_MAGAZYN).value=cStr(strSQL.fields("strMagazyn"))
+    set g_oInwentaryzacja.m_pMagazyn = trans_.getobj(10160,g_idobjMagazyn)
+    if oldIdobjMagazyn <> g_idobjMagazyn then
+        fill_produkty
+    end if
+	end if	
+  
+end function
+
+'----------------------------------------
+'funkcja pobrania danych z filtra- co ma byc wyfiltrowane na stronie
+'----------------------------------------
+function get_where():get_where=""
+    if  g_nIdobjFiltr <> 0 and g_nIdobjFiltr <> 0 then
+		  get_where = doc_.getmodule(60300).bquery_where_for_produkt_filtr(g_nFiltr , g_nIdobjFiltr) 
+      if get_where <> "" then
+        get_where = get_where+ " and v1.p_eRodzaj=N5PRODUKT_TOWAR "
+      end if
+    end if
+end function
+
+'----------------------------------------
+'funkcja wydruku arkusza spisowego
+'----------------------------------------
+function arkusz_spisowy()
+dim perf
+dim iter
+set perf = doc_.performing("Trwa drukowanie arkusza spisowego")
+dim strWhere
+if ((g_nFiltr = 1) or (g_nFiltr > 1 and g_nIdobjFiltr <> 0 )) then
+    if g_nFiltr = 1 then
+      strWhere = "p_eaktywny = 1"
+    else
+      strWhere = get_where()
+    end if
+    if strWhere = "" then
+	    exit function
+    end if
+    		dim query: query = trans_.afc.convert.Formatter( _
+  		" select '%2' as mag , p_strIndeks as inx , p_idobj as prod_idobj , p_strNazwa as prod, " +_
+	  	" c_strNazwa as opak , coll_lp from vlist_n5produkt_listOpakowania as v1 " +_
+	  	" where %1 ")_
+	  	.add(strWhere).add(g_strMagazyn).done()
+      for iter=0 to pParamArray.UpperIndex
+              if not isEmpty(pParamArray.value(iter)) then
+                query = query + " and %"+cStr(iter+1)
+              end if
+      next
+          query = pModRapEngine.query_apply_actual_param(query,pParamArray)
+        query = query+"order by C_PRODUKT_ORDER,v1.coll_lp "
+		   dim rs:set rs = trans_.createadors(query)
+       set g_oInwentaryzacja.m_pRS = rs
+       set g_oInwentaryzacja.m_pMagazyn = trans_.getobj(TYPEID_N5MAGAZYN,g_idobjMagazyn)
+       dim pOpenHLI : set pOpenHLI = doc_.createhlistr("varCmd = CMD_OPEN_STATIC_PAGE")
+		   set pOpenHLI.prop(GVAR_DESTPAGE) = doc_.getmodule(60170).asp_appfile(95133, me.g_oInwentaryzacja)
+       set perf = nothing
+		   doc_.getpagehli(pOpenHLI).domodalauto()
+else
+    trans_.message 6501, 0, "Nie wybrano filtra na produkty"
+end if
+end function
+
+'----------------------------------------
+'funkcja wyslania danych na kolektor
+'----------------------------------------
+function na_kolektor
+if ((g_nFiltr = 1) or (g_nFiltr > 1 and g_nIdobjFiltr <> 0 )) then
+		dim pProdCursorBuilder:set pProdCursorBuilder = doc_.getpagehli("varCmd=CMD_OPEN_WIZARD_PAGE varDestPage=DIALOG_PRODUKT_FILTR")
+		pProdCursorBuilder.init g_nFiltr , g_nIdobjFiltr
+
+		dim pCursor:set pCursor = pProdCursorBuilder.cursor_for_send_to_collector_na_dzien(g_idobjMagazyn, trans_.afc.convert.date2SQL(g_dDataInwentaryzacji))
+		if pCursor is nothing then
+			exit function
+		end if
+
+		dim pCollectorUtil:set pCollectorUtil = doc_.getmodule(60205)
+		pCollectorUtil.send_products_to_collector pCursor
+
+else
+    trans_.message 6501, 0, "Nie wybrano filtra na produkty"
+end if
+
+end function
+
+
+'----------------------------------------
+'funkcja pobrania danych z kolektora
+'----------------------------------------
+function z_kolektora()
+if ((g_nFiltr = 1) or (g_nFiltr > 1 and g_nIdobjFiltr <> 0 )) then
+trans_.message 0, 0, "____Rozpoczęto komunikację z kolektorem"
+	'obiekt komunikacyjny
+	dim pM60224 : set pM60224 = doc_.getmodule(60224)
+	dim pM60277EDI : set pM60277EDI = doc_.getmodule(60277)
+
+	dim pTransfer : set pTransfer = pM60224.new_Cipher_CPT_711_720_Transfer()
+
+	'pętla odczytująca dane
+	dim strRecordData
+	dim nRecordNr : nRecordNr = 0
+	dim answer:answer = -100
+  dim pProdukt,pOpakowanie
+
+	if pTransfer.begin_receive() then
+		g_pStanMagChange_array.removeall()
+
+		dim pPP : set pPP = new CProgressPage
+		pPP.init "Pobieranie danych z kolektora"		
+
+		do while pTransfer.receive(nRecordNr,strRecordData)
+#ifdef _DEBUG		
+			trans_.message 0, 0, "Dane z kolektora:[" + strRecordData + "]"
+#endif			
+			dim strKod,curIlosc,curCena,strNazwa,curKrotnosc,curStanBaza
+			
+			if not pM60224.crack_cipher_record(strRecordData,strKod, curCena,curIlosc,strNazwa) then
+				exit function
+			end if
+			
+#ifdef _DEBUG		
+#ifdef _HJORT
+			trans_.message 0, 0, "Indeks="+ cstr(strKod) + ",ilosc=" + cstr(curIlosc) + ",cena="+cstr(curCena)
+#else
+			trans_.message 0, 0, "EAN="+ cstr(strKod) + ",ilosc=" + cstr(curIlosc) + ",cena="+cstr(curCena)
+#endif
+#endif
+			
+			pPP.update "Wczytano rekord nr " + cstr(nRecordNr)
+
+			if pPP.is_broken() then
+				showCurrentObjects
+				exit function
+			end if			
+      set pProdukt = nothing
+      set pOpakowanie = nothing
+ 'wczytanie produktu i opakowania
+#ifdef _HJORT
+				if not pM60277EDI.get_position_from_colector_by_indeks(strKod,pProdukt,pOpakowanie) then
+					'zapytamy
+					if answer = -100 or answer = vbYes then
+						answer=MessageBoxCustom("Nie można znależć pozycji w bazie dla Indeksu = " + strKod + ". Mozesz pominac te jedna pozycje, pomijac wszystkie podobne lub przerwac wczytywanie", "Brak pozycji", vbYesNoCancel, vbQuestion, "Pomiń;Pomiń wszystkie;Przerwij")
+					end if
+					if ((answer = vbCancel) or (answer = vbNo)) then
+						exit function
+					end if
+				end if
+#else
+				if not pM60277EDI.get_position_from_colector_by_ean(strKod,pProdukt,pOpakowanie) then
+					'pDestDok.listPozycje.delete(pDestDok.listPozycje.count())
+					'zapytamy
+					if not pM60277EDI.get_position_from_colector_by_indeks(strKod,pProdukt,pOpakowanie) then
+						'zapytamy
+						if answer = -100 or answer = vbYes then
+							answer=MessageBoxCustom("Nie można znależć pozycji w bazie dla Indeksu = " + strKod + ". Mozesz pominac te jedna pozycje, pomijac wszystkie podobne lub przerwac wczytywanie", "Brak pozycji", vbYesNoCancel, vbQuestion, "Pomiń;Pomiń wszystkie;Przerwij")
+						end if
+						if ((answer = vbCancel) or (answer = vbNo)) then
+							exit function
+						end if
+					end if
+				end if
+#endif
+
+				' i tu zabawa z kartonami
+				'pobieramy krotnosc z opakowania
+				if not pProdukt is nothing then
+             curStanBaza = get_one_stan_mag(g_idobjMagazyn, pProdukt.idobj, pOpakowanie.idobj)
+        
+#ifdef _GRAJEWSCY
+					curKrotnosc = 1
+#else
+					curKrotnosc = pOpakowanie.currKrotnosc
+#endif
+		 dim iter,bflag
+		 bflag = 0
+          if ccur(curilosc) <> curStanBaza then
+		  for iter=0 to g_pStanMagChange_array.UpperIndex
+			if ((g_pStanMagChange_array.value(iter).m_nMagazyn = g_idobjMagazyn) and (g_pStanMagChange_array.value(iter).m_nProduktIdobj = pProdukt.idobj) and (g_pStanMagChange_array.value(iter).m_pOpakIdobj = pOpakowanie.idobj)) then
+				bflag = 1
+				g_pStanMagChange_array.value(iter).m_curStanFaktyczny = g_pStanMagChange_array.value(iter).m_curStanFaktyczny + ccur(curilosc)
+			end if
+		  next
+		  
+		  dim SQL2 : SQL2 = "select coll_lp as lp from dbo.vlist_n5produkt_listOpakowania where p_idobj = "+cStr(pProdukt.idobj)+" and c_idobj="+cStr(pOpakowanie.idobj)
+		  dim oRS2 : set oRS2 = trans_.createadors(SQL2)
+			  if bflag = 0 then
+				  dim pStanMagRecord_kol : set pStanMagRecord_kol = pM60321.new_CStanMagRecord_fill
+				  pStanMagRecord_kol.m_nMagazyn = g_idobjMagazyn
+				  pStanMagRecord_kol.m_nProduktIdobj = pProdukt.idobj
+				  pStanMagRecord_kol.m_pOpakIdobj = pOpakowanie.idobj
+				  set pStanMagRecord_kol.m_pProdukt = pProdukt
+				  set pStanMagRecord_kol.m_pOpak = pOpakowanie
+				  pStanMagRecord_kol.m_nOpakLp = oRs2.fields("lp")
+				  pStanMagRecord_kol.m_curStanFaktyczny = ccur(curilosc)
+				  pStanMagRecord_kol.m_curStanBaza = ccur(oRS.fields("ilosc").value)
+				  pStanMagRecord_kol.m_curCena = ccur(curCena)
+				  g_pStanMagChange_array.add pStanMagRecord_kol
+			  end if
+          end if
+				end if
+
+			nRecordNr = nRecordNr + 1
+		loop
+		pTransfer.end_receive
+		set pPP = nothing
+	end if
+	
+
+	if pTransfer.get_last_error() <> "" then
+		MessageBox pTransfer.get_last_error(), "Pobieranie danych", vbOKOnly, vbInformation
+	end if
+
+page_.ctrl(CTRLID_MAGAZYN_PICTURE).disable = true
+page_.ctrl(CTRLID_CHANGE_DATE).DISABLE = true
+
+else
+    trans_.message 6501, 0, "Nie wybrano filtra na produkty"
+end if
+z_kolektora = true
+end function
+
+'----------------------------------------
+'funkcja wyboru dokumentu magazynowego w przypadku gdy w danym dniu byly juz robione inwentaryzacje na dany magazyn
+'----------------------------------------
+function choose_dok_mag(byval strTytul, byval dData, byval nTypDok, byval idobjMagazyn) : choose_dok_mag = false
+  
+  dim idDokumentuDoDopis
+	dim pM43009 : set pM43009 = doc_.getmodule(43009)
+  if nTypDok = N5REJESTRDOK__IP then
+	    pM43009.prepare_single_selection TYPEID_N5DOKMAG,strTytul, "dDatawyst="+trans_.afc.convert.date2SQL(dData)+" and nTypDok="+cStr(nTypDok)+" and pMagDocel = "+cStr(idobjMagazyn),""
+  else
+  	  pM43009.prepare_single_selection TYPEID_N5DOKMAG,strTytul, "dDatawyst="+trans_.afc.convert.date2SQL(dData)+" and nTypDok="+cStr(nTypDok)+" and pMagZrod = "+cStr(idobjMagazyn),""
+  end if
+  choose_dok_mag = pM43009.run_browser()
+  if choose_dok_mag > 0 then
+      idDokumentuDoDopis = choose_dok_mag
+      dim oDokument : set oDokument = trans_.getobj(TYPEID_N5DOKMAG,idDokumentuDoDopis)
+      if nTypDok = N5REJESTRDOK__IP then
+        choose_dok_mag = pM60321.make_IP_dopisz (g_pStanMagChange_array,g_oInwentaryzacja,idDokumentuDoDopis)
+      else
+        choose_dok_mag = pM60321.make_IR_dopisz (g_pStanMagChange_array,g_oInwentaryzacja,idDokumentuDoDopis)
+      end if
+  end if
+end function
+
+'----------------------------------------
+'funkcja weryfikacji stanu magazynowego
+'----------------------------------------
+function wprowadz_stan():wprowadz_stan = false
+
+dim iter,strSQLDokMag,oRes
+dim bFlagSuperata : bFlagSuperata = false
+dim bFlagManko : bFlagManko = false
+dim strSQL,oResult,nQuestionResultManko,nQuestionResultSuperata
+
+if ((g_nFiltr = 1) or (g_nFiltr > 1 and g_nIdobjFiltr <> 0 )) then
+  for iter = 0 to g_pStanMagChange_array.UpperIndex
+    if g_pStanMagChange_array.value(iter).m_curStanBaza > g_pStanMagChange_array.value(iter).m_curStanFaktyczny then    'manko  
+        if not bFLagManko then
+            strSQL = "select count(*) as ilosc from n5dokmag where nTypDok = N5REJESTRDOK__IR and dDatawyst = "+trans_.afc.convert.date2SQL(g_oInwentaryzacja.m_dDataWyst)+" and pMagZrod = "+cStr(g_oInwentaryzacja.m_pMagazyn.idobj)
+            set oResult = trans_.createadors(strSQL)
+            if oResult.fields("ilosc")>0 then  'sa jakies juz dokumenty utworzone w danym dniu- teraz nalezy sie zapytac czy dodac do istniejacych czy stworzyc nowy
+            				nQuestionResultManko=MessageBoxCustom("W danym dniu była już robiona inwentaryzacja. Możesz mimo tego utworzyć nowy lub dodać pozycje do juz istniejącego dokumentu inwentaryzacji. Co chcesz zrobić?", "Niedobór (Manko)", vbYesNoCancel, vbQuestion, "Utwórz nowy;Dopisz do istniejących;Anuluj")
+		                select case nQuestionResultManko
+			                case vbYes ' Nowy
+				                bFlagManko = pM60321.make_IR(g_pStanMagChange_array,g_oInwentaryzacja)
+			                case vbNo 'dopisz do istniejacego
+                         if oResult.fields("ilosc") > 1 then
+                             bFlagManko = choose_dok_mag ("Dokumenty inwentaryzacji- manko",g_oInwentaryzacja.m_dDataWyst,N5REJESTRDOK__IR,g_oInwentaryzacja.m_pMagazyn.idobj)
+                         else
+                              strSQLDokMag = "select idobj as numer from n5dokmag where nTypDok = N5REJESTRDOK__IR and dDatawyst = "+trans_.afc.convert.date2SQL(g_oInwentaryzacja.m_dDataWyst)+" and pMagZrod = "+cStr(g_oInwentaryzacja.m_pMagazyn.idobj)
+                              set oRes = trans_.createadors(strSQLDokMag)
+                              bFlagManko = pM60321.make_IR_dopisz(g_pStanMagChange_array,g_oInwentaryzacja,oRes.fields("numer").value)
+                         end if
+			                case vbCancel
+				                'choose_dokmag_for_dokhandl = -1
+		                end select		                 
+            else
+                bFlagManko = pM60321.make_IR(g_pStanMagChange_array,g_oInwentaryzacja)
+            end if
+        end if
+    end if
+    
+    if g_pStanMagChange_array.value(iter).m_curStanBaza < g_pStanMagChange_array.value(iter).m_curStanFaktyczny then    'superata
+        if not bFlagSuperata then
+            strSQL = "select count(*) as ilosc from n5dokmag where nTypDok = "+cStr(N5REJESTRDOK__IP)+" and dDatawyst = "+trans_.afc.convert.date2SQL(g_oInwentaryzacja.m_dDataWyst)+" and pMagDocel = "+cStr(g_oInwentaryzacja.m_pMagazyn.idobj)
+            set oResult = trans_.createadors(strSQL)
+            	if oResult.fields("ilosc")>0 then  'sa jakies juz dokumenty utworzone w danym dniu- teraz nalezy sie zapytac czy dodac do istniejacych czy stworzyc nowy
+            				nQuestionResultSuperata=MessageBoxCustom("W danym dniu była już robiona inwentaryzacja. Możesz mimo tego utworzyć nowy lub dodać pozycje do juz istniejącego dokumentu inwentaryzacji?", "Nadmiar (superata)", vbYesNoCancel, vbQuestion, "Utwórz nowy;Dopisz do istniejących;Anuluj")
+		                select case nQuestionResultSuperata
+			                case vbYes ' Nowy
+				                bFlagSuperata = pM60321. make_IP(g_pStanMagChange_array,g_oInwentaryzacja)
+			                case vbNo 'dopisz do istniejacego
+                         if oResult.fields("ilosc") > 1 then
+                           bFlagSuperata =  choose_dok_mag ("Dokumenty inwentaryzacji- superata",g_oInwentaryzacja.m_dDataWyst,N5REJESTRDOK__IP,g_oInwentaryzacja.m_pMagazyn.idobj)
+                         else
+                              strSQLDokMag = "select idobj as numer from n5dokmag where nTypDok = N5REJESTRDOK__IP and dDatawyst = "+trans_.afc.convert.date2SQL(g_oInwentaryzacja.m_dDataWyst)+" and pMagDocel = "+cStr(g_oInwentaryzacja.m_pMagazyn.idobj)
+                              set oRes = trans_.createadors(strSQLDokMag)
+                              bFlagSuperata = pM60321.make_IP_dopisz(g_pStanMagChange_array,g_oInwentaryzacja,oRes.fields("numer").value)
+                         end if
+                      case vbCancel
+				                'choose_dokmag_for_dokhandl = -1
+		                end select		                 
+              else
+                  bFlagSuperata = pM60321.make_IP(g_pStanMagChange_array,g_oInwentaryzacja)
+              end if
+        end if
+     end if
+  next
+if not (bFlagSuperata) and not (bFlagManko) then
+      trans_.message 6501, 0, "Nie wprowadzono żadnych zmian na magazynie"
+end if
+g_pStanMagChange_array.removeall()
+g_pStanMag_kolektor.removeall()
+page_.ctrl(CTRLID_MAGAZYN_PICTURE).disable = false
+page_.ctrl(CTRLID_CHANGE_DATE).DISABLE = false
+fill_produkty
+
+#ifdef _GRAJEWSCY
+  if g_bInwentTymczas then
+    'zmień magazyn na 'Inwentaryzacja tymczasowa'
+    dim idMag : idMag = trans_.findobjid(TYPEID_N5MAGAZYN,"upper(strNazwa) like upper('Inwentaryzacja tymczasowa IP')")
+    if idMag > clng(0) then
+      dim oMagInw : set oMagInw = trans_.getobj(TYPEID_N5MAGAZYN,idMag)
+      strSQL = "select dm.idobj from n5dokmag dm inner join n5rejestrdok rd on dm.pRejestrDok = rd.idobj " + vbNewLine +_
+               "inner join n5magazyn mg on dm.pMagDocel = mg.idobj where rd.strNazwa like 'Inwentaryzacja tymczasowa IP' " + vbNewLine +_ 
+               "and mg.idobj = " +  cstr(g_oInwentaryzacja.m_pMagazyn.idobj) + " and dm.dDataWyst = " +_ 
+               trans_.afc.convert.date2SQL(g_oInwentaryzacja.m_dDataWyst)
+      dim oRS : set oRS = trans_.createadors(strSQL)
+      do while not oRS.EOF
+        dim idDokMag : idDokMag = clng(oRS(0).value)
+        if idDokMag > clng(0) then
+          dim oDokMag : set oDokMag = trans_.getobj(TYPEID_N5DOKMAG,idDokMag)
+          set oDokMag.pMagDocel = oMagInw
+          if not trans_.saveobjects() then
+          end if
+        end if
+        oRS.movenext
+      loop
+    end if
+  end if
+#endif
+
+showCurrentObjects
+
+else
+    trans_.message 6501, 0, "Nie wybrano filtra na produkty"
+end if
+	wprowadz_stan = true
+end function
+
+'----------------------------------------
+'funkcja poprzedniej strony
+'----------------------------------------
+function previous_objects
+if g_obecnyPrzedzial <> 1 then
+    g_obecnyPrzedzial = g_obecnyPrzedzial - 1
+    showCurrentObjects
+end if
+end function
+
+'----------------------------------------
+'funkcja nastepnej strony
+'----------------------------------------
+function next_objects
+  g_obecnyPrzedzial = g_obecnyPrzedzial + 1
+  showCurrentObjects
+end function
+
+#macro WVB_FILTER_CHOICELIST_INWEN(_expr_get_typeid_,_expr_set_typeid_,_expr_set_idobj_,_expr_set_text_)		\
+function choose_choicelist(byref pHLI)															\
+	dim strWhere																				\
+	dim nTypeId : nTypeId = _expr_get_typeid_													\
+	dim pUtilPage:set pUtilPage=doc_.getmodule(60106)											\
+	strWhere = "nTypeID="+ cstr(nTypeId) + " and " + _											\
+	pUtilPage.GetWHERE_ForCheckRights(STDR_READ,TYPEID_CHOICELIST,"choicelist",trans_.var(GVAR_USER))	\
+	dim idChoice : idChoice = fire_choice_list(TYPEID_CHOICELIST,"","",strWhere,"","")			\
+	if idChoice > 0 then																		\
+		dim pChoiceObj : set pChoiceObj = trans_.getobj(TYPEID_CHOICELIST, idChoice)			\
+		if not pChoiceObj is nothing then														\
+			_expr_set_typeid_ = nTypeId															\
+			_expr_set_idobj_ = idChoice															\
+			_expr_set_text_ = pChoiceObj.text													\
+		end if																					\
+	end if																						\
+end function
+
+#macro WVB_FILTER_CHOICESEARCHTYPE_INWEN(_expr_get_typeid_,_expr_set_typeid_,_expr_set_idobj_,_expr_set_text_)		\
+function choose_searchtype(byref pHLI)															\
+	dim strWhere																				\
+	dim nTypeId : nTypeId = _expr_get_typeid_													\
+	dim pUtilPage:set pUtilPage=doc_.getmodule(60106)											\
+	strWhere = "ResultTypeId="+ cstr(nTypeId) + " and "+ _												\
+	pUtilPage.GetWHERE_ForCheckRights(STDR_READ,TYPEID_SEARCHTYPE,"searchtype",trans_.var(GVAR_USER))	\
+	trans_.var(APPVAR_CHOICELIST_TYPEID) = clng(nTypeId)										\
+	trans_.var(APPVAR_SEARCH_TYPEID) = clng(nTypeId)											\
+	trans_.var(APPVAR_SEARCH_KIND) = "R"														\
+	dim idChoice : idChoice = fire_choice_list(TYPEID_SEARCHTYPE,"","",strWhere,"","")			\
+	if idChoice > 0 then																		\
+		dim pChoiceObj : set pChoiceObj = trans_.getobj(TYPEID_SEARCHTYPE, idChoice)			\
+		if not pChoiceObj is nothing then														\
+			_expr_set_typeid_ = nTypeId															\
+			_expr_set_idobj_ = idChoice															\
+			_expr_set_text_ = pChoiceObj.text													\
+		end if																					\
+	end if																						\
+end function
+
+#macro WVB_FILTER_GETTEXT_INWEN(_item_nr,_ctrl_,_expr_get_option_,_expr_get_idobj_,_expr_get_text_)			\
+function c##_ctrl_##_ongetdata(byref oCtrl)														\
+	if (_expr_get_idobj_ <> 0) and (_expr_get_option_ = _item_nr) then							\
+		dim strText : strText= _expr_get_text_													\
+		oCtrl.text = strText																	\
+	else																						\
+		oCtrl.text = ""																			\
+	end if																						\
+end function
+
+#macro WVB_FILTER_RADIO_INWEN(_ctrl_,_expr_get_option_,_expr_set_option_,_expr_set_idobj_)					\
+function c##_ctrl_##_ongetdata(byref oCtrl)														\
+	oCtrl.value = clng(_expr_get_option_)														\
+end function																					\
+function c##_ctrl_##_ondataentered(byref oCtrl, byval newValue):c##_ctrl_##_ondataentered=true	\
+	_expr_set_option_ = clng(oCtrl.value)														\
+	_expr_set_idobj_  = clng(0)																	\
+end function
+
+dim dummy
+WVB_FILTER_RADIO_INWEN(CTRL_RADIO_NAME,g_nFiltr,g_nFiltr,g_nIdobjFiltr)
+WVB_FILTER_CHOICELIST_INWEN(TYPEID_N5PRODUKT,dummy,g_nIdobjFiltr,g_strNameFiltr)
+WVB_FILTER_CHOICESEARCHTYPE_INWEN(TYPEID_N5PRODUKT,dummy,g_nIdobjFiltr,g_strNameFiltr)
+WVB_FILTER_GETTEXT_INWEN(2,CTRL_LIST_NAME,g_nFiltr,g_nIdobjFiltr,g_strNameFiltr)
+WVB_FILTER_GETTEXT_INWEN(3,CTRL_RAPORT_NAME,g_nFiltr,g_nIdobjFiltr,g_strNameFiltr)
+
+function c##CTRLID_DATA_INWEN##_ondataentered(pCtrl, varValue):c##CTRLID_DATA_INWEN##_ondataentered = true
+	pCtrl.value = varValue																		
+  g_dDataInwentaryzacji = varValue
+  g_oInwentaryzacja.m_dDataWyst = g_dDataInwentaryzacji
+  
+end function																					
+																								
+																								
+function c##CTRLID_DATA_INWEN##_ongetdata(pCtrl):c##CTRLID_DATA_INWEN##_ongetdata = true					
+	'pCtrl.value = cStr(44)																		
+end function
+
+
+
+function c##CTRLID_CENA_DOSTAWY##_ondataentered(pCtrl, varValue):c##CTRLID_CENA_DOSTAWY##_ondataentered = true
+dim iter : iter = 0 
+dim idobj_produkt : idobj_produkt = pCtrl.userprop(100)
+dim idobj_opak : idobj_opak = pCtrl.userprop(101) 
+
+for iter = 0 to g_pStanMagChange_array.UpperIndex
+  if ((g_pStanMagChange_array.value(iter).m_nProduktIdobj = idobj_produkt) and (g_pStanMagChange_array.value(iter).m_pOpakIdobj = idobj_opak) and (g_pStanMagChange_array.value(iter).m_nMagazyn = g_idobjMagazyn)) then
+      g_pStanMagChange_array.value(iter).m_curCena = varValue
+      exit function
+  end if
+next
+
+  add_change_produkt g_pStanMagChange_array, varValue,3,pCtrl.userprop(105),pCtrl.userprop(104),pCtrl.userprop(103),pCtrl.userprop(102),idobj_produkt,idobj_opak
+
+	pCtrl.value = varValue																		
+end function																					
+																								
+																								
+function c##CTRLID_CENA_DOSTAWY##_ongetdata(pCtrl):c##CTRLID_CENA_DOSTAWY##_ongetdata = true					
+																	
+end function
+
+function c##CTRLID_ILOSC_FAKTYCZNA##_ondataentered(pCtrl, varValue):c##CTRLID_ILOSC_FAKTYCZNA##_ondataentered = true
+
+dim oRow : set oRow = pCtrl.parent.parent
+dim iter : iter = 0
+page_.ctrl(CTRLID_MAGAZYN_PICTURE).disable = true
+page_.ctrl(CTRLID_CHANGE_DATE).DISABLE = true
+dim idobj_produkt : idobj_produkt = pCtrl.userprop(100)
+dim idobj_opak : idobj_opak = pCtrl.userprop(101) 
+if varValue >= 0 then
+for iter = 0 to g_pStanMagChange_array.UpperIndex
+  if ((g_pStanMagChange_array.value(iter).m_nProduktIdobj = idobj_produkt) and (g_pStanMagChange_array.value(iter).m_pOpakIdobj = idobj_opak) and (g_pStanMagChange_array.value(iter).m_nMagazyn = g_idobjMagazyn)) then
+      if (g_pStanMagChange_array.value(iter).m_curStanBaza = varValue) then
+          g_pStanMagChange_array.Remove(iter)
+          oRow.backcolor = CTRLID_COLOR
+          	pCtrl.value = varValue
+            change_line_color oRow, CTRLID_COLOR
+        else
+          g_pStanMagChange_array.value(iter).m_curStanFaktyczny = varValue
+          change_line_color oRow,LINES_COLOR_ZMIENIONY
+      end if
+      exit function
+  end if
+next
+  add_change_produkt g_pStanMagChange_array, varValue,2,pCtrl.userprop(105),pCtrl.userprop(104),pCtrl.userprop(103),pCtrl.userprop(102),idobj_produkt,idobj_opak
+
+	pCtrl.value = varValue
+  change_line_color oRow,LINES_COLOR_ZMIENIONY
+else
+  pCtrl.value = cCur(0)
+end if
+end function																					
+																								
+																								
+function c##CTRLID_ILOSC_FAKTYCZNA##_ongetdata(pCtrl):c##CTRLID_ILOSC_FAKTYCZNA##_ongetdata = true					
+end function
+
+
+function c##CTRLID_DATA_WAZNOSCI##_ondataentered(pCtrl, varValue):c##CTRLID_DATA_WAZNOSCI##_ondataentered = true
+dim iter 
+dim idobj_produkt : idobj_produkt = pCtrl.userprop(100)
+dim idobj_opak : idobj_opak = pCtrl.userprop(101) 
+
+for iter = 0 to g_pStanMagChange_array.UpperIndex
+  if ((g_pStanMagChange_array.value(iter).m_nProduktIdobj = idobj_produkt) and (g_pStanMagChange_array.value(iter).m_pOpakIdobj = idobj_opak) and (g_pStanMagChange_array.value(iter).m_nMagazyn = g_idobjMagazyn)) then
+      g_pStanMagChange_array.value(iter).m_dData = varValue
+      exit function
+  end if
+next
+
+  add_change_produkt g_pStanMagChange_array, varValue,1,pCtrl.userprop(105),pCtrl.userprop(104),pCtrl.userprop(103),pCtrl.userprop(102),idobj_produkt,idobj_opak
+
+	pCtrl.value = varValue																		
+end function																					
+																								
+																								
+function c##CTRLID_DATA_WAZNOSCI##_ongetdata(pCtrl):c##CTRLID_DATA_WAZNOSCI##_ongetdata = true					
+end function
+
+function c##CTRLID_OPIS_DOK_ROZWIN##_ondataentered(pCtrl, varValue):c##CTRLID_OPIS_DOK_ROZWIN##_ondataentered = true
+	pCtrl.value = varValue		
+  g_oInwentaryzacja.m_strOpis = varValue
+end function																					
+																								
+																								
+function c##CTRLID_OPIS_DOK_ROZWIN##_ongetdata(pCtrl):c##CTRLID_OPIS_DOK_ROZWIN##_ongetdata = true					
+end function
+
+function c##CTRLID_OPIS_DOK_1##_ondataentered(pCtrl, varValue):c##CTRLID_OPIS_DOK_1##_ondataentered = true
+	pCtrl.value = varValue		
+  g_oInwentaryzacja.m_strOpis = varValue
+end function																					
+																								
+																								
+function c##CTRLID_OPIS_DOK_1##_ongetdata(pCtrl):c##CTRLID_OPIS_DOK_1##_ongetdata = true					
+end function
+
+function add_change_produkt(byref g_pStanMagChange_array,byval varValue, byval opcja,byval phli_prop105,byval phli_prop104,byval phli_prop103,byval phli_prop102,byval idobjProdukt, byval idobjOpak)
+  dim pStanMagRecord : set pStanMagRecord = pM60321.new_CStanMagRecord_fill
+  pStanMagRecord.m_nMagazyn = g_idobjMagazyn
+  pStanMagRecord.m_nProduktIdobj = idobjProdukt 
+  pStanMagRecord.m_pOpakIdobj = idobjOpak
+  if opcja = 1 then 'zmiana w dacie waznosci
+      pStanMagRecord.m_dData = varValue
+      pStanMagRecord.m_curCena = phli_prop104
+      pStanMagRecord.m_curStanFaktyczny = phli_prop105
+  end if
+  if opcja = 2 then 'zmiana w stanie faktycznym
+      pStanMagRecord.m_curCena = phli_prop104
+      pStanMagRecord.m_curStanFaktyczny = varValue
+      pStanMagRecord.m_dData = phli_prop105
+  end if
+  if opcja = 3 then 'zmiana w cenie dostawy
+      pStanMagRecord.m_curStanFaktyczny = phli_prop104
+      pStanMagRecord.m_curCena = varValue
+      pStanMagRecord.m_dData = phli_prop105
+  end if
+  set pStanMagRecord.m_pProdukt = trans_.getobj(TYPEID_N5PRODUKT,idobjProdukt)
+  set pStanMagRecord.m_pOpak = pStanMagRecord.m_pProdukt.listOpakowania.get(phli_prop102)
+#ifdef _GRAJEWSCY
+ if g_bInwentTymczas then
+   pStanMagRecord.m_curStanBaza = phli_prop103 - pStanMagRecord.m_curStanFaktyczny
+ else
+   pStanMagRecord.m_curStanBaza = phli_prop103
+ end if
+#else
+  pStanMagRecord.m_curStanBaza = phli_prop103
+#endif  
+  pStanMagRecord.m_nOpakLp = phli_prop102
+  pStanMagRecord.m_curCena = phli_prop104
+  
+  g_pStanMagChange_array.add pStanMagRecord
+
+end function
+
+
+'---------------------------------
+'zmienia kolor lini w przypadku gdy dokonamy zmian na ilosci faktycznej
+'---------------------------------
+function change_line_color(byref oRow, byval kolor)
+
+            if g_bShowOpak = 0 then
+                oRow.cell(5).backcolor = kolor
+            end if
+
+            oRow.cell(6).backcolor = kolor
+            oRow.cell(7).backcolor = kolor
+            if g_bShowOpak = 1 then
+                oRow.cell(8).backcolor = kolor
+            end if
+            if g_bShowOpak = 0 then
+                oRow.cell(5).element(1).backcolor = kolor
+            end if
+
+            oRow.cell(6).element(1).backcolor = kolor
+            oRow.cell(7).element(1).backcolor = kolor
+            if g_bShowOpak = 1 then
+                oRow.cell(8).element(1).backcolor = kolor
+            end if
+            oRow.backcolor = kolor
+end function
+'------------------------------------------------------------------------------------
+'KB: metoda pobiera pojedynczy stan magazynowy dla podanych idProd,idOpak,idMag,iNumOp		   
+'------------------------------------------------------------------------------------
+function get_one_stan_mag(byval idMag, byval idProd , byval idOpak)
+
+	dim iDummy
+	g_iNumOpMag = 99999999
+  dim pModUtil 
+  dim strNumOpMag
+  dim strQuery 
+	dim strWhere  
+
+  #ifdef APPCONFIG_GM_RAPORT_BY_DATE
+      strQuery = nx_.convert.formatter( _
+		    "select isnull(sum(gmo_curIlosc),0) from n5gmop where gmo_pProd=%1 and gmo_pOpak=%2 and gmo_pMag=%3 and gmo_nNumOp in("+_
+        "select p_nNumOper from vlist_n5dokmag_listPozycje where p_dDataWyst <= " + trans_.afc.convert.date2SQL(g_dDataInwentaryzacji)+_
+        " and c_pprodukt= %1 " +_
+        "union "+_
+        " select p_nNumOper from vlist_n5realprod_listWyrob where p_dDataWyst <= " + trans_.afc.convert.date2SQL(g_dDataInwentaryzacji)+_
+        " and c_pprodukt= %1 "+_
+        ")") _
+		    .add(idProd).add(idOpak).add(idMag).done()
+
+  #else
+      strWhere = "dDataWyst <= " + trans_.afc.convert.date2SQL(g_dDataInwentaryzacji)
+      set pModUtil = doc_.getmodule(60253)
+     	pModUtil.convert_date_range_to_num_oper_range strWhere, iDummy, g_iNumOpMag
+	    strQuery = nx_.convert.formatter( _
+		    "select isnull(sum(gmo_curIlosc),0) from n5gmop where gmo_pProd=%1 and gmo_pOpak=%2 and gmo_pMag=%3 and gmo_nNumOp <=%4") _
+		    .add(idProd).add(idOpak).add(idMag).add( g_iNumOpMag).done()
+
+  #endif
+
+
+	dim oRS : set oRS = trans_.createadors(strQuery)
+	if oRS.EOF then
+		get_one_stan_mag = ccur(0.0)
+	else
+		get_one_stan_mag = ccur(oRS(0))
+	end if
+end function
+
+#ifdef _GRAJEWSCY
+function z_dokIP
+  g_bInwentTymczas = true
+  dim strSQL
+  strSQL = "select 'id_opak'=pr.c_idobj,'id_prod'=max(pr.p_idobj),'ilosc_prod'=sum(vl.c_curiloscopak),'coll_lp'=max(pr.coll_lp) " + vbNewLine +_ 
+           "from vlist_n5dokmag_listPozycje vl " + vbNewLine +_
+           "inner join vlist_n5produkt_listOpakowania pr on vl.c_pprodukt = pr.p_idobj and vl.c_popak = pr.c_idobj " + vbNewLine +_
+           "inner join n5rejestrdok rd on vl.p_prejestrdok = rd.idobj " + vbNewLine +_
+           "inner join n5magazyn mg on vl.p_pmagdocel = mg.idobj " + vbNewLine +_
+           "where upper(rd.strNazwa) like upper('Inwentaryzacja tymczasowa IP') and " + vbNewLine +_
+           "mg.idobj = " + cstr(g_oInwentaryzacja.m_pMagazyn.idobj) + " and " + vbNewLine +_
+           "vl.p_ddatawyst = " + trans_.afc.convert.date2SQL(g_oInwentaryzacja.m_dDataWyst) + " " + vbNewLine +_
+           "group by pr.c_idobj"
+  dim oRS : set oRS = trans_.createadors(strSQL)
+  
+  do while not oRS.EOF
+    dim curIloscOpak : curIloscOpak = ccur(oRS("ilosc_prod").value)
+    dim iLpOpak : iLpOpak = clng(oRS("coll_lp").value)
+    dim idProd : idProd = clng(oRS("id_prod").value)
+    dim idOpak : idOpak = clng(oRS("id_opak").value)
+    dim dData : dData = getDataWazn(idProd,idOpak)
+    dim curCena : curCena = getCena(idProd,idOpak)
+    dim curIloscMag : curIloscMag = get_one_stan_mag(g_oInwentaryzacja.m_pMagazyn.idobj,idProd,idOpak)
+    add_change_produkt g_pStanMagChange_array,curIloscOpak,2,dData,curCena,curIloscMag,iLpOpak,idProd,idOpak
+    oRS.movenext
+  loop
+  showCurrentObjects
+end function
+
+function getCena(byval idProd, byval idOpak) : getCena = ccur(0.0)
+  dim strSQLCena : strSQLCena = "select top 1 gms_curCena as cena from n5gmstan where gms_pprod = " +_ 
+                                cstr(idProd) + "and gms_pOpak = " + cstr(idOpak) + " order by idobj desc"
+  dim oRS : set oRS = trans_.createadors(strSQLCena)
+  if oRS.recordcount > 0 then
+    getCena = ccur(oRS(0).value)
+  end if  
+end function
+
+function getDataWazn(byval idProd, byval idOpak) : getDataWazn = trans_.afc.globals.nulldate()
+  g_rs_cursor.movefirst
+  do while not g_rs_cursor.EOF
+    dim idProdukt : idProdukt = clng(g_rs_cursor("prod_id").value)
+    if idProdukt > clng(0) then
+      dim pProdukt : set pProdukt = trans_.getobj(TYPEID_N5PRODUKT,idProdukt)
+      dim idOpakowania : idOpakowania = clng(pProdukt.listOpakowania.get(clng(g_rs_cursor.fields("lp").value)).idobj)
+      if idProd = idProdukt and idOpak = idOpakowania then
+        getDataWazn = cdate(g_rs_cursor("data_waznosci").value)
+        exit function
+      end if
+    end if
+    g_rs_cursor.movenext
+  loop
+
+end function
+
+#endif
+
+
+]]>
+    </script>
+  </config>
+  <body>
+    <table border="0" name="CTRLID_RESULT">
+      <thead >
+        <tr>
+          <td align='left'>
+          </td>
+          <td align='right'>
+            <button skey='PgUp' name='CTRL_PREV' size='9' tip='Poprzednia strona' style='STYLE_BUTTON' href='varFunction="previous_objects"' ><![CDATA[<<]]></button>
+            <button skey='PgDn' name='CTRL_NEXT' size='9' tip='Następna strona' style='STYLE_BUTTON' href='varFunction="next_objects"' ><![CDATA[>>]]> </button>
+          </td>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+
+          <td colspan="2" width="15000" >
+            <table name="CTRLID_PRODUKTY" border="1" style="STYLE_PAGE">
+              <thead>
+                
+              </thead>
+              <tbody>
+                <tr width="15000">
+                  <td>
+                  </td>
+                </tr>
+              </tbody>
+              <tfoot>
+                
+              </tfoot>
+            </table>
+          </td>
+          <td  colspan='1' style="STYLE_PAGE">
+            <t>&nbsp;</t>
+          </td>
+          <td style="STYLE_PAGE" colspan='1' width='3000'>
+            <table name='CTRLID_NARZEDZIA' border='1'>
+              <tbody>
+                <tr>
+                  <td style='STYLE_TABLE_HEADER'>
+                    <t>Filtr produktów</t>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    WX_FILTER_BEGIN(CTRL_RADIO_NAME)
+                    WX_FILTER_ITEM_FIXED(Wszystkie aktywne)
+                    WX_FILTER_ITEM_CHOICELIST(Lista wyboru,CTRL_LIST_NAME)
+                    WX_FILTER_ITEM_SEARCHTYPE(Wynik wyszukiwania,CTRL_RAPORT_NAME)
+                    WX_FILTER_END
+                  </td>
+                </tr>
+                <tr>
+                  QXC_BUTTON(-1,30,Wypełnij ,varFunction="fill_produkty",1)
+                </tr>
+                <tr>
+                  <td linealign='vcenter' keepline='true' style='STYLE_TABLE_HEADER'>
+                    <picture name='CTRLID_OPIS_DOK_ROZWIN' tip='Rozwiń' image='PICTURE_SMALL_PLUS' width='SIZE_FOR_PLUS' height='SIZE_FOR_PLUS' href='varFunctionHLI="multiline_rollup" vn100=CTRLID_OPIS_DOK_ROZWIN vn101=0 vn102=CTRLID_OPIS_DOK_1'/>
+                    <t/><t ignoresysdisable='true' >Opis dokumentu</t>
+                  </td>
+                </tr>
+                <tr>
+                  <td width='min' >
+                    <multiline name='CTRLID_OPIS_DOK_1' style='STYLE_CTRL' height='500' >
+                      <transfer mode='custom'>
+                      </transfer>
+                    </multiline>	
+                  </td>		
+                </tr>
+              </tbody>
+              <tfoot>
+
+              </tfoot>
+              
+            </table>
+          </td>
+        </tr>
+      </tbody>
+      <tfoot>
+        <tr>
+          <td></td>
+        </tr>
+        <tr style='STYLE_ROW_BTN'>
+          <td colspan='4'>
+            QXE_BUTTON(-1,10,Zapisz zmiany ,varFunction="wprowadz_stan",1)
+            QXE_BUTTON(-1,10,Cofnij zmiany ,varFunction="cofnij_zmiany",1)
+            QXE_BUTTON(-1,15,Drukuj arkusz spisowy,varFunction="arkusz_spisowy",1)
+            QXE_BUTTON(-1,15,Wyślij dane na kolektor,varFunction="na_kolektor",1)
+            QXE_BUTTON(-1,15,Pobierz dane z kolektora ,varFunction="z_kolektora",1)
+#ifdef _GRAJEWSCY
+            QXE_BUTTON(-1,15,Wypełnij z dokumentu IP,varFunction="z_dokIP",1)
+#endif
+          </td>
+        </tr>
+      </tfoot>
+    </table>
+  </body>
+</page>

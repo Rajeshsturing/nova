@@ -1,0 +1,471 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+PAGE_FORM_VAT-UEK
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1201.h"
+#include "h1203.h"
+#include "h1228.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1240.h"
+#include "h1200.h"
+#include "h1233.h"
+
+#comment makra dla formularzy
+#include "h1222.h"
+#comment Makra dla pitów
+#include "h1206.h"
+#comment Szablony dokumentów
+#include "h1234.h"
+
+#define INCLUDE_BULID_CHOICELIST_TRANSAKCJA
+
+#define FORM_SPAN		4
+#define RCELL_SPAN		3
+
+#define CTRLID_UZYTKREJ		1
+#define CTRLID_ZADANIE		2
+#define CTRLID_DOWKSIEG		3
+#define CTRLID_SCHEMAT		4
+#define CTRLID_TRANSAKCJA			5
+#define CTRLID_TRANSAKCJA_EDIT		6
+
+#define SECID_US            1000
+#define SECID_PODATNIK      1001
+#define SECID_OSWIADCZENIE  1002
+#define SECID_VAT_UEK_WDT   1003
+#define SECID_VAT_UEK_WNT   1004
+#define SECID_VAT_UEK_WSU   1005
+-->
+<page style='STYLE_PAGE'
+#ifdef _DEBUG2
+border='1'
+#endif
+>
+<config>
+	<title>
+VAT-UEK
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+<typeid>TYPEID_N5VATUEK</typeid>
+<script><![CDATA[
+
+#include "50101"
+#include "50518"	
+#include "50222"
+#include "50200"
+#include "50513"
+#include "50610"
+
+#ifdef APPCONFIG_DEKLARACJE_VATUEK
+
+function fopen:fopen = true
+#ifdef _ABAKUS
+  if HARUI_FREE(UAR_OGRANICZONY_DOSTEP_DANE_KLIENTA) then
+    fopen = false
+	  exit function
+  end if
+#endif 
+	section_fopen THIS_FILE
+end function
+
+function ask_save_deklaracje : ask_save_deklaracje = true
+  if trans_.isdirty then
+    dim answ : answ = doc_.getmodule(60111).message_box(trans_.var(8003),"Dane zmienione. Zachować?",vbQuestion,vbYesNoCancel)
+    if answ = vbCancel then
+      ask_save_deklaracje = false
+    elseif answ = vbYes then
+      ask_save_deklaracje = zapisz_vatuek(page_.root)
+    end if
+  end if
+end function
+
+function fback
+  if not ask_save_deklaracje() then
+    fback = false
+    exit function
+  end if
+  trans_.discard
+  page_.goback()
+  fback = true
+end function
+
+function fsave
+	if not trans_.saveobjects () then
+		exit function
+	end if
+  if not zapisz_vatuek(page_.root) then
+    exit function
+  end if
+  trans_.discard
+end function
+
+'-------------------------
+'zapis formularza na dysku
+'-------------------------
+function zapisz_vatuek(byval pVatUE):zapisz_vatuek = false
+  dim pFD, bOK
+  set pFD = CFileDrive(bOK)
+
+  if (not bOK) then
+    view_message 6161, 0
+    exit function
+  end if
+
+  'tworzymy katalog user'a jezeli go nie ma
+  if (not checkUserDirectory()) then
+    view_message1 6063, 0, cstr(getUserDirectory())
+    exit function 
+  end if
+
+  'tworzymy teraz katalog ale dla danego user'a i rodzaju deklaracji
+  if (not pFD.IsFolder(getVatFolder(pVatUE))) then
+    if (not pFD.CreatePath( getVatFolder(pVatUE) )) then
+      view_message1 6064, 0, cstr(getVatFolder(pVatUE))
+      exit function
+    end if
+  end if
+
+  dim strFile
+  strFile = pVatUE.getobjdef.humanname + "_" + CStr(Year(pVatUE.vtue_dDataOd)) + "_kw_" + CStr(pVatUE.vtue_lKwartal) + "_nr_" + CStr(pVatUE.vtue_lNrZalacz)
+  dim strStartPath : strStartPath = getVatFolder(pVatUE) + "\" + replace(strFile," ","_")
+  dim strStartFile : strStartFile = pFD.GetFileName(strStartPath)
+  strStartPath = pFD.GetPath(strStartPath)
+
+  dim strFolderName : strFolderName = SelectFolderNewFile(strStartPath, strStartFile)
+  dim strFileName : strFileName=pFD.GetFileName(strFolderName)
+		
+  if (pFD.GetFileExtension(strFileName) = "" and strFileName <> "") then
+    strFolderName = strFolderName + ".nxd"
+  end if
+
+  if strFolderName <> "" then
+    DEKL_object_to_file pVatUE, strFolderName, pVatUE.getobjdef.humanname
+    zapisz_vatuek = true  
+  end if
+end function
+
+'-----------------------------
+'odczytanie formularza z dysku
+'-----------------------------
+function wczytaj_vatuek(byref pVatUE)
+  dim pFD, bOK
+  set pFD = CFileDrive(bOK)
+
+  if (not bOK) then
+    view_message 6161, 0
+    exit function
+  end if
+
+  'tworzymy katalog user'a jezeli go nie ma
+  if (not checkUserDirectory()) then
+    view_message1 6063, 0, cstr(getUserDirectory())
+    exit function
+  end if
+
+  'tworzymy teraz katalog ale dla danego user'a i rodzaju deklaracji
+  if (not pFD.IsFolder(getVatFolder(pVatUE))) then
+    if (not pFD.CreatePath( getVatFolder(pVatUE) )) then
+      view_message1 6064, 0, cstr(getVatFolder(pVatUE))
+      exit function
+    end if
+  end if
+
+  dim strFilePath : strFilePath = SelectFile(getVatFolder(pVatUE), "*.nxd", "")
+  if strFilePath<> "" then
+    DEKL_object_from_file pVatUE, strFilePath
+  end if
+end function
+
+function getVatFolder(byref pVatUE)
+  getVatFolder=getUserDirectory() + "\" + pVatUE.getobjdef.humanname
+end function
+
+function DEKL_object_to_file(byref pSrcObject,byval strDestFileName, byval strHumanName)
+  dim pSO : set pSO = doc_.createstreamobj()
+  dim pModuleExport : set pModuleExport = doc_.getmodule(60210)
+  dim pXMLExpManager : set pXMLExpManager = pModuleExport.new_export_handler()
+  pXMLExpManager.start_export pSO,0, strHumanName
+  pXMLExpManager.std_export_any_object pSrcObject.type , pSrcObject
+  pXMLExpManager.stop_export
+  pSO.save strDestFileName
+end function
+
+function DEKL_object_from_file(byref pDestObject,byval strSrcFileName)
+  dim pSO : set pSO = doc_.createstreamobj()
+  pSO.attach strSrcFileName
+  dim pImportModule: set pImportModule =  doc_.getmodule(60145)
+  dim pRetrHdr : set pRetrHdr = pImportModule.retrieve_header(pSO)
+
+  dim strDesc
+  if not pRetrHdr.header is nothing then
+    if pRetrHdr.header.isfield("description") then
+      strDesc = pRetrHdr.header.field("description")			
+      if strDesc <> pDestObject.getobjdef.humanname then
+        trans_.message 1002 , 0 , "Prubujesz wczytać złą deklarację. Do deklaracji " + pDestObject.getobjdef.humanname + " nie można wczytywać dokumentów " + strDesc
+        exit function								
+      end if					
+    else
+      trans_.message 1002 , 0 , "Brak informacji o rodzaju deklaracji w pliku"
+      exit function
+    end if
+  else
+    trans_.message 1002 , 0 , "Nieprawidłowy plik - brak nagłówka opisującego rodzaj deklaracji"
+    exit function 
+  end if
+
+  dim pImportHandler : set pImportHandler = pImportModule.new_import_handler()
+  pImportHandler.required_init getref("DEKL_object_matcher"),getref("DEKL_environment_helper")
+
+  g_nNoMatchTypeId = pDestObject.type
+  g_nMatchIdObj = pDestObject.idobj
+  pImportHandler.enablesave = false
+  pImportHandler.go pSO
+end function
+
+dim g_nNoMatchTypeId : g_nNoMatchTypeId = 0
+dim g_nMatchIdObj : g_nMatchIdObj = 0 
+
+function DEKL_object_matcher(byref pImpObject,byref pImportHandler)
+  if pImpObject.typeid = g_nNoMatchTypeId then
+    DEKL_object_matcher = g_nMatchIdObj
+  else
+    DEKL_object_matcher = pImpObject.idobj
+  end if
+end function
+
+function DEKL_environment_helper(byref pImpObject,byval idDestObj,byref pImportHandler)
+  DEKL_environment_helper = 0
+end function
+
+function fclose:fclose = true
+	section_fclose THIS_FILE
+end function
+
+#endif
+
+#include "50212"
+#include "50123"
+#include "50632"
+
+function print_page(hli)
+  dim pHLI : set pHLI = asp_object_appfile_hli(hli.prop(1),page_.root)
+  if not pHLI is nothing then
+    pHLI.prop(GVAR_NEWTHREAD) = 1
+    dim pPage : set pPage = doc_.getpagehli(pHLI)
+    pPage.domodalauto()
+  end if
+end function
+
+QVX_PIT_REJESTRACJA(vtue,CTRLID_UZYTKREJ,CTRLID_ZADANIE,CTRLID_TRANSAKCJA,CTRLID_TRANSAKCJA_EDIT,CTRLID_DOWKSIEG,CTRLID_SCHEMAT)  
+
+function zapisz()
+  if not zapisz_vatuek(page_.root) then
+    exit function
+  end if
+  trans_.discard  
+end function
+
+function wczytaj()
+  wczytaj_vatuek page_.root
+  trans_.usermodif(false)	
+end function
+
+
+]]></script>
+</config>
+<header>
+</header>
+<body>
+
+QXF_BEGIN
+		<tr>
+			<td  colspan='7' keepline='true'>
+				<t>Od</t>
+				<t size='2'></t>
+				QXE_DATE_FIELD(-1,vtue_dDataOd)				
+				<t size='2'></t>
+				<t>do</t>
+				<t size='2'></t>
+				QXE_DATE_FIELD(-1,vtue_dDataDo)
+				<t>&nbsp; kwartał &nbsp; </t>
+				QXE_INT_FIELD(-1,2,vtue_lKwartal)	
+				<t>&nbsp;&nbsp;&nbsp; załącznik &nbsp;</t>
+				QXE_INT_FIELD(-1,2,vtue_lNrZalacz)
+				<t>&nbsp; z &nbsp;</t>
+				QXE_INT_FIELD(-1,2,vtue_lLiczbaZalacz)        
+			</td>
+		</tr>
+
+#ifndef APPCONFIG_DEKLARACJE
+		<tr>
+			<td colspan='5'>
+				QXE_BUTTON(-1,15,Zapisz,varFunction="zapisz")
+				QXE_BUTTON(-1,15,Wczytaj,varFunction="wczytaj")        
+			</td>      
+		</tr>
+#endif
+
+		QXS_BEGIN_REQ_PIT(SECID_US,A. MIEJSCE i CEL SKŁADANIA DEKLARACJI,FORM_SPAN)
+			#ifndef APPCONFIG_DEKLARACJE
+				QXR_EDIT_REF_REQ(Urząd skarbowy,-1,40,PICTURE_CHOICE_N5INSTYTUCJA,vtue_pUrzadSkarbowy,strNazwa,CURSOR_PO_URZEDACH_SKARBOWYCH,RCELL_SPAN)		
+
+			#else
+				QXR_EDIT_FIELD(Urząd skarbowy,-1,40,vtue_strUS,RCELL_SPAN)
+			#endif
+
+
+		QXS_END_REQ_PIT(FORM_SPAN)
+
+		QXX_PIT_PLATNIK(vtue,SECID_PODATNIK,B. DANE PODATNIKA,FORM_SPAN,RCELL_SPAN)
+
+XFREQSECBEG(SECID_VAT_UEK_WDT,C. INFORMACJA O WEWNĄTRZWSPÓLNOTOWYCH DOSTAWACH TOWARÓW,FORM_SPAN)
+<tr>
+	<td colspan='2'>
+		<grid name='102'>
+		<transfer mode='grid_list'>
+			<field>vtue_listWDT</field>
+		</transfer>
+
+		<thead>
+		<tr style=' STYLE_TABLE_HEADER'>
+			<td width='max'><text name='-1'>Klient</text></td>
+			<td width='max'><text name='-1'>Kod kraju</text></td>
+			<td width='min'><text name='-1'>Numer identyfikacyjny VAT kontrahenta</text></td>
+			<td width='min'><text name='-1'>Kwota dostaw w zł</text></td>
+			<td width='min'><text name='-1'>Transakcje trójstronne</text></td>
+		</tr>
+		</thead>
+		<tbody>
+			<tr style=' STYLE_TABLE_BODY'>				
+				XG_REF_CELL_ELEMENT(PICTURE_CHOICE_N5KLIENT,14,pvtue_refKlient,strNazwa,CRSR_DEFAULT,,vtue_listWDT)
+				<td>
+				SXE_EDIT_FIELD(-1,3,pvtue_strKodKraju)
+				</td>
+				<td>
+				SXE_EDIT_FIELD(-1,30,pvtue_strNIPKontr)
+				</td>
+				<td>
+				SXE_CURRENCY_FIELD(-1,9,pvtue_curKwota,2)
+				</td>
+				<td>
+				SXE_CHECKBOX_FIELD(-1,pvtue_cT3S,)
+				</td>
+			</tr>
+		</tbody>
+		</grid>
+	</td>
+</tr>
+XFSECEND
+
+XFREQSECBEG(SECID_VAT_UEK_WNT,D. INFORMACJA O WEWNĄTRZWSPÓLNOTOWYCH NABYCIACH TOWARÓW,FORM_SPAN)
+<tr>
+	<td colspan='2'>
+		<grid>
+		<transfer mode='grid_list'>
+			<field>vtue_listWNT</field>
+		</transfer>
+
+		<thead>
+		<tr style=' STYLE_TABLE_HEADER'>
+			<td width='max'><text name='-1'>Klient</text></td>
+			<td width='max'><text name='-1'>Kod kraju</text></td>
+			<td width='min'><text name='-1'>Numer identyfikacyjny VAT kontrahenta</text></td>
+			<td width='min'><text name='-1'>Kwota nabyć w zł</text></td>
+			<td width='min'><text name='-1'>Transakcje trójstronne</text></td>
+		</tr>
+		</thead>
+		<tbody>
+			<tr style=' STYLE_TABLE_BODY'>				
+				XG_REF_CELL_ELEMENT(PICTURE_CHOICE_N5KLIENT,14,pvtue_refKlient,strNazwa,CRSR_DEFAULT,,vtue_listWNT)
+				<td>
+				SXE_EDIT_FIELD(-1,3,pvtue_strKodKraju)
+				</td>
+				<td>
+				SXE_EDIT_FIELD(-1,30,pvtue_strNIPKontr)
+				</td>
+				<td>
+				SXE_CURRENCY_FIELD(-1,9,pvtue_curKwota,2)
+				</td>
+				<td>
+				SXE_CHECKBOX_FIELD(-1,pvtue_cT3S,)
+				</td>
+			</tr>
+		</tbody>
+		</grid>
+	</td>
+</tr>
+XFSECEND
+
+XFREQSECBEG(SECID_VAT_UEK_WSU,E. INFORMACJA O WEWNĄTRZWSPÓLNOTOWYM ŚWIADCZENIU USŁUG,FORM_SPAN)
+<tr>
+	<td colspan='2'>
+		<grid>
+		<transfer mode='grid_list'>
+			<field>vtue_listWSU</field>
+		</transfer>
+
+		<thead>
+		<tr style=' STYLE_TABLE_HEADER'>
+			<td width='max'><text name='-1'>Klient</text></td>
+			<td width='max'><text name='-1'>Kod kraju</text></td>
+			<td width='min'><text name='-1'>Numer identyfikacyjny VAT kontrahenta</text></td>
+			<td width='min'><text name='-1'>Kwota dostaw w zł</text></td>
+		</tr>
+		</thead>
+		<tbody>
+			<tr style=' STYLE_TABLE_BODY'>				
+				XG_REF_CELL_ELEMENT(PICTURE_CHOICE_N5KLIENT,14,pvtue_refKlient,strNazwa,CRSR_DEFAULT,,vtue_listWSU)
+				<td>
+				SXE_EDIT_FIELD(-1,3,pvtue_strKodKraju)
+				</td>
+				<td>
+				SXE_EDIT_FIELD(-1,30,pvtue_strNIPKontr)
+				</td>
+				<td>
+				SXE_CURRENCY_FIELD(-1,9,pvtue_curKwota,2)
+				</td>
+			</tr>
+		</tbody>
+		</grid>
+	</td>
+</tr>
+XFSECEND
+
+		QXS_BEGIN_REQ_PIT(SECID_OSWIADCZENIE,F. OŚWIADCZENIE PODATNIKA LUB OSOBY REPREZENTUJĄCEJ PODATNIKA,FORM_SPAN)
+
+			QXR_EDIT_FIELD(Nazwisko,-1,40,vtue_strNazwiskoSkl,1)
+			QXR_EDIT_FIELD(Imię,-1,40,vtue_strImieSkl,1)
+			QXR_EDIT_FIELD(Telefon kontaktowy,-1,40,vtue_strTelSkl,1)
+			QXR_DATE_FIELD(Data wypełnienia,-1,vtue_dDataSkl,1)
+
+#ifndef APPCONFIG_DEKLARACJE
+			<tr>																					
+				QXC_LABEL_OPEN(CTRLID_UZYTKREJ,Wprowadził:&nbsp;,1)
+				QXC_TEXT_REF(-1,20,vtue_pUzytRej,strNazwa,2)										
+											
+			</tr>
+#endif																																			
+				
+		QXS_END_REQ_PIT(FORM_SPAN)
+		<tr style='STYLE_DESC_ROW'>
+			<td colspan='FORM_SPAN'>
+				QXE_BUTTON(-1,15,Drukuj VAT-UEK 1,varFunctionHLI=print_page vn1=DOCFORM_VATUEK_1)
+				QXE_BUTTON(-1,15,Drukuj VAT-UEK 2,varFunctionHLI=print_page vn1=DOCFORM_VATUEK_2)
+			</td>
+		</tr>
+
+QXF_END
+
+
+</body>
+<footer>
+</footer>
+</page>
+ 

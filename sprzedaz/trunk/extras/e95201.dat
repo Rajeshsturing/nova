@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!-- 05.02.2005 podgrupy produktow --> 
+<!-- 16.02.2005 IG filtr na opiekuna klienta -->
+<!--
+RAPTEMPLATE_CZESTOT_SPRZED_STANDARD
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1250.h"
+
+
+
+#define RAPORT_TITLE		Raport częstotliwości sprzedaży
+-->
+<page width='20000' style='36'>
+<config>
+	<title>RAPORT_TITLE</title>
+</config>
+<header>
+</header>
+<body>
+<p>
+RAPORT_HEADER(3,0)
+</p>
+
+<p>
+<t size='2'/>
+</p>
+
+<%
+function query()
+	query = "select 'c_prod_idobj'= t_prod.idobj,'c_count' = count (t_prod.idobj),'c_prod_nazwa'=max(t_prod.strNazwa),'c_prod_index'=max(t_prod.strIndeks) , 'c_oznprod' = max(t_prod.strCecha1)  " +_
+	"from vlist_n5sprzedaz_listPozycje t_sprz " +_	
+	"join n5produkt t_prod on t_prod.idobj = t_sprz.c_pProdukt " +_
+	"inner join n5klient as t_1 on t_sprz.p_pKlient = t_1.IdObj   "+_
+	"left join n5pracownik as t_prac on  t_1.pPracownik = t_prac.Idobj "+_
+	"left outer join n5pracownik as t_handl on t_sprz.p_sprzed_pHandlowiec = t_handl.idobj " +_
+	"where t_prod.pGrupaProd in (select tmp_group_idobj from #tmp_prod_hierarchy) and %1 and %2 and %3 and %5 and %6 " +_
+	"and t_sprz.p_pRozlVat<>0 and t_sprz.p_idobj not in (select pPopSprzed from n5sprzedaz) " +_
+	"group by t_prod.idobj order by 2 desc "
+end function
+%>
+<%
+dim utilProdHierarchy : set utilProdHierarchy = doc_.getmodule(60246)
+dim pProdHierarchy : set pProdHierarchy = utilProdHierarchy.new_prod_hierarchy()
+
+dim pParamArray
+dim pGrupaParam
+
+function default_param()
+	'TABLICA PARAMETRÓW
+	set pParamArray = doc_.afc.new_navoarray()
+
+	pParamArray.add doc_.afc.rap.param.new_date_range("Analizowany okres").bindexpr("t_sprz.p_dDataWyst")
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwa produktu").bindexpr("t_prod.strNazwa")
+	pParamArray.add doc_.afc.rap.param.new_text("Indeks produktu").bindexpr("t_prod.strIndeks")	
+	set pGrupaParam = doc_.afc.rap.param.new_text("Grupa produktów").bindexpr("strNazwa")
+	pParamArray.add pGrupaParam
+	pParamArray.add doc_.afc.rap.param.new_text("Pracownik dedykowany").bindexpr("t_prac.strNazwisko")
+	pParamArray.add doc_.afc.rap.param.new_text("Handlowiec").bindexpr("isnull(t_handl.strNazwisko,'')")
+	
+
+	'PARAMETR: dostępność
+'	dim pParamFactory : set pParamFactory = doc_.afc.rap.param
+'	dim pParam : Set pParam = pParamFactory.new_choice("Dostępność")
+'	pParamFactory.init_on_enum pParam, TYPEID_N5PRODUKT, "eAktywny"
+'	pParamArray.add pParam.bind("t_prod","eAktywny")
+	set default_param = pParamArray
+end function
+%>
+<p>
+<table border='1'>
+<thead>
+	<tr style='STYLE_TABLE_HEADER'>
+		<td width='min'>
+			<t>LP</t>
+		</td>
+		<td>
+			<t>Nazwa</t>
+		</td>
+#ifdef _IOW
+		<td width='min'>
+			<t>Oznaczenie producenta</t>
+		</td>
+#endif
+		<td width='min'>
+			<t>Indeks</t>
+		</td>
+		<td width='min'>
+			<text>Ilość wystąpień</text>
+		</td>
+	</tr>
+</thead>
+<tbody>
+<%function body_row(byref pSection,byref pRec)%>
+	<tr>
+		<td align='right'>
+			RXE_LP
+		</td>
+		<td>
+			RXX_PRODUKT_NAZWA		
+		</td>
+
+#ifdef _IOW
+		<td>
+			RXE_AUTO_TEXT(c_oznprod)
+		</td>
+#endif
+		<td>
+			RXX_PRODUKT_INDEKS
+		</td>
+		<td align='right'>
+			RXX_PRODUKT_ILOSC
+		</td>
+	</tr>
+<%end function%>
+<%
+dim pRapExec : set pRapExec = rapeng_.new_engine()
+with pRapExec
+	.add_body getref("body_row")
+	if .prepare("RAPORT_TITLE",default_param(),rapeng_.get_raport_param(),query()) then
+
+			
+			.ReplaceQueryParam "t_prac.strNazwisko is not null", "1=1"
+
+			dim pPerf : set pPerf = doc_.performing("Trwa przygotowywanie wyników...")
+				pProdHierarchy.fill_on_prodgrupa_param pGrupaParam
+			set pPerf = nothing
+
+
+		.perform
+	end if
+end with
+
+pProdHierarchy.manual_done() : set pProdHierarchy = nothing
+set utilProdHierarchy = nothing
+
+%>
+</tbody>
+</table>  
+</p>
+
+</body>
+<footer>
+</footer>
+</page>

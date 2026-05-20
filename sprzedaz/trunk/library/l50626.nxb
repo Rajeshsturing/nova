@@ -1,0 +1,664 @@
+#comment '----------------------------------------------------------------------------
+#comment ' (c) NAVO Ltd. 2003
+#comment ' Piotr Spikowski
+#comment '
+#comment ' USUWANIE OBIEKTÓW ZALE¯NYCH
+#comment ' USUWANIE OBIEKTÓW SECURITY
+#comment ' WSTAWIANIE OBIEKTÓW SECURITY
+#comment '----------------------------------------------------------------------------
+
+#comment '----------------------------------------------------------------------------
+#comment ' FUNCKJE DO WYKORZYSTANIA:
+#comment '
+#comment ' remove_dependent_objects(byref pObject, byval bMarkDel)
+#comment ' remove_dependent_objectsID(byval nTYPEID, byval nIdObj, byval bMarkDel)
+#comment ' remove_dependent_objects_save(byval nTYPEID, byval nIdObj)
+#comment ' remove_from_cursor(byval nTypeId, byval strWhere)
+#comment '
+#comment ' remove_SecurityObject(byval nTypeId, byval nIdObj)
+#comment ' remove_SecurityObject_save(byval nTypeId, byval nIdObj)
+#comment ' remove_SecurityObjectForUser(byval nUserIdObj)
+#comment ' remove_SecurityObjectForUser_save(byval nUserIdObj)
+#comment '
+#comment ' insert_SecurityObject(byval strGroupName, byval strSODDesc, byval nIdObj, byval nTypeId, byval strUserWhere)
+#comment ' insert_SecurityObject_save(byval strGroupName, byval strSODDesc, byval nIdObj, byval nTypeId, byval strUserWhere)
+#comment ' insert_SecurityObjectCustom(byval pGroup , byval strGroupName, byval strSODDesc, byval nIdObj, byval nTypeId, byval strUserWhere, byval bRead, byval bUpdate, byval bDelete, byval bInsert)
+#comment ' insert_SecurityObjectCustom_save(byval strGroupName, byval strSODDesc, byval nIdObj, byval nTypeId, byval strUserWhere, byval bRead, byval bUpdate, byval bDelete, byval bInsert)
+#comment '----------------------------------------------------------------------------
+
+'getCurrentUser()
+#include "50203"
+
+#comment '----------------------------------------------------------------------------
+#comment ' Funkcja usuwa wszystkie obiekty zale¿ne od wskazanego obiektu
+#comment '
+#comment ' pObject  - obiekt dla ktorego usunaæ zale¿ne obiekty
+#comment ' bMarkDel - czy zaznaczyæ równie¿ obiekt pObject jako do usuniêcia
+#comment '
+#comment ' RESULT: true gdy zaznaczono do usuniêcia wszytkie w przeciwnym razie false
+#comment '----------------------------------------------------------------------------
+private function remove_dependent_objects(byref pObject, byval bMarkDel): remove_dependent_objects = false
+
+	if (pObject is nothing) then
+		exit function
+	end if
+
+	'Pobieramy typeid i idobj naszego obiektu
+	dim nTYPEID: nTYPEID = CLng(pObject.type)
+	dim nIdObj: nIdObj = CLng(pObject.IdObj)
+
+	'Wo³amy funkcje usuwaj¹c¹ obiekty zalezne na podstawie 
+	'dostarczonego obiektu lub typeid i idobj
+	remove_dependent_objects = remove_dep_obj_custom(pObject, nTYPEID, nIdObj, bMarkDel)
+end function
+
+
+#comment '----------------------------------------------------------------------------
+#comment ' Funkcja usuwa wszystkie obiekty zale¿ne od wskazanego obiektu przez
+#comment ' podanie jego typeid i idobj
+#comment '
+#comment ' nTYPEID  - typeid wskazanego obiektu
+#comment ' nIdObj   - idobj wskazanego obiektu
+#comment ' bMarkDel - czy zaznaczyæ równie¿ obiekt pObject jako do usuniêcia
+#comment '
+#comment ' RESULT: true gdy zaznaczono do usuniêcia wszytkie w przeciwnym razie false
+#comment '----------------------------------------------------------------------------
+private function remove_dependent_objectsID(byval nTYPEID, byval nIdObj, byval bMarkDel)
+	dim pNothing: set pNothing = nothing
+	remove_dependent_objectsID = remove_dep_obj_custom(pNothing, nTYPEID, nIdObj, bMarkDel)
+end function
+
+
+#comment '----------------------------------------------------------------------------
+#comment ' Funkcja usuwa wszystkie obiekty zale¿ne od wskazanego obiektu przez
+#comment ' podanie jego typeid i idobj. Usuwanie obiektów zale¿nych odbywa siê
+#comment ' w nowej transakcji, która ma zostaæ zapisana (trans_.save). Obiekt
+#comment ' okreœlony przez nTYPEID i nIdObj nie jest zaznaczony do usuniêcia.
+#comment '
+#comment ' nTYPEID  - typeid wskazanego obiektu
+#comment ' nIdObj   - idobj wskazanego obiektu
+#comment '
+#comment ' RESULT: true gdy zaznaczono do usuniêcia i uda³o siê save podtransakcji
+#comment '----------------------------------------------------------------------------
+private function remove_dependent_objects_save(byval nTYPEID, byval nIdObj): remove_dependent_objects_save = false
+	
+	'Tworzymy podtransakcje
+	dim pSubTrans
+	set pSubTrans = trans_.createsubtran()
+
+	'Usuwamy obiekty zale¿ne w naszej podtransakcji
+	if (not remove_dependent_objectsID(nTYPEID, nIdObj, false)) then
+		exit function
+	end if
+
+	'Próbujemy zrobiæ save dla tego co zosta³o usuniête
+	if (not trans_.save()) then
+		exit function
+	end if
+
+	set pSubTrans = nothing
+	remove_dependent_objects_save = true
+end function
+
+#comment '----------------------------------------------------------------------------
+#comment ' Podejmuje próbe pobrania obiektu i je¿eli siê nie uda³o to wyœwietla
+#comment ' odpowiedni komunikat. Obiekty sa pobierane na nowo a nie przekazywane
+#comment ' gdyz kod np. usuniecia moze byc wykonywany w innej transkacji a obiektow
+#comment ' nie wolno pomiedzy transkacjami przekazywac
+#comment '----------------------------------------------------------------------------
+private function get_object(byval nTYPEID, byval nIdObj, byref pObject): get_object = false
+	if (pObject is nothing) then
+		set pObject = trans_.getobj(nTYPEID, nIdObj)
+				
+		if (pObject is nothing) then
+			trans_.message 6700, 0, "Nie uda³o siê pobraæ obiektu do usuniêcia. Prawdopodobnie obiekt jest u¿ywany."
+			exit function
+		end if
+	end if
+
+	get_object = true
+end function
+
+#comment '----------------------------------------------------------------------------
+#comment ' *Funkcja usuwa wszystkie obiekty zale¿ne od wskazanego obiektu przez
+#comment ' podanie idobj i typeid lub przekazanie ca³ego obiektu (internal)
+#comment '
+#comment ' pObject  - je¿eli nothing to obiekt w razie potrzeby zostanie wewn¹trz
+#comment '			 tej funkcji pobrany z nTYPEID i nIdObj
+#comment ' nTYPEID  - typeid wskazanego obiektu gdy pObject is nothing
+#comment ' nIdObj   - idobj wskazanego obiektu gdy pObject is nothing
+#comment ' bMarkDel - czy zaznaczyæ równie¿ obiekt pObject jako do usuniêcia
+#comment '
+#comment ' RESULT: true gdy zaznaczono do usuniêcia wszytkie w przeciwnym razie false
+#comment '----------------------------------------------------------------------------
+private function remove_dep_obj_custom(byref pObject, byval nTYPEID, byval nIdObj, byval bMarkDel): remove_dep_obj_custom = false
+
+	'Usuwane s¹ obiekty zale¿ne od naszego dok³adnie
+	'okreœlone przez programiste a nie wszystkie referencje
+	'zapisane w bazie i wskazuj¹ce na pObject
+	
+	'W zale¿noœci od typu obiektu mamy do usuniêcia
+	'ró¿ne obiekty zale¿ne dla pObject
+	select case nTYPEID
+		
+		case TYPEID_N5PRACOWNIK
+			'Usuwamy wszystkich wykonawców danego pracownika
+			if (not remove_from_cursor(TYPEID_N5WYKONAWCA, _
+			    "wrefObiekt=" + CStr(nIdObj) + " and wrefObiekt_wrt=" + CStr(nTYPEID) ) ) then
+					exit function
+			end if
+
+		case TYPEID_N5UZYTKOWNIK
+			'Usuwamy profile dla danego u¿ytkownika
+			if (not remove_from_cursor(TYPEID_USERPROFILE, _
+			    "pn5user=" + CStr(nIdObj) ) ) then
+					exit function
+			end if
+
+		case TYPEID_N5KLIENT
+			'Usuwamy pracowników klienta
+			if (not remove_from_cursor(TYPEID_N5KLIENT_PRACOWNIK, _
+			    "pKlient=" + CStr(nIdObj) ) ) then
+					exit function
+			end if
+
+
+		case TYPEID_N5RAPKAS
+			'Usuwamy pracowników klienta
+			if (not remove_from_cursor(TYPEID_N5PLATNOSC, _
+			    "plat_pRapKas=" + CStr(nIdObj) ) ) then
+					exit function
+			end if
+
+
+		case TYPEID_N5KONTO
+			'Usuwamy pracowników klienta
+			if (not remove_from_cursor(TYPEID_N5KONTO, _
+			    "pKontoNadrz=" + CStr(nIdObj) ) ) then
+					exit function
+			end if
+
+		case TYPEID_N5SOD
+
+			'Potrzebujemy obiekt
+			'todo:spiko usunac
+			'if (not get_object(nTYPEID, nIdObj, pObject)) then
+			'	exit function
+			'end if
+
+			'Usuwamy security object wzkazuj¹cy na odpowiedni
+			'security object description
+			if (not remove_from_cursor(TYPEID_N5SECURITYOBJ, _
+			    "pSOD=" + CStr(nIdObj) ) ) then
+					exit function
+			end if
+		case TYPEID_N5PLLISTAPLAC
+			'Usuwamy naliczenia dla tej listy p³ac
+			if (not remove_from_cursor(TYPEID_N5PLNALICZENIE, _
+			    "pListaPlac=" + CStr(nIdObj) ) ) then
+					exit function
+			end if
+#ifdef ENABLE_DB11_C			
+		case TYPEID_N5OPAKOWANIE_PRODUKTU
+			'usuwamy obiekty produkt-magazyn
+			if (not remove_from_cursor(TYPEID_N5PRODUKT_MAGAZYN, _
+			    "prmg_pOpakowanie=" + CStr(nIdObj) ) ) then
+					exit function
+			end if
+#endif			
+									
+	end select
+
+	'Na koñcu zaznaczmy do usuniêcia
+	'nasz obiekt g³ówny jezeli tego
+	'chcielismy
+	if (bMarkDel) then
+
+		if (not get_object(nTYPEID, nIdObj, pObject)) then
+			'Nie uda³o siê pobraæ obiektu
+			exit function
+		end if
+
+		remove_single_object pObject
+	end if
+
+	remove_dep_obj_custom = true
+end function
+
+
+#comment '----------------------------------------------------------------------------
+#comment ' Usuwa wszystkie obiekty wskazane w kursorze wraz z obiektami zale¿nymi
+#comment '
+#comment ' nTypeId  - TypeId obiektu do usuniêcia
+#comment ' strWhere - where s³u¿¹cy wyselekcjonowaniu odpowiednich obiektów
+#comment '			 do usuniêcia
+#comment '----------------------------------------------------------------------------
+private function remove_from_cursor(byval nTypeId, byval strWhere): remove_from_cursor = false
+
+	'Tworzymy kursor obiektów zale¿nych, które maj¹ zostaæ
+	'usuniête
+	dim pCursorOfObjs2Del
+	set pCursorOfObjs2Del = trans_.createrawcursor(nTypeId, strWhere, "", "")
+
+	dim n: n = 1
+			
+	while pCursorOfObjs2Del.exists(n)
+
+		dim pObject2Del
+		set pObject2Del = pCursorOfObjs2Del.get(n)
+
+		if (not pObject2Del is nothing) then
+
+			'Mamy nasz obiekt do usuniêcia jednak zanim
+			'ten obiekt zostanie usuniêty usuwamy wszystkie
+			'zale¿noœci dla niego samego
+			'todo:spiko Remove + comment
+			'if (not remove_dep_obj_custom( pObject2Del, nTypeId, pObject2Del.IdObj, true )) then
+			'	exit function
+			'end if
+
+			remove_single_object pObject2Del
+
+		else
+			trans_.message 6700, 0, "Nie uda³o siê pobraæ obiektu zale¿nego do usuniêcia. Prawdopodobnie obiekt jest u¿ywany."
+			exit function
+		end if
+
+		set pObject2Del = nothing
+		n = n + 1
+	wend
+
+	'Usuniêto wszystkie wyselekcjonowane
+	remove_from_cursor = true
+end function
+
+#comment '----------------------------------------------------------------------------
+#comment ' Funkcja usuwa obiekt w lub zaznacz go do ignorowania przy zapisie
+#comment ' je¿eli nie zosta³ jeszcze zapisany
+#comment '----------------------------------------------------------------------------
+private function remove_single_object(byref pObject2Del)
+	if (pObject2Del.isnew) then
+		pObject2Del.ignore = true
+	else
+		pObject2Del.markdel = true
+	end if
+end function
+
+#comment '----------------------------------------------------------------------------
+#comment ' Funkcja usuwa uprawnienia (obiekty n5sod) na podstawie dostarczonego
+#comment ' where'a
+#comment '
+#comment ' strWhereSOD - where dla obiektu n5sod
+#comment '----------------------------------------------------------------------------
+private function remove_SecurityObjectWhere(byval strWhereSOD): remove_SecurityObjectWhere = false
+
+	'Usuñ SOD wraz z obiektami zale¿nym od niego
+	if (not remove_from_cursor(TYPEID_N5SOD, strWhereSOD)) then
+		'Nie uda³o siê usuniêcie obiektu uprawnieñ. Prawdopodobnie
+		'jest on uzywany przez inny obiekt.
+		exit function
+	end if
+
+	remove_SecurityObjectWhere = true
+end function
+
+#comment '----------------------------------------------------------------------------
+#comment ' Funckja usuwa uprawnienia przypisane do danego obiektu.
+#comment '
+#comment ' nTypeId - typeid obiektu, któremu usun¹æ przypisane uprawnienia
+#comment ' nIdObj  - idobj obiektu, któremu usun¹æ przypisane uprawnienia
+#comment '----------------------------------------------------------------------------
+private function remove_SecurityObject(byval nTypeId, byval nIdObj)
+	'Zapytanie wydobywaj¹ce wszystkie n5securityobj. Usuwamy wszystkie
+	'uprawnienia przypisane danemu obiektowi.
+	dim strWhere
+	strWhere = "(n5SOD.nSecId / 10) = " + CStr(nTypeId) + " and n5SOD.nIdent=" + CStr(nIdObj)
+
+	remove_SecurityObject = remove_SecurityObjectWhere( strWhere )
+end function
+
+#comment '----------------------------------------------------------------------------
+#comment ' Funckja usuwa uprawnienia przypisane do danego u¿ytkownika
+#comment '
+#comment ' nUserIdObj - idobj u¿ytkownika, któremu usun¹æ uprawnienia
+#comment '----------------------------------------------------------------------------
+private function remove_SecurityObjectForUser(byval nUserIdObj)
+	'Usuwamy n5securityobj. n5sod zostawiamy poniewaz definiuje on
+	'uprawnienia ktore maga posiadac lub juz posiadaja jacys inni
+	'uztykownicy programu
+	remove_SecurityObjectForUser = remove_from_cursor(TYPEID_N5SECURITYOBJ, "pUser=" + CStr(nUserIdObj))
+end function
+
+#comment '----------------------------------------------------------------------------
+#comment ' Funckja usuwa uprawnienia przypisane do danego u¿ytkownika. Ca³oœæ
+#comment ' odbywa siê w podtransakcji a rezultat jest zale¿ny od save
+#comment '
+#comment ' nUserIdObj - idobj u¿ytkownika, któremu usun¹æ uprawnienia
+#comment '----------------------------------------------------------------------------
+private function remove_SecurityObjectForUser_save(byval nUserIdObj): remove_SecurityObjectForUser_save = false
+	'Tworzymy podtransakcje
+	dim pSubTrans
+	set pSubTrans = trans_.createsubtran()
+
+	'Wolamy funkcje usuwajaca obiekt security
+	if (not remove_SecurityObjectForUser(nUserIdObj)) then
+		exit function
+	end if
+
+	'Próbujemy zrobiæ save dla tego co zosta³o usuniête
+	if (not trans_.save()) then
+		trans_.message 6472, 0, "Usuniêcie obiektów uprawnieñ nie uda³o siê. Prawdopodobnie obiekty s¹ aktualnie u¿ywane."
+		exit function
+	end if
+
+	set pSubTrans = nothing
+	remove_SecurityObjectForUser_save = true
+end function
+
+#comment '----------------------------------------------------------------------------
+#comment ' Funckja usuwa uprawnienia przypisane do danego obiektu. Usuwanie 
+#comment ' uprawnien odbywa siê w podtransakcji a rezultat jest zalezny
+#comment ' rowniez od wyniku trans_.save
+#comment '
+#comment ' nTypeId - typeid obiektu, któremu usun¹æ przypisane uprawnienia
+#comment ' nIdObj  - idobj obiektu, któremu usun¹æ przypisane uprawnienia
+#comment '----------------------------------------------------------------------------
+private function remove_SecurityObject_save(byval nTypeId, byval nIdObj): remove_SecurityObject_save = false
+
+	'Tworzymy podtransakcje
+	dim pSubTrans
+	set pSubTrans = trans_.createsubtran()
+
+	'Wolamy funkcje usuwajaca obiekt security
+	if (not remove_SecurityObject(nTypeId, nIdObj)) then
+		exit function
+	end if
+
+	'Próbujemy zrobiæ save dla tego co zosta³o usuniête
+	if (not trans_.save()) then
+		trans_.message 6472, 0, "Usuniêcie obiektów uprawnieñ nie uda³o siê. Prawdopodobnie obiekty s¹ aktualnie u¿ywane."
+		exit function
+	end if
+
+	set pSubTrans = nothing
+	remove_SecurityObject_save = true
+end function
+
+#comment '----------------------------------------------------------------------------
+#comment ' Funkcja dodaje wybranemu uzytkownikowi dane uprawnienie (security)
+#comment '
+#comment ' pUser - Obiekt uzytkownika, ktoremu dodac dostep (uprawnienie)
+#comment ' pSOD  - Uprawnienie, ktore ma mu byc dodane
+#comment '----------------------------------------------------------------------------
+private function add_access4user(byref pUser, byref pSOD)
+
+	'Zobacz czy takiego dostepu juz nie ma
+	dim idSecurityObj
+	idSecurityObj = trans_.findobjid(TYPEID_N5SECURITYOBJ, "pSOD=" + CStr(pSOD.IdObj) + " and pUser=" + CStr(pUser.IdObj))
+
+	if (idSecurityObj = 0) then
+		'Dodajemy nowy dostep dla danego uzytkownika
+		'i okreslonego uprawnienia
+		dim pSecurityObj
+		set pSecurityObj = trans_.newobj(TYPEID_N5SECURITYOBJ)
+
+		set pSecurityObj.pSOD = pSOD
+		set pSecurityObj.pUser = pUser
+	end if
+end function
+
+#comment '----------------------------------------------------------------------------
+#comment ' Funkcja dodaje pojedyncze uprawnienie do wskazanej grupy uprawnien
+#comment '
+#comment ' strSODDescription - opis danego uprawnieni wyrozniajacy je z innych 
+#comment '					  uprawnien. Najczescie astext obiektu lub nazwa dla
+#comment '					  ktorego dane uprawnienie jest zakladane
+#comment ' pSODGroup			- Grupa uprawnien do ktorej dodac dane uprawnienie. 
+#comment '				      Obiekt n5sodgroup
+#comment ' nIdObj			- idObj obiektu dla którego jest dodawane dane security
+#comment ' nTypeID			- typeid tego obiektu
+#comment ' nRightType        - Uprawnienie jakie chcemy dodac np. STDR_READ
+#comment ' strUserWhere      - where wydobywajace uzytkownikow dla ktorych ma zostac 
+#comment '				      dodany access na dodane uprawnienia.
+#comment '----------------------------------------------------------------------------
+private function insert_SingleSOD(byval strSODDescription, byref pSODGroup, byval nIdObj, byval nTypeId, byval nRightType, byval bCustom ,byval strUserWhere)
+	dim iCodedSecId : iCodedSecId  = CLng((CLng(nTypeId) * CLng(10)) + CLng(nRightType))
+	dim iCodedIdent : iCodedIdent = CLng(nIdObj)
+	
+	'KB: POPR: wychodzimy jesli jest juz
+	if trans_.findobjid(TYPEID_N5SOD,"nSecId=" + cstr(iCodedSecId) + " and nIdent=" + cstr(iCodedIdent)) > 0 then
+		exit function
+	end if
+	
+
+	'Dodajemy nowy typ uprawnienia
+	dim pNewSOD
+	set pNewSOD = trans_.newobj(TYPEID_N5SOD)
+
+	'Ustalamy nazwê dla naszego uprawnienia
+	dim strRightName: strRightName = ""
+	select case nRightType
+		case STDR_READ
+			strRightName = "Odczyt"
+
+		case STDR_INSERT
+			strRightName = "Wstawianie"
+
+		case STDR_UPDATE
+			strRightName = "Zmiana"
+
+		case STDR_DELETE
+			strRightName = "Usuniêcie"
+		case else 
+			strRightName = ""
+			'nRightType = nRightType
+	end select
+
+	if bCustom then
+		strRightName = ""
+	end if
+
+	if len(strSODDescription) > 64 then
+		strSODDescription = left(strSODDescription,64)
+	end if
+
+	if strSODDescription <> "" then
+		if strRightName = "" then
+			pNewSOD.strNazwa = strSODDescription
+		else
+			pNewSOD.strNazwa = strRightName + ": '" + strSODDescription + "'"
+		end if
+	else
+		pNewSOD.strNazwa = strRightName
+	end if
+
+	'Diodajemy uprawnienie do grupy uprawnien
+	set pNewSOD.pSODGroup = pSODGroup
+	
+	
+	'Kodujemy identyfikator obiektu wraz z rodzajem uprawnienia
+	pNewSOD.nSecId = iCodedSecId
+	'Dodajemy idobj obiektu dla ktorego dane uprawnienie zostalo
+	'przypisane
+	pNewSOD.nIdent = iCodedIdent
+
+	'Dodaliœmy rodzaj uprawnienia. Teraz nalezy nadaæ dodane 
+	'uprawnienie okreslonym u¿ytkownikom
+	
+	dim pUsersCrsr
+	set pUsersCrsr = trans_.createrawcursor(TYPEID_N5UZYTKOWNIK, strUserWhere, "", "")
+
+	dim pUser2Add
+	for each pUser2Add in pUsersCrsr
+			
+		if (not pUser2Add is nothing) then
+			'Dodaj dostep (access)
+			add_access4user pUser2Add, pNewSOD
+		end if
+
+	next
+
+end function 
+
+#comment '----------------------------------------------------------------------------
+#comment ' Funckja jest odpowiedzialna za wstawianie obiektów security dla podanego
+#comment ' obiektu
+#comment '
+#comment ' strGroupName - Grupa uprawnieñ do jakiej dodaæ wstawiane obiekty security
+#comment '				 Jej nazwa (n5sodgroup). Je¿eli taka grupa nie istnieje to
+#comment '			     zostanie stworzona (nie byla w preload)
+#comment ' strSODDesc   - opis danego uprawnienia wyrozniajacy je z innych 
+#comment '                uprawnien. Najczescie astext obiektu lub nazwa dla
+#comment '				 ktorego dane uprawnienie jest zakladane
+#comment ' nIdObj	   - idObj obiektu dla którego jest dodawane dane security
+#comment ' nTypeID	   - typeid tego obiektu
+#comment ' strUserWhere - where wydobywajace uzytkownikow dla ktorych ma zostac dodany
+#comment '				 access na dodane uprawnienia. 
+#comment '----------------------------------------------------------------------------
+private function insert_SecurityObject(byval strGroupName, byval strSODDesc, byval nIdObj, byval nTypeId, byval strUserWhere): insert_SecurityObject = false
+	insert_SecurityObject = insert_SecurityObjectCustom(nothing , strGroupName, strSODDesc, nIdObj, nTypeId, strUserWhere, true, true, true, false,false,0)
+end function
+
+#comment '----------------------------------------------------------------------------
+#comment ' Funckja jest odpowiedzialna za wstawianie obiektów security dla podanego
+#comment ' obiektu
+#comment '
+#comment ' pGroup       - do jakiej grupy dodac - to jesli nie chcemy wyszkuiwac po nazwie (nastrepny paramter)
+#comment ' strGroupName - Grupa uprawnieñ do jakiej dodaæ wstawiane obiekty security
+#comment '				 Jej nazwa (n5sodgroup). Je¿eli taka grupa nie istnieje to
+#comment '			     zostanie stworzona (nie byla w preload)
+#comment ' strSODDesc   - opis danego uprawnienia wyrozniajacy je z innych 
+#comment '                uprawnien. Najczescie astext obiektu lub nazwa dla
+#comment '				 ktorego dane uprawnienie jest zakladane
+#comment ' nIdObj	   - idObj obiektu dla którego jest dodawane dane security
+#comment ' nTypeID	   - typeid tego obiektu
+#comment ' strUserWhere - where wydobywajace uzytkownikow dla ktorych ma zostac dodany
+#comment '				 access na dodane uprawnienia. 
+#comment ' bRead		   - czy dodac uprawnienie typu read
+#comment ' bUpdate      - czy dodac uprawnienie typu update
+#comment ' bDelete      - czy dodac uprawnienie typu delete
+#comment ' bInsert      - czy dodac uprawnienie typu insert
+#comment '----------------------------------------------------------------------------
+private function insert_SecurityObjectCustom(byval pGroup , byval strGroupName, byval strSODDesc, byval nIdObj, byval nTypeId, byval strUserWhere, byval bRead, byval bUpdate, byval bDelete, byval bInsert , byval bCustom , byval nCustomSuffix): insert_SecurityObjectCustom = false
+
+	if pGroup is nothing then
+
+		'Sprawdzamy czy istnieje juz taka grupa i jezeli tak
+		'to ja pobieramy, jezeli nie to zakladamy
+		dim idSODGroup
+		idSODGroup = trans_.findobjid(TYPEID_N5SODGROUP, "strNazwa='" + trans_.afc.convert.DoubleApostrophe(strGroupName) + "'")
+
+		dim pSODGroup
+		set pSODGroup = nothing
+		
+		if (idSODGroup>0) then
+			'Znaleziono grupe istniejaca
+			set pSODGroup = trans_.getobj(TYPEID_N5SODGROUP, idSODGroup)
+		else
+			'Zakladamy nowa grupe
+			set pSODGroup = trans_.newobj(TYPEID_N5SODGROUP)
+			pSODGroup.strNazwa = strGroupName
+		end if
+	else
+
+		set pSODGroup = pGroup
+
+	end if
+
+	'Je¿eli nie uda³o siê pobraæ lub za³o¿yæ to komunikat
+	if (pSODGroup is nothing) then
+		trans_.message 6513, 0, "Brakuje grupy uprawnieñ """ + strGroupName + """ a jej za³o¿enie siê nie uda³o."
+		exit function
+	end if
+
+	'Wstawiamy poszczególne uprawnienia dla danego obiektu i dodajemy
+	'access na te uprawnienia odpowiednim uzytkownikom
+	if (bRead) then
+		insert_SingleSOD strSODDesc, pSODGroup, nIdObj, nTypeId, STDR_READ, false , strUserWhere
+	end if
+
+	if (bUpdate) then
+		insert_SingleSOD strSODDesc, pSODGroup, nIdObj, nTypeId, STDR_UPDATE, false , strUserWhere
+	end if
+
+	if (bDelete) then
+		insert_SingleSOD strSODDesc, pSODGroup, nIdObj, nTypeId, STDR_DELETE, false , strUserWhere
+	end if
+
+	if (bInsert) then
+		insert_SingleSOD strSODDesc, pSODGroup, nIdObj, nTypeId, STDR_INSERT, false , strUserWhere
+	end if
+
+	if (bCustom) then
+		insert_SingleSOD strSODDesc, pSODGroup, nIdObj, nTypeId, nCustomSuffix , true , strUserWhere
+	end if
+
+	insert_SecurityObjectCustom = true
+end function
+
+#comment '----------------------------------------------------------------------------
+#comment ' Funckja jest odpowiedzialna za wstawianie obiektów security dla podanego
+#comment ' obiektu. Caly proces wstawiania odbywa sie w nowej transakcji a wynik
+#comment ' zalezny jest tez od trans_.save()
+#comment '
+#comment ' strGroupName - Grupa uprawnieñ do jakiej dodaæ wstawiane obiekty security
+#comment '				 Jej nazwa (n5sodgroup). Je¿eli taka grupa nie istnieje to
+#comment '			     zostanie stworzona (nie byla w preload)
+#comment ' strSODDesc   - opis danego uprawnienia wyrozniajacy je z innych 
+#comment '                uprawnien. Najczescie astext obiektu lub nazwa dla
+#comment '				 ktorego dane uprawnienie jest zakladane
+#comment ' nIdObj	   - idObj obiektu dla którego jest dodawane dane security
+#comment ' nTypeID	   - typeid tego obiektu
+#comment ' strUserWhere - where wydobywajace uzytkownikow dla ktorych ma zostac dodany
+#comment '				 access na dodane uprawnienia. Where ma wskazywac userow
+#comment '				 roznych od aktualnie zalogowanego. Userowi aktualnie 
+#comment '				 zalogowanemu zawsze dodawany jest access. Jezeli strUserWhere="" 
+#comment '				 to access jest dodawany tylko uzytkownikowi aktualnie zalogowanemu 
+#comment '				 (getCurrentUser()).
+#comment ' bRead		   - czy dodac uprawnienie typu read
+#comment ' bUpdate      - czy dodac uprawnienie typu update
+#comment ' bDelete      - czy dodac uprawnienie typu delete
+#comment ' bInsert      - czy dodac uprawnienie typu insert
+#comment '----------------------------------------------------------------------------
+private function insert_SecurityObjectCustom_save(byval strGroupName, byval strSODDesc, byval nIdObj, byval nTypeId, byval strUserWhere, byval bRead, byval bUpdate, byval bDelete, byval bInsert): insert_SecurityObjectCustom_save = false
+	'Tworzymy podtransakcje
+	dim pSubTrans
+	set pSubTrans = trans_.createsubtran()
+
+	'Dodajemy obiekty security w naszej podtransakcji
+	if (not insert_SecurityObjectCustom(nothing , strGroupName, strSODDesc, nIdObj, nTypeId, strUserWhere, bRead, bUpdate, bDelete, bInsert , false , 0)) then
+		exit function
+	end if
+
+	'Próbujemy zrobiæ save dla tego co zosta³o dodane
+	if (not trans_.save()) then
+		exit function
+	end if
+
+	set pSubTrans = nothing
+	insert_SecurityObjectCustom_save = true
+end function
+
+#comment '----------------------------------------------------------------------------
+#comment ' Funckja jest odpowiedzialna za wstawianie obiektów security dla podanego
+#comment ' obiektu. Caly proces wstawiania odbywa sie w nowej transakcji a wynik
+#comment ' zalezny jest tez od trans_.save()
+#comment '
+#comment ' strGroupName - Grupa uprawnieñ do jakiej dodaæ wstawiane obiekty security
+#comment '				 Jej nazwa (n5sodgroup). Je¿eli taka grupa nie istnieje to
+#comment '			     zostanie stworzona (nie byla w preload)
+#comment ' strSODDesc   - opis danego uprawnienia wyrozniajacy je z innych 
+#comment '                uprawnien. Najczescie astext obiektu lub nazwa dla
+#comment '				 ktorego dane uprawnienie jest zakladane
+#comment ' nIdObj	   - idObj obiektu dla którego jest dodawane dane security
+#comment ' nTypeID	   - typeid tego obiektu
+#comment ' strUserWhere - where wydobywajace uzytkownikow dla ktorych ma zostac dodany
+#comment '				 access na dodane uprawnienia. Where ma wskazywac userow
+#comment '				 roznych od aktualnie zalogowanego. Userowi aktualnie 
+#comment '				 zalogowanemu zawsze dodawany jest access. Jezeli strUserWhere="" 
+#comment '				 to access jest dodawany tylko uzytkownikowi aktualnie zalogowanemu 
+#comment '				 (getCurrentUser()).
+#comment '----------------------------------------------------------------------------
+private function insert_SecurityObject_save(byval strGroupName, byval strSODDesc, byval nIdObj, byval nTypeId, byval strUserWhere)
+	insert_SecurityObject_save = insert_SecurityObjectCustom_save(strGroupName, strSODDesc, nIdObj, nTypeId, strUserWhere, true, true, true, false)
+end function

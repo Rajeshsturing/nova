@@ -1,0 +1,1456 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1220.h"
+#include "h1231.h"
+#include "h1200.h"
+#include "h1201.h"
+#include "h1240.h"
+#include "h1203.h"
+-->
+<page style='STYLE_PAGE' width='10000'>
+<config>
+<startpos>center</startpos>
+<startfocus>101</startfocus>
+<title>Instalacja serwera</title>
+<script>
+<![CDATA[
+
+#define CTRL_USER_NAME		11
+#define CTRL_USER_PWD		12
+#define CTRL_DB_NAME		338
+
+
+#include "50203"
+#include "50516"
+#include "50211"
+#include "50122"
+
+'preload
+#include "50303"
+
+
+dim strUnInKey
+dim strAppName
+dim g_strSQLLogin
+
+
+function create_performing_widget()
+	set create_performing_widget = doc_.performing("Trwa instalacja serwera " + strAppName)
+end function
+
+
+function backup_add_filegroup(byref navobrmctrl, byref pNEBRSet, byval strFilesPath,byval strMask,byval bRecurse,byval bRelative)
+	Dim pItemBRSet
+    Set pItemBRSet = navobrmctrl.newbrset
+	        
+    'dodajemy backup dla plikow
+    pItemBRSet.Type = 1 'filegroup
+    pItemBRSet.Path = strFilesPath
+    pItemBRSet.mask = strMask
+    pItemBRSet.recurse = bRecurse
+    pItemBRSet.Relative = bRelative
+        
+    pNEBRSet.addbrset pItemBRSet
+end function
+
+function backup_add_db(byref navobrmctrl, byref pNEBRSet, byval strServerName, byval strLoginName, byval strPwd, byval strDbName)
+	Dim pItemBRSet
+    Set pItemBRSet = navobrmctrl.newbrset
+    pItemBRSet.Type = 2 'ms db
+    pItemBRSet.Database = strDbName
+
+    pItemBRSet.Server = strServerName
+    pItemBRSet.User = strLoginName
+    pItemBRSet.Password = strPwd
+        
+    pNEBRSet.addbrset pItemBRSet
+end function
+
+function CreateBackupProfile(byval strSQLServerName)
+	dim strInstRoot	'katalog instalacji
+	strInstRoot = doc_.system.registry(hKey_LocalMachine,"SOFTWARE\NAVO\NAVO2002\Setup", "InstallationRoot")
+
+	dim strExtrasRoot
+	strExtrasRoot = strInstRoot + "Applications\" + strAppName + "\Extras"
+
+	dim strChacheRoot
+	strChacheRoot = doc_.system.registry(hKey_LocalMachine,"SOFTWARE\NAVO\NAVO2002\FileCache", "Root")
+
+	dim PROFILENAME:PROFILENAME=strAppName + " (baza " + m_strDBName + ")"
+
+	'obsluga bledow
+	err.clear
+
+#ifdef _DEBUG
+#else
+	on error resume next
+#endif
+
+	'dobieramy sie do NavoBrm
+	Dim navobrmctrl
+	Set navobrmctrl = CreateObject("NAVOBRMCTRL.NAVOBRMCtrl.1")
+
+	if (not isObject(navobrmctrl)) then
+		exit function
+	end if
+
+    Dim pNEBRSet, iter
+    Dim nFound: nFound = 0
+
+    
+	'znajdź profil o nazwie PROFILENAME
+    For iter = 1 To 9
+        Dim strProf: strProf = navobrmctrl.profile("", iter)
+        If strProf <> "" Then
+            Set pNEBRSet = navobrmctrl.newbrset
+            pNEBRSet.read strProf
+            If pNEBRSet.Name = PROFILENAME Then
+                nFound = iter
+				CreateBackupProfile=true
+                exit function
+            End If
+        Else
+            Exit For
+        End If
+    Next
+
+	
+	'dodajemy profil
+    Set pNEBRSet = navobrmctrl.newbrset
+    pNEBRSet.Type = 4   'navobrman
+    pNEBRSet.Name = PROFILENAME
+
+	'dodajemy profile
+	'nie sprawdzamy czy taka sciezka juz istnieje - zrobi to backup client
+	'składujemy global.dat (numery idfile)
+	backup_add_filegroup navobrmctrl, pNEBRSet, strChacheRoot + "\","*.dat",false,false
+	'składujemy _database__komputer_bazadnych gdzie są pliki
+	dim strCacheName : strCacheName = "_database__" + strSQLServerName + "_" + m_strDBName
+	strCacheName = replace(strCacheName,"\","_")
+	strCacheName = replace(strCacheName,":","_")
+	backup_add_filegroup navobrmctrl, pNEBRSet, strChacheRoot + "\" + strCacheName + "\","*.*",true,false
+
+	dim DBSERVER:DBSERVER=strSQLServerName
+
+	backup_add_db navobrmctrl, pNEBRSet, DBSERVER, "navo2002user", "y7410xru3", m_strDBName
+
+    'save results
+    navobrmctrl.profile("", 1) = pNEBRSet.write
+
+	CreateBackupProfile=(err.number=0)
+end function
+
+'---------------------------------------------------------------------------
+'Instalacja źródel danych dla Navo Firma
+'---------------------------------------------------------------------------
+function install_FirmaODBC(byref pageUtil, byref instses, byval bReinstall, byval bInstallODBCDriver)
+	
+	dim oInfoS3: set oInfoS3 = pageUtil.get_navo_firma_info()
+	
+	' jeśli jest zainstalowana NAVO Firma
+	if not oInfoS3 is nothing then
+
+		instses.addlogmsg "NAVO Firma is installed on the local computer"
+
+		if oInfoS3.m_Sybase then
+			instses.addlogmsg "NAVO Firma found, platform: Sybase"
+		end if
+		if oInfoS3.m_MsSQL then
+			instses.addlogmsg "NAVO Firma found, platform: Microsoft SQL Server"
+		end if
+
+		if oInfoS3.m_Sybase then
+			' jest wersja Sybase
+			if bReinstall then
+				instses.addlogmsg "Skipping ODBC reinstallation during reinstall (upgrade)"
+			else
+				on error resume next
+
+				if (bInstallODBCDriver) then
+					instses.installODBCdriver "SYBASE"
+					if err.number <> 0 then
+						instses.addlogmsg "Sybase ODBC Driver installation failed"
+						exit function
+					end if
+				end if
+
+				dim strDesc: strDesc = "DSN=NAVO_FIRMA|START=rtdsk50.exe|DBF="
+				strDesc = strDesc + oInfoS3.m_Root + oInfoS3.m_DataBase + "|UID=DBA|PWD=" + oInfoS3.m_Password
+
+				' dodaj DSN
+				instses.addodbcdsn "SYBASE", true, strDesc
+
+				if err.number <> 0 then
+					instses.addlogmsg "Adding ODBC DSN for Sybase failed"
+					exit function
+				end if
+
+				instses.addlogmsg "Adding ODBC DSN, platform: Sybase, database: " + oInfoS3.m_Root + oInfoS3.m_DataBase + ", DSN: NAVO_FIRMA37"
+
+				on error goto 0
+				err.clear
+			end if
+		end if
+
+	else
+		instses.addlogmsg "NAVO Firma not found"
+	end if
+end function
+
+'--------------------------------------------------------------------------
+' funkcje pomocnicze operujące na SQL'u
+'--------------------------------------------------------------------------
+' usuwanie starej bazy
+'--------------------------------------------------------------------------
+function sql_drop_database(byref oSQLDMO,byref oInstallSession,byval strDBName)
+	sql_drop_database = false
+	dim strSqlDropDBScript
+	strSqlDropDBScript = "if exists (select * from sysdatabases where name='" + strDBName + "')" + vbCrLf +_
+		"begin" + vbCrLf +_
+		"	raiserror('Dropping existing " + strDBName + " database ....',0,1)" + vbCrLf +_
+		"	drop database " + strDBName + " " + vbCrLf +_
+		"end"
+	oInstallSession.addlogmsg "Dropping old database..."
+
+	err.clear
+	on error resume next
+	'{{		
+		oSQLDMO.ExecuteImmediate strSqlDropDBScript
+		if (err.number>0) then
+			oInstallSession.addlogmsg "Warning (" + cstr(clng(err.number)) + "): " + cstr(err.description)
+		else
+			oInstallSession.addlogmsg "Dropping old database: success"
+		end if
+
+	'}}
+	on error goto 0
+	err.clear
+
+	sql_drop_database = true
+end function
+
+'--------------------------------------------------------------------------
+' zmiana nazwy plików DB
+'--------------------------------------------------------------------------
+function sql_rename_db_files(byref oSQLDMO,byref oInstallSession,byval strInstRoot,byval strDBName)
+	sql_rename_db_files = false
+
+	dim strDbPath : strDbPath = strInstRoot + "Database"
+	dim strDbBackupPath : strDbBackupPath = strInstRoot + "Archive"
+
+	'wyszukaj pliki z poprzednich instalacji i jezeli sa to zmieniamy
+	'ich nazwe
+
+	dim pSQLFile:set pSQLFile = doc_.getappfile(95004)
+	dim oIstreamSQL: set oIstreamSQL = doc_.createstreamobj
+	oIstreamSQL.attach pSQLFile
+	dim strFileSQL: strFileSQL = oIstreamSQL.getstring
+
+	strFileSQL = replace(strFileSQL, "%SQLLOGIN%", g_strSQLLogin)
+	strFileSQL = replace(strFileSQL, "%DBBACKUPDIR%", cstr(strDbBackupPath))
+	strFileSQL = replace(strFileSQL, "%DBDIR%", cstr(strDbPath))
+	strFileSQL = replace(strFileSQL, "%DBNAME%", cstr(strDBName))
+
+	err.clear
+	on error resume next
+	'{{
+		oSQLDMO.ExecuteImmediate strFileSQL
+
+		oInstallSession.addlogmsg "Searching for old database files..."
+		if (err.number>0) then
+			oInstallSession.addlogmsg "Search warning: " + err.description
+		else
+			oInstallSession.addlogmsg "Searching for old database files: SUCCESSFUL"
+		end if
+	
+	'}}
+	on error goto 0
+	err.clear
+
+	sql_rename_db_files = true
+end function
+
+'--------------------------------------------------------------------------
+'wykonanie skryptu
+'--------------------------------------------------------------------------
+function sql_prepare_and_execute_script(byref oSQLDMO,byref oInstallSession,_
+	byval bLocalInstall,byval strInstRoot,byval strDBName,byval idAppFile)
+
+	sql_prepare_and_execute_script = false
+
+	' przygotowanie skryptu
+	oInstallSession.addlogmsg "Preparation SQL script " + cstr(idAppFile) + " to execute..."
+	
+	dim pPM:set pPM = doc_.getappfile(idAppFile)
+	dim oIstream: set oIstream = doc_.createstreamobj
+	oIstream.attach pPM
+	dim strSQL: strSQL = oIstream.getstring
+
+	dim strLocalInstall: strLocalInstall="0"
+	if (bLocalInstall) then
+		strLocalInstall="1"
+	end if
+
+	dim strDbPath : strDbPath = strInstRoot + "Database"
+	dim strDbBackupPath : strDbBackupPath = strInstRoot + "Archive"
+
+' sprawdzenie czy instalujemy na sql2000 czy sql2005
+'	dim strSqlDwaTysPiec: strSqlDwaTysPiec = "if exists (select * from sysobjects where name = 'SqlServerVersion') " + vbCrLf +_
+'	" drop table SqlServerVersion " + vbCrLf +_
+'	" create table SqlServerVersion ( " + vbCrLf +_
+'	"  Idx varchar(200), " + vbCrLf +_
+'	"  Name  varchar(200), " + vbCrLf +_
+'	"  InternalValue varchar(200), " + vbCrLf +_
+'	"  CharacterValue varchar(200) " + vbCrLf +_
+'	" ) " + vbCrLf +_
+'	" insert SqlServerVersion exec master.dbo.xp_msver  " + vbCrLf +_
+'	" declare @wersja nvarchar(132) " + vbCrLf +_
+'	" set @wersja=(select substring(CharacterValue,1,1) from SqlServerVersion where name='ProductVersion') " + vbCrLf +_
+'	" select @wersja " + vbCrLf
+
+'	dim Qry2res : set Qry2res = oSQLDMO.ExecuteWithResults(strSqlDwaTysPiec)
+'	dim strVerSqlDwaTysPiec : strVerSqlDwaTysPiec = Qry2res.GetColumnString(1,1)
+
+'podstawiamy pod master..sysxlogins rozne loginsy dla wersji 2000 i 2005
+dim strPodstaw : strPodstaw = "sys.syslogins"
+
+'if strVerSqlDwaTysPiec = "9" or strVerSqlDwaTysPiec="1" then '9,10 or above
+'		strPodstaw = "sys.syslogins"
+'	else
+'	strPodstaw = "master..sysxlogins"
+'	end if
+
+strSQL = replace(strSQL, "master..sysxlogins", strPodstaw)
+
+	strSQL = replace(strSQL, "%SQLLOGIN%", g_strSQLLogin)
+	strSQL = replace(strSQL, "%LOCAL_INSTALL%", strLocalInstall)
+	strSQL = replace(strSQL, "%DBBACKUPDIR%", cstr(strDbBackupPath))
+	strSQL = replace(strSQL, "%DBDIR%", cstr(strDbPath))
+	strSQL = replace(strSQL, "%DBNAME%", cstr(strDBName))
+
+	oInstallSession.addlogmsg "SQL script prepared"
+	
+	oInstallSession.addlogmsg "Database files will be created in " + strDbPath + "\"
+
+	' wykonywanie skryptu
+	oInstallSession.addlogmsg "Executing SQL script..." + cstr(idAppFile)
+
+	err.clear
+	on error resume next
+
+	oSQLDMO.ExecuteImmediate strSQL
+	if (err.number<>0) then
+		oInstallSession.addlogmsg "Executing failed with code=" + cstr(clng(err.number)) + ", description:" + cstr(err.description)
+		exit function
+	end if
+
+	on error goto 0
+	err.clear
+
+	oInstallSession.addlogmsg "Executing SQL script" + cstr(idAppFile) + ": successed"
+
+	sql_prepare_and_execute_script = true
+end function
+
+function get_application_db_version(byref oSQLDMO,byref oInstallSession,byval strDBName)
+	get_application_db_version = -1
+	
+	dim bFound : bFound = false
+	dim oDMODB
+	for each oDMODB in oSQLDMO.Databases
+		if oDMODB.Name = strDBName then
+			bFound = true
+			exit for
+		end if
+	next
+	if not bFound then
+		get_application_db_version = 0
+		exit function
+	end if
+ 
+
+	dim strSQL : strSQL = "use " + strDBName + vbCrLf +_
+	"declare @strDBVersion varchar(255)" + vbCrLf +_
+	"select @strDBVersion = '0'" + vbCrLf +_
+	"select @strDBVersion = Wartosc from n5globprof where indeks=GLOBPROF_DBVERSION" + vbCrLf +_
+	"select @strDBVersion" + vbCrLf	
+
+
+	oInstallSession.addlogmsg "Checking DB Version (application specific)"
+	err.clear
+	on error resume next
+
+	dim QryRes : set QryRes = oSQLDMO.ExecuteWithResults(strSQL)
+	if (err.number>0) then
+		oInstallSession.addlogmsg "Executing failed with code=" + cstr(clng(err.number)) + ", description:" + cstr(err.description)
+		exit function
+	end if
+
+	dim strVersion : strVersion = QryRes.GetColumnString(1,1)
+	oInstallSession.addlogmsg "Found DB Version (application specific)" + strVersion
+	on error goto 0
+	err.clear
+	
+	get_application_db_version = clng(strVersion)
+end function
+
+'--------------------------------------------------------------------------
+' Instalacja bazy danych i serwera SQL'a gdy brak
+'--------------------------------------------------------------------------
+function do_install_server(byval strSQLServerNamePARAM, byval strUID, byval strPWD)
+
+
+	do_install_server = -1
+	dim nResult
+
+	dim bLocalInstall 'true - jezeli instalacja lokalna
+	bLocalInstall=false 'UCase(trim(trans_.var(GVAR_MACHINE)))=UCase(Trim(strSQLServerNamePARAM))
+
+	dim pPerf:set pPerf = create_performing_widget()
+
+	dim instses : set instses = createobject("navoinstall.session")
+	instses.setlogname strAppName + " Serwer Setup.txt"
+
+	dim sysobj: set sysobj = doc_.system
+
+	dim bReinstall
+	bReinstall = (sysobj.registry(hKey_LocalMachine,strUnInKey,"DisplayName") <> "")
+
+	'znajdź root instalacji
+	instses.addlogmsg "Getting Installation root..."
+	dim strInstRoot: strInstRoot = sysobj.registry(hKey_LocalMachine,"SOFTWARE\NAVO\NAVO2002\Setup","InstallationRoot")
+	if strInstRoot = "" then
+		instses.addlogmsg "Installation root is empty"
+		exit function
+	else
+		instses.addlogmsg "Installation root found: " + cstr(strInstRoot)
+	end if
+	dim strPath : strPath = strInstRoot + "System\"
+	dim pageUtil : set pageUtil = doc_.getmodule(60116)
+
+	set pPerf = doc_.performing("Łączenie z serwerem SQL na '" + UCase(strSQLServerNamePARAM) + "'")
+
+	'check mssql2000
+	dim strSQLServerName
+	strSQLServerName = pageUtil.try_mssql2000( strSQLServerNamePARAM, strUID, strPWD, instses, false )
+
+	if (strSQLServerName = "") then
+
+		'--- since DB5 we SQL 2000 is required - MS SQL 7.0 not longer supported
+	
+		'--- dim nSQL7Result
+		'--- nSQL7Result = pageUtil.try_mssql7( strSQLServerNamePARAM, strUID, strPWD, instses )
+		
+		'--- 'Serwer SQL nie istnieje
+		'--- if (nSQL7Result = -2)  then
+
+		 	'if (UCase(strSQLServerNamePARAM)<>UCase(trans_.var(GVAR_MACHINE))) then
+		 	'	do_install_server=-2
+			'	set pPerf = nothing
+			'	exit function
+			'end if
+
+
+			'install mssql2000 if necessary
+			if doc_.system.osid = 1 then
+				set pPerf = nothing
+				MessageBox "Wymagana jest instalacja MSDE 2000. Po jej zakończeniu, ponownie zostanie uruchomiony program instalacyjny #*varApplication", "Wymagana instalacja MSDE 2000", vbOKOnly, vbInformation
+			end if
+			
+			nResult = pageUtil.install_msde80(instses, strUID, strPWD)
+
+			'3010 - ERROR_SUCCESS_REBOOT_REQUIRED
+			'3011 -  ERROR_SUCCESS_RESTART_REQUIRED
+
+			if nResult = 3011 then
+				do_install_server = 3011
+				exit function
+			end if
+
+			if nResult = 3010 then
+				instses.addlogmsg "Installation of MSDE 2000 is successful, but OS reboot is required"
+				set pPerf = nothing
+				MessageBox "Instalacja MSDE 2000 zakończyła się pomyślnie. Wymagany jest restart komputera", "Wymagany restart", vbOKOnly, vbInformation
+				do_install_server = 3010
+				exit function
+			end if
+
+			if nResult <> 0  then
+				instses.addlogmsg "Installation of MSDE 2000 failed"
+				exit function
+			end if
+
+			'we just installed our instance
+			strSQLServerName = strSQLServerNamePARAM' + "\NAVO2002"
+		
+		'--- elseif (nSQL7Result=-1) then
+		'--- 	'Serwer istnieje ale nie udało się do niego podłączyć.
+		'--- 	instses.addlogmsg "SQL Server exists but I couldn't establish the connection."
+		'--- 	do_install_server=-2
+		'--- 	set pPerf = nothing
+		'--- 	exit function
+		'--- else
+		'--- 	instses.addlogmsg "MSSQL Server 7.0 detected. Server name:" + cstr(strSQLServerNamePARAM)
+		'--- 	'SQL7: ustaw w registry lokalny komputer
+		'--- 	instses.addlogmsg "Adding a string into registry: Server=""" + cstr(strSQLServerNamePARAM) + """"
+		'--- 	sysobj.registry(hKey_LocalMachine,"SOFTWARE\NAVO\NAVO2002\Database","Server") = strSQLServerNamePARAM
+		'--- 	strSQLServerName = strSQLServerNamePARAM
+		'--- end if
+
+	else
+		'use existing instance
+		instses.addlogmsg "MSSQL Server 2000 detected and will be used. Server name:" + strSQLServerName
+
+		'SQL 200: ustaw w registry lokalny komputer
+		instses.addlogmsg "Setting registry to: Server=""" + strSQLServerName + """"
+		sysobj.registry(hKey_LocalMachine,"SOFTWARE\NAVO\NAVO2002\Database","Server") = strSQLServerName
+	end if
+
+	'..................................................
+	'Instalacja źródel danych dla Navo Firma
+	'..................................................
+	install_FirmaODBC pageUtil, instses, bReinstall, true
+
+	'..................................................
+	'zapisujemy profile backup'u dla Navo Archiwizacji
+	'..................................................
+	if not CreateBackupProfile(strSQLServerName) then
+		'trans_.message 1, 0, "Nie udał się zapis ustawień backup'u dla Navo Archiwizacji."
+		view_message 6180, 0
+	end if
+
+	'
+	' utwórz pustą bazę danych
+	'
+
+	set pPerf = doc_.performing("Łączenie z serwerem SQL '" + UCase(strSQLServerName) + "'")
+
+	' logowanie
+	dim sqls
+	instses.addlogmsg "Connecting to MSSQL Server..."
+	set sqls = createobject("SQLDMO.SQLServer")
+
+	instses.addlogmsg "Starting SQL Server on " + strSQLServerName
+
+	err.clear
+	on error resume next
+
+	sqls.Connect strSQLServerName, strUID, strPWD 'try to connect
+	
+	if (err.number <> 0) then
+
+		err.clear
+		sqls.start false, strSQLServerName, strUID, strPWD
+		'1056 = ERROR_SERVICE_ALREADY_RUNNING
+		if (err.number <> 0 and err.number <> 1056) then
+			instses.addlogmsg "Starting SQL Server failed. Error code=" + Cstr(err.number)
+			do_install_server=-2
+			exit function
+		end if
+
+	else
+		sqls.disconnect
+	end if
+	
+	on error goto 0
+	err.clear
+
+	instses.addlogmsg "SQL Server on " + strSQLServerName + " started. Now connecting"
+
+
+	dim strSqlUserName: strSqlUserName = strUID
+	g_strSQLLogin = strSqlUserName
+
+	dim strSqlPassword: strSqlPassword = strPWD
+
+	on error resume next
+	err.clear
+	sqls.connect strSQLServerName, strSqlUserName, strSqlPassword
+	if err.number>0 then
+		set pPerf = nothing
+
+		' teraz try z podaniem hasła przes usera
+		dim bRetryWhile: bRetryWhile = true
+		while bRetryWhile
+			if pageUtil.show_logon_dialog("Zaloguj do serwera SQL", strSqlUserName, strSqlPassword) then
+				err.clear
+				sqls.connect strSQLServerName, strSqlUserName, strSqlPassword
+				if err.number>0 then
+					' nie udało się, trzeba ponownie
+					instses.addlogmsg "Connecting to MSSQL Server as '" + strSqlUserName + "' failed. code:" +_
+						cstr(clng(err.number)) + ", description: " + cstr(err.description)
+				else
+					instses.addlogmsg "Connecting to MSSQL Server as '" + strSqlUserName + "': success"
+					bRetryWhile = false ' uciekamy z petli: success
+				end if
+			else
+				instses.addlogmsg "Connecting to MSSQL Server failed: Action cancelled"
+				exit function
+			end if
+		wend
+
+		set pPerf = create_performing_widget()
+	end if
+	on error goto 0
+	err.clear
+
+	instses.addlogmsg "Connecting to MSSQL Server: success"
+	instses.addlogmsg "MSSQL Server version: " + cstr(sqls.VersionMajor) + "." + cstr(sqls.VersionMinor)
+	instses.addlogmsg "Additional informations for MSSQL Server: " + cstr(sqls.VersionString)
+	instses.addlogmsg "MSSQL Server language: " + cstr(sqls.Language)
+	instses.addlogmsg "MSSQL Server time: " + cstr(sqls.ServerTime)
+	instses.addlogmsg "ODBC version: " + cstr(sqls.Application.ODBCVersionString)
+
+
+	'----- analiza wersji bazy danych ---- 
+	dim nExistingDBVersion : nExistingDBVersion = get_application_db_version(sqls,instses,m_strDBName)
+	if nExistingDBVersion < 0 then
+		exit function
+	end if
+
+	instses.addlogmsg "ExistingDBVersion: " + cstr(nExistingDBVersion)
+	
+	'wykryto wersję aktualną 
+	set pPerf = nothing
+	if nExistingDBVersion > CURRENT_DB_VERSION then
+		MessageBox "Baza danych '" + m_strDBName + "' na serwerze " + strSQLServerName +_
+		" jest w nowszej wersji [ "  + cstr(nExistingDBVersion) +_ 
+		"], niż wersja aplikacji którą instalujesz [ CURRENT_DB_VERSION ]", "Instalacja niemożliwa", vbOKOnly, vbInformation
+		exit function
+	end if
+
+	if nExistingDBVersion = CURRENT_DB_VERSION then
+
+		dim pytanie:pytanie = MessageBoxCustom("Baza danych '" + m_strDBName + "' na serwerze " + strSQLServerName +_
+		" jest w aktualnej wersji. Nie ma potrzeby instalacji bazy danych. Czy kontynuować ?", _
+			"Wykryto bazę danych", vbYesNoCancel, vbQuestion, "Instaluj nową bazę;Nie instaluj bazy;Przerwij instalację")
+
+		if pytanie = vbCancel then
+			exit function
+		elseif pytanie = vbNo then
+			'ale instalujemy klienta
+
+			if not doc_.getmodule(72000).do_install_client() then
+				instses.addlogmsg "Cannot install client"
+				MessageBox "Instalacja nie została dokonana. Zajrzyj do pliku """ + strAppName + " Client Setup.txt"" aby uzyskać więcej informacji", "Instalacja nie została dokonana", vbOKOnly, vbInformation
+				exit function
+			end if
+			do_install_server = clng(0)
+			exit function
+		end if
+
+		pytanie = MessageBoxCustom("Ponowna instalacja bazy danych USUNIE WSZYSTKIE DANE. Czy na pewno kontynuować ?", _
+			"Wymagane potwierdzenie", vbYesNoCancel, vbQuestion, "Usuń dane;Nie usuwaj danych;Przerwij instalację")
+
+		if pytanie = vbCancel then
+			exit function
+		elseif pytanie = vbNo then
+			do_install_server = clng(0)
+			exit function
+		end if
+
+		nExistingDBVersion = 0
+	end if
+	if nExistingDBVersion > 0 and nExistingDBVersion < CURRENT_DB_VERSION  then
+		dim nResult2:nResult2 = MessageBoxCustom("Baza danych '" + m_strDBName + "' na serwerze " + strSQLServerName +_
+		" jest w starszej wersji [ " + cstr(nExistingDBVersion) +_ 
+		" ]. Zostanie przeprowadzona aktualizacja do wersji [ CURRENT_DB_VERSION ]. Czy kontynuować ?", _
+			"Wykryto bazę danych", vbYesNoCancel, vbQuestion, "Kontynuuj;Zainstaluj nową;Przerwij instalację")
+		if nResult2=vbCancel then
+			exit function
+		elseif nResult2=vbNo then
+			nExistingDBVersion = clng(0)
+		end if
+	end if
+
+	set pPerf = doc_.performing("Instalowanie bazy danych . . . .")
+	'no version - new db
+	if nExistingDBVersion = 0 then
+		'---- drop old db --------
+		if not sql_drop_database(sqls,instses,m_strDBName) then
+			exit function
+		end if
+
+		'---- rename existing DB files ---------
+		if not sql_rename_db_files(sqls,instses,strInstRoot,m_strDBName) then
+			exit function
+		end if
+
+		instses.addlogmsg "Preparating to create database..."
+		
+		'system_install
+		
+		if not sql_prepare_and_execute_script(sqls,instses,bLocalInstall,_
+			strInstRoot,m_strDBName,50400 + CURRENT_DB_VERSION) then
+			exit function
+		end if
+		'create_tables
+		if not sql_prepare_and_execute_script(sqls,instses,bLocalInstall,_
+			strInstRoot,m_strDBName,50420 + CURRENT_DB_VERSION) then
+			exit function
+		end if
+	else
+		instses.addlogmsg "Preparating to upgrade database..."
+		'drop_objects
+		if not sql_prepare_and_execute_script(sqls,instses,bLocalInstall,_
+			strInstRoot,m_strDBName,50460 + CURRENT_DB_VERSION) then
+			exit function
+		end if
+		dim iter
+		'upgrade vold -> vnew
+		for iter = nExistingDBVersion to CURRENT_DB_VERSION - 1
+			instses.addlogmsg "Upgrading database... from version " + cstr(iter)
+			if not sql_prepare_and_execute_script(sqls,instses,bLocalInstall,_
+				strInstRoot,m_strDBName,50480 + iter + 1) then
+				exit function
+			end if
+
+			instses.addlogmsg "Database upgraded from version " + cstr(iter)
+		next 
+	end if
+
+	'create_objects
+	if not sql_prepare_and_execute_script(sqls,instses,bLocalInstall,_
+		strInstRoot,m_strDBName,50440 + CURRENT_DB_VERSION) then
+		exit function
+	end if
+	'system_finish
+	if not sql_prepare_and_execute_script(sqls,instses,bLocalInstall,_
+		strInstRoot,m_strDBName,50399) then
+		exit function
+	end if
+
+	instses.addlogmsg "Server setup: success (upgraded database structures)"
+
+	set pPerf = create_performing_widget()
+
+	
+	'automatycznie zainstaluj klienta
+	instses.addlogmsg "Client setup..."
+	if not doc_.getmodule(72000).do_install_client() then
+		instses.addlogmsg "Cannot install client"
+		MessageBox "Instalacja nie została dokonana. Zajrzyj do pliku """ + strAppName + " Client Setup.txt"" aby uzyskać więcej informacji", "Instalacja nie została dokonana", vbOKOnly, vbInformation
+		set pPerf = nothing
+		exit function
+	end if
+
+	instses.addlogmsg "Client setup: success"
+
+	'uninstall information - last because used as installation marker (see fopen)
+	sysobj.registry(hKey_LocalMachine,strUnInKey,"UninstallString") = strPath + "navo2002.exe" +_
+		" -s ""varCmd=CMD_OPEN_STATIC_PAGE varDestPage=72003 varApplication='#*varApplication' varUninstall='1' """
+	sysobj.registry(hKey_LocalMachine,strUnInKey,"DisplayName") = strAppName + " Serwer"
+
+	'zapisz informacje o wersji bazy
+	sysobj.registry(hKey_LocalMachine,"SOFTWARE\NAVO\NAVO2002\Database", m_strDBName) = CURRENT_DB_VERSION_VARIANT
+
+	instses.addlogmsg "Adding an unistall information into registry: success"
+
+	set pPerf = nothing
+	'
+	dim pInitModule
+	set pInitModule=doc_.getmodule(60121)
+
+	if nExistingDBVersion = 0 then
+		'TODO: to działa tylko dla domyślnej bazy navo2002
+		'natomiast dla innych nie jest wołane
+
+		if not pInitModule.system_init_first_time() then
+			exit function
+		end if
+	else
+		
+		'--- tylko dla upg z VER 1 robimy rebuild stanów magazynowych --
+		'---------------------------------------------------------------
+
+
+		dim cursor
+		dim idUser
+
+		if nExistingDBVersion = 1 then
+			dim pGMModule4Ver1
+			set pGMModule4Ver1=doc_.getmodule(60253)
+			'3. rebuild stanów magazynowych
+			if not pGMModule4Ver1.rebuid_gm_from_dokmag then
+				exit function
+			end if
+		end if
+		'-----------------------------------------
+		'w tym miejscu mogą być wstawione procedury VB do upgrade jeśli
+		'nie jest to robione przez SQL
+		'procedura może być interaktywna (pytać się użytkownika)
+		'1. dodanie profilo globalnych
+		'2. dodanie profili użytkowników
+
+		if nExistingDBVersion = 3 then
+
+			PreloadSecurityObj_BD4()
+			PreloadN5DPC()
+
+			setglobprofile GLOBPROF_CUSTOM_NUMERATOR , 0
+			setglobprofile GLOBPROF_PRICE_SYSTEM , clng(1)
+			setglobprofile GLOBPROF_PLLISTAPLAC_NRDOK_FORMAT, "%r/%m/%n"
+			setglobprofile GLOBPROF_GM_BORDER , GM_BORDER_ALL_BAD
+
+			if not doc_.getmodule(60268).perform_Preload_Object_Security then
+				instses.addlogmsg "Nie udał się upgrade uprawnień"
+				exit function
+			end if
+					
+
+			' TODO - upgrade rejestrów dokuemntów - aby zachować ustawnienia przycisków
+
+
+
+			dim elem , strConfig
+			idUser = trans_.findobjid(TYPEID_N5UZYTKOWNIK, "strLogin='" + ADMIN_LOGIN + "'")
+			if idUser > clng(0) then
+				trans_.var(GVAR_USER)=idUser
+			end if
+
+
+			set cursor = trans_.createrawcursor(TYPEID_N5REJESTRDOK,"","","")
+			for each elem in cursor
+				strConfig = elem.strKonfiguracja
+				strConfig = replace (strConfig , vbCrLf , REJDOK_CONG_SEPARATOR )
+				elem.strKonfiguracja = strConfig
+			next
+
+			if not trans_.saveobjects then
+				instses.addlogmsg "Nie udał się upgrade rejestrów dokumentów (z wersji 3)"
+				exit function
+			end if
+
+
+			trans_.execsql "exec n5dekret_sums_repair"
+			
+			trans_.var(GVAR_USER)=clng(0)			
+
+			nExistingDBVersion = 4
+			'wymuszamy upgrade na 5 wersje
+
+		end if
+
+
+		if nExistingDBVersion = 4 then
+
+
+			idUser = trans_.findobjid(TYPEID_N5UZYTKOWNIK, "strLogin='" + ADMIN_LOGIN + "'")
+			if idUser > clng(0) then
+				trans_.var(GVAR_USER)=idUser
+			end if
+
+			
+			if not doc_.getmodule(60268).perform_Preload_Object_Security or not PreloadSecurityObj_BD5 then
+				instses.addlogmsg "Nie udał się upgrade rejestrów dokumentów (z wersji 4)"
+				exit function
+			end if		
+			
+
+			if not upgrade_rejdok_db5() then
+				MessageBox "Nie udał się upgrade rejestrów dokumentów - informacji szukaj w pliku z komunikatami systemowymi. Zmian musisz dokonać ręcznie.", "Upgrade", vbOKOnly, vbInformation
+				trans_.discard()
+			end if
+
+			if not upgrade_plat_db5() then
+				MessageBox "Nie udał się upgrade płatności - informacji szukaj w pliku z komunikatami systemowymi. Zmian musisz dokonać ręcznie.", "Upgrade", vbOKOnly, vbInformation
+				trans_.discard()
+			end if					
+
+			if not upgrade_sprzedaz_db5() then	
+				MessageBox "Nie udał się dokumentów sprzedaży - informacji szukaj w pliku z komunikatami systemowymi. Zmian musisz dokonać ręcznie.", "Upgrade", vbOKOnly, vbInformation
+				trans_.discard()
+			end if
+
+
+#ifdef _INTERGLOBAL
+			'przestawiamy rejdok_eZasadaRapKas na co 10 dni
+			dim rs:set rs = trans_.createrawcursor(TYPEID_N5REJESTRDOK,"","","")
+			dim rejdok
+			for each rejdok in rs
+				rejdok.rejdok_eZasadaRapKas = clng(3)
+			next
+			if not trans_.saveobjects() then
+				MessageBox "Nie udało się przestawienie sposobu generowania raportu kasowego dla rejestrów - informacji szukaj w pliku z komunikatami systemowymi. Zmian musisz dokonać ręcznie.", "Upgrade", vbOKOnly, vbInformation				
+				trans_.discard()
+			end if
+#endif
+						
+			trans_.var(GVAR_USER)=clng(0)
+
+			nExistingDBVersion = 5
+			'wymuszamy upgrade na 6 wersje
+
+
+			trans_.discard()
+
+			if not pInitModule.system_savedbversion(nExistingDBVersion) then
+				exit function
+			end if
+
+			trans_.discard()
+						
+		end if
+
+
+
+		if nExistingDBVersion = 5 then
+
+			if not doc_.getmodule(60268).perform_Preload_Object_Security or not PreloadSecurityObj_BD6 or not PreloadUzbrPlacowe_BD6 then
+				instses.addlogmsg "Nie udał się upgrade uprawnień, publikacji lub uzbrojenia płacowego (z wersji 5)"
+				exit function
+			end if	
+
+
+			if not doc_.getmodule(60268).PreloadN5DPC_STD(N5DPC_PUBTYPE_OFERTY_WLASNE) then
+				instses.addlogmsg "Nie udał się upgrade publikacji (z wersji 5)"
+				exit function
+			end if
+			
+			'profile do db6
+			setglobprofile GLOBPROF_EWID_ETYKIET_FORMAT, "%n"
+			setglobprofile GLOBPROF_EWID_ETYKIET_NR, 0
+			setglobprofile GLOBPROF_EWID_ETYKIET_AUTONUM , "1"	
+			setglobprofile GLOBPROF_EWID_ETYKIET_LICZNIK, 0
+
+			setglobprofile GLOBPROF_PRAC_FORMAT, "%n"
+			setglobprofile GLOBPROF_PRAC_NR, 0
+			setglobprofile GLOBPROF_PRAC_AUTONUM , "1"
+
+			setglobprofile GLOBPROF_SRTRW_FORMAT, "%n"
+			setglobprofile GLOBPROF_SRTRW_NR, 0
+			setglobprofile GLOBPROF_SRTRW_AUTONUM , "1"
+
+
+			if not pInitModule.system_savedbversion(CURRENT_DB_VERSION) then
+				exit function
+			end if
+			nExistingDBVersion = 6
+
+		end if
+
+
+		if nExistingDBVersion = 6 then
+
+			if not doc_.getmodule(60268).perform_Preload_Object_Security or not PreloadSecurityObj_BD7 then
+				instses.addlogmsg "Nie udał się upgrade uprawnień, publikacji lub uzbrojenia płacowego (z wersji 6)"
+				exit function
+			end if
+			
+			if not pInitModule.system_savedbversion(CURRENT_DB_VERSION) then
+				exit function
+			end if	
+			nExistingDBVersion = 7
+		end if
+
+		if nExistingDBVersion = 7 then
+
+			if not doc_.getmodule(60268).upgrade_data_db7_to_db8(instses) then
+				instses.addlogmsg "Nie udał się upgrade (z wersji 7)"
+				exit function
+			end if
+			
+			if not pInitModule.system_savedbversion(CURRENT_DB_VERSION) then
+				exit function
+			end if
+
+			nExistingDBVersion = 8
+
+		end if
+
+		if nExistingDBVersion = 8 then
+
+			if not doc_.getmodule(60268).upgrade_data_db8_to_db9(instses) then
+				instses.addlogmsg "Nie udał się upgrade (z wersji 8)"
+				exit function
+			end if
+			
+			if not pInitModule.system_savedbversion(CURRENT_DB_VERSION) then
+				exit function
+			end if
+			MessageBox "Po zakonczeniu instalacji nalezy uruchomic system jako Administrator aby dokonczyc konwersje", "Konwersja Danych", vbOKOnly, vbInformation
+				
+		  nExistingDBVersion = 9
+		end if
+
+		if nExistingDBVersion = 9 then
+			'to do: uzupelnic
+			'na razie jest wstawianie nowych profili
+			'setglobprofile GLOBPROF_KLOB_NRDOK_FORMAT, "%n"
+			'setglobprofile GLOBPROF_KLOB_NRDOK,			0
+			'setglobprofile GLOBPROF_KLOB_AUTONUM,		"1"
+				doc_.getmodule(60121).system_saveglobprof GLOBPROF_KLOB_NRDOK_FORMAT,			"%n"
+				doc_.getmodule(60121).system_saveglobprof GLOBPROF_KLOB_NRDOK,	0
+				doc_.getmodule(60121).system_saveglobprof GLOBPROF_KLOB_AUTONUM,	"1"
+			
+			if not pInitModule.system_savedbversion(CURRENT_DB_VERSION) then
+				exit function
+			end if
+		end if
+
+		if nExistingDBVersion = 10 then
+			'upgrade z db10 do db11 - dodane l50471_drop, l50490_upg, l50451_create
+
+			if not pInitModule.system_savedbversion(CURRENT_DB_VERSION) then
+				exit function
+			end if
+		end if
+
+	end if
+
+	if not pInitModule.system_savedbversion(CURRENT_DB_VERSION) then
+		exit function
+	end if
+
+	do_install_server = 0
+end function
+
+#include "50120"
+
+function upgrade_plat_db5()
+
+	upgrade_plat_db5 = true
+
+
+		dim idRokKs: idRokKs = findCurrentRKS()
+		trans_.var(GVAR_ROKKSIEG) = clng(idRokKs)
+		dim pRKS: set pRKS = getCurrentRKS()
+
+		dim cursor: set cursor = trans_.createrawcursor(TYPEID_N5PLATNOSC,"dDataOper BETWEEN " + trans_.afc.convert.date2SQL(pRKS.dDataRozp) + " and " + trans_.afc.convert.date2SQL(pRKS.dDataZakon),"dDataOper","")
+
+		dim plat
+		trans_.var(GVAR_OPERATION_MODE) = clng(OPERATION_MODE_IMPORT)
+		dim perf
+		set perf = doc_.performing("upgrade płatności ..... ")		
+		for each plat in cursor
+			perf.text = "upgrade płatności ..... " +  plat.text
+			plat.n5platnosc_configure_for_db_ver5()
+			if not trans_.saveobjects() then
+				set perf = nothing
+				trans_.message 1002 , 0 , "Nie udał się upgrade płatności " + plat.text
+				upgrade_plat_db5 = false
+				trans_.discard
+				exit function
+			end if
+		next
+
+		set perf = nothing
+
+end function
+
+
+
+
+
+function upgrade_rejdok_db5()
+
+	dim rs:set rs = trans_.createrawcursor(TYPEID_N5REJESTRDOK,"","","")
+	dim rejdok
+
+	dim perf
+	set perf = doc_.performing("upgrade rejestrów dokumentów ..... ")
+
+	for each rejdok in rs
+		perf.text = "upgrade rejestrów dokumentów ..... " +  rejdok.text
+		rejdok.n5rejestrdok_configure_for_db5( false )
+		if rejdok.eTyp = 9 then
+			rejdok.rejdok_strFormatNumeracji3 = "RAPKAS/" + cstr(rejdok.idobj) + " %r/%n"
+		end if
+		if rejdok.eTyp = 10 then
+			rejdok.rejdok_strFormatNumeracji3 = "RAPBANK/" + cstr(rejdok.idobj) + " %r/%n"
+		end if
+
+#ifdef _INTERGLOBAL
+		' w czasie upgrade dla IG raporty generowane codziennie
+		rejdok.rejdok_eZasadaRapKas = clng(1)	
+#endif
+	next	
+
+	perf.text = "upgrade rejestrów dokumentów ..... zapis danych"
+
+	upgrade_rejdok_db5 = trans_.saveobjects()
+
+	if not upgrade_rejdok_db5 then
+		trans_.message 1002 , 0 , "Nie udał się upgrade rejestrów dokumentów"
+	end if
+
+	set perf = nothing
+
+end function
+
+
+
+
+function upgrade_sprzedaz_db5()
+
+	upgrade_sprzedaz_db5 = true
+
+	dim idRokKs: idRokKs = findCurrentRKS()
+	trans_.var(GVAR_ROKKSIEG) = clng(idRokKs)
+	dim pRKS: set pRKS = getCurrentRKS()
+
+
+
+	dim adors:set adors = trans_.createadors("select idobj from n5sprzedaz where (dDataWyst BETWEEN " + trans_.afc.convert.date2SQL(pRKS.dDataRozp) + " and " + trans_.afc.convert.date2SQL(pRKS.dDataZakon) + ") and ( idobj in (select pFaktura from n5sprzedaz) ) order by dDataWyst " )
+
+	dim pSubTrans,sprzed
+
+	dim perf
+	set perf = doc_.performing("upgrade dokumentów sprzedaży ..... ")
+
+	while not adors.eof
+		set pSubTrans=trans_.createsubtran()
+
+			set sprzed = trans_.getobj(TYPEID_N5SPRZEDAZ, clng(adors.fields("idobj").value) )
+			perf.text = "upgrade dokumentów sprzedaży ..... " +  sprzed.text + ",  " + cstr(sprzed.dDataWyst)
+			sprzed.n5sprzedaz_configure_for_db5
+			if not trans_.saveobjects() then
+				upgrade_sprzedaz_db5 = false
+				trans_.message 1002 , 0 , "Konwersja " + sprzed.text + " - nieudana"
+				trans_.discard
+			end if
+
+		set pSubTrans=nothing
+		adors.movenext
+	wend
+	
+	set perf = nothing 
+
+end function
+
+
+
+
+
+
+
+function on_install_server()
+
+	dim strSQLServerName, strUID, strPWD
+
+	if (bSetupMode) then
+
+		if (len(trim(m_strDBName))=0) then
+			MessageBox "W trybie zaawansowanym musisz podać nazwę BAZY DANYCH SQL", "Brak danych", vbOKOnly, vbInformation
+			exit function
+		end if
+
+		if (len(trim(m_strServer))=0) then
+			MessageBox "W trybie zaawansowanym musisz podać nazwę SERWERA SQL", "Brak danych", vbOKOnly, vbInformation
+			exit function
+		end if
+
+		if (len(trim(m_strUserName))=0) then
+			MessageBox "W trybie zaawansowanym musisz podać nazwę UŻYTKOWNIKA logowania do serwera SQL", "Brak danych", vbOKOnly, vbInformation
+			exit function
+		end if
+
+		strSQLServerName=UCase(Trim(m_strServer))
+
+		if (strSQLServerName="." or strSQLServerName="(local)" or _
+			strSQLServerName="(lokalny)") then
+				strSQLServerName=UCase(trans_.var(GVAR_MACHINE) + "\NAVO2002")
+		end if
+		
+		strUID=m_strUserName
+		strPWD=m_strPassword
+		m_strDBName=trim(m_strDBName)
+
+	else
+
+		m_strDBName="navo2002"
+		strSQLServerName=UCase(trans_.var(GVAR_MACHINE) + "\NAVO2002")
+		strUID="sa"
+		strPWD=""
+
+	end if
+
+	dim bEndOfInstall
+	bEndOfInstall=false
+
+	do
+
+		dim nResult : nResult = do_install_server( strSQLServerName, strUID, strPWD )
+
+		'-2 - nie udalo sie polaczyc z serwerem SQL znajdujacym sie
+		'na innej maszynie
+		if (nResult <> -2) then
+			bEndOfInstall=true
+		else
+			if MessageBoxCustom("Nie udało się połączyć z serwerem SQL o nazwie '" + strSQLServerName + "'", "Nie udało się połączyć", vbYesNo, vbInformation, "Ponów próbę;Przerwij instalację")<>vbYes then
+				bEndOfInstall=true
+			end if
+		end if
+
+	loop until bEndOfInstall
+
+	
+	'......................................................
+	' Konczymy instalcje i dajemy odpowiedni komunikat
+	'......................................................
+
+	if nResult = 0 then
+		MessageBox "Instalacja zakończyła się pomyślnie. Możesz uruchomić teraz " + strAppName + " z ikony na pulpicie", "Instalacja zakończona", vbOKOnly, vbInformation
+	else
+		if nResult <> 3010 and nResult <> 3011 then
+			MessageBox "Instalacja nie została dokonana. Zajrzyj do pliku """ + strAppName + " Serwer Setup.txt"" aby uzyskać więcej informacji", "Instalacja nie została dokonana", vbOKOnly, vbInformation
+
+#ifndef _DEBUG
+			'RELEASE ONLY:
+			'call uninstall procedure
+			doc_.getmodule(72003).do_uninstall_server
+			doc_.getmodule(72001).do_uninstall_client
+			'END OF RELEASE ONLY
+#else
+			'DEBUG ONLY:
+			MsgBox "DEBUG: Czyszczenie tego co zainstalowane tylko w wersji release"
+			'END OF DEBUG ONLY
+#endif
+
+		else	'reboot
+		end if
+	end if
+	
+	doc_.postcommand "varCmd=CMD_QUIT"
+end function
+
+
+function fopen()
+
+	
+	strAppName=trans_.var(GVAR_APPLICATION)
+
+	strUnInKey = "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\" + strAppName + " Serwer"
+
+	page_.topelement.title = "Instalacja serwera " + strAppName
+
+	dim sysobj
+	set sysobj = doc_.system
+
+	page_.ctrl(2).text = "Naciśnij przycisk 'Zainstaluj' aby rozpocząć instalację serwera aplikacji " + strAppName + " na tym komputerze"
+	page_.ctrl(4).hide = true
+
+	page_.ctrl(1).focus=true
+	bSetupMode=false
+	page_.ctrl(15).hide=true
+
+	m_strDBName="navo2002"
+	if (trans_.isvar(GVAR_DBNAME)) then
+		m_strDBName=trans_.var(GVAR_DBNAME)
+	end if
+	m_strUserName="sa"
+	m_strPassword=""
+	m_strServer=trans_.var(GVAR_MACHINE) + "\NAVO2002"
+
+	fopen = true
+end function
+
+function fback()
+	fback = std_fback()
+	doc_.postcommand "varCmd=CMD_QUIT"
+end function
+
+dim bSetupMode
+dim m_strUserName	'nazwa uzytkownika SQL
+dim m_strPassword   'haslo użytkownika SQL
+dim m_strServer	    'serwer SQL
+dim m_strDBName		'nazwa bazy
+
+function c10_ongetdata(ctrl)
+	if bSetupMode then
+		ctrl.value = "1"
+	else
+		ctrl.value = "0"
+	end if
+	c10_ongetdata = true
+end function
+
+function c10_ondataentered(ctrl, value)
+	if value="1" then
+		page_.ctrl(15).hide=false
+		bSetupMode = true
+	else
+		page_.ctrl(15).hide=true
+		bSetupMode = false
+	end if
+
+	c10_ondataentered = true
+end function
+
+'ctrl<->m_strUserName
+function c11_ongetdata(byref oCtrl): c11_ongetdata=true
+	oCtrl.text=m_strUserName
+end function
+
+function c11_ondataentered(byref oCtrl, byval newValue)
+	m_strUserName=CStr(newValue)
+	c11_ondataentered=true
+end function
+
+
+'ctrl<->m_strPassword
+function c12_ongetdata(byref oCtrl): c12_ongetdata=true
+	oCtrl.text=m_strPassword
+end function
+
+function c12_ondataentered(byref oCtrl, byval newValue)
+	m_strPassword=CStr(newValue)
+	c12_ondataentered=true
+end function
+
+function c13_ongetdata(byref oCtrl): c13_ongetdata=true
+	oCtrl.text=m_strServer
+end function
+
+function c13_ondataentered(byref oCtrl, byval newValue)
+	m_strServer=CStr(newValue)
+	c13_ondataentered=true
+end function
+
+function c338_ongetdata(byref oCtrl): c338_ongetdata=true
+	oCtrl.text=m_strDBName
+end function
+
+function c338_ondataentered(byref oCtrl, byval newValue)
+	m_strDBName=CStr(newValue)
+	c338_ondataentered=true
+end function
+
+
+]]>
+
+</script>
+</config>
+<header>
+</header>
+	<body>
+		<table>
+			<tbody>
+				<tr>
+					<td>
+						<picture image='PICTURE_WIZZARD_INSTALL_SERVER' 
+							width='WIDTH_FOR_WIZZARD' height='HEIGHT_FOR_WIZZARD'/>
+					</td>
+					<td>
+		<table><tbody>
+		<tr>
+			<td style='STYLE_TABLE_INFO'>
+				<text name='t2'></text>
+				<text forecolor='red' bold='true' name='t4' />
+			</td>
+		</tr>
+
+		<tr><td><t/><br/></td></tr>
+
+		<tr>
+		<td>
+		
+		<t/><br/>
+		<checkbox name='e10'>
+			<t>Opcje zaawansowane</t>
+			<transfer mode='custom'/>
+		</checkbox>
+		<t/><br/>
+
+		<table name='e15'>
+			<tbody>
+				<tr>
+					<td style='STYLE_TABLE_HEADER' colspan='2'>
+						<t bold='true'>Połączenie</t>
+					</td>
+				</tr>
+
+				<tr>
+					
+					<td width='min'>
+						<t>Serwer SQL</t>
+					</td>
+
+					<td>
+						<edit name='e##13' size='30'>
+							<transfer mode='custom'></transfer>
+						</edit>
+					</td>
+
+				</tr>
+
+				<tr>
+					
+					<td width='min'>
+						<t>Użytkownik</t>
+					</td>
+
+					<td>
+						<edit name='e##CTRL_USER_NAME' size='30'>
+							<transfer mode='custom'></transfer>
+						</edit>
+					</td>
+
+				</tr>
+
+				<tr>
+					
+					<td width='min'>
+						<t>Hasło</t>
+					</td>
+
+					<td>
+						<edit password='true' name='e##CTRL_USER_PWD' size='30'>
+							<transfer mode='custom'></transfer>
+						</edit>
+					</td>
+
+				</tr>
+
+				<tr>
+					<td style='STYLE_TABLE_HEADER' colspan='2'>
+						<t bold='true'>Baza danych</t>
+					</td>
+				</tr>
+
+				<tr>
+					
+					<td width='min'>
+						<t>Nazwa</t>
+					</td>
+
+					<td>
+						<edit name='e##CTRL_DB_NAME' size='30'>
+							<transfer mode='custom'></transfer>
+						</edit>
+					</td>
+
+				</tr>
+
+				<tr>
+					<td>
+						<t/><br/>
+					</td>
+				</tr>
+
+
+			</tbody>
+		</table>
+
+		</td>
+		</tr>
+
+		
+		</tbody></table>
+				</td>
+			</tr>
+			<tr style='STYLE_ROW_BTN' width='max'>
+				<td />
+				<td align='right'>
+					<button style='STYLE_BUTTON' name='t1' href='varFunction="on_install_server"'>Zainstaluj</button><t/>
+					<button style='STYLE_BUTTON' name='t101' href='varCmd=CMD_GOBACK'>Anuluj</button>
+				</td>
+			</tr>
+		</tbody>
+		</table>
+
+	</body>
+	<footer>
+	</footer>
+</page>

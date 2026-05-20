@@ -1,0 +1,298 @@
+#include "h1000.h"
+#include "h1001.h"
+#include "h1222.h"
+
+<?xml version="1.0" encoding="windows-1250" ?>
+<page style='STYLE_PAGE'>
+<config>
+<script>
+<!--
+	Wybierz pole z bazy danych i zwróć composed path
+-->
+<![CDATA[
+
+#include "50203"
+#include "50122"
+
+'czy ma pokazywac referencje do danego obiektu na liscie
+'oznacza ze dla WHERE
+dim g_bShowSelfReference:g_bShowSelfReference=false
+
+'czy ma pokazywac pole do wprowadzania nazwy dla dzikiej referencji
+'tylko dla sekcji SELECT
+dim g_bShowNameForWildReference:g_bShowNameForWildReference=false
+
+'glebokosc dzikiej referencji np dla  (1)10334;wpPointer(2)10333;strNazwa(2)10336;strNazwa(2)(1)
+' to jest 2
+dim g_nDepthOfWildReference:g_nDepthOfWildReference=0
+
+dim g_pPathBuilder: set g_pPathBuilder = nothing
+dim g_nTypeId: g_nTypeId = -1
+
+'ile checkboxow na stronie
+dim g_nctrl_count: g_nctrl_count=0
+
+'nazwa pola
+dim m_strFieldName:m_strFieldName=""
+
+function SetPathBuilder(byref pPathBuilder, byval nTypeId)
+	set g_pPathBuilder = pPathBuilder
+	g_nTypeId = nTypeId
+end function 
+
+function GetPathBuilder()
+	set GetPathBuilder = g_pPathBuilder
+end function 
+
+'--------------------------------------------------------------------------
+'metody prywatne
+'--------------------------------------------------------------------------
+
+function fill_table()
+	dim tab: set tab = doc_.afc.new_tb(page_).attach(page_.ctrl(5000)).removeall
+	dim hli
+	dim pText
+	dim pObjDef: set pObjDef = doc_.stdobjdef.getobjdef(g_nTypeId)
+	dim pFieldDef: set pFieldDef = pObjDef.field( pObjDef.GetFieldIndex(g_pPathBuilder.current.fields(1).name))
+	dim nTypeId: nTypeId = pFieldDef.wildreftypeid(g_nctrl_count)
+
+	while ( nTypeId <> 0 ) 
+		g_nctrl_count=g_nctrl_count+1
+
+		tab.newrow.newcell.addctrl CTRL_TYPE_CHECKBOX, clng(g_nctrl_count)
+		set hli = doc_.createhli()
+		hli.prop(5000) = clng(nTypeId)
+
+		set tab.element.userprop = hli
+
+		set pText = tab.element.addnew (CTRL_TYPE_STATIC, g_nctrl_count + 1000)
+		pText.text = " "
+
+		set hli = doc_.createhli()
+		hli.prop(GVAR_FUNCTIONHLI) = "add_pathhli"
+		hli.prop(5000) = clng(nTypeId)
+		hli.prop(5001) = clng(g_nctrl_count)
+		hli.prop(5002) = 2000 + clng(g_nctrl_count)
+		hli.prop(5003) = 3000 + clng(g_nctrl_count)
+		hli.prop(GVAR_MODALRES) = clng(g_nctrl_count)
+
+		tab.newcell.addtexthli doc_.stdobjdef.getobjdef(nTypeId).humanname , hli
+		tab.newcell.addctrl CTRL_TYPE_STATIC,clng(g_nctrl_count + 3000)
+		tab.element.text = "                              "
+
+		tab.newcell.addctrl CTRL_TYPE_STATIC,clng(g_nctrl_count + 2000)
+		tab.element.text = "                              "
+
+		nTypeId = pFieldDef.wildreftypeid(g_nctrl_count)
+	wend
+
+	set pFieldDef = nothing
+end function
+
+function add_pathhli(byref hli)
+	dim pPM : set pPM = doc_.getmodule(60113)
+	pPM.SetPathBuilder doc_.afc.rap.new_path(hli.prop(5000))
+
+	dim result: result = pPM.select_object_field()
+	dim pBuilder
+
+	if result > 0 then
+		set pBuilder = pPM.GetPathBuilder()
+
+		page_.ctrl( clng( hli.prop(5001))).value = "1"
+		page_.ctrl( clng( hli.prop(5002))).value = pBuilder.cracker.RaportTypeName
+		page_.ctrl( clng( hli.prop(5003))).value = pBuilder.cracker.HumanPathShort
+
+		g_pPathBuilder.AddPath pBuilder.root
+	else
+		g_pPathBuilder.RemovePath( hli.prop(5000))
+		page_.ctrl( clng( hli.prop(5001))).value = "0"
+		page_.ctrl( clng( hli.prop(5002))).value = ""
+		page_.ctrl( clng( hli.prop(5003))).value = ""
+	end if
+
+	set pBuilder = nothing
+end function 
+
+function collect_human_names
+	
+end function 
+
+
+'--------------------------------------------------------------------------
+sub OnSwap(indexFirst, indexSecond)
+	Dim temp
+	temp = pArrTypeids.Value(indexFirst)
+	pArrTypeids.Value(indexFirst)=pArrTypeids.Value(indexSecond)
+	pArrTypeids.Value(indexSecond)=temp
+end sub
+
+'--------------------------------------------------------------------------
+'
+'	select_object_field
+'
+'	nTypeId - typ obiektu do prezentacji
+'	strComposedPath - composed path dla wybranego pola
+'
+'	Pozwala użytkownikowi wybrać pole obiektu bazy danych i zwraca 
+'	composed path z wyborem
+' ZMODYFIKOWANE dla WILD REFERENCES!!!!!!!!!!!!!!!!!!!!!!
+'--------------------------------------------------------------------------
+'leszek function select_object_field(byval szTypeIdList,byref strComposedPath)
+function select_object_field()
+	page_.topelement.title = "Wybór pól dla dzikich referencji "
+
+	if g_bShowNameForWildReference=true and g_nDepthOfWildReference=1 then
+		page_.ctrl(5001).hide=false
+	end if
+	
+	fill_table
+	
+	select_object_field = page_.domodalauto
+end function
+
+
+
+'--------------------------------------------------------------------------
+'
+'	setShowSelfReference
+'
+'	ustawia czy w liscie ma byc pokazana referencja do samego obiektu
+'
+'--------------------------------------------------------------------------
+function setShowSelfReference(byVal val)
+	g_bShowSelfReference=val
+end function 
+
+'--------------------------------------------------------------------------
+'
+'	setShowNameForWildReference
+'
+'czy ma pokazywac pole do wprowadzania nazwy dla dzikiej referencji
+'tylko dla sekcji SELECT
+'
+'--------------------------------------------------------------------------
+function setShowNameForWildReference(byVal val)
+	g_bShowNameForWildReference=val
+end function 
+
+
+'--------------------------------------------------------------------------
+'
+'	setDepthOfWildReference
+'
+'	ustawia glebokosc dla dziekij referencji
+'
+'--------------------------------------------------------------------------
+function setDepthOfWildReference(byVal val)
+	g_nDepthOfWildReference=val
+end function 
+
+
+
+'--------------------------------------------------------------------------
+'
+'	page_OnOk
+'
+'	wychodzi ze strony i zwraca sciezke
+'
+'--------------------------------------------------------------------------
+function page_OnOk()
+	dim iter: iter=1
+	dim bAnyChosen: bAnyChosen = false
+	dim pCtrl
+
+	while iter <= g_nctrl_count
+		set pCtrl = page_.ctrl( clng( iter))
+
+		if cstr( pCtrl.value) = "1" then
+			if g_pPathBuilder.ExistsPath( pCtrl.userprop.prop( 5000)) then
+				bAnyChosen = true
+			end if
+		else
+			g_pPathBuilder.RemovePath( pCtrl.userprop.prop( 5000))
+		end if
+
+		set pCtrl = nothing
+		iter = iter + 1
+	wend
+
+	if g_pPathBuilder.cracker.RaportType < 0 then
+		MessageBox "Wybrane pola są różnych typów. Proszę wybrać pola tego samego typu.", "Uwaga", vbOkOnly, vbInformation
+	else
+		if bAnyChosen then 
+			page_.result = clng(1)
+		else
+			page_.result = clng(0)
+		end if
+
+		page_.goback
+	end if
+end function 
+
+
+
+'--------------------------------------------------------------------------
+function c9001_ongetdata(byref oCtrl): c9001_ongetdata=true
+	oCtrl.text=m_strFieldName
+end function
+
+'--------------------------------------------------------------------------
+function c9001_ondataentered(byref oCtrl, byval newValue)
+	m_strFieldName=CStr(newValue)
+	c9001_ondataentered=true
+end function
+'--------------------------------------------------------------------------
+
+
+]]>
+</script>
+</config>
+	<body>
+		<t/><br/>
+		<table hide='true' name='t5001'>
+			<thead style='STYLE_TABLE_HEADER'>
+				<tr>
+					<td>
+						<t style='STYLE_REQUIRED'>Nazwa pola wyświetlana w nagłówku raportu</t>
+					</td>
+				</tr>
+			</thead>
+			<tbody>
+				<tr style='STYLE_TABLE_BODY'>
+					<td >
+						<edit name='e9001' width='MAXIMIZE_SIZE' style='STYLE_CTRL'>
+							<transfer mode='custom'></transfer>
+						</edit>
+					</td>				
+				</tr>
+			</tbody>
+		</table>
+		<br/>
+		<table name='t5000'>
+			<thead style='STYLE_TABLE_HEADER'>
+				<tr>
+					<td>
+						<t>Aktywny</t>
+					</td>
+					<td>
+						<t>Odwołanie do</t>
+					</td>
+					<td>
+						<t>Pole</t>
+					</td>
+					<td>
+						<t>Typ</t>
+					</td>
+				</tr>
+			</thead>
+			<tbody style='STYLE_TABLE_BODY'>
+			</tbody>
+		</table>
+		<br/>
+
+		XF_BUTTON_CTRLID_SIZE(varFunction="page_OnOk",OK,-1,12)
+
+
+	</body>
+</page>

@@ -1,0 +1,454 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+
+<!-- Logowanie    
+
+#include "h1000.h"
+#include "h1002.h"
+#include "h1200.h"
+#include "h1201.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1240.h"
+#include "h1220.h"
+#include "h1224.h"
+
+#define CTRL_USER_NAME		01
+#define CTRL_USER_PWD		02
+#define CTRL_PICTURE_LOGO	3
+
+#define RESULT_LOGON		-1
+
+
+ -->
+
+
+<page style='STYLE_PAGE' width='min'>
+
+<config>
+<title>
+Logowanie
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+</title>
+<startpos>center</startpos>
+<startfocus>CTRL_USER_PWD</startfocus>
+	<script>
+		<![CDATA[
+
+
+'funckje globalne
+#include "50129"
+#include "50516"
+#include "50122"
+#include "50125"
+#include "50126"
+#include "50611"
+#include "50101"
+
+dim m_strUserName	'nazwa uzytkownika
+dim m_strPassword   'haslo użytkownika
+dim m_idUser		'identyfikator uzytkownika wypelniany tylko gdy 
+					'podano poprawne haslo
+dim m_strLogonError 'zawiera komunikat z informacja czemu sie nie 
+					'udalo logowanie
+
+
+'funckje obslugujace zdarzenia strony
+function fopen(): fopen=true
+#ifdef _ABAKUS
+	if HARUI_FREE(UAR_OGRANICZONY_DOSTEP_DANE_KLIENTA) then
+    fopen = false
+    exit function
+	end if
+#endif
+	page_.result=CMD_GOBACK
+	m_strUserName=UCaseFirst(trans_.var(GVAR_OSUSERNAME))
+#ifdef _DEBUG
+	if m_strUserName="XXXXXX" then
+		m_strUserName=ADMIN_LOGIN
+	end if
+#endif  
+#ifdef _DEBUG
+	if m_strUserName="XXXXXX" then
+		m_strUserName=ADMIN_LOGIN
+	end if
+#endif
+#ifdef _DEBUG
+	if m_strUserName="XXXXXX" then
+		m_strUserName=ADMIN_LOGIN
+	end if
+#endif
+#ifdef _DEBUG
+	if m_strUserName="XXXXXX" then
+		m_strUserName=ADMIN_LOGIN
+	end if
+#endif
+#ifdef _DEBUG
+	if m_strUserName="XXXXXX" then
+		m_strUserName=ADMIN_LOGIN
+	end if
+#endif
+	m_strPassword=""
+	m_strLogonError=""
+	page_.cmdenabled CMD_SAVEFORM, false
+	m_idUser=CLng(0)
+
+	dim pFirma : set pFirma = getCurrentFirma()
+	if (not pFirma is nothing) then
+		if not pFirma.fLogo is nothing then
+			if not pFirma.fLogo.isempty() then
+				set page_.ctrl(CTRL_PICTURE_LOGO).image = pFirma.fLogo
+			end if
+		end if
+	end if
+end function
+
+'funckcej wolane z zewnatrz by ustawic haslo i
+sub setUserPassword(strNewPassword)
+	m_strPassword=strNewPassword
+end sub
+
+'pobrac nazwe user'a
+function getUserName()
+	getUserName=m_strUserName
+end function
+
+'sprawdzamy wersje systemu operacyjnego
+function isNT():isNT=false
+	dim idOS
+	idOS=doc_.system.osid()
+
+	if (idOS=ID_OS_WINNT or _
+		idOS=ID_OS_WIN2K or _
+		idOS=ID_OS_WINXP) then
+			isNT=true
+	end if
+end function
+
+#include "50611"
+
+'OnUserLogon, OnUserLogoff
+#include "50627"
+
+'powoduje rozpoczecie procesu logowania
+'i zwraca true jezeli sie udalo - wolane z zewnatrz
+function logon(): logon=false
+
+	if (not logon_automatically()) then
+		'logownie reczne - pytaj o haslo
+
+		dim pMe: set pMe=doc_.getmodule(PAGE_FORM_LOGON)
+		doc_.pushpage(pMe)
+
+		'nazwa user'a, który sie zalogowal
+		dim strLoggedUserName
+
+		logon=logon_loop(pMe, strLoggedUserName)
+
+		'to poppage może zostać ponieważ jest robione wcześniej activate.
+		'przy loginie do systemu, gdy jest tylko jeden użytkownik
+		pMe.activate
+		doc_.poppage 
+		
+		set pMe=nothing
+
+		if (logon) then
+
+			'czy włączyć udogodnienie - automatyczne logowanie
+			if (isNT() and UCase(strLoggedUserName)=UCase(trans_.var(GVAR_OSUSERNAME))) then
+
+				'sprawdzaj czy moze sie on logowac automatycznie
+				dim nAutoLogon
+				nAutoLogon=getuserprofileLong(USERPROF_AUTOLOGON)
+
+				if (nAutoLogon=0) then
+					if MessageBoxAndForget("Istnieje możliwość automatycznego logowania Ciebie do systemu na podstawie nazwy użytkownika w Windows. Czy chcesz aby włączyć to udogodnienie?", "Logowanie", vbYesNo, vbQuestion, USERPROF_MSGBOX_AUTOLOGON)=vbYes then
+						setuserprofile USERPROF_AUTOLOGON, "1"
+						
+						if trans_.saveobjects() then
+							view_message 4120, 0
+						else
+							MessageBox "Nie udało się włączyć automatycznego logowania", "Logowanie", vbOkOnly, vbInformation
+						end if
+
+					end if
+				end if
+			end if
+
+		end if
+
+	else
+		'udalo sie automatyczne logowanie
+		OnUserLogon true
+		logon=true
+	end if
+
+end function
+
+'petla logowania - otwiera formularz tak dlugo az
+'ktos wprowadzi odpowiednie haslo i nazwe usera
+'lub zrezygnuje z logowania
+function logon_loop(byref pMe, byref strLoggedUserName): logon_loop=false
+	
+	'nie ma nazwy zalogowanego user'a
+	strLoggedUserName=""
+
+	do
+		'za kazdym razem zeruj wpisane na formularz haslo
+		pMe.result=CMD_GOBACK
+		pMe.setUserPassword ""
+
+		dim nResult
+		nResult=pMe.domodal()
+
+		if (nResult<>CMD_CHOICE and nResult<>RESULT_LOGON) then
+			exit function
+		end if
+
+		if (nResult=CMD_CHOICE) then
+			'MessageBox pMe.getErrorMsg(), "Nieudane logowanie", vbOkOnly, vbInformation
+		end if
+
+	loop until (nResult=RESULT_LOGON)
+
+	strLoggedUserName=pMe.getUserName()
+	logon_loop=true
+end function
+
+'probuje zalogowac automatycznie na podstawie autoryzacji
+'Windows NT (2000)
+function logon_automatically(): logon_automatically=false
+
+	'sprawdzamy wersje systemu operacyjnego
+	if isNT() then
+	
+		'pobieramy nazwe user'a z systemu operacyjnego
+		dim strOSUserName
+		strOSUserName=trans_.var(GVAR_OSUSERNAME)
+
+		'szukamy id tego user'a w naszym systemie
+		dim idUser
+		idUser=trans_.findobjid(TYPEID_N5UZYTKOWNIK, "strLogin='" + strOSUserName + "'")
+
+		'jezeli istnieje dokladnie jeden
+		if (idUser>0) then
+
+			'sprawdzaj czy moze sie on logowac automatycznie
+			dim valProf
+			valProf=getuserprofileByID(USERPROF_AUTOLOGON, idUser)
+
+			if isNumeric(valProf) then
+				if (CLng(valProf)=CLng(1)) then
+
+					dim pUser
+					set pUser=trans_.getobj(TYPEID_N5UZYTKOWNIK, idUser)
+
+					if not pUser is nothing then
+						if pUser.eAktywny=N5UZYTKOWNIK_AKTYWNY then
+
+							trans_.var(GVAR_USER)=CLng(idUser)
+
+							'zalogowano automatycznie
+							logon_automatically=true
+						end if
+					else
+						logon_automatically=false
+					end if
+				end if
+			end if
+
+		end if
+
+	end if 'is valid os
+
+end function
+
+'zwraca true jezeli wpisane haslo i nazwa uzytkownika
+'sa poprawne
+function isCorrectPassword()
+	m_idUser = doc_.getmodule(60106).try_logon_user(m_strUserName,m_strPassword,m_strLogonError)
+	isCorrectPassword = (m_idUser <> 0)
+end function
+
+'zwraca id usera z membera
+function getUserID()
+	getUserID=m_idUser
+end function
+
+'zwraca informacje czemu nie udało sie logowanie
+function getErrorMsg()
+	getErrorMsg=m_strLogonError
+end function
+
+'nacisnieto OK
+function page_OnOk(): page_OnOk=true
+	
+	if (isCorrectPassword()) then
+
+		dim bRelogon: bRelogon=false
+		dim nRelogonUser: nRelogonUser = getCurrentUserID()
+		
+		if (nRelogonUser>0) then
+			bRelogon=true
+
+			'Zdarzenie wylogowania się użytkownika
+			OnUserLogoff
+		end if
+
+		trans_.var(GVAR_USER)=CLng(getUserID())
+		page_.result=RESULT_LOGON
+
+		'Zdarzenie zalogowania się
+		OnUserLogon (not bRelogon)
+    
+#ifdef _ABAKUS
+		'ustawi zmienną globalną dla pracownika dedykowanego
+		trans_.var(GVAR_PRACOWNIK_DEDYK) = clng(-1)
+		if HARUI_FREE(UAR_OGRANICZONY_DOSTEP_DANE_KLIENTA) then
+			trans_.var(GVAR_PRACOWNIK_DEDYK) = getPracDedyk()
+		end if  
+#endif    
+
+#ifdef _ALMA_TREND
+    'ustaw zmienną globalną na 1 gdy użytkownik ma ograniczony dostęp do dostawców na wybranych formularzach
+		trans_.var(GVAR_DOSTAWCA_OGRANICZONY_DOSTEP) = clng(0)
+		if HARUI_FREE(UAR_DOSTAWCA_OGRANICZONY_DOSTEP) then
+			trans_.var(GVAR_DOSTAWCA_OGRANICZONY_DOSTEP) = clng(1)
+		end if     
+#endif
+    
+	else
+		view_message 6174, 0
+		page_.result=CMD_CHOICE
+	end if
+
+	page_.goback
+end function
+
+#ifdef _ABAKUS
+'--------------------------------------------
+'funkcja zwraca IdObj pracownika dedykowanego
+'--------------------------------------------
+function getPracDedyk(): getPracDedyk = clng(-1)
+  if trans_.var(GVAR_USER) > clng(0) then
+    dim strWhere
+    strWhere = "IdObj in " + vbNewLine +_
+               "(select n5pracownik.idobj from n5uzytkownik " + vbNewLine +_
+               "inner join n5wykonawca on n5uzytkownik.pWykonawca = n5wykonawca.idobj " + vbNewLine +_
+               "inner join n5pracownik on n5wykonawca.wrefObiekt = n5pracownik.idobj and n5wykonawca.wrefObiekt_wrt = TYPEID_N5PRACOWNIK " + vbNewLine +_
+               "where n5uzytkownik.idobj = " + CStr(getCurrentUserID()) + ")"              
+               
+    dim idPrac: idPrac = trans_.findobjid(TYPEID_N5PRACOWNIK,strWhere)
+    if idPrac > 0 then
+      getPracDedyk = clng(idPrac)
+    end if
+  end if
+end function
+#endif
+
+function usun_hasla
+	dim strsql: strsql = " update n5uzytkownik set strHaslo = '' "
+		trans_.execsql strSQL
+		trans_.message 0,0,"BEGUG: Usunieto wszystkie hasla..."
+end function
+
+'nacisnieto Anuluj
+function page_OnCancel(): page_OnCancel=true
+	page_.result=CMD_GOBACK
+	page_.goback
+end function
+
+
+'ctrl<->m_strUserName
+function c1_ongetdata(byref oCtrl): c1_ongetdata=true
+	oCtrl.text=m_strUserName
+end function
+
+function c1_ondataentered(byref oCtrl, byval newValue)
+	m_strUserName=CStr(newValue)
+	c1_ondataentered=true
+end function
+
+
+'ctrl<->m_strPassword
+function c2_ongetdata(byref oCtrl): c2_ongetdata=true
+	oCtrl.text=m_strPassword
+end function
+
+function c2_ondataentered(byref oCtrl, byval newValue)
+	m_strPassword=CStr(newValue)
+	c2_ondataentered=true
+end function
+
+		]]>
+	</script>
+
+</config>
+
+<header>
+</header>
+
+<body>
+
+
+<table style='STYLE_TABLE'>
+	<tbody>
+		<tr>
+			<td>
+				<picture tip='Tu możesz wstawić swoje logo!' scalingmode='1' width='3230' height='3130' name='CTRL_PICTURE_LOGO' image='80805'/>
+			</td>		
+			<td>
+				<table>
+					<tbody>
+
+
+
+	<tr>
+		<td>
+			<text align='center' width='max' style='STYLE_FORMTITLE'>Witamy w #*varApplication !</text><br/><t/>
+		</td>
+	</tr>
+
+
+
+	<tr>
+		<td keepline='true'>
+			<t bold='true' size='12'
+#ifdef _DEBUG
+				 href='varFunction="usun_hasla"'
+#endif
+				 >Użytkownik</t>
+			<edit tip='Podaj swój "login"' style='STYLE_CTRL' name='e##CTRL_USER_NAME' size='25'>
+			<transfer mode='custom'></transfer>
+			</edit>
+		</td>
+	</tr>
+
+	<tr>
+		<td keepline='true'>
+			<t bold='true' size='12'>Hasło</t>
+			<edit tip='Podaj swoje hasło' style='STYLE_CTRL' password='true' name='e##CTRL_USER_PWD' size='25'>
+			<transfer mode='custom'></transfer>
+			</edit>
+		</td>
+	</tr>	
+
+
+
+						</tbody>
+					</table>				
+				</td>
+			</tr>
+		</tbody>
+</table>
+
+
+XFCANCELOKBUTTONS(page_OnOk,page_OnCancel)
+
+
+
+</body>
+	<footer></footer>
+</page>

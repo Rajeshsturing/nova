@@ -1,0 +1,623 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!-- 9.05.2008  zmiana naliczania w WNT-->
+<!--
+RAPTEMPLATE_VAT_ZAKUP_PODSUMOWANIE
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1240.h"
+#include "h1250.h"
+#include "h1231.h"
+
+#define RAPORT_TITLE Rejestr zakupów VAT - podsumowanie
+#macro MONEY(_value_)					doc_.afc.display.money(_value_,"")
+
+
+-->
+
+
+
+
+<page style='36'>
+<config>
+<title>RAPORT_TITLE</title>
+<script>
+<![CDATA[
+<%
+
+dim curNettoOp,curVATOp,curNettoMi,curVATMi,curRazem
+dim curSecNettoOp,curSecVATOp,curSecNettoMi,curSecVATMi,curSecRazem
+
+curNettoOp = ccur(0.0)
+curVATOp = ccur(0.0)
+curNettoMi = ccur(0.0)
+curVATMi = ccur(0.0)
+curRazem = ccur(0.0)
+
+%>
+<%
+
+function query()
+	query = replace(doc_.getmodule(60238).query_for_zakup_vat(),"%groupby%","group by t_rej.idobj")
+end function
+%>
+<%
+function default_param()
+	
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+	pParamArray.add doc_.afc.rap.param.new_date_range("Data otrzymania").bindexpr("t_zakup.dDataOtrzym")
+
+	dim pParamFactory2: set pParamFactory2= doc_.afc.rap.param
+	dim pParam2: Set pParam2= pParamFactory2.new_choice("Rejestr").bindexpr("t_rej.idobj")
+	doc_.afc.rap.param.init_on_query pParam2, trans_ ,_
+		"select strNazwa , idobj from n5rejestrdok where eTyp in (N5REJESTRDOK_FAKT_ZAK,N5REJESTRDOK_WNT,N5REJESTRDOK_KOREKTA_WNT,N5REJESTRDOK_KOR_FAKT_ZAK,N5REJESTRDOK_FAKT_IMP,N5REJESTRDOK_KOR_FAKT_IMP,N5REJESTRDOK_FAKT_ZAK_RR,N5REJESTRDOK_KOR_FAKT_ZAK_RR,N5REJESTRDOK_IMPORT_USLUG,N5REJESTRDOK_KOR_IMPORT_USLUG) order by strNazwa "	
+	pParamArray.add pParam2
+
+	dim pParamFactory3: set pParamFactory3= doc_.afc.rap.param
+	dim pParam3: Set pParam3= pParamFactory3.new_choice("Okres VAT").bindexpr("t_zakup.pRozlVAT")
+	doc_.afc.rap.param.init_on_query pParam3, trans_ , _
+		"select 'bez odliczeń',0 union select ltrim(str(year(vat7_ddataod))) + '/' + substring(ltrim(str(100+month(vat7_ddataod))),2,2),idobj " +_
+		"from n5rozlvat where datediff(month,vat7_ddataod," + trans_.afc.convert.date2SQL(trans_.var(GVAR_TODAY)) + ") < 12 order by 1 desc"
+	pParamArray.add pParam3
+
+	set default_param = pParamArray
+end function
+%>
+<%
+function write_actual_param(byref pActualParam)
+	dim iter
+	dim bAnyWritten : bAnyWritten = false
+	if not pActualParam is nothing then
+		for iter = 0 to pActualParam.upperIndex
+			if pActualParam.value(iter).get_desc() <> "" then 
+				bAnyWritten = true
+				so.write "<t size='5' /><text fontsize='4'><![CD"+"ATA[" + pActualParam.value(iter).get_desc() + "]"+"]></text><br/>"
+			end if
+		next
+	end if
+	if not bAnyWritten then 
+		so.write "<t fontsize='4'>brak</t><br/>"
+	end if
+	so.write "<br/>"
+end function
+%>
+
+#macro BODY_ROW(_vat_)					\
+<tr bordercolor='white'>				\
+	<td  width='min' align='right'>					\
+		<t>_vat_ %</t>					\
+	</td>								\
+	<td align='right'>					\
+		RXE_QUANTITY_CVV(c_n##_vat_##op,"",2)	\
+	</td>									\
+	<td align='right'>						\
+		RXE_QUANTITY_CVV(c_v##_vat_##op,"",2)	\
+	</td>									\
+	<td align='right'>						\
+		RXE_QUANTITY_CVV(c_n##_vat_##mi,"",2)	\
+	</td>									\
+	<td align='right'>						\
+		RXE_QUANTITY_CVV(c_v##_vat_##mi,"",2)	\
+	</td>									\
+	<td align='right'>						\
+		RXE_MONEY_VAR(ccur(pRec("c_n##_vat_##op")) + ccur(pRec("c_n##_vat_##mi")) + ccur(pRec("c_v##_vat_##op")) + ccur(pRec("c_v##_vat_##mi")))	\
+	</td>								\
+</tr>
+
+#macro NETTO_ROW(_vat_,_vat_name_)					\
+<tr bordercolor='white'>				\
+	<td align='right'>					\
+		<t>_vat_name_</t>				\
+	</td>								\
+	<td align='right'>					\
+		RXE_QUANTITY_CVV(c_n##_vat_##op,"",2)	\
+	</td>									\
+	<td align='right'>						\
+	</td>									\
+	<td align='right'>						\
+		RXE_QUANTITY_CVV(c_n##_vat_##mi,"",2)	\
+	</td>								\
+	<td align='right'>						\
+	</td>									\
+	<td align='right'>						\
+		RXE_MONEY_VAR(ccur(pRec("c_n##_vat_##op")) + ccur(pRec("c_n##_vat_##mi")))	\
+	</td>								\
+</tr>
+
+#macro BODY_ROW_WNT(_vat_id_, _vat_name_, _vat_arr_)					\
+<tr bordercolor='white'>				\
+	<td  width='min' align='right'>					\
+		<t>_vat_name_ %</t>					\
+	</td>								\
+	<td align='right'>					\
+		<t><%so.write MONEY(_vat_arr_(_vat_id_))%></t>	\
+	</td>									\
+	<td align='right'>						\
+		<t><%so.write MONEY(_vat_arr_(_vat_id_) * util_.vat_to_val(_vat_id_))%></t>	\
+	</td>									\
+	<td align='right'>						\
+		<t><%so.write MONEY(0.0)%></t>\
+	</td>									\
+	<td align='right'>						\
+		<t><%so.write MONEY(0.0)%></t>\
+	</td>									\
+	<td align='right'>						\
+		<t><%so.write MONEY( (_vat_arr_(_vat_id_)) +(_vat_arr_(_vat_id_) * util_.vat_to_val(_vat_id_)))%></t>	\
+	</td>								\
+</tr>
+
+#macro NETTO_ROW_WNT(_vat_id_, _vat_name_, _vat_arr_)				\
+<tr bordercolor='white'>				\
+	<td align='right'>					\
+		<t>_vat_name_</t>				\
+	</td>								\
+	<td align='right'>					\
+		<t><%so.write MONEY(_vat_arr_(_vat_id_))%></t>	\
+	</td>									\
+	<td align='right'>						\
+	</td>									\
+	<td align='right'>						\
+		<t><%so.write MONEY(0.0)%></t>\
+	</td>								\
+	<td align='right'>						\
+	</td>									\
+	<td align='right'>						\
+		<t><%so.write MONEY(_vat_arr_(_vat_id_))%></t>	\
+	</td>								\
+</tr>
+
+
+#macro ADOCUR(_col_)	ccur(pRec("_col_"))
+
+<%
+function body_row(byref pSection,byref pRec)
+	dim curRowNettoOp,curRowNettoMi
+	dim curRowVATOp,curRowVATMi
+	dim curBezOdl
+	dim oRecordset
+	dim iter, iter_poz, pozycja
+	dim idZak  
+	dim pZakup
+#ifdef ENABLE_VAT2011
+#ifdef ENABLE_DB12
+	dim pArrStawki(15)
+#else
+	dim pArrStawki(14)
+#endif
+#else
+	dim pArrStawki(11)
+#endif
+	dim curSumaWartoscNetto : curSumaWartoscNetto = ccur(0.0)
+	dim curSumaWartoscVat : curSumaWartoscVat = ccur(0.0)
+	dim strWhereParam1, strWhereParam2
+	'parametr - data otrzymania
+	if cstr(rapeng_.get_raport_param().value(0).get_where_part(trans_)) <> "" then
+		strWhereParam1 = " and " + cstr(rapeng_.get_raport_param().value(0).get_where_part(trans_))
+	end if
+	'parametr okres VAT
+	if cstr(rapeng_.get_raport_param().value(2).get_where_part(trans_)) <> "" then
+		strWhereParam2 = " and " + cstr(rapeng_.get_raport_param().value(2).get_where_part(trans_))
+	end if
+	
+
+	
+	if ccur(pRec("c_rej_typ")) = 48  or ccur(pRec("c_rej_typ")) = 50  then 
+		set oRecordset=trans_.createadors("select 'c_zakup_idobj'=t_zakup.idObj, 'c_popdok'=t_zakup.pPopZakup from n5zakup t_zakup "+_  
+				" left outer join n5zakup t_orgzakup on t_zakup.pPopZakup = t_orgzakup.idobj  "+_  
+				" inner join n5rejestrdok as t_rej on t_zakup.pRejestrDok = t_rej.IdObj  "+_  
+				" where  (t_zakup.dDataOtrzym is not null) "+ strWhereParam1 + strWhereParam2 +"  and t_rej.idObj=" + cstr(pRec("c_rej_idobj")) )
+
+		
+		while not oRecordset.eof
+			idZak = clng(oRecordset("c_zakup_idobj").value)
+			set pZakup = trans_.getobj(TYPEID_N5ZAKUP,idZak)
+			for each pozycja in pZakup.listPozycje	
+					#ifdef _FRAM
+					  curSumaWartoscNetto  = curSumaWartoscNetto + trans_.afc.convert.round2(((trans_.afc.convert.round2((pozycja.pzak_curWartWal + pozycja.curOplatyZagr) * pZakup.curKurs)) + pozycja.curClo + pozycja.curAkcyza))
+					  curSumaWartoscVat  = curSumaWartoscVat + trans_.afc.convert.round2((((trans_.afc.convert.round2((pozycja.pzak_curWartWal + pozycja.curOplatyZagr) * pZakup.curKurs)) + pozycja.curClo + pozycja.curAkcyza)) )* util_.vat_to_val(pozycja.eVAT)
+					#else
+						#ifdef _INTERCO
+							  curSumaWartoscNetto  = curSumaWartoscNetto + trans_.afc.convert.round2(((trans_.afc.convert.round2((pozycja.pzak_curWartWal + pozycja.curOplatyZagr) * pZakup.curKurs)) + pozycja.curClo + pozycja.curAkcyza))
+							  curSumaWartoscVat  = curSumaWartoscVat + trans_.afc.convert.round2((((trans_.afc.convert.round2((pozycja.pzak_curWartWal + pozycja.curOplatyZagr) * pZakup.curKurs)) + pozycja.curClo + pozycja.curAkcyza)) )* util_.vat_to_val(pozycja.eVAT)
+						#else
+							curSumaWartoscNetto  = curSumaWartoscNetto + pozycja.n5pozzakup_wyl_podst_VAT_bez_Opl_kraj()
+							curSumaWartoscVat  = curSumaWartoscVat + pozycja.n5pozzakup_wyl_podst_VAT_bez_Opl_kraj() * util_.vat_to_val(pozycja.eVAT)
+						#endif
+					#endif
+					#ifdef _FRAM
+						pArrStawki(clng(pozycja.eVat)) = trans_.afc.convert.round2(pArrStawki(clng(pozycja.eVat)))+  trans_.afc.convert.round2((pozycja.pzak_curWartWal + pozycja.curOplatyZagr) * pozycja.parent.curKurs)+pozycja.curClo + pozycja.curAkcyza
+					#else
+						#ifdef _INTERCO
+							pArrStawki(clng(pozycja.eVat)) = trans_.afc.convert.round2(pArrStawki(clng(pozycja.eVat)))+  trans_.afc.convert.round2((pozycja.pzak_curWartWal + pozycja.curOplatyZagr) * pozycja.parent.curKurs)+pozycja.curClo + pozycja.curAkcyza
+						#else
+							pArrStawki(clng(pozycja.eVat)) = trans_.afc.convert.round2(pArrStawki(clng(pozycja.eVat))) + pozycja.n5pozzakup_wyl_podst_VAT_bez_Opl_kraj()
+						#endif
+					#endif
+				iter_poz = iter_poz + 1
+			next
+			
+			dim idPopZakup : idPopZakup = clng(oRecordset("c_popdok").value)
+			if idPopZakup <> 0 then
+				dim pPopZakup : set pPopZakup = trans_.getobj(TYPEID_N5ZAKUP,idPopZakup)
+				iter_poz = 0
+				for each pozycja in pPopZakup.listPozycje
+					#ifdef _FRAM
+					  curSumaWartoscNetto  = curSumaWartoscNetto - trans_.afc.convert.round2(((trans_.afc.convert.round2((pozycja.pzak_curWartWal + pozycja.curOplatyZagr) * pPopZakup.curKurs)) + pozycja.curClo + pozycja.curAkcyza))
+					  curSumaWartoscVat  = curSumaWartoscVat - trans_.afc.convert.round2((((trans_.afc.convert.round2((pozycja.pzak_curWartWal + pozycja.curOplatyZagr) * pPopZakup.curKurs)) + pozycja.curClo + pozycja.curAkcyza)) )* util_.vat_to_val(pozycja.eVAT)
+					#else
+						#ifdef _INTERCO
+						  curSumaWartoscNetto  = curSumaWartoscNetto - trans_.afc.convert.round2(((trans_.afc.convert.round2((pozycja.pzak_curWartWal + pozycja.curOplatyZagr) * pPopZakup.curKurs)) + pozycja.curClo + pozycja.curAkcyza))
+						  curSumaWartoscVat  = curSumaWartoscVat - trans_.afc.convert.round2((((trans_.afc.convert.round2((pozycja.pzak_curWartWal + pozycja.curOplatyZagr) * pPopZakup.curKurs)) + pozycja.curClo + pozycja.curAkcyza)) )* util_.vat_to_val(pozycja.eVAT)
+						#else
+							curSumaWartoscNetto  = curSumaWartoscNetto - pozycja.n5pozzakup_wyl_podst_VAT_bez_Opl_kraj()
+							curSumaWartoscVat  = curSumaWartoscVat - pozycja.n5pozzakup_wyl_podst_VAT_bez_Opl_kraj() * util_.vat_to_val(pozycja.eVAT)
+						#endif
+					#endif
+					iter_poz = iter_poz + 1
+					#ifdef _FRAM
+						pArrStawki(clng(pozycja.eVat)) = trans_.afc.convert.round2(pArrStawki(clng(pozycja.eVat)))-  trans_.afc.convert.round2((pozycja.pzak_curWartWal + pozycja.curOplatyZagr) * pozycja.parent.curKurs)- pozycja.curClo - pozycja.curAkcyza
+					#else
+						#ifdef _INTERCO
+							pArrStawki(clng(pozycja.eVat)) = trans_.afc.convert.round2(pArrStawki(clng(pozycja.eVat)))-  trans_.afc.convert.round2((pozycja.pzak_curWartWal + pozycja.curOplatyZagr) * pozycja.parent.curKurs)- pozycja.curClo - pozycja.curAkcyza
+						#else
+							pArrStawki(clng(pozycja.eVat)) = trans_.afc.convert.round2(pArrStawki(clng(pozycja.eVat))) - pozycja.n5pozzakup_wyl_podst_VAT_bez_Opl_kraj()
+						#endif
+					#endif
+				next
+			end if	
+			
+			
+			iter = iter + 1
+			oRecordset.movenext
+		wend
+
+		curBezOdl = ADOCUR(c_bez_odliczen)
+		
+		#ifdef _FRAM
+			curSecNettoOp = curSecNettoOp + pArrStawki(14)+pArrStawki(13)+pArrStawki(11)+pArrStawki(10)+pArrStawki(9)+pArrStawki(8)+pArrStawki(7)+pArrStawki(3)+pArrStawki(2)+pArrStawki(1)
+			curSecVATOp = curSecVATOp + pArrStawki(14)* util_.vat_to_val(14)+pArrStawki(13)* util_.vat_to_val(13)+pArrStawki(11)* util_.vat_to_val(11)+pArrStawki(10)* util_.vat_to_val(10)+pArrStawki(9)* util_.vat_to_val(9)+pArrStawki(8)* util_.vat_to_val(8)+pArrStawki(7)* util_.vat_to_val(7)+pArrStawki(3)* util_.vat_to_val(3)+pArrStawki(2)* util_.vat_to_val(2)+pArrStawki(1)* util_.vat_to_val(1)
+			curSecNettoMi = curSecNettoMi + curRowNettoMi
+			curSecVATMi = curSecVATMi + curRowVATMi
+			curSecRazem = curSecNettoOp + curSecVATOp +curBezOdl
+		#else
+			#ifdef _INTERCO
+				curSecNettoOp = curSecNettoOp + pArrStawki(14)+pArrStawki(13)+pArrStawki(11)+pArrStawki(10)+pArrStawki(9)+pArrStawki(8)+pArrStawki(7)+pArrStawki(3)+pArrStawki(2)+pArrStawki(1)
+				curSecVATOp = curSecVATOp + pArrStawki(14)* util_.vat_to_val(14)+pArrStawki(13)* util_.vat_to_val(13)+pArrStawki(11)* util_.vat_to_val(11)+pArrStawki(10)* util_.vat_to_val(10)+pArrStawki(9)* util_.vat_to_val(9)+pArrStawki(8)* util_.vat_to_val(8)+pArrStawki(7)* util_.vat_to_val(7)+pArrStawki(3)* util_.vat_to_val(3)+pArrStawki(2)* util_.vat_to_val(2)+pArrStawki(1)* util_.vat_to_val(1)
+				curSecNettoMi = curSecNettoMi + curRowNettoMi
+				curSecVATMi = curSecVATMi + curRowVATMi
+				curSecRazem = curSecNettoOp + curSecVATOp +curBezOdl
+			#else
+				curSecNettoOp = curSumaWartoscNetto
+				curSecVATOp = curSumaWartoscVat 
+				curSecNettoMi = curSecNettoMi + curRowNettoMi
+				curSecVATMi = curSecVATMi + curRowVATMi
+				curSecRazem = curSumaWartoscNetto + curSumaWartoscVat +curBezOdl
+			#endif
+		#endif
+
+
+%>
+#ifdef ENABLE_VAT2011
+			BODY_ROW_WNT(14,23,pArrStawki)
+			BODY_ROW_WNT(13,8,pArrStawki)
+			BODY_ROW_WNT(11,5,pArrStawki)
+#endif
+#ifdef ENABLE_DB12     
+<tr bordercolor='white'>
+	<td  width='min' align='right'>
+		<t>o.o.</t>
+	</td>
+	<td align='right'>
+		<t><%so.write MONEY(pArrStawki(15))%></t>
+	</td>
+	<td align='right'>
+		<t><%so.write MONEY(pArrStawki(15) * util_.vat_to_val(15))%></t>
+	</td>
+	<td align='right'>
+		<t><%so.write MONEY(0.0)%></t>
+	</td>
+	<td align='right'>
+		<t><%so.write MONEY(0.0)%></t>
+	</td>
+	<td align='right'>
+		<t><%so.write MONEY( (pArrStawki(15)) +(pArrStawki(15) * util_.vat_to_val(15)))%></t>
+	</td>
+</tr>      
+#endif
+			BODY_ROW_WNT(10,22,pArrStawki)
+			BODY_ROW_WNT(7,7,pArrStawki)
+#ifndef ENABLE_VAT2011      
+			#ifndef APPCONFIG_HIDE_5_VAT
+			BODY_ROW_WNT(11,5,pArrStawki)
+			#endif
+#endif      
+			BODY_ROW_WNT(5,3,pArrStawki)
+			NETTO_ROW_WNT(1,0,pArrStawki)
+			NETTO_ROW_WNT(2,zw.,pArrStawki)
+			
+			<tr bordercolor='white'>
+				<td align='right'>
+					<t>bez odliczeń</t>
+				</td>
+				<td align='right'></td>
+				<td align='right'></td>
+				<td align='right'></td>
+				<td align='right'></td>
+				<td align='right'>
+					RXE_QUANTITY_CVV(c_bez_odliczen,"",2)
+				</td>
+			</tr>
+			<%
+		#ifdef _FRAM
+			curNettoOp = curNettoOp + curSecNettoOp
+			curVATOp = curVATOp + curSecVATOp
+			curNettoMi = curNettoMi + curSecNettoMi
+			curVATMi = curVATMi + curSecVATMi
+			curRazem = curRazem  + curSecNettoOp + curSecVATOp +curBezOdl
+		#else
+			#ifdef _INTERCO
+				curNettoOp = curNettoOp + curSecNettoOp
+				curVATOp = curVATOp + curSecVATOp
+				curNettoMi = curNettoMi + curSecNettoMi
+				curVATMi = curVATMi + curSecVATMi
+				curRazem = curRazem  + curSecNettoOp + curSecVATOp +curBezOdl
+			#else
+				curNettoOp = curNettoOp + curSumaWartoscNetto
+				curVATOp = curVATOp + curSumaWartoscVat
+				curNettoMi = curNettoMi + curSecNettoMi
+				curVATMi = curVATMi + curSecVATMi
+				curRazem = curRazem  + curSumaWartoscNetto + curSumaWartoscVat +curBezOdl
+			#endif
+		#endif
+	else
+	
+
+		curRowNettoOp = ADOCUR(c_n22op) + ADOCUR(c_n17op) + ADOCUR(c_n12op) + ADOCUR(c_n7op) + ADOCUR(c_n5op) +_
+#ifdef ENABLE_VAT2011
+                    ADOCUR(c_n23op) + ADOCUR(c_n8op) +_
+#endif
+#ifdef ENABLE_DB12
+                    ADOCUR(c_n23ooop) +_
+#endif
+                    ADOCUR(c_n3op) + ADOCUR(c_n0op) + ADOCUR(c_nzwop)
+		curRowNettoMi = ADOCUR(c_n22mi) + ADOCUR(c_n17mi) + ADOCUR(c_n12mi) + ADOCUR(c_n7mi) + ADOCUR(c_n5mi) +_
+#ifdef ENABLE_VAT2011
+                    ADOCUR(c_n23mi) + ADOCUR(c_n8mi) +_
+#endif
+#ifdef ENABLE_DB12
+                    ADOCUR(c_n23oomi) +_
+#endif
+                    ADOCUR(c_n3mi) + ADOCUR(c_n0mi) + ADOCUR(c_nzwmi)
+
+		curRowVATOp = ADOCUR(c_v22op) + ADOCUR(c_v17op) + ADOCUR(c_v12op) + ADOCUR(c_v7op) +_
+#ifdef ENABLE_VAT2011
+                  ADOCUR(c_v23op) + ADOCUR(c_v8op) +_
+#endif
+#ifdef ENABLE_DB12
+                  ADOCUR(c_v23ooop) +_
+#endif
+                  ADOCUR(c_v5op) + ADOCUR(c_v3op)
+		curRowVATMi = ADOCUR(c_v22mi) + ADOCUR(c_v17mi) + ADOCUR(c_v12mi) + ADOCUR(c_v7mi) +_ 
+#ifdef ENABLE_VAT2011
+                  ADOCUR(c_v23mi) + ADOCUR(c_v8mi) +_
+#endif
+#ifdef ENABLE_DB12
+                  ADOCUR(c_v23oomi) +_
+#endif
+                  ADOCUR(c_v5mi) + ADOCUR(c_v3mi)
+		curBezOdl = ADOCUR(c_bez_odliczen)
+
+		curNettoOp = curNettoOp + curRowNettoOp
+		curVATOp = curVATOp + curRowVATOp
+		curNettoMi = curNettoMi + curRowNettoMi
+		curVATMi = curVATMi + curRowVATMi
+		curRazem = curRazem + curRowNettoOp + curRowVATOp + curRowNettoMi + curRowVATMi + curBezOdl
+
+		curSecNettoOp = curSecNettoOp + curRowNettoOp
+		curSecVATOp = curSecVATOp + curRowVATOp
+		curSecNettoMi = curSecNettoMi + curRowNettoMi
+		curSecVATMi = curSecVATMi + curRowVATMi
+		curSecRazem = curSecRazem + curRowNettoOp + curRowVATOp + curRowNettoMi + curRowVATMi + curBezOdl
+
+		%>
+#ifdef ENABLE_VAT2011
+		BODY_ROW(23)
+		BODY_ROW(8)
+		BODY_ROW(5)    
+#endif
+#ifdef ENABLE_DB12
+<tr bordercolor='white'>
+	<td  width='min' align='right'>
+		<t>o.o.</t>
+	</td>
+	<td align='right'>
+		RXE_QUANTITY_CVV(c_n23ooop,"",2)
+	</td>
+	<td align='right'>
+		RXE_QUANTITY_CVV(c_v23ooop,"",2)
+	</td>
+	<td align='right'>
+		RXE_QUANTITY_CVV(c_n23oomi,"",2)
+	</td>
+	<td align='right'>
+		RXE_QUANTITY_CVV(c_v23oomi,"",2)
+	</td>
+	<td align='right'>
+		RXE_MONEY_VAR(ccur(pRec("c_n23ooop")) + ccur(pRec("c_n23oomi")) + ccur(pRec("c_v23ooop")) + ccur(pRec("c_v23oomi")))
+	</td>
+</tr>    
+#endif
+		BODY_ROW(22)
+		BODY_ROW(7)
+#ifndef ENABLE_VAT2011    
+		#ifndef APPCONFIG_HIDE_5_VAT
+		BODY_ROW(5)
+		#endif
+#endif    
+		BODY_ROW(3)
+		NETTO_ROW(0,0%)
+		NETTO_ROW(zw,zw.)
+
+		<tr bordercolor='white'>
+			<td align='right'>
+				<t>bez odliczeń</t>
+			</td>
+			<td align='right'></td>
+			<td align='right'></td>
+			<td align='right'></td>
+			<td align='right'></td>
+			<td align='right'>
+				RXE_QUANTITY_CVV(c_bez_odliczen,"",2)
+			</td>
+		</tr>
+
+		<%
+		end if
+
+end function
+%>
+<%
+function body_header(byref pSection,byref pRec)
+'so.write "<p backcolor='yellow'><text><![CD"+"ATA["+pRapExec.get_final_query() + "]"+"]></text></p><br/>" 
+%>
+<table border='1'>
+<thead>
+<tr style='21'>
+	<td rowspan='2'>	<text><![CDATA[Stawka]]></text>	</td>
+	<td colspan='2'>	<text><![CDATA[Zakupy związane ze sprzedażą opodatkowaną]]></text>	</td>
+	<td colspan='2'>	<text><![CDATA[Zakupy związane ze sprzedażą opodatkowaną i zwolnioną]]></text>	</td>
+	<td rowspan='2' align='right'>	<text><![CDATA[Brutto]]></text>	</td>
+</tr>
+<tr style='21'>
+	<td width='3000'>	<text><![CDATA[Netto]]></text>	</td>
+	<td width='3000'>	<text><![CDATA[VAT]]></text>	</td>
+	<td width='3000'>	<text><![CDATA[Netto]]></text>	</td>
+	<td width='3000'>	<text><![CDATA[VAT]]></text>	</td>
+</tr>
+</thead>
+<tbody>
+<%
+end function
+%>
+<%
+function body_footer(byref pSection)
+%>
+</tbody>
+<tfoot>
+<tr style='21'>
+	<td style='27' align='right'>
+	</td>
+	<td style='27' align='right'>
+		RXE_MONEY_VAR(curNettoOp)
+	</td>
+	<td style='27' align='right'>
+		RXE_MONEY_VAR(curVATOp)
+	</td>
+	<td style='27' align='right'>
+		RXE_MONEY_VAR(curNettoMi)
+	</td>
+	<td style='27' align='right'>
+		RXE_MONEY_VAR(curVATMi)
+	</td>
+	<td style='27' align='right'>
+		RXE_MONEY_VAR(curRazem)
+	</td>
+</tr>
+
+</tfoot>
+</table>
+<%
+end function
+%>
+<%
+function section_header_1(byref pSection,byref pRec)
+	curSecNettoOp = ccur(0.0)
+	curSecVATOp = ccur(0.0)
+	curSecNettoMi = ccur(0.0)
+	curSecVATMi = ccur(0.0)
+	curSecRazem = ccur(0.0)
+%>
+<tr userprop='propc_section_start="1" propc_section_hidden="0" propc_section_req="0"' fontsize='4'>
+	<td style='27' colspan='6'>
+		<picture name='<%so.write cstr(nSectionPicCounter)%>' tip='Zwiń' ignoresysdisable='true' image='PICTURE_SMALL_MINUS' width='SIZE_FOR_PLUS' height='SIZE_FOR_PLUS' href='vs1022="section_hideshow_hli" vn100="<%so.write cstr(nSectionPicCounter)%>"'/>
+	RXE_AUTO_TEXT(c_rej_nazwa)
+</td>
+</tr>
+<%
+nSectionPicCounter=nSectionPicCounter+1
+end function
+%>
+<%
+function section_footer_1(byref pSection)
+%>
+<tr border='0'><td colspan='6' /></tr>
+<tr hide='true' userprop='propc_section_end="1"'><td colspan='6' /></tr>
+<tr fontsize='4'>
+	<td style='27' />
+	
+	<td style='27' align='right'>
+		RXE_MONEY_VAR(curSecNettoOp)
+	</td>
+	<td style='27' align='right'>
+		RXE_MONEY_VAR(curSecVATOp)
+	</td>
+	<td style='27' align='right'>
+		RXE_MONEY_VAR(curSecNettoMi)
+	</td>
+	<td style='27' align='right'>
+		RXE_MONEY_VAR(curSecVATMi)
+	</td>
+	<td style='27' align='right'>
+		RXE_MONEY_VAR(curSecRazem)
+	</td>
+</tr>
+<%
+end function
+%>
+
+<%dim nSectionPicCounter : nSectionPicCounter = 10000000%>
+function section_hideshow_hli(byref pHLI)
+doc_.afc.formsection.section_hideshow page_, pHLI.prop(100)
+end function
+
+
+
+
+]]>
+</script>
+</config>
+<header>
+</header>
+<body>
+<p>
+RAPORT_HEADER(3,1)
+</p>
+<p>
+<t size='2'/>
+</p>
+
+<p><br/><br/><br/><text fontsize='7'><![CDATA[RAPORT_TITLE]]></text></p><br/><br/>
+<t fontsize='5' bold='true'>Kryteria selekcji:</t><br/>
+<%
+dim pRapExec : set pRapExec = rapeng_.new_engine()
+with pRapExec
+	.add_body_ex getref("body_header"),getref("body_footer"),getref("body_row")
+	.add_group_section 0,getref("section_header_1"),getref("section_footer_1")
+
+	if .prepare("RAPORT_TITLE",default_param(),rapeng_.get_raport_param(),query()) then
+	write_actual_param rapeng_.get_raport_param()
+	if not .perform then
+		so.write "<p style='21'><t>Brak danych spełniających podane kryteria</t></p>"
+	end if
+
+%>
+<%
+end if
+end with
+%>
+</body>
+<footer>
+</footer>
+</page>

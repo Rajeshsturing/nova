@@ -1,10 +1,7 @@
 # escape=`
 
-# Source-build image for NAVO Cocoon WebHost.
-#
-# This is Windows-only: the app targets .NET Framework 4.8 and uses the COM
-# object "navo2002.client". Build and run it on a Windows Docker host with
-# Windows containers enabled.
+# NAVO Cocoon is Windows-only: it targets .NET Framework 4.8 and creates the
+# COM object "navo2002.client". Build and run with Windows containers.
 
 FROM mcr.microsoft.com/dotnet/framework/sdk:4.8-windowsservercore-ltsc2022 AS build
 
@@ -58,6 +55,8 @@ SHELL ["powershell", "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Co
 
 WORKDIR C:\app
 
+COPY global_output C:\navo_eb\global_output
+COPY sprzedaz C:\navo_eb\sprzedaz
 COPY docker/eb-runtime/ C:\eb-runtime\
 RUN C:\eb-runtime\install-eb-runtime.ps1
 

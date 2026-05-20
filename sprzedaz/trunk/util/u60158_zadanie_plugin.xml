@@ -1,0 +1,421 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+todo: generowanie treści maila w  - więcej template
+prepare_body
+
+todo: inne możliwe typy n5zadanie.wrefszczegoly
+
+moduł generuje pluginy do zadań
+na podstawie wrefSzczegoły
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200_typeid.h"
+#include "h1220_pictureid.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1234.h"
+
+
+-->
+<page>
+<config>
+<script>
+<![CDATA[
+
+'EventStatus
+#include "50608"
+
+'chat_SendObjMessageTo
+#include "50125"
+
+#include "50200_fire_choice_list"
+
+'asp_appfile_object_stream
+#include "50518"
+
+'idZadanie - idobj zadania
+'nTypeId:idObj - szczegóły
+
+sub plug_zadanie_szczegoly(byref pContainer,byval idZadanie,byval nTypeId,byval idObj)
+	pContainer.removeall
+	dim strOpis : strOpis = trans_.getobj(TYPEID_N5ZADANIE,idZadanie).strOpis
+	
+	dim pPlugInTable : set pPlugInTable = pContainer.addnew(CTRL_TYPE_TABLE,-1)
+	pPlugInTable.body.border = 0
+
+	select case nTypeId
+	case 0
+		plug_zadanie_szczegoly_nothing pPlugInTable
+	case TYPEID_N5SPRZEDAZ
+		plug_zadanie_szczegoly_sprzedaz pPlugInTable,idZadanie,idObj
+	case TYPEID_N5PLATNOSC
+		plug_zadanie_szczegoly_platnosc pPlugInTable,idZadanie,idObj
+	
+	'todo: inne możliwe typy n5zadanie.wrefszczegoly
+	end select
+	'dodaj standardowy element - opis
+
+	dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(pPlugInTable)
+	if nTypeId <> 0 then
+		with pTB.newrow.newcell
+			.cell.colspan = 3
+			.cell.styleitem = STYLE_TABLE_HEADER_RAPORT
+			.addtext "Opis"
+		end with
+	end if
+	pTB.newrow.newcell.cell.colspan = 3
+	if strOpis = "" then
+		pTB.addtext("brak opisu").element.italic = true
+	else
+		pTB.addctrl(CTRL_TYPE_STATICEX,-1).element.text = strOpis 
+	end if
+end sub
+
+sub plug_zadanie_szczegoly_nothing(byref pContainer)
+end sub
+
+sub plug_zadanie_szczegoly_sprzedaz(byref pPlugInTable,byval idZadanie,byval idObj)
+	
+	dim pSprzedaz : set pSprzedaz = trans_.getobj(TYPEID_N5SPRZEDAZ,idObj)
+
+	dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(pPlugInTable)
+	pTB.newrow.newcell.cell.colspan = 3
+	with pTB.addtext("Sprzedaż").element
+		.fontsize = 5
+		.bold = true
+		set .hli = _
+			doc_.createhlistr(doc_.afc.convert.formatter("OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5SPRZEDAZ,%1,USAGE_VIEW)")(idObj).Done())
+		.ignoresysdisable true
+	end with
+
+	pTB.newrow.newcell.addtext("Nr dokumentu")
+	pTB.cell.width = MINIMIZE_SIZE
+	pTB.newcell.addtext pSprzedaz.strNrDok
+	pTB.cell.width = 5000
+
+	pTB.newcell
+	
+	pTB.newrow.newcell.addtext("Wartość brutto")
+	pTB.newcell.cell.align = ALIGN_RIGHT
+	pTB.addtext doc_.afc.display.money(pSprzedaz.curSumaBrutto,"")
+	pTB.newcell
+
+	pTB.newrow.newcell.addtext("Termin płatności")
+	pTB.newcell.addtext doc_.afc.display.fulldate(pSprzedaz.dDataPlat)
+	pTB.newcell
+end sub
+
+sub plug_zadanie_szczegoly_platnosc(byref pPlugInTable,byval idZadanie,byval idObj)
+	dim pPlatnosc : set pPlatnosc = trans_.getobj(TYPEID_N5PLATNOSC,idObj)
+
+	dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(pPlugInTable)
+	pTB.newrow.newcell.cell.colspan = 3
+	with pTB.addtext("Płatność").element
+		.fontsize = 5
+		.bold = true
+		set .hli = _
+			doc_.createhlistr(doc_.afc.convert.formatter("OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5PLATNOSC,%1,USAGE_VIEW)")(idObj).Done())
+		.ignoresysdisable true
+	end with
+
+	pTB.newrow.newcell.addtext("Nr dokumentu")
+	pTB.cell.width = MINIMIZE_SIZE
+	pTB.newcell.addtext pPlatnosc.strNrDok
+	pTB.cell.width = 5000
+
+	pTB.newcell
+	
+	pTB.newrow.newcell.addtext("Kwota")
+	pTB.newcell.cell.align = ALIGN_RIGHT
+	pTB.addtext doc_.afc.display.money(pPlatnosc.curKwotaPodm,"")
+	pTB.newcell
+
+end sub
+
+'------------------------------------------------------------------
+' utility do tworzenia zadań
+'------------------------------------------------------------------
+function supply_wykonawca(byref pWykonawca)
+	set supply_wykonawca = pWykonawca
+
+	if pWykonawca is nothing then
+		dim idWykonawca : idWykonawca = fire_choice_list( TYPEID_N5WYKONAWCA,"","","","","")
+		if idWykonawca > 0 then
+			set supply_wykonawca = trans_.getobj(TYPEID_N5WYKONAWCA,idWykonawca)
+		else
+			exit function
+		end if
+	end if
+end function
+
+sub choose_pop_nad_zadanie_id(byval idKlient,byref idNadZadanie,byref idPopZadanie)
+	idPopZadanie = 0
+	idNadZadanie = 0
+
+	'wybór zadania poprzedniego
+
+	'pokazuj wszystkich, albo wskazanego klienta
+	dim idStartingObj : idStartingObj = 0
+	dim StartingTypeId: StartingTypeId = -13
+	if idKlient <> 0 then
+		idStartingObj = idKlient
+		StartingTypeId = TYPEID_N5KLIENT
+	end if
+
+	dim idChoosenTypeId
+	idPopZadanie = fire_choice_tree(EXPLORER_TASKS_BY_CUSTOMER,StartingTypeId,idStartingObj,idChoosenTypeId)
+	if idChoosenTypeId <> TYPEID_N5ZADANIE and idPopZadanie<>0  then
+		trans_.message 1002 , 0 , "Nie wybrano zadania"
+		idPopZadanie = 0
+	end if
+end sub
+
+sub choose_pop_nad_zadanie(byval idKlient,byref pNadZadanie,byref pPopZadanie)
+	set pNadZadanie = nothing
+	set pPopZadanie = nothing
+
+
+	dim idPopZadanie : idPopZadanie = 0
+	dim idNadZadanie : idNadZadanie = 0
+
+	choose_pop_nad_zadanie_id idKlient,idNadZadanie,idPopZadanie
+
+	if idPopZadanie <> 0 then
+		set pPopZadanie = trans_.getobj(TYPEID_N5ZADANIE,idPopZadanie)
+	end if
+	if idNadZadanie <> 0 then
+		set pNadZadanie = trans_.getobj(TYPEID_N5ZADANIE,idPopZadanie)
+	end if
+
+end sub
+
+function supply_typ_dzialania_on_iid_id(byval nInternalID) : supply_typ_dzialania_on_iid_id = 0
+	dim idTypDzialania : idTypDzialania = trans_.findobjid(TYPEID_N5TYPDZIALANIA,_
+		"nInternalID="+ cstr(nInternalID))
+
+	if idTypDzialania > 0 then
+		supply_typ_dzialania_on_iid_id = idTypDzialania
+	else
+		supply_typ_dzialania_on_iid_id = fire_choice_list(TYPEID_N5TYPDZIALANIA,"","","","","")
+	end if
+end function
+
+'-------------- powiadomienie ---------
+function send_email_to_wykonawca_about_zadanie(byval strEmail,byref strBody,byval strSubject)
+	dim pM60299 : set pM60299 = doc_.getmodule(60299)
+	send_email_to_wykonawca_about_zadanie = pM60299.nx_send_mail_internal_0_att(strEmail,strSubject,strBody)
+end function
+
+function prepare_body(byref pZadanie) : prepare_body = ""
+
+	dim idTemplate : idTemplate = 0
+	select case pZadanie.nStatus
+		case N5ZADANIE_ZLECONE
+			idTemplate = EMAILTEMPLATE_ZADANIE_ZLECONE_TXT
+		case N5ZADANIE_ODEBRANE
+		case N5ZADANIE_WYKONYWANE
+		case N5ZADANIE_WSTRZYMANE
+		case N5ZADANIE_ZAKONCZONE
+			idTemplate = EMAILTEMPLATE_ZADANIE_ZAKONCZONE_TXT
+		case N5ZADANIE_ZAMKNIETE
+	end select
+	
+	if idTemplate = 0 then
+		exit function
+	end if
+
+	dim pStream : set pStream = asp_appfile_object_stream(idTemplate,pZadanie)
+	if pStream is nothing then
+		exit function
+	end if
+	prepare_body = pStream.getstring()
+
+#ifdef _DEBUG
+	pStream.save "c:\temp\email_zadanie.txt"
+#endif
+
+end function
+
+
+
+
+
+
+
+function prepare_body_for_sms(byref pZadanie) : prepare_body_for_sms = ""
+
+	dim idTemplate : idTemplate = 0
+	select case pZadanie.nStatus
+		case N5ZADANIE_ZLECONE
+			idTemplate = SMSTEMPLATE_ZADANIE_ZLECONE_TXT
+		case N5ZADANIE_ODEBRANE
+		case N5ZADANIE_WYKONYWANE
+		case N5ZADANIE_WSTRZYMANE
+		case N5ZADANIE_ZAKONCZONE
+			idTemplate = SMSTEMPLATE_ZADANIE_ZAKONCZONE_TXT
+		case N5ZADANIE_ZAMKNIETE
+	end select
+	
+	if idTemplate = 0 then
+		exit function
+	end if
+
+	dim pStream : set pStream = asp_appfile_object_stream(idTemplate,pZadanie)
+	if pStream is nothing then
+		exit function
+	end if
+	prepare_body_for_sms = pStream.getstring()
+
+#ifdef _DEBUG
+	pStream.save "c:\temp\sms_zadanie.txt"
+#endif
+
+end function
+
+
+sub notify_wykonawca_about_zadanie(byval strText,byref pWykonawca,byref pZadanie)
+	if pWykonawca is nothing then
+		exit sub
+	end if
+	
+	if pZadanie.pWykonawca is pZadanie.pZlecajacy then
+		exit sub
+	end if
+	
+	'generowanie treści maila w 
+	dim strBody : strBody = prepare_body(pZadanie)
+	if strBody = "" then
+		exit sub
+	end if
+
+
+	'make chat-safe
+	strText = replace(strText, "~", "")
+
+	'always send chat message
+	chat_SendObjMessageTo strText,pWykonawca.idobj,TYPEID_N5ZADANIE, pZadanie.idobj
+
+	'check if he/she wants e-mail
+	dim strEmail:strEmail = ""
+	if mid(pWykonawca.strMetPow,3,1) = "1" then		'email służbowy
+		strEmail = pWykonawca.wrefObiekt.strEmail
+		if strEmail <> "" then
+			send_email_to_wykonawca_about_zadanie strEmail,strBody, strText
+		end if
+	end if
+	strEmail = ""
+	if (mid(pWykonawca.strMetPow,4,1)="1") then 'email prywatny
+		select case pWykonawca.wrefObiekt.type
+			case TYPEID_N5KLIENT:
+				strEmail = pWykonawca.wrefObiekt.strEmail
+			case TYPEID_N5KLIENT_PRACOWNIK:				
+				strEmail = pWykonawca.wrefObiekt.strEmail2
+			case TYPEID_N5PRACOWNIK:
+				strEmail = pWykonawca.wrefObiekt.strEmail2
+		end select
+		if strEmail <> "" then
+			send_email_to_wykonawca_about_zadanie strEmail,strBody, strText
+		end if
+	end if		
+
+	dim strTel:strTel = ""
+	if (mid(pWykonawca.strMetPow,1,1)="1") then 'sms na tel sluzbowy
+		select case pWykonawca.wrefObiekt.type
+			case TYPEID_N5PRACOWNIK,TYPEID_N5KLIENT_PRACOWNIK:
+				strTel = pWykonawca.wrefObiekt.strTel2
+		end select
+		if strTel <> "" then
+			notify_by_sms strTel , get_message_for_sms(pZadanie)
+		end if
+	end if
+
+
+	if (mid(pWykonawca.strMetPow,2,1)="1") then 'sms na tel prywatny
+		select case pWykonawca.wrefObiekt.type
+			case TYPEID_N5PRACOWNIK,TYPEID_N5KLIENT_PRACOWNIK:
+				strTel = pWykonawca.wrefObiekt.strTel4
+		end select
+		if strTel <> "" then
+			notify_by_sms strTel , get_message_for_sms(pZadanie)
+		end if
+	end if
+			
+
+end sub
+
+
+function get_message_for_sms( byval pZadanie)
+	get_message_for_sms = prepare_body_for_sms(pZadanie)
+end function
+
+sub notify_by_sms( byval strTel , byval strMessage)
+	if not doc_.getmodule(60217).send_sms(strTel , strMessage) then
+		trans_.message 1002, 0 , "Nie udało się wysłać smsa na numer " + strTel
+	end if
+end sub
+
+'-------------------------------------------------------------
+'utwórz przypomnienie z załączonym dokumentem
+'-------------------------------------------------------------
+function create_note_with_reminder_and_document(byval strSubject,byval idDokument)
+	dim pUtility : set pUtility = doc_.getmodule(60158)
+	'wybór typu działania gdy brak
+	dim idTypDzialania : idTypDzialania = pUtility.supply_typ_dzialania_on_iid_id(N5TYPDZIALANIA_IID_NOTATKA)
+	if idTypDzialania <= 0 then
+		exit function
+	end if
+
+	trans_.var(APPVAR_REJESTR_TYP) = N5REJESTRDOK_ZADANIA
+	trans_.var(GVAR_CURSOR) = clng(0)
+	dim pOpenFormNotatka : set pOpenFormNotatka = doc_.getmodule(60129).prepare_form_open_command(TYPEID_N5ZADANIE,0,0)
+	if pOpenFormNotatka is nothing then
+		exit function
+	end if
+	dim pFormZadanie : set pFormZadanie = doc_.getpagehli(pOpenFormNotatka)
+	if pFormZadanie is nothing then
+		exit function
+	end if
+
+	with pFormZadanie.root
+		.strTemat = strSubject
+		set .pTypDzialania=trans_.getobj(TYPEID_N5TYPDZIALANIA,idTypDzialania)
+		.nStatus=clng(N5ZADANIE_ZAMKNIETE)
+		.strOpis = strSubject
+		set .pZlecajacy=getCurrentWykonawca()
+		set .pWykonawca=getCurrentWykonawca()
+		dim pDocument : set pDocument = trans_.getobj(TYPEID_N5DOKUMENT,idDokument)
+		dim pKlient : set pKlient = pDocument.wpAdresat
+		if not pKlient is nothing then
+			if pKlient.type = TYPEID_N5KLIENT then
+				set .pKlient = pKlient
+			end if
+		end if
+		if not pDocument is nothing then
+			set .listZalaczniki.addnew().wrefZal = pDocument
+		end if
+		.dDataPrzyp = pDocument.dDataWeWy
+		.tCzasPrzyp = clng(1000)
+	end with
+
+	pFormZadanie.domodalauto()
+end function
+
+'-------------------------------------------------------------
+'usługi dla raportowania (ASP blokuje include!)
+'-------------------------------------------------------------
+function get_status_name(nStatus)
+	get_status_name = EventStatus2String(nStatus)
+end function
+
+function get_status_pic(nStatus)
+	get_status_pic = EventStatus2PicNum(nStatus)
+end function
+
+
+]]>
+</script>
+</config>
+	<body>
+	</body>
+</page>

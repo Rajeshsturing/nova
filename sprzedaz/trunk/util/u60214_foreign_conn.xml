@@ -1,0 +1,272 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+'FOREIGN system connector
+
+#include "h1000.h"
+#include "h1203.h"
+-->
+<page>
+<config>
+<script>
+<![CDATA[
+#define ON_ERROR_RESUME_NEXT	on error resume next
+#define ERR_CLEAR				err.clear
+
+#define CONNTYPE_NONE	0
+#define CONNTYPE_MSSQL	1
+#define CONNTYPE_DSN	2
+#define CONNTYPE_EXCEL	3
+
+class CForeignConnection
+	private m_pADOConnection
+	private m_pPerforming
+	private m_eConnType
+
+	private sub class_initialize()
+		set m_pADOConnection = nothing
+		set m_pPerforming = nothing
+		m_eConnType = CONNTYPE_NONE
+	end sub
+
+	private sub class_terminate()   'TODO
+		set m_pADOConnection = nothing
+		set m_pPerforming = nothing
+	end sub
+
+	public sub hide_progress()
+		set m_pPerforming = nothing
+	end sub
+
+	public sub show_progress(strText)
+		if m_pPerforming is nothing then
+			set m_pPerforming = doc_.performing(strText)
+		else
+			m_pPerforming.text = strText
+		end if
+	end sub
+	
+	public function connectMSSQL(byval strServer,byval strDBName,byval strUser,byval strPassword)
+		connectMSSQL = false
+		ON_ERROR_RESUME_NEXT
+		
+		set m_pADOConnection = doc_.system.activex("ADODB.Connection")
+		if m_pADOConnection is nothing then
+			exit function
+		end if
+
+		show_progress "Trwa łączenie z serwerem " + strServer
+
+		m_pADOConnection.ConnectionTimeout = 60
+		m_pADOConnection.CommandTimeout = 180
+		
+		'proba podlaczenia do serwera
+		m_pADOConnection.open "Provider=SQLOLEDB;Server=" + strServer + ";DATABASE=" + strDBName, strUser, strPassword
+		
+		ERR_CLEAR
+
+		'true jezeli podlaczono
+		hide_progress
+		connectMSSQL = (m_pADOConnection.state = clng(1))
+		m_eConnType = CONNTYPE_MSSQL
+	end function
+
+	public function connectDSN(byval strDSN,byval strUser,byval strPassword)
+		connectDSN = false
+
+		ON_ERROR_RESUME_NEXT
+
+		set m_pADOConnection = doc_.system.activex("ADODB.Connection")
+		if m_pADOConnection is nothing then
+			exit function
+		end if
+
+		show_progress "Trwa łączenie ze źródłem danych " + strDSN
+
+		m_pADOConnection.ConnectionTimeout = 60
+		m_pADOConnection.CommandTimeout = 180
+
+		if strUser <> "" then
+			m_pADOConnection.open strDSN, strUser, strPassword
+		else
+			m_pADOConnection.open strDSN
+		end if
+		
+		ERR_CLEAR
+
+		'true jezeli podlaczono
+		hide_progress
+		connectDSN = (m_pADOConnection.state = clng(1))
+		m_eConnType = CONNTYPE_DSN
+	end function
+
+	public function connectExcel(byval strFileName)
+		connectExcel = false
+		ON_ERROR_RESUME_NEXT
+
+		set m_pADOConnection = doc_.system.activex("ADODB.Connection")
+		if m_pADOConnection is nothing then
+			exit function
+		end if
+
+#ifdef APPCONFIG_USE_EXCEL_8
+			m_pADOConnection.Provider = "Microsoft.Jet.OLEDB.4.0"
+			m_pADOConnection.Properties("Extended Properties") = "Excel 8.0; IMEX=1"
+#else
+			m_pADOConnection.Provider = "Microsoft.ACE.OLEDB.12.0"
+			m_pADOConnection.Properties("Extended Properties") = "Excel 12.0;HDR=YES;IMEX=1"
+#endif    
+
+		m_pADOConnection.Open strFileName
+		
+		ERR_CLEAR
+
+		'true jezeli podlaczono
+		connectExcel = (m_pADOConnection.state = clng(1))
+		m_eConnType = CONNTYPE_EXCEL
+	end function
+
+	public property get connection()
+		set connection = m_pADOConnection
+	end property
+	
+	public property get connection_type()
+		connection_type = m_eConnType
+	end property
+end class
+
+class CRemoteNAVO2002Client
+	private m_pRemoteApp
+	private m_pRemoteDoc
+	private m_pRemoteTopPage
+
+	private sub class_initialize()
+		set m_pRemoteApp = nothing
+		set m_pRemoteDoc = nothing
+		set m_pRemoteTopPage = nothing
+	end sub
+
+	private sub class_terminate() 'TODO
+		set m_pRemoteTopPage = nothing
+		set m_pRemoteDoc = nothing
+		set m_pRemoteApp = nothing
+	end sub
+
+	public function connect(byval strRemoteClient)
+		connect = connect_ex(strRemoteClient,"#*varApplication",trans_.var(GVAR_DBNAME),false)
+	end function
+
+
+	public function connect_ex(byval strRemoteClient,byval strApplication,byval strDB,byval bSilent)
+		connect_ex = false
+		dim pPerforming : set pPerforming = doc_.performing("Trwa łączenie z " + strRemoteClient)
+		on error resume next
+		err.clear
+			set m_pRemoteApp = createobject("navo2002.client",strRemoteClient)
+			if err.number <> 0 then
+				exit function
+			end if
+		on error goto 0
+		set m_pRemoteDoc = m_pRemoteApp.document
+		dim strCmd : strCmd = "varCmd=CMD_OPEN_STATIC_PAGE varNewThread=1 varDestPage=72007 "
+		if bSilent then
+			strCmd = strCmd + "varUIStyle=0 "
+		else
+			strCmd = strCmd + "varUIStyle=1 "
+		end if 
+		strCmd = strCmd + " varApplication='" + strApplication + "' varDbName='" + strDB + "' "  +_
+			"varDBServer='" + trans_.var(GVAR_DBSERVER) + "'"
+		m_pRemoteDoc.callcommand(strCmd)
+		set m_pRemoteTopPage = m_pRemoteDoc.gettoppage
+		connect_ex = true
+	end function
+
+	public property get document
+		set document = m_pRemoteDoc
+	end property
+
+	public property get page
+		set page = m_pRemoteTopPage
+	end property
+end class
+
+function new_remote_client(byval strRemoteClient)
+	set new_remote_client = new_remote_client_ex(strRemoteClient,"#*varApplication",trans_.var(GVAR_DBNAME),false)
+end function
+
+function new_remote_client_ex(byval strRemoteClient,byval strApplication,byval strDB,byval bSilent)
+	set new_remote_client_ex = nothing
+	dim pRC : set pRC = new CRemoteNAVO2002Client
+	
+	if not pRC.connect_ex(strRemoteClient,strApplication,strDB,bSilent) then
+		exit function
+	end if
+	
+	set new_remote_client_ex = pRC
+end function
+
+#comment '----------------------------------------------------------------------------
+#comment ' architecture oriented functions (low level)
+#comment '----------------------------------------------------------------------------
+
+function connectMSSQL(byval strServer,byval strDBName,byval strUser,byval strPassword)
+	set connectMSSQL = nothing
+	dim pForCon : set pForCon = new CForeignConnection
+	
+	if pForCon.connectMSSQL(strServer,strDBName,strUser,strPassword) then
+		set connectMSSQL = pForCon
+	end if
+end function
+
+function connectDSN(byval strDSN,byval strUser,byval strPassword)
+	set connectDSN = nothing
+	dim pForCon : set pForCon = new CForeignConnection
+	
+	if pForCon.connectDSN(strDSN,strUser,strPassword) then
+		set connectDSN = pForCon
+	end if
+end function
+
+function connectExcel(byval strFileName)
+	set connectExcel = nothing
+	dim pForCon : set pForCon = new CForeignConnection
+	
+	if pForCon.connectExcel(strFileName) then
+		set connectExcel = pForCon
+	end if
+end function
+
+#comment '----------------------------------------------------------------------------
+#comment ' application oriented functions (high level)
+#comment '----------------------------------------------------------------------------
+
+#define STD_DATABASE_NAME_FIRMA		"navo_firma"
+#define STD_DATABASE_NAME_KADRY		"navo99_1"
+
+function connectFirmaSQL(byval strServer)
+	set connectFirmaSQL = connectMSSQL(strServer,STD_DATABASE_NAME_FIRMA,"DBA","y1410grun")
+	if not connectFirmaSQL is nothing then
+		exit function
+	end if
+	set connectFirmaSQL = connectMSSQL(strServer,STD_DATABASE_NAME_FIRMA,"sa","")
+end function
+
+function connectFirma38Sybase()
+	set connectFirma38Sybase = connectDSN("NAVO_FIRMA", "dba", "y1410grun")
+end function
+
+function connectKadry(byval strServer)
+	set connectKadry = connectMSSQL(strServer,STD_DATABASE_NAME_KADRY,"navo98","czapajew")
+	if not connectKadry is nothing then
+		exit function
+	end if
+	set connectKadry = connectMSSQL(strServer,STD_DATABASE_NAME_KADRY,"sa","")
+end function
+
+
+]]>
+</script>
+
+</config>
+	<body>
+	</body>
+</page>

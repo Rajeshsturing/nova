@@ -1,0 +1,181 @@
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1240.h"
+#include "h1201.h"
+
+#define PAGE_FORM_WIZZARD_MULTICACHE_STEP1		20510
+#define PAGE_FORM_WIZZARD_MULTICACHE_STEP2		20511
+
+
+<?xml version="1.0" encoding="windows-1250" ?>
+<page>
+<config>
+<title>Kreator importu z systemu multicache</title>
+<script>
+<!--
+PAGE_FORM_WIZZARD_MULTICACHE
+-->
+<![CDATA[
+#include "50209"
+#include "50203"
+#include "50211"
+#include "50511"
+#include "50122"
+
+
+class CMCash
+	public m_strFileName
+end class
+
+dim pParamClass
+
+function fopen()
+	run_this
+	fopen=false
+end function
+
+function run_this()
+	dim pWizzard
+	set pParamClass = new CMCash
+
+	dim strFileName:strFileName = getuserprofile(USERPROF_MULTICACHE_FILENAME)
+	if strFileName="" then
+		strFileName="<brak>"		
+	end if
+	pParamClass.m_strFileName = strFileName
+	set pWizzard=CWizzard(false)
+	pWizzard.add_container pParamClass
+	pWizzard.add_step PAGE_FORM_WIZZARD_MULTICACHE_STEP1
+	pWizzard.add_step PAGE_FORM_WIZZARD_MULTICACHE_STEP2
+
+
+
+	pWizzard.run
+end function
+
+function onPageEnter(pWizzardPage)
+	select case ( pWizzardPage.m_nPage )
+		case PAGE_FORM_WIZZARD_MULTICACHE_STEP1:
+		case PAGE_FORM_WIZZARD_MULTICACHE_STEP2:
+	end select
+end function
+
+function onPageExit(pWizzardPage)
+	onPageExit=PAGE_DEFAULT
+	select case ( pWizzardPage.m_nPage )
+		case PAGE_FORM_WIZZARD_MULTICACHE_STEP1:
+			if pParamClass.m_strFileName = "<brak>" or pParamClass.m_strFileName="" then
+				MessageBox "Nie wybrano pliku" , "Kreator importu multicache" , vbOkOnly, vbInformation
+				onPageExit=PAGE_DONOTEXIT
+			end if
+		case PAGE_FORM_WIZZARD_MULTICACHE_STEP2:
+	end select
+end function
+
+function onPageInit(pWizzardPage)
+	select case ( pWizzardPage.m_nPage )
+		case PAGE_FORM_WIZZARD_MULTICACHE_STEP1:
+		case PAGE_FORM_WIZZARD_MULTICACHE_STEP2:
+	end select
+end function
+
+function onWizzardComplete(pWizzardPage)
+	if not importMultiCash(pParamClass.m_strFileName) then
+		onWizzardComplete = false
+		MessageBox "Wystąpił bład importu pliku" , "Kreator importu multicache" , vbOkOnly, vbInformation
+		exit function
+	end if
+
+	dim pSubTrans
+	set pSubTrans=trans_.createsubtran()
+		setuserprofile USERPROF_MULTICACHE_FILENAME,pParamClass.m_strFileName	
+		onWizzardComplete = trans_.saveobjects()
+	set pSubTrans=nothing
+	
+	pWizzardPage.m_pPage.activate
+	if onWizzardComplete then
+		MessageBox "Działanie kreatora zakonczyło się sukcesem" , "Kreator importu multicache" , vbOkOnly, vbInformation
+	else
+		MessageBox "Wystąpił bład zachowania profilu" , "Kreator importu multicache" , vbOkOnly, vbInformation
+	end if
+end function
+
+
+'-------------------------------------------------
+'Przeprowadza całą operację importu z MultiCashe
+'-------------------------------------------------
+public function importMultiCash(byval strImportFileName):importMultiCash = false
+
+	dim pSubTrans
+	set pSubTrans=trans_.createsubtran()	
+	
+	dim pContext:set pContext = new CMCContext	
+	set pContext.m_pPerforming = doc_.performing("Trwa importowanie danych MultiCash('" + strImportFileName + "')")
+
+	dim pMCF
+	set pMCF = new MCFileImport
+	'otwórz plik
+	if not pMCF.open(strImportFileName) then
+	    strText = pMCF.error_()
+		set pContext.m_pPerforming = nothing
+		MessageBox strText, "Błąd", vbOKOnly, vbInformation
+		exit function
+	end if
+
+	pContext.m_idRejestrBankPrz = clng(0)
+	pContext.m_idRejestrBankRozch = clng(0)
+
+	'Pętla czytania z pliku
+	do while true
+		set pContext.m_pPerforming = doc_.performing("Trwa importowanie danych MultiCash('" + strImportFileName + "')")
+	
+		dim pStruct
+		set pStruct = pMCF.GetNext(pContext)
+		if pStruct is nothing then
+			exit do
+		end if
+		
+		pStruct.MakePlatnoscFromMC(pContext)
+
+	
+		
+		if not trans_.save() then
+			set pContext.m_pPerforming = nothing
+			MessageBox "Nie można zachować importowanych płatności","Błąd", vbOKOnly, vbInformation
+			trans_.discard
+			exit do
+		end if
+	loop
+	
+	set pContext.m_pPerforming = nothing
+	dim strError:strError = pMCF.error_()
+	if trim(strError) = "" then
+		if trans_.saveobjects() then
+			'MessageBox "Operacja importu z pliku MultiCashe powiodła się." ,"Sukces", vbOKOnly, vbInformation
+			importMultiCash = true
+		else
+			MessageBox "Nie można zachować transakcji","Błąd", vbOKOnly, vbInformation
+			importMultiCash = false
+		end if
+	
+	
+	else
+		MessageBox strError ,"Błąd w sekwencji nr " + cstr(pMCF.m_counter), vbOKOnly, vbInformation
+	end if
+
+	set pMCF = nothing
+	set pStruct = nothing
+	trans_.discard
+	set pSubTrans = nothing
+end function
+
+]]>
+</script>
+</config>
+<body></body>
+</page>

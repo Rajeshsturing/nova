@@ -1,0 +1,320 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+REV:KB:20030213
+
+prefix: raka_
+
+#include "h1000.h" 
+#include "h1200.h" 
+#include "h1203.h" 
+#include "h1229.h" 
+#include "h1231.h" 
+#include "h1006.h" 
+#include "h1240.h" 
+
+-->
+<class>
+	<identifier>TYPEID_N5RAPKAS</identifier>
+	<table>n5rapkas</table>
+	<humanname>Raport kasowy/bankowy</humanname>
+	<idobj/>
+
+	XDF_NRDOK_OBJ(raka_)								
+
+	<embedded>
+		<name>raka_dDataOd</name>
+		<sqltype>SQLdate</sqltype>
+		<humanname>Początek okresu</humanname>
+		<nonempty/>
+	</embedded>
+	<embedded>
+		<name>raka_dDataDo</name>
+		<sqltype>SQLdate</sqltype>
+		<humanname>Koniec okresu</humanname>
+		<nonempty/>
+	</embedded>
+
+	XDF_REJDOWSCHEM_OBJ(raka_)
+
+
+	<ref>
+		<name>raka_pPKPIR</name>
+		<humanname>PKPIR</humanname>
+		<typeid>TYPEID_N5PKPIR</typeid>
+		<optional/>
+	</ref>
+
+	<ref>
+		<name>raka_pUzytRej</name>
+		<humanname>Wprowadził</humanname>
+		<typeid>TYPEID_N5UZYTKOWNIK</typeid>
+	</ref>
+
+	XDF_EXTRAS_OBJ(raka_)
+
+	<!-- DB9 -->
+  XDF_OSTMODYF(raka_)
+
+
+#ifdef ENABLE_DB13
+
+  XDF_CHANGE_TIME(raka_)
+
+#endif
+
+  <cursors>
+	<cursor>
+		<identifier>CRSR_N5RAPKAS_WG_REJESTRU</identifier>
+		<humanname>Wg rejestru</humanname>
+		<join></join>
+		<where>raka_pRejestrDok=appvar_rejestr_dokumentow</where>
+		<orderby>raka_dDataOd</orderby>
+	</cursor>
+</cursors>
+
+
+<script>
+<![CDATA[
+
+'GetCurrentUser
+#include "L50203.NXB"
+
+
+'compute_dates_for_rapkas
+#include "L50523.NXB"
+
+'uprawnienia
+#include "L50101.NXB"
+
+'srvDate
+#include "50126"
+
+'make_dk_*
+#include "L50214.NXB"
+
+'remove_dependent_objects_save
+#include "50626"
+
+function n5rapkas_initnew():n5rapkas_initnew = true
+
+	set this_.raka_pRejestrDok =  trans_.getobj(TYPEID_N5REJESTRDOK,trans_.var(APPVAR_REJESTR_DOKUMENTOW) )
+	set this_.raka_pSchematDekr = this_.raka_pRejestrDok.rejdok_pDefSchematdekr2
+	set this_.raka_pUzytRej = GetCurrentUser()
+	set this_.raka_pUzytModyf = this_.raka_pUzytRej
+
+	'daty
+	dim dDataOd,dDataDo
+	compute_dates_for_rapkas this_.raka_pRejestrDok.rejdok_eZasadaRapKas , srvDate , dDataOd , dDataDo
+	this_.raka_dDataOd = dDataOd
+	this_.raka_dDataDo = dDataDo
+
+end function
+
+
+function n5rapkas_befins()
+
+'	if not this_.raka_pRejestrDok.n5rejestrdok_hasUserRights then
+'		trans_.message 1002 ,0, "Nie można dodać dokumentu - nie masz do uprawnień do rejestru " + this_.pRejestrDok.text
+'		n5rapkas_befins = false
+'		exit function
+'	end if
+
+	n5rapkas_befins = n5rapkas_GenerateNextNum() and this_.n5rapkas_check_dates()
+
+#ifndef APPCONFIG_PKPIR
+	if n5rapkas_befins then
+		n5rapkas_befins = n5rapkas_make_dk()
+	end if
+#endif
+
+end function
+
+function n5rapkas_befupd()
+
+	n5rapkas_befupd = n5rapkas_GenerateNextNum() and this_.n5rapkas_check_dates()
+
+#ifndef APPCONFIG_PKPIR
+	if n5rapkas_befupd then
+		n5rapkas_befupd = n5rapkas_make_dk()
+	end if
+#endif
+	if n5rapkas_befupd then
+		set this_.raka_pUzytModyf = GetCurrentUser()
+	end if
+
+end function
+
+function n5rapkas_befdel():n5rapkas_befdel = false
+
+	'Usuwanie obiektów zależnych
+	if (not remove_dependent_objects_save(TYPEID_N5RAPKAS, this_.idObj)) then
+		exit function
+	end if
+
+#ifdef APPCONFIG_PKPIR
+	n5rapkas_befdel = true
+#else
+	n5rapkas_befdel = make_dk_delete(this_.get_this(),this_.raka_pDowodKsieg)
+#endif
+
+end function
+
+
+function n5rapkas_GenerateNextNum() : n5rapkas_GenerateNextNum = true
+
+	if ((this_.raka_strNrDok="") and (not this_.raka_pRejestrDok is nothing)) then
+
+		dim strNrDok
+
+		n5rapkas_GenerateNextNum =  this_.raka_pRejestrDok.n5rejestrdok_GenerateNextNum3(strNrDok)
+
+		if n5rapkas_GenerateNextNum then
+			this_.raka_strNrDok = strNrDok
+		else
+			n5rapkas_GenerateNextNum = false	
+		end if
+
+	end if
+
+#ifdef _DEBUG
+	trans_.message 1002 , 0 , "DEBUG: " + this_.raka_strNrDok
+#endif
+
+end function
+
+function n5rapkas_get_platnosci()
+	set n5rapkas_get_platnosci = trans_.createrawcursor(TYPEID_N5PLATNOSC,"plat_pRapKas=" + cstr(this_.idobj),"nNumOper,dDataOper","")
+end function
+
+function n5rapkas_get_podsumowanie(byref curPrzychody,byref curRozchody)
+	curPrzychody = ccur(0.0)
+	curRozchody = ccur(0.0)
+	dim cursor: set cursor = n5rapkas_get_platnosci()
+	dim plat
+	for each plat in cursor
+		if plat.curKwotaEwid > 0 then
+			curPrzychody = curPrzychody + plat.curKwotaEwid
+		else
+			curRozchody = curRozchody + plat.curKwotaEwid
+		end if
+	next
+end function
+
+function n5rapkas_get_podsumowanie_split(byref curPrzychodyNetto, byref curRozchodyNetto, byref curPrzychodyVAT, byref curRozchodyVAT)
+	curPrzychodyNetto = ccur(0.0)
+	curRozchodyNetto = ccur(0.0)
+	curPrzychodyVAT = ccur(0.0)
+	curRozchodyVAT = ccur(0.0)
+  
+	dim cursor: set cursor = n5rapkas_get_platnosci()
+	dim plat
+	for each plat in cursor
+		
+    if plat.curKwotaEwid > 0 then
+			curPrzychodyNetto = curPrzychodyNetto + plat.curKwotaEwid
+			curPrzychodyVAT = curPrzychodyVAT + plat.plat_curVAT
+		else
+			curRozchodyNetto = curRozchodyNetto + plat.curKwotaEwid
+			curRozchodyVAT = curRozchodyVAT + plat.plat_curVAT
+		end if
+    
+	next
+end function
+
+function n5rapkas_check_dates():n5rapkas_check_dates = false
+	dim idOther : idOther = trans_.findobjid(TYPEID_N5RAPKAS,_
+		"raka_dDataDo >= " + trans_.afc.convert.date2SQL(this_.raka_dDataOd) + " and " +_
+		trans_.afc.convert.date2SQL(this_.raka_dDataDo) + " >= raka_dDataOd and raka_pRejestrDok=" + cstr(this_.raka_pRejestrDok.idobj))
+
+	if idOther <> 0 and idOther <> this_.idobj then
+			trans_.message 6500,0, "Daty w tworzonym raporcie kasowym ("+this_.text+") pokrywają się z innym raportem"
+		exit function
+	end if
+	n5rapkas_check_dates = true
+end function
+
+
+function n5rapkas_as_text()
+#ifdef _IOW
+    n5rapkas_as_text = this_.raka_strNrDok
+#else
+	n5rapkas_as_text=this_.raka_strNrDok + " (od"+ trans_.afc.display.fulldate(this_.raka_dDataOd) +" do " + trans_.afc.display.fulldate(this_.raka_dDataDo) + ")" 
+#endif
+end function
+
+
+
+function n5rapkas_checkdate(byval dDate2Check): n5rapkas_checkdate = false
+
+	if (dDate2Check < this_.raka_dDataOd or _
+		dDate2Check > this_.raka_dDataDo) then
+			trans_.message 1002, 0, "Data " + trans_.afc.display.fulldate(dDate2Check) + " nie zawiera się w raporcie kasowym."
+			exit function
+	end if
+
+	n5rapkas_checkdate = true
+end function
+
+
+'----------------------------------------------------------------------
+function n5rapkas_make_dk()
+	n5rapkas_make_dk = false
+	'dla importu pozostaw jak było	
+	if (trans_.var(GVAR_OPERATION_MODE) = clng(OPERATION_MODE_IMPORT)) then
+		n5rapkas_make_dk = true
+		exit function
+	end if
+
+	'brak schematu 
+	if this_.raka_pSchematDekr is nothing then
+		'usuń jeśli był i był automatyczny
+		if not this_.raka_pDowodKsieg is nothing then
+			if this_.raka_pDowodKsieg.cAuto = N5_DEKRET_AUTO then
+				this_.raka_pDowodKsieg.markdel = true
+				
+				'----- zapis aby wyzerować cykliczną referencję ----
+				dim id_dok:id_dok = this_.idobj
+				dim typeid:typeid = this_.type
+
+				dim pSubTrans
+				set pSubTrans = trans_.createsubtran()
+					dim pThisDok:set pThisDok = trans_.getobj(typeid,id_dok)
+					set pThisDok.raka_pDowodKsieg = nothing
+
+					if not trans_.save() then
+						exit function
+					end if
+					set pThisDok = nothing
+				set pSubTrans = nothing
+			end if
+			set this_.raka_pDowodKsieg = nothing
+		end if
+		n5rapkas_make_dk = true
+	else
+		dim pAutoDekret : set pAutoDekret = this_.raka_pSchematDekr.n5schematdekr_prepare(this_.get_this(),this_.raka_pDowodKsieg)
+
+		dim pCursor: set pCursor = this_.n5rapkas_get_platnosci()
+		dim pPlatnosc
+		for each pPlatnosc in pCursor
+			if not pPlatnosc.pSchematDekr is nothing then
+				pAutoDekret.switch_to_dokument pPlatnosc
+				pPlatnosc.pSchematDekr.n5schematdekr_run_intrnl pAutoDekret
+			end if
+		next
+		pAutoDekret.switch_to_dokument this_.get_this()
+		this_.raka_pSchematDekr.n5schematdekr_run_intrnl pAutoDekret
+	
+		set this_.raka_pDowodKsieg = pAutoDekret.dow()
+		n5rapkas_make_dk = pAutoDekret.is_ok()
+	end if
+end function
+
+'----------------------------------------------------------------------
+
+'----------------------------------------------------------------------
+
+]]>
+</script>
+	
+	
+</class>

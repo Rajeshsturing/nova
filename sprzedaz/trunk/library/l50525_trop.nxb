@@ -1,0 +1,374 @@
+'//////////////////////////////////////////
+'// (C) 2008 NAVO				         //
+'// Obs³uga obiektu operacji transakcji  //
+'// (czêœc obiektowa)			         //
+'//////////////////////////////////////////
+
+#ifndef LIBRARY_50525
+#define LIBRARY_50525
+
+#include "50203"
+
+#comment '------------------------------------------------------------
+#comment 'inicjalizacja obiektu transakcja-operacja
+#comment '------------------------------------------------------------
+private sub initialize_transaction_oper(byref oThis, byref oTransOper)
+	dim idPoz
+#ifdef ENABLE_DB11_TROP  
+	set oTransOper = trans_.newobj(TYPEID_N5TRANSAKCJA_OPERACJA)
+	with oTransOper
+		select case oThis.type
+			case TYPEID_N5SPRZEDAZ
+				set .trop_wrefDokument = trans_.getobj(TYPEID_N5SPRZEDAZ,this_.idobj)
+				.trop_dDataOp = this_.dDataWyst
+#ifdef _IOW
+				dim pFirma : set pFirma = getcurrentFirma()
+				if not (oThis.pWaluta is pFirma.pWaluta or oThis.n5sprzedaz_transakcja_zawsze_w_PLN()) then
+					.trop_curKursOp = this_.curKurs  
+				end if
+#else				
+				.trop_curKursOp = this_.curKurs
+#endif				
+			case TYPEID_N5ZAKUP
+				set .trop_wrefDokument = trans_.getobj(TYPEID_N5ZAKUP,this_.idobj)
+				.trop_dDataOp = this_.dDataWyst
+				.trop_curKursOp = this_.curKurs       
+			case TYPEID_N5POZPLATNOSC
+				idPoz = this_.parent.listPozycje.findonid(this_.idobj)
+				if idPoz > 0 then
+					set .trop_wrefDokument = this_.parent.listPozycje.get(idPoz)
+				end if  
+				.trop_dDataOp = this_.parent.dDataOper
+				.trop_curKursOp = this_.curPozKursEwid      
+			case TYPEID_N5POZRATA
+				if this_.parent.type = TYPEID_N5SPRZEDAZ then
+					idPoz = this_.parent.sprzed_listRata.findonid(this_.idobj)
+					if idPoz > 0 then
+						set .trop_wrefDokument = this_.parent.sprzed_listRata.get(idPoz)
+					end if
+				else
+					idPoz = this_.parent.zak_listRata.findonid(this_.idobj)
+					if idPoz > 0 then
+						set .trop_wrefDokument = this_.parent.zak_listRata.get(idPoz)
+					end if                    
+				end if 
+				.trop_dDataOp = this_.prat_dDataPlat
+				.trop_curKursOp = this_.parent.curKurs       
+			case TYPEID_N5DEKRET
+				idPoz = this_.parent.listDekret.findonid(this_.idobj)
+				if idPoz > 0 then
+					set .trop_wrefDokument = this_.parent.listDekret.get(idPoz)
+				end if
+				.trop_dDataOp = this_.dDataKsieg            
+			case TYPEID_N5PLNALICZENIE
+				set .trop_wrefDokument = trans_.getobj(TYPEID_N5PLNALICZENIE,this_.IdObj)
+				.trop_dDataOp = this_.dDataNal
+			case TYPEID_N5TRANSAKCJA
+				set .trop_pTransakcja = oThis
+				.trop_dDataOp = oThis.dDataRozp
+				.trop_curKursOp = oThis.trn_curKurs	
+			case TYPEID_N5NOTAODS
+				set .trop_wrefDokument = trans_.getobj(TYPEID_N5NOTAODS,this_.IdObj)
+				.trop_dDataOp = this_.dDataWyst								
+		end select                                  
+	end with 
+#else
+     set oTransOper = nothing      	  
+#endif   	            
+end sub
+
+
+#comment '--------------------------------------------------------------
+#comment 'inicjalizacja obiektu transakcja-operacja US (n5plnaliczenie)
+#comment '--------------------------------------------------------------
+private function n5plnaliczenie_initialize_trans_oper_US(byref oTransOper)
+#ifdef ENABLE_DB11_TROP
+	n5plnaliczenie_initialize_trans_oper_US = false
+	dim oFirma : set oFirma = getcurrentFirma()
+	if not oFirma is nothing then
+		if not oFirma.pUrzadSkarbowyPD is nothing then
+			set oTransOper = trans_.newobj(TYPEID_N5TRANSAKCJA_OPERACJA)
+			with oTransOper
+				set .trop_wrefDokument = trans_.getobj(TYPEID_N5PLNALICZENIE,this_.IdObj)
+				.trop_dDataOp = this_.dDataNal
+			end with
+			n5plnaliczenie_initialize_trans_oper_US = true
+		else
+			nx_.trace.fatal "FPL003", "Nie podano Urzêdu Skarbowego w danych firmy"
+		end if
+	end if
+#else
+	set oTransOper = nothing
+	n5plnaliczenie_initialize_trans_oper_US = true	
+#endif	
+end function
+
+
+#comment '--------------------------------------------------------------
+#comment 'inicjalizacja obiektu transakcja-operacja ZUS (n5plnaliczenie)
+#comment '--------------------------------------------------------------
+private sub n5plnaliczenie_initialize_trans_oper_ZUS(byref oTransOper, byval strFldName)
+#ifdef ENABLE_DB11_TROP
+	set oTransOper = nothing
+	dim oFirma : set oFirma = getcurrentFirma()
+	if not oFirma is nothing then
+		if not oFirma.pZUS is nothing then
+			set oTransOper = trans_.newobj(TYPEID_N5TRANSAKCJA_OPERACJA)
+			with oTransOper
+				set .trop_wrefDokument = trans_.getobj(TYPEID_N5PLNALICZENIE,this_.IdObj)
+				.trop_dDataOp = this_.dDataNal
+			end with
+		else
+			nx_.trace.fatal "FPL004", "Nie podano ZUS w danych firmy"
+		end if
+	end if
+#else
+	  set oTransOper = nothing
+#endif
+end sub
+
+
+#comment '------------------------------------------------------------
+#comment 'update obiektu transakcja-operacja
+#comment '------------------------------------------------------------
+
+#ifdef ENABLE_DB14
+private sub update_transaction_oper(byref oThis, byref pTransOper, byval curKwotaWn, byval curKwotaMa, byval curKwotaWnEwid, byval curKwotaMaEwid, byval curWnVAT, byval curMaVAT)
+  if not pTransOper is nothing then
+    with pTransOper
+      select case oThis.type
+		case TYPEID_N5SPRZEDAZ
+           dim pFirma : set pFirma = getcurrentFirma()
+           if oThis.n5sprzedaz_isExport() or (oThis.pRejestrDok.eTyp = N5REJESTRDOK_FAKTURA_ZALICZKOWA and not oThis.pWaluta is pFirma.pWaluta) then
+              .trop_curKursOp = oThis.curKurs
+           end if
+
+           if oThis.pRejestrDok.eTyp = N5REJESTRDOK_DOSTAWA or oThis.pRejestrDok.eTyp = N5REJESTRDOK_KOR_DOSTAWA then
+              .trop_curWn = ccur(0.0)			
+			  .trop_curWnVAT = ccur(0.0)
+           else	
+              .trop_curWn = curKwotaWn		
+			  .trop_curWnVAT = curWnVAT
+           end if 			
+		   .trop_dDataOp = this_.dDataWyst
+		case TYPEID_N5ZAKUP
+		   .trop_curMa = curKwotaMa   
+		   .trop_curMaVAT = curMaVAT
+		   .trop_dDataOp = this_.dDataWyst
+		case TYPEID_N5POZPLATNOSC
+		   if not oThis.pTransakcja is nothing then
+		     if oThis.pTransakcja.eTyp = N5TRANSAKCJA_ZOBOWIAZANIE then
+		       .trop_curWn = -curKwotaWn
+			   .trop_curWnVAT = -curWnVAT
+		     else
+		       .trop_curMa = curKwotaWn
+			   .trop_curMaVAT = curWnVAT
+		     end if
+		   end if  
+			.trop_dDataOp = this_.parent.dDataOper		      
+		case TYPEID_N5POZRATA
+			if oThis.parent.type = TYPEID_N5SPRZEDAZ then
+				if oThis.parent.pRejestrDok.eTyp = N5REJESTRDOK_DOSTAWA or oThis.parent.pRejestrDok.eTyp = N5REJESTRDOK_KOR_DOSTAWA then
+					.trop_curWn = ccur(0.0)			
+					.trop_curWnVAT = ccur(0.0)
+				else	
+					.trop_curWn = curKwotaWn		   			
+					.trop_curWnVAT = curWnVAT
+				end if 			
+			else
+				'zakup
+				.trop_curMa = curKwotaWn
+				.trop_curMaVAT = curWnVAT
+			end if      
+			.trop_dDataOp = this_.prat_dDataPlat
+		case TYPEID_N5DEKRET
+           
+		   .trop_curWn = curKwotaWn
+		   .trop_curWnVAT = curWnVAT
+		   .trop_curMa = curKwotaMa
+		   .trop_curMaVAT = curMaVAT
+		   .trop_dDataOp = this_.dDataKsieg
+
+        case TYPEID_N5PLNALICZENIE
+           if curKwotaWn = ccur(1) then
+             'n5plnaliczenie_set_wyplata_to_trans_oper
+             .trop_curMa = curKwotaMa     
+			 .trop_curMaVAT = curMaVAT
+           else
+             'n5plnaliczenie_set_uszus_to_trans_oper
+             .trop_curMa = curKwotaMa
+			 .trop_curMaVAT = curMaVAT
+           end if 
+		   .trop_dDataOp = this_.dDataNal
+         case TYPEID_N5TRANSAKCJA
+           .trop_curWn = oThis.curWn
+		   .trop_curWnVAT = oThis.trn_curWnVAT
+           .trop_curMa = oThis.curMa		
+		   .trop_curMaVAT = oThis.trn_curMaVAT
+		   .trop_dDataOp = oThis.dDataRozp
+         case TYPEID_N5NOTAODS
+           .trop_curWn = curKwotaWn		                   		
+           .trop_curWnVAT = curWnVAT	
+		   .trop_dDataOp = this_.dDataWyst	                   		
+      end select
+    end with
+  end if	
+end sub
+
+#else
+
+private sub update_transaction_oper(byref oThis, byref pTransOper, byval curKwotaWn, byval curKwotaMa, byval curKwotaWnEwid, byval curKwotaMaEwid)
+  if not pTransOper is nothing then
+    with pTransOper
+      select case oThis.type
+		case TYPEID_N5SPRZEDAZ
+           dim pFirma : set pFirma = getcurrentFirma()
+           if oThis.n5sprzedaz_isExport() or (oThis.pRejestrDok.eTyp = N5REJESTRDOK_FAKTURA_ZALICZKOWA and not oThis.pWaluta is pFirma.pWaluta) then
+              .trop_curKursOp = oThis.curKurs
+           end if
+#ifdef ENABLE_DB12
+           if oThis.pRejestrDok.eTyp = N5REJESTRDOK_DOSTAWA or oThis.pRejestrDok.eTyp = N5REJESTRDOK_KOR_DOSTAWA then
+              .trop_curWn = ccur(0.0)			
+           else	
+              .trop_curWn = curKwotaWn		   			
+           end if 			
+#else           
+           .trop_curWn = curKwotaWn
+#endif
+			.trop_dDataOp = this_.dDataWyst           
+		case TYPEID_N5ZAKUP
+		   .trop_curMa = curKwotaMa 
+		   .trop_dDataOp = this_.dDataWyst    
+		case TYPEID_N5POZPLATNOSC
+		   if not oThis.pTransakcja is nothing then
+		     if oThis.pTransakcja.eTyp = N5TRANSAKCJA_ZOBOWIAZANIE then
+		       .trop_curWn = -curKwotaWn
+		     else
+		       .trop_curMa = curKwotaWn
+		     end if
+		   end if     
+		   .trop_dDataOp = this_.parent.dDataOper
+		case TYPEID_N5POZRATA
+			if oThis.parent.type = TYPEID_N5SPRZEDAZ then
+#ifdef ENABLE_DB12
+				if oThis.parent.pRejestrDok.eTyp = N5REJESTRDOK_DOSTAWA or oThis.parent.pRejestrDok.eTyp = N5REJESTRDOK_KOR_DOSTAWA then
+					.trop_curWn = ccur(0.0)			
+				else	
+					.trop_curWn = curKwotaWn		   			
+				end if 			
+#else 
+				.trop_curWn = curKwotaWn
+#endif
+			else
+				'zakup
+				.trop_curMa = curKwotaWn
+			end if 
+			.trop_dDataOp = this_.prat_dDataPlat     
+		case TYPEID_N5DEKRET
+           .trop_curWn = curKwotaWn
+           .trop_curMa = curKwotaMa
+		   .trop_dDataOp = this_.dDataKsieg
+        case TYPEID_N5PLNALICZENIE
+           if curKwotaWn = ccur(1) then
+             'n5plnaliczenie_set_wyplata_to_trans_oper
+             .trop_curMa = curKwotaMa     
+           else
+             'n5plnaliczenie_set_uszus_to_trans_oper
+             .trop_curMa = curKwotaMa
+           end if 
+		   .trop_dDataOp = this_.dDataNal
+         case TYPEID_N5TRANSAKCJA
+           .trop_curWn = oThis.curWn
+           .trop_curMa = oThis.curMa	
+		   .trop_dDataOp = oThis.dDataRozp	
+         case TYPEID_N5NOTAODS
+           .trop_curWn = curKwotaWn		   
+		   .trop_dDataOp = this_.dDataWyst                		
+      end select
+    end with
+  end if	
+end sub
+
+#endif 
+
+#comment '------------------------------------------------------------
+#comment 'probuje usunac obiekt transakcja-operacja jesli jest to mozliwe
+#comment 'usuniecie odbywa sie w podtransakcji
+#comment '------------------------------------------------------------
+private sub try_delete_transaction_oper(byval idTrans)
+	if idTrans = 0 then
+		exit sub
+	end if
+
+	dim pSubTrans:set pSubTrans = trans_.createsubtran()
+
+		dim pTrans : set pTrans = trans_.getobj(TYPEID_N5TRANSAKCJA_OPERACJA , idTrans)
+	    pTrans.markdel = true
+		set pTrans = nothing
+		if not trans_.save() then
+			trans_.discard
+		end if
+
+	set pSubTrans = nothing
+end sub
+
+
+#comment '------------------------------------------------------------
+#comment 'probuje wyszukac obiekt transakcja-operacja skojarzony z this_
+#comment '------------------------------------------------------------
+private function find_transaction_oper(byref oThis,byref oTransakcja)
+	set find_transaction_oper = nothing
+	
+	#ifdef ENABLE_DB11_TROP
+		dim idTransOper
+		if not oTransakcja is nothing then
+			idTransOper = trans_.findobjid(TYPEID_N5TRANSAKCJA_OPERACJA, "trop_wrefDokument=" +_
+				cstr(oThis.IdObj) + " and trop_wrefDokument_wrt=" + cstr(oThis.type) + " and trop_pTransakcja = " + cstr(oTransakcja.IdObj))
+		else
+			idTransOper = trans_.findobjid(TYPEID_N5TRANSAKCJA_OPERACJA, "trop_wrefDokument=" +_
+				cstr(oThis.IdObj) + " and trop_wrefDokument_wrt=" + cstr(oThis.type))			
+		end if
+		if idTransOper > 0 then
+			set find_transaction_oper = trans_.getobj(TYPEID_N5TRANSAKCJA_OPERACJA,idTransOper)
+		end if		
+	#endif	
+		
+end function
+
+#comment '--------------------------------------------------------------
+#comment 'ustawia transakcjê w obiekcie transakcja-operacja i robi zapis
+#comment '--------------------------------------------------------------
+private function save_transaction_oper(byval idTransOper, byval idTrans)
+	if idTransOper = clng(0) or idTrans = clng(0) then
+		save_transaction_oper = true
+	else		
+		'start sub
+		'''dim pSubTrans :  set pSubTrans = trans_.createsubtran()
+		
+		'reacquire objects
+		dim oTransOper : set oTransOper = trans_.getobj(TYPEID_N5TRANSAKCJA_OPERACJA, idTransOper)
+		dim oTrans : set oTrans = trans_.getobj(TYPEID_N5TRANSAKCJA, idTrans)
+		
+		'modify inside sub
+		set oTransOper.trop_pTransakcja = oTrans
+		
+		'save
+		save_transaction_oper = true '''trans_.save()
+	end if
+end function
+
+
+#comment '--------------------------------------------------
+#comment 'ustawia idobj dla transakcji i transakcji-operacji
+#comment '--------------------------------------------------
+private sub get_id_trans(byref oTransOper, byref idTransOper, byref oTrans, byref idTrans)
+	idTransOper = clng(0)
+	idTrans = clng(0)
+	if not oTransOper is nothing then
+		idTransOper = oTransOper.IdObj 
+	end if
+	if not oTrans is nothing then
+		idTrans = oTrans.IdObj 
+	end if 	
+end sub
+#endif

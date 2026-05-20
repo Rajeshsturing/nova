@@ -1,0 +1,195 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h" 
+#include "h1006_obj_macros.h"
+#include "h1200.h" 
+#include "h1229.h" 
+#include "h1231.h"
+#include "h1240.h"
+
+Lista płac pełni rolę zestawu naliczeń (paczki naliczeń).
+Paczka jest generowana wg jakiś kryteriów i jest "stała".
+-->
+<class>
+	<identifier>TYPEID_N5PLLISTAPLAC</identifier>
+	<table>n5pllistaplac</table>
+	<humanname>Lista płac</humanname>
+	<idobj/>
+
+	XDF_NRDOK
+
+	<embedded>
+		<name>dDataNal</name>
+		<sqltype>SQLdate</sqltype>
+		<humanname>Data naliczenia</humanname>
+		<nonempty/>
+	</embedded>
+	<embedded>
+		<name>dDataOd</name>
+		<sqltype>SQLdate</sqltype>
+		<humanname>Początek okresu</humanname>
+		<nonempty/>
+	</embedded>
+	<embedded>
+		<name>dDataDo</name>
+		<sqltype>SQLdate</sqltype>
+		<humanname>Koniec okresu</humanname>
+		<nonempty/>
+	</embedded>
+
+	XDF_REJDOWSCHEM_OBJ(lppl_)
+
+
+	<embedded>
+		<name>lppl_nNumListy</name>
+		<sqltype>SQLlong</sqltype>
+		<humanname>Numer operacji</humanname>
+	</embedded>
+
+	<embedded>
+		<name>lppl_strUwagi</name>
+		<sqltype>SQLvc512</sqltype>
+		<humanname>Opis listy płac</humanname>
+	</embedded>
+
+<cursors>
+	DEFAULT_CURSOR(wg numeru,strNrDok)
+
+	<cursor>
+		<identifier>CRSR_N5PLLISTAPLAC_PO_REJ</identifier>
+		<humanname>wg rejestrzu</humanname>
+		<join></join>
+		<where>lppl_pRejestrDok=appvar_rejestr_dokumentow</where>
+		<orderby>strNrDok</orderby>
+	</cursor>
+
+</cursors>
+
+<script>
+<![CDATA[
+
+
+'remove_dependent_objects_save
+#include "50626"
+
+
+
+'generate_doc_symbol
+#include "50121"
+
+function n5pllistaplac_initnew():n5pllistaplac_initnew = false
+
+	this_.dDataOd = PIERWSZY_DZIEN_MCA
+	this_.dDataDo = OSTATNI_DZIEN_MCA
+	this_.dDataNal = OSTATNI_DZIEN_MCA
+
+	set this_.lppl_pRejestrDok =  trans_.getobj(TYPEID_N5REJESTRDOK,trans_.var(APPVAR_REJESTR_DOKUMENTOW) )
+
+	n5pllistaplac_initnew = true
+end function
+
+function n5pllistaplac_as_text()
+	n5pllistaplac_as_text = this_.strNrDok    
+end function
+
+function n5pllistaplac_befins():n5pllistaplac_befins = false
+
+
+	if not n5pllistaplac_GenerateNumOper() or not n5pllistaplac_GenerateNumDok()  then
+		n5pllistaplac_befins = false
+		exit function
+	end if
+
+	n5pllistaplac_befins = n5pllistaplac_checkDates()
+end function
+
+function n5pllistaplac_befupd():n5pllistaplac_befupd = false
+
+	if this_.strNrDok = "" then
+		if not n5pllistaplac_GenerateIndeks() then
+			exit function
+		end if
+	end if
+	
+	n5pllistaplac_befupd = n5pllistaplac_checkDates()
+end function
+
+function n5pllistaplac_befdel()
+	n5pllistaplac_befdel = false
+	'Usuwamy naliczenia dla tej listy płac
+	if (not remove_dependent_objects_save(TYPEID_N5PLLISTAPLAC, this_.IdObj)) then
+		trans_.message 0,0,"Usunięcie listy płac nieudane"
+		exit function
+	end if
+
+	n5pllistaplac_befdel = true
+end function
+
+#comment '-----------------------------------------------------------
+function n5pllistaplac_checkDates()
+	n5pllistaplac_checkDates = false
+
+	if (this_.dDataOd > this_.dDataDo) then
+		trans_.message 1002 , 0 , "Data początkowa musi być wcześniejsza od końcowej"
+		exit function
+	end if
+
+	if month(this_.dDataOd) <> month(this_.dDataDo) or year(this_.dDataOd) <> year(this_.dDataDo) then
+		trans_.message 1002 , 0 , "Lista płac może dotyczyć tylko jednego miesiaca kalendarzowego"
+		exit function
+	end if
+	n5pllistaplac_checkDates = true
+end function
+
+
+function n5pllistaplac_GenerateNumDok()	
+	n5pllistaplac_GenerateNumDok = true
+	dim strNrDok		
+	if (this_.strNrDok="") then			
+		if not this_.lppl_pRejestrDok is nothing then		
+			if this_.lppl_pRejestrDok.n5rejestrdok_GenerateNextNum(strNrDok) then
+				this_.strNrDok = strNrDok
+			else
+				n5pllistaplac_GenerateNumDok = false
+			end if
+			
+		end if
+	end if
+end function
+
+
+
+
+function n5pllistaplac_GenerateNumOper(): n5pllistaplac_GenerateNumOper = false
+	'Automatyczna numeracja operacji
+	if this_.lppl_nNumListy = 0 then
+		dim pGlobProfNr: set pGlobProfNr = getglobprofileObj( GLOBPROF_PLLISTAPLAC_NRDOK )
+
+		if not pGlobProfNr.exlock then
+			trans_.message 4090, 0, "Nie udało się uzyskać wyłącznego dostępu do numeracji dokumentów magazynowych. Spróbuj później."
+			exit function
+		end if
+
+		'mamy lock'a to dzialamy dalej
+		'zwiekszamy wartosc profilu
+		dim nNewNo: nNewNo = clng(pGlobProfNr.Wartosc) + 10
+
+		pGlobProfNr.Wartosc = CStr( nNewNo )
+		this_.lppl_nNumListy = nNewNo
+	else
+		dim whereStr: whereStr = " lppl_nNumListy = " + cstr( this_.lppl_nNumListy)
+
+		if trans_.FindObjId(TYPEID_N5PLLISTAPLAC, whereStr) <> 0 then
+
+			trans_.message 4090, 0, "Lista płac o numerze: " + cstr(this_.lppl_nNumListy) + " juz istnieje"
+			exit function
+		end if
+	end if
+
+	n5pllistaplac_GenerateNumOper = true
+end function
+
+
+]]>
+</script>
+</class>

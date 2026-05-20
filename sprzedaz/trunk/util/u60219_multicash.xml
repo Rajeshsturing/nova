@@ -1,0 +1,2426 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+
+
+
+
+
+#define MULTICASH_TYP_PP			110
+#define MULTICASH_TYP_ZUS			120
+#define MULTICASH_TYP_PZ			210			
+
+
+#define MULTICASH_PRZYCHOD			1
+#define MULTICASH_ROZCHOD			2
+
+
+
+
+
+-->
+<page>
+  <config>
+    <title></title>
+    <script>
+
+      <![CDATA[
+#include "50209"
+
+'TRACE
+#include "50306"
+
+
+'choose_rejestr_dok
+#include "50517"
+
+'get_current_firma
+#include "50203"
+
+
+#include "50126"
+
+#include "50200"
+
+
+#ifdef _DEBUG
+	#ifndef MACRO_MCASHTRACE
+	TRACE2FILE_NAME(mcashtrace)
+	#macro MCASHTRACE(message) TRACE2FILE("mcash.log", message, mcashtrace)
+	#define MACRO_MCASHTRACE
+	#endif
+#else
+	#ifndef MCASHTRACE
+	#define MCASHTRACE '
+	#endif
+#endif
+
+
+
+class CMultiCashPOLECENIE
+
+	public m_nTyp
+	public m_dDataPlat
+	public m_curKwota
+	public m_nNRBZ
+	public m_strNrRachZlec
+	public m_strNrRachKontr
+
+	public m_strDaneZlec_Line1
+	public m_strDaneZlec_Line2
+	public m_strDaneZlec_Line3
+	public m_strDaneZlec_Line4
+
+	public m_strDaneKontr_Line1
+	public m_strDaneKontr_Line2
+	public m_strDaneKontr_Line3
+	public m_strDaneKontr_Line4
+
+	public m_nNRBK
+
+	public m_nKlasyfikacja
+
+
+	public m_strSzczegoly_Line1
+	public m_strSzczegoly_Line2
+	public m_strSzczegoly_Line3
+	public m_strSzczegoly_Line4
+
+	public m_strSzczegoly_ZUS
+	public m_strSzczegoly_US
+	public m_strSzczegoly_PZ
+
+
+	public m_nPodmiotID
+	public m_nPodmiotTYPE
+
+	public m_nTransakcjaID
+	public m_strTransakcja
+
+	public m_nRejestrID
+
+	public m_nPlatnoscID
+
+	public m_nPrzychodRozchod
+
+
+	Private Sub class_initialize()	
+		m_nPrzychodRozchod = MULTICASH_PRZYCHOD
+	end sub
+  
+  
+  public function from_string(byval str):from_string = false		 
+
+#ifdef _DEBUG
+		dim strTmp:strTmp = str
+#endif
+
+		if str = "" then 		
+			m_nTyp = -1
+			from_string = true
+			exit function
+		end if
+
+		MCASHTRACE("PARSOWANIE OPERACJI : " + str)
+
+		'a teraz 'parsujemy stringa'
+		' kolejne pole oddzielone są przecinkami
+		dim nCursorPosition
+
+
+		'Typ polecenia
+		MCASHTRACE("Typ polecenia") 
+		nCursorPosition = InStr(str, ",")		
+		m_nTyp = Left(str, nCursorPosition - CLng(1))
+		'ciachnij to, co już wczytałeś
+		str = Mid(str, nCursorPosition + CLng(1))
+		if not format_typ_polecenia then
+			exit function
+		end if
+
+
+		'data płatności
+		MCASHTRACE("Data płatności") 
+		nCursorPosition = InStr(str, ",")
+		m_dDataPlat = Left(str, nCursorPosition - CLng(1))
+		str = Mid(str, nCursorPosition + CLng(1))
+		if not format_data_platnosci then
+			exit function
+		end if
+		
+
+		'kwota
+		MCASHTRACE("Kwota") 
+		nCursorPosition = InStr(str, ",")
+		m_curKwota = Left(str, nCursorPosition - CLng(1))
+		str = Mid(str, nCursorPosition + CLng(1))
+		if not format_kwota_platnosci then
+			exit function
+		end if
+
+	
+
+		'numer rozliczeniowy banku
+		MCASHTRACE("Numer rozliczeniowy") 
+		nCursorPosition = InStr(str, ",")
+		m_nNRBZ = Left(str, nCursorPosition - CLng(1))
+		str = Mid(str, nCursorPosition + CLng(1))
+		if not format_numer_rozliczeniowy then
+			exit function
+		end if
+
+		'kolejne pole nie jest użyte, dlatego po prostu obcinamy
+		'napis do kolejnego
+		nCursorPosition = InStr(str, ",")
+		str = Mid(str, nCursorPosition + CLng(1))
+
+
+		'numer rachunku zleceniodawcy
+		MCASHTRACE("Numer rachunku zelceniodawcy") 
+		nCursorPosition = InStr(str, ",")
+		m_strNrRachZlec = Left(str, nCursorPosition - CLng(1))
+		str = Mid(str, nCursorPosition + CLng(1))
+		if not format_numer_rach_zlec then
+			exit function
+		end if
+
+
+
+		'numer rachunku kontrahenta
+		MCASHTRACE("Numer rachunku kontrahenta") 
+		nCursorPosition = InStr(str, ",")
+		m_strNrRachKontr = Left(str, nCursorPosition - CLng(1))
+		str = Mid(str, nCursorPosition + CLng(1))
+		if not format_numer_rach_kontr then
+			exit function
+		end if
+
+
+
+		'dane zleceniodawcy
+		MCASHTRACE("Dane zleceniodawcy i kontrahenta") 
+		'UWAGA! Po tych danych ZAWSZE jest ciąg ",0,"
+		'szukam go, gdyż w danych jakiś debil moze umieścic przecinek :)
+		nCursorPosition = InStr(str, ",0,")
+		dim strDaneZlecKontr
+		strDaneZlecKontr = Left(str, nCursorPosition - CLng(1))
+		'UWAGA - obcinamy napis ale o trzy pozycje dalej niz kursor! 
+		'szukalismy napisu ",0," a nie samego przecinka
+		str = Mid(str, nCursorPosition + CLng(3))
+		if not format_dane_zlec_kontr(strDaneZlecKontr) then
+			exit function
+		end if
+
+
+
+		MCASHTRACE("Numer rozliczeniowy banku kontrahenta")
+		nCursorPosition = InStr(str, ",")
+		m_nNRBK = Left(str, nCursorPosition - CLng(1))
+		str = Mid(str, nCursorPosition + CLng(1))
+		if not format_numer_rozliczeniowy_k then
+			exit function
+		end if
+
+
+
+		'szczegóły		 
+		'UWAGA! Po tych danych ZAWSZE jest ciąg " ,"","",   " - dwa puste pola
+		'szukam go, gdyż w szczegółach jakiś debil moze umieścic przecinek :)
+		nCursorPosition = InStr(str, ","""","""",")
+		dim strSzczegoly
+		strSzczegoly = Left(str, nCursorPosition - CLng(1))
+		'UWAGA - obcinamy napis ale o 7 pozycji dalej niz kursor! 
+		'patrz jakiego ciągu szukaliśmy - wyżej
+		str = Mid(str, nCursorPosition + CLng(7))
+
+
+
+		'ale zanim przeformatujemy szczegóły musimy sprawdzić klasyfikację polecenia
+		'a to jest pole zaeaz po tych dwóch pustych za szczegółami
+
+		'klsayfikacja polecenia
+		MCASHTRACE("Klasyfikacja")
+		nCursorPosition = InStr(str, ",")
+		'może się zdarzyć ze mamy już koniec
+		dim bEof:bEof = false
+		if nCursorPosition = 0 then
+			bEof = true
+			m_nKlasyfikacja = str
+		else
+			m_nKlasyfikacja = Left(str, nCursorPosition - CLng(1))
+			str = Mid(str, nCursorPosition + CLng(1))
+		end if		
+		if not format_klasyfikacja then
+			exit function
+		end if
+
+
+		MCASHTRACE("Szczegóły")
+		if not format_szczegoly(strSzczegoly) then
+			exit function
+		end if
+
+
+		MCASHTRACE("KONIEC OPERACJI - OK") 
+		MCASHTRACE("")
+
+#ifdef _DEBUG
+		MCASHTRACE("orginal: " + strTmp)
+		MCASHTRACE("nowy   : " + to_string)
+		MCASHTRACE("")
+#endif		
+
+
+		from_string = true
+
+	end function
+  
+  
+  
+  public function from_string_sta(byval strCur):from_string_sta = false  
+  
+    dim iPos
+    dim strBuf, strCurBuf
+    strCurBuf = strCur  'pamiętaj bieżącą linię
+     'odetnij 3 znaki z bieżącej linii (dla ninii rozpoczynającej się od :XX)
+     strBuf = Left(strCur,3)      
+     select case strBuf
+        case ":25"
+           strCur = Mid(strCur,5,Len(strCur))
+           iPos = InStr(strCur,"/")
+           if iPos <> 0 then
+              m_nNRBZ = Mid(strCur,1,iPos - 1)          'Nr Rozliczeniowy Banku
+              if Len(m_nNRBZ) > 0 then                  'W przypadku gdy nie będzie podany nie sprawdzaj formatu
+                if not format_numer_rozliczeniowy then
+                   exit function
+                end if
+              end if  
+              m_strNrRachZlec = Mid(strCur,iPos + 1,Len(strCur))  'Nr Rachunku Zleceniodawcy
+              'if not format_numer_rach_zlec then
+              '   exit function
+              'end if
+           end if              
+           MCASHTRACE(m_nNRBZ)
+           MCASHTRACE(m_strNrRachZlec)
+        case ":13"
+           m_dDataPlat = "20" + Mid(strCur,5,6)                'Data płatności
+           if not format_data_platnosci then
+              exit function
+           end if
+           MCASHTRACE(m_dDataPlat)
+        case ":61"
+           strCur = Mid(strCur,5,Len(strCur))
+           iPos = InStr(strCur,"S")
+           if iPos <> 0 then
+              strCur = Mid(strCur,1,iPos-1)
+           end if   
+           iPos = InStr(strCur,"C")
+           if iPos = 0 then
+              iPos = InStr(strCur,"D")
+              if iPos <> 0 then
+                 m_curKwota = "-" + Mid(strCur,iPos + 1, Len(strCur))    'Kwota transakcji z przecinkiem
+                 m_curKwota = Replace(m_curKwota,",","")           'Kwota bez przecinka
+                 if not format_kwota_platnosci then
+                    exit function
+                 end if
+              end if   
+           else
+              m_curKwota = Mid(strCur,iPos + 1, Len(strCur))
+              m_curKwota = Replace(m_curKwota,",","")              'Kwota bez przecinka
+              if not format_kwota_platnosci then
+                 exit function
+              end if
+           end if
+           if m_curKwota < ccur(0.0) then
+            m_nPrzychodRozchod = MULTICASH_ROZCHOD
+           end if
+           MCASHTRACE(m_curKwota)
+        case ":86"
+           strCur = Mid(strCur,5,Len(strCur))
+           iPos = InStr(strCur,"+30")
+           if iPos <> 0 then
+              m_nNRBK = Mid(strCur,iPos + 3,Len(strCur))              'Nr rozliczeniowy banku kontrahenta
+              strCur = Left(strCur,iPos - 1)
+           end if
+           iPos = InStr(strCur,"+20")
+           if iPos <> 0 then
+              m_strSzczegoly_Line2 = Mid(strCur,iPos + 3,Len(strCur))  'Szczegóły operacji +20
+              strCur = Left(strCur,iPos - 1)
+           end if    
+           iPos = InStr(strCur,"+00")
+           '~00 w ING nie ma nic ciekawego
+           'if iPos = 0 then             'gdy nie znajdzie +00 niech szuka ~00
+           '   iPos = InStr(strCur,"~00")
+           'end if   
+           if iPos <> 0 then
+              m_strSzczegoly_Line1 = Mid(strCur,iPos + 3,Len(strCur))  'Szczegóły operacji +00 lub ~00
+           end if
+           MCASHTRACE(m_strSzczegoly_Line1)
+           MCASHTRACE(m_strSzczegoly_Line2)
+     end select       
+     strCur = strCurBuf 
+     'odetnij 1 znak z bieżącej linii (dla linii rozpoczynających się od + lub ~)
+     strBuf = Left(strCur,1)             
+     select case strBuf
+        case "+"       
+           iPos = InStr(strCur,"+33")
+           if iPos <> 0 then
+              m_strDaneKontr_Line2 = Mid(strCur,iPos + 3,Len(strCur))  'Nazwa kontrahenta 2
+              if iPos > 1 then   'Gdy w jednej linii będzie kilka +XX                   
+                 strCur = Left(strCur,iPos - 1)
+              end if
+              MCASHTRACE(m_strDaneKontr_Line2)
+           end if
+           iPos = InStr(strCur,"+32")
+           if iPos <> 0 then
+              m_strDaneKontr_Line1 = Mid(strCur,iPos + 3,Len(strCur))  'Nazwa kontrahenta 1
+              if iPos > 1 then
+                 strCur = Left(strCur,iPos - 1)
+              end if
+              MCASHTRACE(m_strDaneKontr_Line1)
+           end if
+           iPos = InStr(strCur,"+31")
+           if iPos <> 0 then
+              m_strNrRachKontr = Mid(strCur,iPos + 3,Len(strCur))      'Nr rachunku kontrahenta
+              if iPos > 1 then
+                 strCur = Left(strCur,iPos - 1)
+              end if   
+              MCASHTRACE(m_strNrRachKontr)
+           end if
+           iPos = InStr(strCur,"+30")
+           if iPos <> 0 then
+              m_nNRBK = Mid(strCur,iPos + 3,Len(strCur))           'Nr rozliczeniowy banku kontrahenta
+              if iPos > 1 then
+                 strCur = Left(strCur,iPos - 1)
+              end if
+              MCASHTRACE(m_nNRBK)
+           end if   
+           iPos = InStr(strCur,"+22")
+           if iPos <> 0 then
+              m_strSzczegoly_Line4 = Mid(strCur,iPos + 3,Len(strCur))  'Szczegóły operacji +22
+              strCur = Left(strCur,iPos - 1)
+              MCASHTRACE(m_strSzczegoly_Line4)
+           end if
+           iPos = InStr(strCur,"+21")
+           if iPos <> 0 then
+              m_strSzczegoly_Line3 = Mid(strCur,iPos + 3,Len(strCur))  'Szczegóły operacji +21
+              strCur = Left(strCur,iPos - 1)
+              MCASHTRACE(m_strSzczegoly_Line3)
+           end if
+        
+        case "~"       
+           iPos = InStr(strCur,"~62")                                 
+           if iPos <> 0 then
+              m_strDaneKontr_Line3 = Mid(strCur,iPos + 3,Len(strCur))  'Nazwa kontrahenta 3
+              if iPos > 1 then   'Gdy w jednej linii będzie kilka +XX                   
+                 strCur = Left(strCur,iPos - 1)
+              end if
+              MCASHTRACE(m_strDaneKontr_Line3)
+           end if
+           iPos = InStr(strCur,"~33")
+           if iPos <> 0 then
+              m_strDaneKontr_Line2 = Mid(strCur,iPos + 3,Len(strCur))  'Nazwa kontrahenta 2
+              if iPos > 1 then   'Gdy w jednej linii będzie kilka +XX                   
+                 strCur = Left(strCur,iPos - 1)
+              end if
+              MCASHTRACE(m_strDaneKontr_Line2)
+           end if
+           iPos = InStr(strCur,"~32")
+           if iPos <> 0 then
+              m_strDaneKontr_Line1 = Mid(strCur,iPos + 3,Len(strCur))  'Nazwa kontrahenta 1
+              if iPos > 1 then
+                 strCur = Left(strCur,iPos - 1)
+              end if
+              MCASHTRACE(m_strDaneKontr_Line1)
+           end if
+           iPos = InStr(strCur,"~38")
+           if iPos <> 0 then
+              m_strNrRachKontr = Mid(strCur,iPos + 3,Len(strCur))      'Nr rachunku kontrahenta
+              if iPos > 1 then
+                 strCur = Left(strCur,iPos - 1)
+              end if   
+              MCASHTRACE(m_strNrRachKontr)
+           end if
+           iPos = InStr(strCur,"~30")
+           if iPos <> 0 then
+              m_nNRBK = Mid(strCur,iPos + 3,Len(strCur))           'Nr rozliczeniowy banku kontrahenta
+              if iPos > 1 then
+                 strCur = Left(strCur,iPos - 1)
+              end if
+              MCASHTRACE(m_nNRBK)
+           end if   
+           iPos = InStr(strCur,"~22")
+           if iPos <> 0 then
+              m_strSzczegoly_Line4 = Mid(strCur,iPos + 3,Len(strCur))  'Szczegóły operacji ~22
+              strCur = Left(strCur,iPos - 1)
+              MCASHTRACE(m_strSzczegoly_Line4)
+           end if
+           iPos = InStr(strCur,"~21")
+           if iPos <> 0 then
+              m_strSzczegoly_Line3 = Mid(strCur,iPos + 3,Len(strCur))  'Szczegóły operacji ~21
+              strCur = Left(strCur,iPos - 1)
+              MCASHTRACE(m_strSzczegoly_Line3)
+           end if  
+           iPos = InStr(strCur,"~20")
+           if iPos <> 0 then
+              m_strSzczegoly_Line2 = Mid(strCur,iPos + 3,Len(strCur))  'Szczegóły operacji ~20
+              strCur = Left(strCur,iPos - 1)
+              MCASHTRACE(m_strSzczegoly_Line2)
+           end if
+     end select                     
+         
+   from_string_sta = true
+
+	end function
+
+  public function from_string_mt940(byval strCur):from_string_mt940 = false 
+    from_string_mt940 = from_string_mt940_ex(strCur, 0)
+  end function
+  
+  public function from_string_mt940_ex(byval strCur, byval nImportFormat):from_string_mt940_ex = false  
+  
+    dim iPos
+    dim strBuf, strCurBuf
+    strCurBuf = strCur  'pamiętaj bieżącą linię
+	      
+     'odetnij 3 znaki z bieżącej linii (dla ninii rozpoczynającej się od :XX)
+     strBuf = Left(strCur,3)      
+     select case strBuf
+        case ":25"
+           strCur = Mid(strCur,5,Len(strCur))
+           iPos = InStr(strCur,"/")
+           if iPos <> 0 then
+              m_nNRBZ = Mid(strCur,1,iPos - 1)          'Nr Rozliczeniowy Banku
+              if Len(m_nNRBZ) > 0 then                  'W przypadku gdy nie będzie podany nie sprawdzaj formatu
+                if not format_numer_rozliczeniowy then
+                   exit function
+                end if
+              end if  
+              m_strNrRachZlec = Mid(strCur,iPos + 1,Len(strCur))  'Nr Rachunku Zleceniodawcy
+           else
+              m_strNrRachZlec = strCur
+           end if   
+           MCASHTRACE(m_nNRBZ)
+           MCASHTRACE(m_strNrRachZlec)
+        case ":61"
+           dim strZero, iLen           
+           strCur = Mid(strCur,5,Len(strCur))
+           m_dDataPlat = "20" + Mid(strCur,1,2) + Mid(strCur,7,4)  'Data księgowania
+           if not format_data_platnosci then
+              exit function
+           end if
+           MCASHTRACE(m_dDataPlat)
+           'znak kwoty
+           dim strZnak: strZnak = Mid(strCur,11,1)
+           if strZnak = "C" then
+             strZnak = ""
+           else
+             strZnak = "-"
+           end if
+           if nImportFormat = MULTICASH_IMPORT_FORMAT_BNPPARIBAS_MT940 then
+              m_curKwota = Mid(strCur,13,15)
+              'usuń 0 na początku
+              do
+                  iLen = Len(m_curKwota)
+                  strZero = Left(m_curKwota,1)
+                  if strZero = "0" then
+                    m_curKwota = Right(m_curKwota,iLen - 1)
+                  else
+                    exit do
+                  end if
+              loop     
+              m_curKwota = strZnak + Replace(m_curKwota,",","")           'Kwota bez przecinka
+              if not format_kwota_platnosci then
+                  exit function
+              end if              
+           else
+             iPos = InStr(strCur,"NTRFNONREF")
+             if iPos <> 0 then
+                m_curKwota = Mid(strCur,13,iPos - 13)
+                'usuń 0 na początku
+                do
+                   iLen = Len(m_curKwota)
+                   strZero = Left(m_curKwota,1)
+                   if strZero = "0" then
+                      m_curKwota = Right(m_curKwota,iLen - 1)
+                   else
+                      exit do
+                   end if
+                loop
+                m_curKwota = strZnak + Replace(m_curKwota,",","")           'Kwota bez przecinka
+                if not format_kwota_platnosci then
+                   exit function
+                end if
+             else
+                iPos = InStr(strCur,"NTRF")
+                if iPos <> 0 then
+                   m_curKwota = strZnak + Mid(strCur,13,iPos - 13)
+                end if
+                iPos = InStr(strCur,"NCOM")
+                if iPos <> 0 then
+                   m_curKwota = strZnak + Mid(strCur,13,iPos - 13)
+                end if
+                iPos = InStr(strCur,"NMSC")
+                if iPos <> 0 then
+                   m_curKwota = strZnak + Mid(strCur,13,iPos - 13)
+                end if
+                iPos = InStr(strCur,"NCHG")
+                if iPos <> 0 then
+                   m_curKwota = strZnak + Mid(strCur,13,iPos - 13)
+                end if
+                iPos = InStr(strCur,"NCMT")
+                if iPos <> 0 then
+                   m_curKwota = strZnak + Mid(strCur,13,iPos - 13)
+                end if              
+             end if
+           end if  
+           MCASHTRACE(m_curKwota)
+        case ":86"
+           strCur = Mid(strCur,5,Len(strCur))
+           iPos = InStr(strCur,"^34")          'usuń pole ^34
+           if iPos <> 0 then
+              strCur = Left(strCur,iPos - 1)
+           else
+              iPos = InStr(strCur,">34")
+              if iPos <> 0 then
+                 strCur = Left(strCur,iPos - 1)  
+              end if
+           end if
+           iPos = InStr(strCur,"^00")
+           if iPos <> 0 then
+              m_strSzczegoly_Line1 = Mid(strCur,iPos + 3,Len(strCur))  'Szczegóły operacji ^00
+           else
+              iPos = InStr(strCur,">00")
+              if iPos <> 0 then
+                 m_strSzczegoly_Line1 = Mid(strCur,iPos + 3,Len(strCur))
+                 from_string_mt940_ex = true
+                 exit function
+              end if
+           end if
+           iPos = InStr(strCur," ")
+           strCur = Mid(strCur,iPos + 1,Len(strCur)-iPos)
+           iPos = InStr(strCur,";")
+           if iPos - 1 > 35 then                                       'gdy łańcuch będzie dłuższy od 35 znaków - podziel na 2
+              m_strSzczegoly_Line1 = Mid(strCur,1,35)
+              m_strSzczegoly_Line2 = Mid(strCur,36,iPos - 1)
+           elseif iPos > 10 and (iPos - 1) <= 35 then                  'gdy 1 człon > 10 i <= 35          
+              m_strSzczegoly_Line1 = Mid(strCur,1,iPos - 1)
+              strCur = Mid(strCur,iPos + 1, Len(strCur))
+              iPos = InStr(strCur,";")         
+              if iPos > 10 then                                        'gdy 2 człon > 10
+                 m_strSzczegoly_Line2 = Mid(strCur,1,iPos - 1)
+                 strCur = Mid(strCur,iPos + 1, Len(strCur))
+                 iPos = InStr(strCur,";")
+                 if iPos > 10 then                                     'gdy 3 człon > 10
+                    m_strSzczegoly_Line3 = Mid(strCur,1,iPos - 1)
+                 elseif Len(strCur) > 10 then                          'gdy nie znajdzie trzeciego ; a człon > 10
+                    m_strSzczegoly_Line3 = strCur
+                 end if
+              else                                                     'gdy nie znajdzie drugiego ;
+                 m_strSzczegoly_Line2 = strCur
+              end if
+           elseif iPos > 0 and (iPos - 1) <= 10 then                   'gdy 1 człon > 0 i <= 10
+              strCur = Mid(strCur,iPos + 1, Len(strCur))
+              iPos = InStr(strCur,";")
+              if iPos > 10 then                                        'gdy 2 człon > 10
+                 m_strSzczegoly_Line1 = Mid(strCur,1,iPos - 1)
+                 strCur = Mid(strCur,iPos + 1, Len(strCur))
+                 iPos = InStr(strCur,";")
+                 if iPos > 10 then                                     'gdy 3 człon > 10
+                    m_strSzczegoly_Line2 = Mid(strCur,1,iPos - 1)
+                 elseif Len(strCur) > 10 then                          'gdy nie zjadzie trzeciego ; a człon > 10
+                    m_strSzczegoly_Line2 = strCur
+                 end if   
+              else                                                     'gdy 2 człon < 10
+                 strCur = Mid(strCur,iPos + 1, Len(strCur))
+                 iPos = InStr(strCur,";")
+                 m_strSzczegoly_Line1 = Mid(strCur,1,iPos - 1)         'pobierz 3 człon 
+                 strCur = Mid(strCur,iPos + 1, Len(strCur))
+                 iPos = InStr(strCur,";")
+                 m_strSzczegoly_Line2 = Mid(strCur,1,iPos - 1)         'pobierz 4 człon 
+              end if
+           else                                                        'gdy nie znajdzie ;                       
+              m_strSzczegoly_Line1 = strCur                           
+           end if
+           MCASHTRACE(m_strSzczegoly_Line1)
+           MCASHTRACE(m_strSzczegoly_Line2)
+           MCASHTRACE(m_strSzczegoly_Line3)
+     end select       
+     strCur = strCurBuf 
+     'odetnij 1 znak z bieżącej linii (dla linii rozpoczynających się od ^)
+     strBuf = Left(strCur,1)             
+     select case strBuf
+        case "^"       
+           iPos = InStr(strCur,"^33")
+           if iPos <> 0 then
+              m_strDaneKontr_Line2 = Mid(strCur,iPos + 3,Len(strCur))  'Nazwa kontrahenta 2
+              if iPos > 1 then   'gdy przed ^33 znajduje się jakaś wartość, odetnij ^33                   
+                 strCur = Left(strCur,iPos - 1)
+              end if
+              MCASHTRACE(m_strDaneKontr_Line2)
+           end if
+           iPos = InStr(strCur,"^32")
+           if iPos <> 0 then
+              m_strDaneKontr_Line1 = Mid(strCur,iPos + 3,Len(strCur))  'Nazwa kontrahenta 1
+              if iPos > 1 then
+                 strCur = Left(strCur,iPos - 1)
+              end if
+              MCASHTRACE(m_strDaneKontr_Line1)
+           end if
+           iPos = InStr(strCur,"^31")
+           if iPos <> 0 then
+              m_strNrRachKontr = Mid(strCur,iPos + 3,Len(strCur))      'Nr rachunku kontrahenta
+              if iPos > 1 then
+                 strCur = Left(strCur,iPos - 1)
+              end if   
+              MCASHTRACE(m_strNrRachKontr)
+           end if
+           iPos = InStr(strCur,"^20")
+           if iPos <> 0 then
+              m_strSzczegoly_Line2 = Mid(strCur,iPos + 3,Len(strCur))  'Szczegóły operacji ^20
+              strCur = Left(strCur,iPos - 1)
+              MCASHTRACE(m_strSzczegoly_Line2)
+           end if           
+           iPos = InStr(strCur,"^30")
+           if iPos <> 0 then
+              m_nNRBK = Mid(strCur,iPos + 3,Len(strCur))           'Nr rozliczeniowy banku kontrahenta
+              if iPos > 1 then
+                 strCur = Left(strCur,iPos - 1)
+              end if
+              MCASHTRACE(m_nNRBK)
+           end if   
+           iPos = InStr(strCur,"^38")
+           if iPos <> 0 then
+              m_strNrRachKontr = Mid(strCur,iPos + 3,Len(strCur))      'Nr rachunku kontrahenta
+              if iPos > 1 then
+                 strCur = Left(strCur,iPos - 1)
+              end if   
+              MCASHTRACE(m_strNrRachKontr)
+           end if          
+        'dla linii rozp. od ">"   
+        case ">"       
+           iPos = InStr(strCur,">33")
+           if iPos <> 0 then
+              m_strDaneKontr_Line2 = Mid(strCur,iPos + 3,Len(strCur))  'Nazwa kontrahenta 2
+              if iPos > 1 then   'gdy przed >33 znajduje się jakaś wartość, odetnij >33                   
+                 strCur = Left(strCur,iPos - 1)
+              end if
+              MCASHTRACE(m_strDaneKontr_Line2)
+           end if
+           iPos = InStr(strCur,">32")
+           if iPos <> 0 then
+              m_strDaneKontr_Line1 = Mid(strCur,iPos + 3,Len(strCur))  'Nazwa kontrahenta 1
+              if iPos > 1 then
+                 strCur = Left(strCur,iPos - 1)
+              end if
+              MCASHTRACE(m_strDaneKontr_Line1)
+           end if
+           iPos = InStr(strCur,">31")
+           if iPos <> 0 then
+              m_strNrRachKontr =  Mid(strCur,iPos + 3,Len(strCur))      'Nr rachunku kontrahenta
+              if iPos > 1 then
+                 strCur = Left(strCur,iPos - 1)
+              end if   
+              MCASHTRACE(m_strNrRachKontr)
+           end if
+           iPos = InStr(strCur,">30")
+           if iPos <> 0 then
+              m_nNRBK = Mid(strCur,iPos + 3,Len(strCur))           'Nr rozliczeniowy banku kontrahenta
+              m_strNrRachKontr = m_nNRBK + m_strNrRachKontr
+              if iPos > 1 then
+                 strCur = Left(strCur,iPos - 1)
+              end if
+              MCASHTRACE(m_nNRBK)
+           end if 
+           iPos = InStr(strCur,">20")
+           if iPos <> 0 then
+              m_strSzczegoly_Line2 = Mid(strCur,iPos + 3,Len(strCur))  'Szczegóły operacji >20
+              strCur = Left(strCur,iPos - 1)
+              MCASHTRACE(m_strSzczegoly_Line2)
+           end if       
+      case "<"
+        select case left(trim(strCur), 3)
+        case "<38"
+          m_strNrRachKontr = Mid(strCur,4) 
+          MCASHTRACE("rachunek kontra:" + m_strNrRachKontr)
+        case "<27"
+          m_strDaneKontr_Line1 = Mid(strCur,4) 
+          MCASHTRACE("dane kontra 1:" + m_strDaneKontr_Line1)
+       case "<28"
+          m_strDaneKontr_Line2 = Mid(strCur,4) 
+          MCASHTRACE("dane kontra 2:" + m_strDaneKontr_Line2)
+       case "<21"
+          m_strSzczegoly_Line1 = Mid(strCur,4) 
+          MCASHTRACE("opis 1:" + m_strSzczegoly_Line1)          
+       case "<22"
+          m_strSzczegoly_Line2 = Mid(strCur,4) 
+          MCASHTRACE("opis 2:" + m_strSzczegoly_Line2)          
+       case "<23"
+          m_strSzczegoly_Line3 = Mid(strCur,4) 
+          MCASHTRACE("opis 3:" + m_strSzczegoly_Line3)          
+       end select
+     end select                     
+         
+   from_string_mt940_ex = true
+
+	end function
+
+
+	'parses VideoTel Format 2 line
+	public function from_string_vtf2(byval strInpLine) : from_string_vtf2 = false
+		'Format linii: 
+		'"data" 
+		'"numer rachunku"
+		'"saldo początkowe"
+		'"saldo końcowe" 
+		'"waluta rachunku"
+		'"kwota operacji"
+		'"referencja"
+		'"nazwa rach.nadawcy"
+		'"waluta operacji"
+		'"data operacji"
+		'"numer rach nadawcy"
+		'"symbol operacji"
+
+		if trim(strInpLine) = "" then
+			m_nTyp = -1
+			from_string_vtf2 = true
+			exit function 
+		end if
+		
+		m_nTyp = MULTICASH_TYP_PP
+
+		dim iLPos, iRPos
+		'"data" 
+		iLPos = instr(strInpLine,"""")
+		iRPos = instr(iLPos+1,strInpLine,"""")
+		dim strData : strData = Mid(strInpLine,iLPos+1,iRPos - iLPos - 1)
+		strInpLine = Mid(strInpLine,iRPos+1)
+		m_dDataPlat = cdate(strData)
+
+		'"numer rachunku"
+		iLPos = instr(strInpLine,"""")
+		iRPos = instr(iLPos+1,strInpLine,"""")
+		dim strNrRachNasz : strNrRachNasz = Mid(strInpLine,iLPos+1,iRPos - iLPos - 1)
+		strInpLine = Mid(strInpLine,iRPos+1)
+		m_strNrRachZlec = strNrRachNasz
+
+		'"saldo początkowe"
+		iLPos = instr(strInpLine,"""")
+		iRPos = instr(iLPos+1,strInpLine,"""")
+		dim strSaldoPocz : strSaldoPocz = Mid(strInpLine,iLPos+1,iRPos - iLPos - 1)
+		strInpLine = Mid(strInpLine,iRPos+1)
+
+		'"saldo końcowe"
+		iLPos = instr(strInpLine,"""")
+		iRPos = instr(iLPos+1,strInpLine,"""")
+		dim strSaldoKonc : strSaldoKonc = Mid(strInpLine,iLPos+1,iRPos - iLPos - 1)
+		strInpLine = Mid(strInpLine,iRPos+1)
+		
+		'"waluta rachunku"
+		iLPos = instr(strInpLine,"""")
+		iRPos = instr(iLPos+1,strInpLine,"""")
+		dim strWalRach : strWalRach = Mid(strInpLine,iLPos+1,iRPos - iLPos - 1)
+		strInpLine = Mid(strInpLine,iRPos+1)
+
+		'"kwota operacji"
+		iLPos = instr(strInpLine,"""")
+		iRPos = instr(iLPos+1,strInpLine,"""")
+		dim strKwotaOp : strKwotaOp = Mid(strInpLine,iLPos+1,iRPos - iLPos - 1)
+		strInpLine = Mid(strInpLine,iRPos+1)
+		m_curKwota = Str2Cur(strKwotaOp)
+		
+		if m_curKwota < ccur(0.0) then
+			m_nPrzychodRozchod = MULTICASH_ROZCHOD
+		end if
+
+		'"referencja"
+		iLPos = instr(strInpLine,"""")
+		iRPos = instr(iLPos+1,strInpLine,"""")
+		dim strOpis : strOpis = Mid(strInpLine,iLPos+1,iRPos - iLPos - 1)
+		strInpLine = Mid(strInpLine,iRPos+1)
+		m_strSzczegoly_Line1 = strOpis
+
+		'"nazwa rach.nadawcy"
+		iLPos = instr(strInpLine,"""")
+		iRPos = instr(iLPos+1,strInpLine,"""")
+		dim strNadawca : strNadawca = Mid(strInpLine,iLPos+1,iRPos - iLPos - 1)
+		strInpLine = Mid(strInpLine,iRPos+1)
+		m_strDaneKontr_Line1 = strNadawca
+
+		'"waluta operacji"
+		iLPos = instr(strInpLine,"""")
+		iRPos = instr(iLPos+1,strInpLine,"""")
+		dim strWalOp : strWalOp = Mid(strInpLine,iLPos+1,iRPos - iLPos - 1)
+		strInpLine = Mid(strInpLine,iRPos+1)
+
+		'"data operacji"
+		iLPos = instr(strInpLine,"""")
+		iRPos = instr(iLPos+1,strInpLine,"""")
+		dim strDataOp : strDataOp = Mid(strInpLine,iLPos+1,iRPos - iLPos - 1)
+		strInpLine = Mid(strInpLine,iRPos+1)
+		
+		'"numer rach nadawcy"
+		iLPos = instr(strInpLine,"""")
+		iRPos = instr(iLPos+1,strInpLine,"""")
+		dim strNrRachNad : strNrRachNad = Mid(strInpLine,iLPos+1,iRPos - iLPos - 1)
+		strInpLine = Mid(strInpLine,iRPos+1)
+		m_strNrRachKontr = strNrRachNad
+
+		'"symbol operacji"
+		iLPos = instr(strInpLine,"""")
+		iRPos = instr(iLPos+1,strInpLine,"""")
+		dim strSymbOp : strSymbOp = Mid(strInpLine,iLPos+1,iRPos - iLPos - 1)
+		strInpLine = Mid(strInpLine,iRPos+1)
+
+		from_string_vtf2 = true
+	end function
+
+	'*****************************************************************************
+	'sprawdza, czy napis jest prawidłowym typem polecenia
+	'na razie m_nTyp to NAPIS !!!
+	'prawdiłowy format to 110, 120 lub 210
+	private function format_typ_polecenia:format_typ_polecenia = false
+		MCASHTRACE("BEFORE: " + cstr(m_nTyp)) 
+		'sprawdzam czy liczba
+		if not isNumeric(m_nTyp) then
+			trans_.message 1002 , 0 , "Nieprawidłowy typ polecenia (nie jest liczbą) :" + cstr(m_nTyp)
+			exit function		
+		end if
+		'sprawdzam czy prawidłowa liczba
+		m_nTyp = clng(m_nTyp)
+		if	m_nTyp <> MULTICASH_TYP_PP and _
+			m_nTyp <> MULTICASH_TYP_ZUS and _
+			m_nTyp <> MULTICASH_TYP_PZ then
+			trans_.message 1002 , 0 , "Nieprawidłowy typ polecenia (zła wartość) :" + cstr(m_nTyp)
+			exit function
+		end if
+		MCASHTRACE("AFTER: " + cstr(m_nTyp)) 
+		format_typ_polecenia = true	
+	end function
+
+
+
+
+	'*****************************************************************************
+	'sprawdza, czy napis jest prawidłową datą
+	'na razie m_dDataPlat to NAPIS!!!
+	'prawidlowy format to RRRRMMDD
+	public function format_data_platnosci :format_data_platnosci  = false
+		MCASHTRACE("BEFORE: " + cstr(m_dDataPlat))
+
+		'sprawdzam czy liczba
+		if not isNumeric(m_dDataPlat) then
+			trans_.message 1002 , 0 , "Nieprawidłowa data (nie jest liczbą) :" + cstr(m_dData)
+			exit function		
+		end if
+		
+		'sprawdzamy czy prawidłowa długosć (8 znaków)
+		if len(m_dDataPlat)>8 then
+			trans_.message 1002 , 0 , "Nieprawidłowa data (zła długość) :" + cstr(m_dData)
+			exit function		
+		end if
+
+		'sprawdzamy czy da sie przekonwertować na datę
+		dim nRok:nRok = clng(Mid(m_dDataPlat, 1, 4))
+		dim nMiesiac:nMiesiac = clng(Mid(m_dDataPlat, 5, 2))
+		dim nDzien:nDzien = clng(Mid(m_dDataPlat, 7, 2))
+		if nMiesiac < 1 or nMiesiac > 12 then
+			trans_.message 1002 , 0 , "Nieprawidłowa data (zły miesiąc) :" + cstr(nmiesiac)
+			exit function		
+		end if
+		if nDzien < 1 or nDzien > 31 then
+			trans_.message 1002 , 0 , "Nieprawidłowa data (zły dzień) :" + cstr(ndzien)
+			exit function		
+		end if
+
+		m_dDataPlat = dateSerial(nRok,nMiesiac,nDzien)
+
+		MCASHTRACE("AFTER: " + cstr(m_dDataPlat))
+
+		format_data_platnosci  = true	
+	end function
+
+
+
+
+
+	'*****************************************************************************
+	'sprawdza, czy napis jest prawidłową kwotą płatności
+	'na razie m_curKwota to NAPIS!!!
+	'prawidlowy format to maksymalnie 15 znaków
+	public function format_kwota_platnosci :format_kwota_platnosci = false
+
+		MCASHTRACE("BEFORE: "  + cstr(m_curKwota))
+
+		'sprawdzam czy liczba
+		if not isNumeric(m_curKwota) then
+			trans_.message 1002 , 0 , "Nieprawidłowa kwota (nie jest liczbą) :" + cstr(m_curKwota)
+			exit function		
+		end if
+
+		'sprawdzamy czy prawidłowa długosć (max 15 znaków)
+		if len(m_curKwota)>15 then
+			trans_.message 1002 , 0 , "Nieprawidłowa kwota (zła długość) :" + cstr(m_curKwota)
+			exit function		
+		end if
+
+		m_curKwota = ccur(clng(m_curKwota)/100)
+
+		MCASHTRACE("AFTER: "  + cstr(m_curKwota))
+
+		format_kwota_platnosci  = true	
+	end function
+
+
+
+
+
+
+	'*****************************************************************************
+	'sprawdza, czy napis jest prawidłowym numerem rozliczeniowym
+	'na razie m_nNRBZ to NAPIS!!!
+	'prawidlowy format to 8 znakow
+	private function format_numer_rozliczeniowy :format_numer_rozliczeniowy = false
+
+		MCASHTRACE("BEFORE: "  + cstr(m_nNRBZ))
+
+		'sprawdzam czy liczba
+		if not isNumeric(m_nNRBZ) then
+			trans_.message 1002 , 0 , "Nieprawidłowy nr rozliczeniowy (nie jest liczbą) :" + cstr(m_nNRBZ)
+			exit function
+		end if
+
+		'sprawdzamy czy prawidłowa długosć (8 znakow)
+		if len(m_nNRBZ)<>8 then
+			trans_.message 1002 , 0 , "Nieprawidłowy nr rozliczeniowy (zła długość) :" + cstr(m_nNRBZ)
+			exit function		
+		end if
+
+		MCASHTRACE("AFTER: "  + cstr(m_nNRBZ))
+
+		format_numer_rozliczeniowy  = true	
+	end function
+
+
+
+
+	'*****************************************************************************
+	'34 znakow max, jeżeli jest kreska to to co przed kreską jest numerem rozliczeniowym
+	'pozostałe 26 znaków to tylko i wyłącznie znaki alfanumeryczne
+	private function format_numer_rach_zlec:format_numer_rach_zlec = false
+		'wywalam cudzysłowy
+		MCASHTRACE("BEFORE: " + cstr(m_strNrRachZlec))
+
+		m_strNrRachZlec = RemoveQuotation(m_strNrRachZlec)
+
+		dim arrayNumer:arrayNumer = split(m_strNrRachZlec,"-")
+
+		if ubound(arrayNumer) > 0 then
+			if cstr(arrayNumer(0)) <> cstr(m_nNRBZ) then
+				MCASHTRACE("format_numer_rach_zlec FAILED - pierwszy człon rachunku nie odpowiada numerowi rozliczeniowemu banku")
+				trans_.message 1002, 0 , "Numer rachunku bankowego nieprawidłowy - nie zgadza się numer rozliczeniowy banku"
+				exit function
+			end if
+		end if
+
+		'if not isNumeric(m_strNrRachZlec) then
+		'	MCASHTRACE("format_numer_rach_zlec FAILED - numer rachunku zawiera nieprawidłowe znaki")
+		'	trans_.message 1002 , 0 , "nieprawidłowy numer rachunku bankowego zleceniodawcy"
+		'end if
+
+
+		MCASHTRACE("AFTER: " + cstr(m_strNrRachZlec))
+		format_numer_rach_zlec = true
+	end function
+
+
+
+	'*****************************************************************************
+	'dowolny, maksymalnie 34 znakowy ciąg mogący zawierać wszystkie znaki
+	'UWAGA - MOZE TO BYC INNY FORMAT NIZ NUMER RACHUNKU ZLECENIODAWCY!!
+	private function format_numer_rach_kontr:format_numer_rach_kontr = false
+		'wywalam cudzysłowy
+		MCASHTRACE("BEFORE: " + cstr(m_strNrRachKontr))
+
+		m_strNrRachKontr = RemoveQuotation(m_strNrRachKontr)
+
+		MCASHTRACE("AFTER: " + cstr(m_strNrRachKontr))
+		format_numer_rach_kontr = true
+	end function
+
+
+
+	'*****************************************************************************
+	'8 wierszy przedzielonych "|"
+	'po 4 na zleceniodawcę i kontrahenta
+	private function format_dane_zlec_kontr(byval strDane):format_dane_zlec_kontr = false
+		MCASHTRACE("BEGIN: format_dane_zlec_kontr: " + cstr(strDane))
+
+		'najpierw ucinam początkowy i ostatni cudzysłow
+		strDane = left(strDane , len(strDane)-1)
+		strDane = right(strDane , len(strDane)-1)
+
+		dim nCursorPosition:nCursorPosition = InStr(strDane, """,""")
+		dim strDaneZlec
+		dim strDaneKontr
+
+		if nCursorPosition = 0 then
+			MCASHTRACE("format_dane_zlec_kontr FAILED: brakuje danych kontrahenta")
+			trans_.message 1002 , 0 , "Brakuje danych kontrahenta"
+			exit function
+		end if
+
+		strDaneZlec = (left(strDane , nCursorPosition - 1))
+		strDane = Mid(strDane, nCursorPosition + 3)
+		strDaneKontr = strDane
+		MCASHTRACE("	Zleconidawca: " + cstr(strDaneZlec))
+		MCASHTRACE("	Kontrahent: " + cstr(strDaneKontr))
+
+		dim iter
+		dim arrayDane:arrayDane = split(strDaneZlec,"|")
+		if ubound(arrayDane)<>3 then
+			MCASHTRACE("format_dane_zlec_kontr FAILED: zła liczba wierszy danych zleceniodawcy - ubound(arrayDane)=" + cstr(ubound(arrayDane)))
+			for iter = 0 to ubound(arrayDane)			
+				MCASHTRACE("	" + arrayDane(iter))
+			next
+			trans_.message 1002 , 0 , "Zła liczba wierszy danych zleceniodawcy"
+			exit function
+		end if
+		m_strDaneZlec_Line1 = arrayDane(0)
+		m_strDaneZlec_Line2 = arrayDane(1)
+		m_strDaneZlec_Line3 = arrayDane(2)
+		m_strDaneZlec_Line4 = arrayDane(3)
+
+
+		arrayDane = split(strDaneKontr,"|")
+		if ubound(arrayDane)<>3 then
+			MCASHTRACE("format_dane_zlec_kontr FAILED: zła liczba wierszy danych kontrahenta")
+			for iter = 0 to ubound(arrayDane)			
+				MCASHTRACE("	" + arrayDane(iter))
+			next
+			trans_.message 1002 , 0 , "Zła liczba wierszy danych kontrahenta"
+			exit function
+		end if
+		m_strDaneKontr_Line1 = arrayDane(0)
+		m_strDaneKontr_Line2 = arrayDane(1)
+		m_strDaneKontr_Line3 = arrayDane(2)
+		m_strDaneKontr_Line4 = arrayDane(3)
+
+
+		MCASHTRACE("	AFTER: zleceniodawca linia 1: " + cstr(m_strDaneZlec_Line1))
+		MCASHTRACE("	AFTER: zleceniodawca linia 2: " + cstr(m_strDaneZlec_Line2))
+		MCASHTRACE("	AFTER: zleceniodawca linia 3: " + cstr(m_strDaneZlec_Line3))
+		MCASHTRACE("	AFTER: zleceniodawca linia 4: " + cstr(m_strDaneZlec_Line4))
+
+		MCASHTRACE("	AFTER: kontrahent linia 1: " + cstr(m_strDaneKontr_Line1))
+		MCASHTRACE("	AFTER: kontrahent linia 2: " + cstr(m_strDaneKontr_Line2))
+		MCASHTRACE("	AFTER: kontrahent linia 3: " + cstr(m_strDaneKontr_Line3))
+		MCASHTRACE("	AFTER: kontrahent linia 4: " + cstr(m_strDaneKontr_Line4))
+
+		MCASHTRACE("END: format_dane_zlec_kontr")
+		format_dane_zlec_kontr = true
+	end function
+
+
+
+
+
+
+	'*****************************************************************************
+	'sprawdza, czy napis jest prawidłowym numerem rozliczeniowym
+	'na razie m_nNRBK to NAPIS!!!
+	'prawidlowy format to 8 znakow
+	private function format_numer_rozliczeniowy_k :format_numer_rozliczeniowy_k = false
+
+		MCASHTRACE("BEFORE: "  + cstr(m_nNRBK))
+
+		'sprawdzam czy liczba
+		if not isNumeric(m_nNRBK) then
+			trans_.message 1002 , 0 , "Nieprawidłowy nr rozliczeniowy banku kontrahenta (nie jest liczbą) :" + cstr(m_nNRBK)
+			exit function
+		end if
+
+		'sprawdzamy czy prawidłowa długosć (8 znakow)
+		if len(m_nNRBK)<>8 then
+			trans_.message 1002 , 0 , "Nieprawidłowy nr rozliczeniowy banku kontrahenta (zła długość) :" + cstr(m_nNRBK)
+			exit function		
+		end if
+
+		MCASHTRACE("AFTER: "  + cstr(m_nNRBK))
+
+		format_numer_rozliczeniowy_k  = true	
+	end function
+
+
+
+
+	'*****************************************************************************
+	'01, 71 albo 51
+	private function format_klasyfikacja:format_klasyfikacja = false
+		MCASHTRACE("BEFORE : " + cstr(m_nKlasyfikacja) )
+
+
+		m_nKlasyfikacja = RemoveQuotation(m_nKlasyfikacja)
+
+		if not isNumeric(m_nKlasyfikacja) then
+			MCASHTRACE("format_klasyfikacja FAILED: nie jest liczbą - "  + cstr(m_nKlasyfikacja))
+			trans_.message 1002, 0 , "Błędna klasyfikacja polecenia (nie jest liczbą): " + cstr(m_nKlasyfikacja)
+			exit function
+		end if
+
+		m_nKlasyfikacja = clng(m_nKlasyfikacja)
+
+		if	m_nKlasyfikacja<> 71 and _
+			m_nKlasyfikacja<> 51 and _
+			m_nKlasyfikacja<> 1 then
+			MCASHTRACE("format_klasyfikacja FAILED: nie jest liczbą - "  + cstr(m_nKlasyfikacja))
+			trans_.message 1002, 0 , "Błędna klasyfikacja polecenia (nie jest liczbą): " + cstr(m_nKlasyfikacja)
+			exit function
+		end if
+
+		MCASHTRACE("AFTER: "  + cstr(m_nKlasyfikacja))
+		format_klasyfikacja = true
+	end function
+
+
+
+
+	'*****************************************************************************
+	private function format_szczegoly(byval str):format_szczegoly = false
+		MCASHTRACE("BEGIN: format_szczegoly: " + cstr(str))
+		select case m_nTyp
+			case MULTICASH_TYP_ZUS'zus
+				format_szczegoly = format_szczegoly_ZUS(str)
+			case MULTICASH_TYP_PP'polecenie przelewu lub platnosc do US
+				format_szczegoly = format_szczegoly_PP(str)
+			case MULTICASH_TYP_PZ'polecenie zaplaty
+				format_szczegoly = format_szczegoly_PZ(str)
+		end select
+		MCASHTRACE("END: format_szczegoly")
+		format_szczegoly = true
+	end function
+
+
+	private function format_szczegoly_PZ(str):format_szczegoly_PZ = false
+		MCASHTRACE("	format_szczegoly_PZ")
+#ifdef _DEBUG
+	msgbox "TODO format_szczegoly_PZ"
+#endif
+		m_strSzczegoly_PZ = str
+		MCASHTRACE("	AFTER: " + m_strSzczegoly_PZ)
+		format_szczegoly_PZ = true
+	end function
+
+	private function format_szczegoly_ZUS(str):format_szczegoly_ZUS = false
+		MCASHTRACE("	format_szczegoly_ZUS")
+#ifdef _DEBUG
+	msgbox "TODO format_szczegoly_PP_ZUS"
+#endif
+		m_strSzczegoly_ZUS = str
+		MCASHTRACE("	AFTER: " + m_strSzczegoly_ZUS)
+		format_szczegoly_ZUS = true
+	end function
+
+	private function format_szczegoly_PP(str):format_szczegoly_PP = false
+		MCASHTRACE("	format_szczegoly_PP")
+		select case m_nKlasyfikacja
+			case 71:'US
+				format_szczegoly_PP = format_szczegoly_PP_US(str)
+			case 51:'std
+				format_szczegoly_PP = format_szczegoly_PP_std(str)
+		end select
+		format_szczegoly_PP = true
+	end function
+
+
+	private function format_szczegoly_PP_std(str):format_szczegoly_PP_std = false
+		MCASHTRACE("		format_szczegoly_PP_std")
+
+		'najpierw ucinam początkowy i ostatni cudzysłow
+		str = left(str , len(str)-1)
+		str = right(str , len(str)-1)
+
+		dim arrayRows:arrayRows = split(str,"|")
+		if ubound(arrayRows) <> 3 then
+			MCASHTRACE("		format_szczegoly_PP_std FAILED - ubound(arrayRows)=" + cstr(ubound(arrayRows)))
+			trans_.message 1002 , 0 , "Nieprawidłowa ilośc wierszy szczegółów polecenia"
+			exit function
+		end if
+
+		m_strSzczegoly_Line1 = arrayRows(0)
+		m_strSzczegoly_Line2 = arrayRows(1)
+		m_strSzczegoly_Line3 = arrayRows(2)
+		m_strSzczegoly_Line4 = arrayRows(3)
+
+
+		MCASHTRACE("		AFTER: Szczegóły linia 1: " + cstr(m_strSzczegoly_Line1))
+		MCASHTRACE("		AFTER: Szczegóły linia 2: " + cstr(m_strSzczegoly_Line2))
+		MCASHTRACE("		AFTER: Szczegóły linia 3: " + cstr(m_strSzczegoly_Line3))
+		MCASHTRACE("		AFTER: Szczegóły linia 4: " + cstr(m_strSzczegoly_Line4))
+
+		format_szczegoly_PP_std = true
+	end function
+
+
+	private function format_szczegoly_PP_US(str):format_szczegoly_PP_US = false
+		MCASHTRACE("		format_szczegoly_PP_US")
+			m_strSzczegoly_US = str
+#ifdef _DEBUG
+	msgbox "TODO format_szczegoly_PP_US"
+#endif
+			MCASHTRACE("		AFTER: " + m_strSzczegoly_US)
+		format_szczegoly_PP_US = true
+	end function
+
+
+
+
+	Private Function RemoveQuotation(ByVal strText)
+        RemoveQuotation = Replace(strText, """", "")
+    End Function
+
+
+	public function process_import(byval pRejestrDok) : process_import = false
+    dim pDialogPage:set pDialogPage = doc_.getpagehli("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=20609")
+		dim res:res = pDialogPage.openForPolecenie(me,pRejestrDok)
+		process_import = (res=0)
+	end function
+
+
+	public function process_export:process_export = false
+		dim pDialogPage:set pDialogPage = doc_.getpagehli("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=20610")
+		dim res:res = pDialogPage.openForPolecenie(me)
+		process_export = (res=0)
+	end function
+
+
+	public function typ
+		typ = cstr(m_nTyp)
+	end function
+
+
+	public function data
+		data = doc_.afc.display.fulldate(m_dDataPlat)
+	end function
+
+
+	public function nrbz
+		nrbz = cstr(m_nNRBZ)
+	end function
+
+	public function nrzlec
+		nrzlec = cstr(m_strNrRachZlec)
+	end function
+
+	public function nrkontr
+		nrkontr = cstr(m_strNrRachKontr)
+	end function
+
+
+	public function findPodmiot()
+		MCASHTRACE("")
+		MCASHTRACE("BEGIN : SZUKANIE PODMIOTU")
+
+    if m_nPodmiotTYPE = TYPEID_N5KLIENT and m_nPodmiotID <> 0 then
+ 		  MCASHTRACE("Podmiot już jest ustawiony (jako kontrahent)")
+			exit function
+    end if
+
+		'najpierw sprawdzmy, czy zleceniodawca to nasza firma
+		m_nPodmiotTYPE = TYPEID_N5FIRMA
+		findPodmiotByKONTO(true)
+		if m_nPodmiotID > 0 then 'jezeli tak, to patrzymy kto nam wplacil/komu wplacamy
+			MCASHTRACE("Znaleziona firma jako zleceniodawca - szukam podmiotu wg pola kontrahent")
+			
+			'm_nPrzychodRozchod = MULTICASH_ROZCHOD
+
+			'sprawdzmy czy sobie samu nie placimy
+			m_nPodmiotTYPE = TYPEID_N5FIRMA
+			findPodmiotByKONTO(false)
+			if m_nPodmiotID <> 0 then
+				exit function
+			end if
+
+			'patrzymy na kontrahenta
+			m_nPodmiotTYPE = TYPEID_N5KLIENT
+			findPodmiotByKONTO(false)		
+			if m_nPodmiotID <> 0 then
+				exit function
+			end if	
+
+
+			m_nPodmiotTYPE = TYPEID_N5PRACOWNIK
+			findPodmiotByKONTO(false)		
+			if m_nPodmiotID <> 0 then
+				exit function
+			end if
+
+			m_nPodmiotTYPE = TYPEID_N5INSTYTUCJA
+			findPodmiotByKONTO(false)
+			if m_nPodmiotID <> 0 then
+				exit function
+			end if
+
+
+			m_nPodmiotTYPE = TYPEID_N5BANK
+			findPodmiotByKONTO(false)
+			if m_nPodmiotID <> 0 then
+				exit function
+			end if
+
+
+			MCASHTRACE("Nie znalazlem podmiotu wg pola kontrahent")
+			exit function
+
+
+		end if
+
+		'jezeli nadal nie znalezlismy to szukamy inaczej
+		' szukamy po zleceniodawcy
+
+		MCASHTRACE("Szukam podmiotu wg pola zleceniodawca")
+
+
+		'szukanie podmiotu odpowiadającego danemu wpisowi
+		'najpierw klient
+		m_nPodmiotTYPE = TYPEID_N5KLIENT
+		findPodmiotByKONTO(true)		
+		if m_nPodmiotID <> 0 then
+			exit function
+		end if
+
+
+
+		m_nPodmiotTYPE = TYPEID_N5PRACOWNIK
+		findPodmiotByKONTO(true)		
+		if m_nPodmiotID <> 0 then
+			exit function
+		end if
+
+
+
+		m_nPodmiotTYPE = TYPEID_N5INSTYTUCJA
+		findPodmiotByKONTO(true)		
+		if m_nPodmiotID <> 0 then
+			exit function
+		end if
+
+
+		m_nPodmiotTYPE = TYPEID_N5BANK
+		findPodmiotByKONTO(true)		
+		if m_nPodmiotID <> 0 then
+			exit function
+		end if
+
+		MCASHTRACE("END: SZUKANIE PODMIOTU")
+
+	end function
+
+
+	'szukanie klienta jako zleceniodawca lub kontrahent
+	public function findPodmiotByKONTO(bZleceniodawca)
+     
+		dim strSQL_RachBankowy
+		dim strKonto
+
+		if bZleceniodawca then
+			if m_nPodmiotTYPE = TYPEID_N5BANK then
+				strKonto = m_nNRBZ
+			else
+				strKonto = m_strNrRachZlec
+			end if
+		else
+			if m_nPodmiotTYPE = TYPEID_N5BANK then
+				strKonto = m_nNRBK
+			else
+				strKonto = m_strNrRachKontr
+			end if
+		end if
+
+#ifdef _HADEX
+	if m_nPodmiotTYPE = TYPEID_N5KLIENT then
+		strKonto = Right(m_strNrRachKontr,12)
+		'usuń 0 na początku
+		do
+			dim iLen: iLen = Len(strKonto)
+			dim strZero: strZero = Left(strKonto,1)
+			if strZero = "0" then
+				strKonto = Right(strKonto,iLen - 1)
+			else
+				exit do
+			end if
+		loop      
+		strSQL_RachBankowy = "strIndeks = '" + strKonto + "'"
+	else
+		strSQL_RachBankowy = bqry_where_for_rach_bankowy(m_nPodmiotTYPE , strKonto)  
+	end if
+#else
+		strSQL_RachBankowy = bqry_where_for_rach_bankowy(m_nPodmiotTYPE , strKonto)
+#endif    
+		MCASHTRACE("Szukanie: " + cstr(m_nPodmiotTYPE) + " : " + strKonto)
+		m_nPodmiotID = trans_.findobjid(m_nPodmiotTYPE, strSQL_RachBankowy)
+		MCASHTRACE("Szukanie: idPodmiot = " + cstr(m_nPodmiotID))
+	end function
+
+
+	public function get_podmiot:set get_podmiot = nothing
+		if m_nPodmiotID > 0 then
+			set get_podmiot = trans_.getobj(m_nPodmiotTYPE,m_nPodmiotID)
+		end if
+	end function
+
+
+	public function fill_platnosc(byref pPlat)
+		set pPlat.wrefPodmiot = get_podmiot
+		if m_nPrzychodRozchod = MULTICASH_ROZCHOD then
+			pPlat.curKwotaPodm = -1 * m_curKwota
+		else
+			pPlat.curKwotaPodm = m_curKwota
+		end if
+		
+		pPlat.dDataOper = m_dDataPlat
+		if m_nTransakcjaID > 0 then ' wtedy wybralismy jedna transakcje i wypelniamy ją
+			set pPlat.listPozycje.addnew().pTransakcja = trans_.getobj(TYPEID_N5TRANSAKCJA , m_nTransakcjaID)
+		else ' a tutaj nic nie mamy i zpuszczamy automat
+			dim pModule : set pModule = doc_.getmodule(60270)
+			pModule.pl_auto_assign_transaction pPlat,""
+		end if
+	end function
+
+
+	public function findRejestr
+		m_nRejestrID = choose_rejestr_dok(N5REJESTRDOK_BANKOWY , true , "Wybierz rejestr dokumentów")
+	end function
+
+
+	public sub error_msg(byval msg)
+		trans_.message 1002 , 0 , msg
+	end sub
+
+
+
+	public function verify_polecenie:verify_polecenie = false
+		'zaczynamy od sprawdzania numerów rozliczeniowych banków
+		if len(cstr(m_nNRBZ)) <> 8 then
+			error_msg "Nieprawidłowa długośc numeru rozliczeniowego banku zleceniodawcy - powinien mieć 8 znaków"
+			exit function
+		else
+			if not isNumeric(cstr(m_nNRBZ)) then
+				error_msg "Nieprawidłowy numer rozliczeniowy banku zleceniodawcy - nie jest liczbą"
+				exit function
+			end if
+		end if
+
+
+		if len(cstr(m_nNRBK)) <> 8 then
+			error_msg "Nieprawidłowa długośc numeru rozliczeniowego banku kontrahenta - powinien mieć 8 znaków"
+			exit function
+		else
+			if not isNumeric(cstr(m_nNRBK)) then
+				error_msg "Nieprawidłowy numer rozliczeniowy banku kontrahenta - nie jest liczbą"
+				exit function
+			end if
+		end if
+
+
+		'sprawdam numery kont
+		'konto zleceniodawcy powinno byc w formacie NRB
+
+		'sprawdzam, czy pierwszy człon to numer roziczeniowy
+		dim array_rach:array_rach = split(m_strNrRachZlec,"-")
+		if ubound(array_rach)=1 then
+			if len(array_rach(0)) <> 8 then
+				error_msg "Pierwszy człon numeru rachunku zleceniodawcy ma nieprawidłową długość - powinno byc 8 znaków"
+				exit function	
+			else
+				if not isNumeric(array_rach(0)) then
+					error_msg "Pierwszy człon numeru rachunku zleceniodawcy zawiera nieprawidłowe znaki - powinny byc tylko znaki alfanumeryczne"
+					exit function	
+				else
+					if clng(array_rach(0))<> clng(m_nNRBZ) then
+						error_msg "Pierwszy człon numeru rachunku zleceniodawcy jest nieprawdiłowy - powinien to być kod rozrachunkowy banku"
+						exit function	
+					end if
+				end if
+			end if
+		end if
+
+		if not isNumeric(replace(array_rach(ubound(array_rach))," ","")) then
+			error_msg "Numer konta zleceniodawcy powinien składać sie tylko ze znaków alfanuumerycznych"
+			exit function
+		end if
+
+
+		if len(replace(array_rach(ubound(array_rach))," ","")) > 26  then
+			error_msg "Numer konta zleceniodawcy jest za długi - powinien zawierać maksymalnie 26 znaków"
+			exit function
+		end if
+
+
+
+		'numer konta kontrahenta
+		if cstr(m_strNrRachKontr) = "" then
+			error_msg "Nie podano numeru rachunku kontrahenta"
+			exit function	
+		end if
+		if len(m_strNrRachKontr) > 34 then
+			error_msg "Numer rachunku kontrahenta jest za długi - powinien zawierać maksymalnie 34 znaki"
+			exit function	
+		end if
+
+
+		'szczegóły - jedna linia nie moze przekroczyć 35 znaków
+		if	len(m_strSzczegoly_Line1) > 35 or _
+			len(m_strSzczegoly_Line2) > 35 or _
+			len(m_strSzczegoly_Line3) > 35 or _
+			len(m_strSzczegoly_Line4) > 35 then
+				
+				error_msg "Jedna z linii szczegółów płatności jest zbyt długa - przekracza 35 znaków "
+				exit function		
+
+		end if
+
+
+
+		'zleceniodawca - jedna linia nie moze przekroczyć 35 znaków
+		if	len(m_strDaneZlec_Line1) > 35 or _
+			len(m_strDaneZlec_Line2) > 35 or _
+			len(m_strDaneZlec_Line3) > 35 or _
+			len(m_strDaneZlec_Line4) > 35 then
+				
+				error_msg "Jedna z linii danych zleceniodawcy jest zbyt długa - przekracza 35 znaków "
+				exit function		
+
+		end if
+
+
+		'kontrahent - jedna linia nie moze przekroczyć 35 znaków
+		if	len(m_strDaneKontr_Line1) > 35 or _
+			len(m_strDaneKontr_Line2) > 35 or _
+			len(m_strDaneKontr_Line3) > 35 or _
+			len(m_strDaneKontr_Line4) > 35 then
+				
+				error_msg "Jedna z linii danych kontrahenta jest zbyt długa - przekracza 35 znaków "
+				exit function		
+
+		end if
+
+
+		verify_polecenie = true
+	end function
+
+	public function to_string:to_string = ""
+		'najpierw sprawdzamy, czy można je zapisać
+		if not verify_polecenie then
+			exit function
+		end if
+		
+		dim strBufor:strBufor = ""
+
+		strBufor = cstr(m_nTyp) + ","
+		strBufor = strBufor + convertDate() + ","
+		strBufor = strBufor + convertKwota() + ","
+		strBufor = strBufor + cstr(m_nNRBZ) + ",0,"
+		strBufor = strBufor + """" + cstr(replace(m_strNrRachZlec," ","")) + ""","
+		strBufor = strBufor + """" + cstr(m_strNrRachKontr) + ""","
+		strBufor = strBufor + """" + cstr(convertZleceniodawca) + ""","
+		strBufor = strBufor + """" + cstr(convertKontrahent) + """,0,"
+		strBufor = strBufor + cstr(m_nNRBK) + ","
+		strBufor = strBufor + """" + cstr(convertSzczegoly) + ""","""","""","
+		strBufor = strBufor + """" + cstr(convertKlasyfikacja) + """"
+
+		to_string = strBufor + vbNewLine
+	end function
+
+	private function convertKlasyfikacja
+		convertKlasyfikacja = cstr(m_nKlasyfikacja)
+		if len(convertKlasyfikacja) = 1 then
+			convertKlasyfikacja = "0" + convertKlasyfikacja
+		end if
+	end function
+	
+
+
+	private function convertZleceniodawca()
+		convertZleceniodawca = m_strDaneZlec_Line1 + "|" + m_strDaneZlec_Line2 + "|" + m_strDaneZlec_Line3 + "|" + m_strDaneZlec_Line4
+	end function
+
+	private function convertKontrahent()
+		convertKontrahent = m_strDaneKontr_Line1 + "|" + m_strDaneKontr_Line2 + "|" + m_strDaneKontr_Line3 + "|" + m_strDaneKontr_Line4
+	end function
+
+
+	private function convertSzczegoly()
+		convertSzczegoly = m_strSzczegoly_Line1 + "|" + m_strSzczegoly_Line2 + "|" + m_strSzczegoly_Line3 + "|" + m_strSzczegoly_Line4
+	end function
+
+
+	private function convertDate()
+		convertDate = cstr(year(m_dDataPlat))
+		dim strMonth:strMonth = cstr(month(m_dDataPlat))
+		if len(strMonth) = 1 then
+			strMonth = "0" + strMonth
+		end if
+
+		dim strDay:strDay = cstr(day(m_dDataPlat))
+		if len(strDay) = 1 then
+			strDay = "0" + strDay
+		end if
+
+		convertDate = convertDate + strMonth + strDay
+
+	end function
+
+
+
+	private function convertKwota()
+		convertKwota = cstr(m_curKwota * 100)
+	end function
+
+
+
+	public function from_platnosc(byval pPlatnosc):from_platnosc = false						
+		MCASHTRACE("")
+		MCASHTRACE("FROM " + cstr(pPlatnosc.text))
+
+		m_nPlatnoscID = pPlatnosc.idobj
+		m_nTyp = MULTICASH_TYP_PP
+		m_dDataPlat = pPlatnosc.dDataOper
+		m_curKwota = abs(pPlatnosc.curKwotaPodm)
+		m_nNRBZ = get_NRB_from_currentFirma()
+		m_strNrRachZlec = get_NrRach_from_currentFirma()
+		get_NRB_NrRach_from_podmiot pPlatnosc.wrefPodmiot
+		zleceniodawca_from_currenFirma
+		kontrahent_from_podmiot pPlatnosc.wrefPodmiot
+		szczegoly_from_platnosc pPlatnosc
+		m_nKlasyfikacja = 51
+
+		from_platnosc = true
+	end function
+
+
+	private sub szczegoly_from_platnosc(byval pPlatnosc)		
+
+		m_strSzczegoly_Line1 = ""
+		m_strSzczegoly_Line2 = ""
+		m_strSzczegoly_Line3 = ""
+		m_strSzczegoly_Line4 = ""
+    dim iLen : iLen = clng(0)
+    
+		dim strSzczegoly:strSzczegoly = ""
+		dim elem
+		dim first:first = true
+		for each elem in pPlatnosc.listPozycje
+			if first then
+#ifdef _AMPLUS
+        'dodaj do symbolu transakcje datę operacji (gdy tylko jedna transakcja)
+        iLen = Len(elem.pTransakcja.strSymTrans + " (" + CStr(elem.pTransakcja.dDataRozp) + ")")
+        strSzczegoly = elem.pTransakcja.strSymTrans + " (" + CStr(elem.pTransakcja.dDataRozp) + ")" + dop32(iLen)
+#else
+				strSzczegoly = elem.pTransakcja.strSymTrans
+#endif        
+				first = false
+			else
+#ifdef _AMPLUS
+        iLen = Len(elem.pTransakcja.strSymTrans + " (" + CStr(elem.pTransakcja.dDataRozp) + ")")
+				strSzczegoly = strSzczegoly + elem.pTransakcja.strSymTrans + " (" + CStr(elem.pTransakcja.dDataRozp) + ")" + dop32(iLen)
+#else
+				strSzczegoly = strSzczegoly + ", " + elem.pTransakcja.strSymTrans
+#endif        
+			end if
+		next
+
+		m_strSzczegoly_Line1 = left(strSzczegoly,35)
+
+		if len(strSzczegoly) < 36 then
+			exit sub
+		end if
+		strSzczegoly = Mid(strSzczegoly,36)
+		m_strSzczegoly_Line2 = left(strSzczegoly,35)
+
+		if len(strSzczegoly) < 36 then
+			exit sub
+		end if
+		strSzczegoly = Mid(strSzczegoly,36)
+		m_strSzczegoly_Line3 = left(strSzczegoly,35)
+
+		if len(strSzczegoly) < 36 then
+			exit sub
+		end if
+		strSzczegoly = Mid(strSzczegoly,36)
+		m_strSzczegoly_Line4 = left(strSzczegoly,35)
+		
+	end sub
+
+
+	private sub zleceniodawca_from_currenFirma()
+		dim firma_mod:set firma_mod = doc_.getmodule(60182)
+		m_strDaneZlec_Line1 = left(firma_mod.Firma_Nazwa , 35)
+#ifdef _AMPLUS
+    dim pFirma : set pFirma = getCurrentFirma()
+    m_strDaneZlec_Line2 = pFirma.pMiejscowosc.strNazwa + " " + pFirma.strNrDomu
+    m_strDaneZlec_Line3 = pFirma.strKod + " " + pFirma.strPoczta
+		m_strDaneZlec_Line4 = ""    
+#else
+#ifdef _ALMA_TREND
+		if len(firma_mod.Firma_Nazwa) > 35 then
+			m_strDaneZlec_Line2 = mid(firma_mod.Firma_Nazwa , 36, 35)
+		end if
+		m_strDaneZlec_Line3 = left(firma_mod.Firma_Ulica , 35)
+		m_strDaneZlec_Line4 = left(firma_mod.Firma_Kod_Miasto , 35)
+#else
+		m_strDaneZlec_Line2 = left(firma_mod.Firma_Ulica , 35)
+		m_strDaneZlec_Line3 = left(firma_mod.Firma_Kod_Miasto , 35)
+		m_strDaneZlec_Line4 = ""    
+#endif    
+#endif
+	end sub
+
+
+
+	private sub kontrahent_from_podmiot(byval pPodmiot)
+		dim util_mod
+		select case pPodmiot.type
+			case TYPEID_N5KLIENT
+				set util_mod = doc_.getmodule(60182)
+
+        dim strDaneKlienta
+        strDaneKlienta = util_mod.Klient_Nazwa(pPodmiot) + " " + util_mod.Klient_Ulica(pPodmiot) + " " +_
+                         util_mod.Klient_Kod_Miasto(pPodmiot)
+				m_strDaneKontr_Line1 = Mid(strDaneKlienta,1,35)
+				m_strDaneKontr_Line2 = Mid(strDaneKlienta,36,35)
+				m_strDaneKontr_Line3 = Mid(strDaneKlienta,71,35)
+				m_strDaneKontr_Line4 = Mid(strDaneKlienta,106,35)    
+
+			case TYPEID_N5FIRMA
+				set util_mod = doc_.getmodule(60182)
+				m_strDaneKontr_Line1 = left(util_mod.Firma_Nazwa , 35)
+				m_strDaneKontr_Line2 = left(util_mod.Firma_Ulica , 35)
+				m_strDaneKontr_Line3 = left(util_mod.Firma_Kod_Miasto , 35)				
+				m_strDaneKontr_Line4 = ""
+
+			case TYPEID_N5PRACOWNIK
+				set util_mod = doc_.getmodule(60182)
+				m_strDaneKontr_Line1 = left(pPodmiot.strImie + " " + pPodmiot.strNazwisko  , 35)
+				m_strDaneKontr_Line2 = left(util_mod.Klient_Ulica(pPodmiot)  , 35)
+				m_strDaneKontr_Line3 = left(util_mod.Klient_Kod_Miasto(pPodmiot)  , 35)
+				m_strDaneKontr_Line4 = ""
+
+			case TYPEID_N5BANK
+				set util_mod = doc_.getmodule(60182)
+				m_strDaneKontr_Line1 = left(pPodmiot.strNazwa  , 35)
+				m_strDaneKontr_Line2 = left(pPodmiot.strOddzial  , 35)
+				m_strDaneKontr_Line3 = left(util_mod.Klient_Ulica(pPodmiot)  , 35)
+				m_strDaneKontr_Line4 = left(util_mod.Klient_Kod_Miasto(pPodmiot)  , 35)
+
+			case TYPEID_N5INSTYTUCJA
+				set util_mod = doc_.getmodule(60182)
+				m_strDaneKontr_Line1 = left(pPodmiot.strNazwa  , 35)
+				m_strDaneKontr_Line2 = left(util_mod.Klient_Ulica(pPodmiot)  , 35)
+				m_strDaneKontr_Line3 = left(util_mod.Klient_Kod_Miasto(pPodmiot)  , 35)
+				m_strDaneKontr_Line4 = ""
+
+		end select 
+	end sub
+
+
+	private function get_NRB_from_currentFirma()
+		dim pBank
+		if g_idBankZlec > clng(0) then
+			set pBank = trans_.getobj(TYPEID_N5BANK,g_idBankZlec)
+		else
+			set pBank = getCurrentFirma.pBank1
+		end if
+		if pBank is nothing then
+			get_NRB_from_currentFirma = ""
+		else
+			get_NRB_from_currentFirma = pBank.strKodRach			
+		end if
+		get_NRB_from_currentFirma = Replace(get_NRB_from_currentFirma," ","")
+		if Len(get_NRB_from_currentFirma) >= clng(10) then
+			get_NRB_from_currentFirma = Mid(get_NRB_from_currentFirma,3,8)    
+		end if
+	end function
+
+	private function get_NrRach_from_currentFirma()
+		dim strRachunek
+		if g_idBankZlec > clng(0) then
+			strRachunek = getRachunekBank()
+		else
+			strRachunek = getCurrentFirma.strRachunek1
+		end if
+		get_NrRach_from_currentFirma = strRachunek
+	end function
+
+	private function getRachunekBank()
+		dim pCurrBank: set pCurrBank = trans_.getobj(TYPEID_N5BANK,g_idBankZlec)
+		getRachunekBank = Replace(pCurrBank.strKodRach," ","")
+	end function
+
+	private function get_NRB_NrRach_from_podmiot(byval pPodmiot) 
+    dim strKod : strKod = ""   
+		if pPodmiot.type = TYPEID_N5PRACOWNIK or pPodmiot.type = TYPEID_N5KLIENT or pPodmiot.type = TYPEID_N5INSTYTUCJA or pPodmiot.type = TYPEID_N5FIRMA  then			
+        m_strNrRachKontr = pPodmiot.strRachunek1
+        strKod = Replace(m_strNrRachKontr," ","")
+        m_nNRBK = Mid(strKod,3,8)
+        if m_strNrRachKontr <> "" then
+          exit function
+        end if     
+		end if
+
+		if pPodmiot.type = TYPEID_N5KLIENT or pPodmiot.type = TYPEID_N5INSTYTUCJA or pPodmiot.type = TYPEID_N5FIRMA  then   
+				m_strNrRachKontr = pPodmiot.strRachunek2
+        strKod = Replace(m_strNrRachKontr," ","")
+        m_nNRBK = Mid(strKod,3,8)
+        if m_strNrRachKontr <> "" then
+          exit function
+        end if        
+        
+				m_strNrRachKontr = pPodmiot.strRachunek3
+        strKod = Replace(m_strNrRachKontr," ","")
+        m_nNRBK = Mid(strKod,3,8)
+        if m_strNrRachKontr <> "" then
+          exit function
+        end if        
+		end if
+
+		if pPodmiot.type = TYPEID_N5BANK then
+			m_nNRBK = pPodmiot.strKodRach
+			m_strNrRachKontr = ""
+			exit function
+		end if
+
+		'jezeli nie znaleziono to puste
+		m_strNrRachKontr = ""
+		m_nNRBK = ""
+
+	end function
+
+
+end class
+
+'zwraca łańcuch spacji o długości 35 - iLiczZnak
+function dop32(byval iLiczZnak) : dop32 = ""
+   dim spacja : spacja = chr(32)
+   dim iter
+   for iter = 1 to (35 - iLiczZnak)
+     dop32 = dop32 + spacja
+   next
+end function
+
+function bqry_where_for_rach_bankowy(byval nTypeID , byval strRach)
+  strRach = Replace(strRach," ","")
+	select case nTypeID
+    case TYPEID_N5FIRMA
+      bqry_where_for_rach_bankowy = trans_.afc.convert.Formatter(_
+      "(replace(strRachunek1,' ','') like '%1' or replace(strRachunek2,' ','') like '%1' or replace(strRachunek3,' ','') like '%1' or replace(strRachunek4,' ','') like '%1'  or replace(strRachunek5,' ','') like '%1' or replace(strRachunek6,' ','') like '%1' or replace(strRachunek7,' ','') like '%1' or replace(strRachunek8,' ','') like '%1' or replace(strRachunek9,' ','') like '%1' or replace(strRachunek10,' ','') like '%1') ")_
+      .add(replace(strRach," ","")).done()		
+		case TYPEID_N5KLIENT,TYPEID_N5INSTYTUCJA
+			bqry_where_for_rach_bankowy = trans_.afc.convert.Formatter(" ( replace(strRachunek1,' ','') like '%1' or replace(strRachunek2,' ','') like '%1' or replace(strRachunek3,' ','') like '%1' ) ").add(replace(strRach," ","")).done()
+		case TYPEID_N5PRACOWNIK
+			bqry_where_for_rach_bankowy = trans_.afc.convert.Formatter(" ( replace(strRachunek1,' ','') like '%1' ) ").add(replace(strRach," ","")).done()
+		case TYPEID_N5BANK
+			bqry_where_for_rach_bankowy = trans_.afc.convert.Formatter(" ( replace(strKodRach,' ','') like '%1' ) ").add(replace(strRach," ","")).done()
+	end select
+end function
+
+
+class CMultiCashContext
+
+	public m_pArrayMCRows'string
+	public m_pArrayMCPolecenia'zlecenia 
+
+	private m_pStream
+	
+	public m_eFileFormat
+	'0 - no format specified
+	'1 - MultiCash .PLI file
+	'2 - VideoTel Format 2 file
+
+	Private Sub class_initialize()	
+		set m_pArrayMCRows = doc_.afc.new_navoarray()
+		set m_pArrayMCPolecenia = doc_.afc.new_navoarray()
+		m_eFileFormat = 0 'no format
+	end sub
+
+
+	public function from_stream(byval pStream):from_stream = false
+	
+    set m_pStream = pStream
+		dim strTmp
+		strTmp = m_pStream.getstring
+		m_pArrayMCRows.separate strTmp , vbNewLine
+
+#ifdef _DEBUG
+		trans_.message 1002 , 0 , "Parsowanie pliku: wynik w mcash.log" 
+#endif
+
+		dim iter
+		dim pMCPOLECENIE
+		for iter = 0 to m_pArrayMCRows.upperIndex
+			set pMCPOLECENIE = new CMultiCashPOLECENIE
+			select case m_eFileFormat
+			case 1
+				if not pMCPOLECENIE.from_string(m_pArrayMCRows.value(iter)) then
+					exit function
+				end if
+			case 2
+				if not pMCPOLECENIE.from_string_vtf2(m_pArrayMCRows.value(iter)) then
+					exit function
+				end if
+			end select
+			if pMCPOLECENIE.m_nTyp > 0 then				
+				m_pArrayMCPolecenia.add pMCPOLECENIE
+			end if
+		next
+
+		from_stream = true
+
+	end function
+  
+  
+  public function from_stream_STA(byval pStream):from_stream_STA = false
+  
+    set m_pStream = pStream 
+    dim strTmp, strNag
+		strTmp = m_pStream.getstring
+		m_pArrayMCRows.separate strTmp , vbNewLine
+
+#ifdef _DEBUG
+		trans_.message 1002 , 0 , "Parsowanie pliku: wynik w mcash.log" 
+#endif
+
+		dim i, iter, iLicz:iLicz = 0
+		dim pMCPOLECENIE
+		for i = 0 to m_pArrayMCRows.upperIndex
+       strNag = Trim(m_pArrayMCRows.value(i))      'pobierz dowolną linię  
+       
+       if strNag = ":20:STARTDISP" then
+          set pMCPOLECENIE = new CMultiCashPOLECENIE
+          iter = i + 1
+          do 
+             if Trim(m_pArrayMCRows.value(iter)) = "-" then
+                iLicz = 0
+                exit do
+             end if
+             if Left(Trim(m_pArrayMCRows.value(iter)),3) = ":61" then
+                iLicz = iLicz + 1
+                 if iLicz > 1 then
+                    m_pArrayMCPolecenia.add pMCPOLECENIE          'dodaj polecenie do tablicy
+                    set pMCPOLECENIE = new CMultiCashPOLECENIE    'stwórz nowe polecenie
+                    'pamiętaj nagłówek rozpatrywanego polecenia
+                    if not pMCPOLECENIE.from_string_sta(m_pArrayMCRows.value(i+1)) then
+                       exit function
+                    end if
+                    if not pMCPOLECENIE.from_string_sta(m_pArrayMCRows.value(i+2)) then
+                       exit function
+                    end if
+                 end if
+             end if
+             if not pMCPOLECENIE.from_string_sta(m_pArrayMCRows.value(iter)) then
+                exit function
+             end if
+             iter = iter + 1
+          loop
+          m_pArrayMCPolecenia.add pMCPOLECENIE
+       end if  
+		next
+
+		from_stream_STA = true
+
+	end function 
+  
+  public function from_stream_MT940(byval pStream):from_stream_MT940 = false
+  
+    set m_pStream = pStream 
+    dim strTmp, strNag
+		strTmp = m_pStream.getstring
+		m_pArrayMCRows.separate strTmp , vbNewLine
+
+#ifdef _DEBUG
+		trans_.message 1002 , 0 , "Parsowanie pliku: wynik w mcash.log" 
+#endif
+
+		dim i, iter, iLicz:iLicz = 0
+		dim pMCPOLECENIE
+		for i = 0 to m_pArrayMCRows.upperIndex
+       strNag = Left(Trim(m_pArrayMCRows.value(i)),4)      'pobierz dowolną linię  
+       
+       if strNag = ":20:" then
+          set pMCPOLECENIE = new CMultiCashPOLECENIE
+          iter = i + 1
+          do 
+             if Left(Trim(m_pArrayMCRows.value(iter)),1) = "-" then
+                iLicz = 0
+                exit do
+             end if
+             if Left(Trim(m_pArrayMCRows.value(iter)),3) = ":61" then
+                iLicz = iLicz + 1
+                 if iLicz > 1 then
+                    m_pArrayMCPolecenia.add pMCPOLECENIE          'dodaj polecenie do tablicy
+                    set pMCPOLECENIE = new CMultiCashPOLECENIE    'stwórz nowe polecenie
+                    'pamiętaj nagłówek rozpatrywanego polecenia
+                    if not pMCPOLECENIE.from_string_mt940(m_pArrayMCRows.value(i+1)) then
+                       exit function
+                    end if
+                 end if
+             end if
+             if not pMCPOLECENIE.from_string_mt940(m_pArrayMCRows.value(iter)) then
+                exit function
+             end if
+             iter = iter + 1
+          loop
+          m_pArrayMCPolecenia.add pMCPOLECENIE
+       end if  
+		next
+    set m_pStream = nothing
+		from_stream_MT940 = true
+
+	end function  
+
+public function from_stream_ING_MT942(byval pStream) : from_stream_ING_MT942 = false
+#ifdef _DEBUG
+		trans_.message 1002 , 0 , "Parsowanie pliku: wynik w mcash.log" 
+#endif
+	
+  MCASHTRACE("ING_MT942 begin")
+  from_stream_ING_MT942 = from_stream_STA(pStream)
+  MCASHTRACE("ING_MT942 end")
+  
+end function
+'-------------------------------------------------------
+' specjalna funkcja dla importu z Millenium
+'-------------------------------------------------------
+public function from_stream_Millenium_MT940(byval pStream) : from_stream_Millenium_MT940 = false
+#ifdef _DEBUG
+		trans_.message 1002 , 0 , "Parsowanie pliku: wynik w mcash.log" 
+#endif
+	MCASHTRACE("Millenium_MT940 begin")
+	
+  dim strTmp: strTmp = pStream.getstring
+  m_pArrayMCRows.separate strTmp , vbNewLine
+
+  dim iLine
+  dim strPrefix
+  dim oMCPolecenie : set oMCPolecenie = nothing
+  dim strNrRBFirmy : strNrRBFirmy = ""
+  
+  for iLine = 0 to m_pArrayMCRows.upperIndex
+    strPrefix = Left(Trim(m_pArrayMCRows.value(iLine)),4)
+    select case strPrefix
+    case ":25:"
+      strNrRBFirmy = mid(Trim(m_pArrayMCRows.value(iLine)), 7)
+    case ":61:"
+      set oMCPolecenie = new CMultiCashPOLECENIE
+      oMCPolecenie.m_strNrRachZlec = strNrRBFirmy
+      MCASHTRACE("Millenium_MT940 statement start")
+	  case "<63R"
+    m_pArrayMCPolecenia.add oMCPolecenie
+      set oMCPolecenie = nothing
+      MCASHTRACE("Millenium_MT940 statement end") 
+    end select
+    
+    if not oMCPolecenie is nothing then
+      if not oMCPolecenie.from_string_mt940(m_pArrayMCRows.value(iLine)) then
+        MCASHTRACE("Millenium_MT940 fail")
+	      exit function
+      end if
+    else
+      MCASHTRACE("Millenium_MT940 ignoring:" + m_pArrayMCRows.value(iLine))      
+    end if
+  next
+  
+  from_stream_Millenium_MT940 = true
+  
+  MCASHTRACE("Millenium_MT940 end")  
+end function
+
+'w rzeczywistosci format AIPP3
+public function from_stream_Millenium_AIPP4(byval pStream) : from_stream_Millenium_AIPP4 = false
+
+#ifdef _DEBUG
+		trans_.message 1002 , 0 , "Parsowanie pliku: wynik w mcash.log" 
+#endif
+
+	MCASHTRACE("Millenium_AIPP4 begin")
+	
+  dim strTmp: strTmp = pStream.getstring
+  m_pArrayMCRows.separate strTmp , vbNewLine
+  dim arrFields(11)
+   
+  dim iLine
+  for iLine = 1 to m_pArrayMCRows.upperIndex
+    dim iter : iter = 1
+    dim oRE : set oRE = New RegExp
+    oRE.Global = true
+    oRE.Pattern = "\""[^\""]+\"""
+
+    dim oMatches: Set oMatches = oRE.Execute(m_pArrayMCRows.value(iLine))
+    dim oMatch
+    For Each oMatch in oMatches
+      arrFields(iter) = oMatch.Value
+      iter = iter + 1
+    Next
+
+    if iter >= 10 then
+      dim oMCPolecenie : set oMCPolecenie = new CMultiCashPOLECENIE
+    
+      oMCPolecenie.m_dDataPlat = cdate(replace(arrFields(7), """", ""))
+
+      oMCPolecenie.m_curKwota  = Str2Cur(replace(arrFields(6), """", ""))
+      
+      dim strNrRachAIPP : strNrRachAIPP = replace(arrFields(4), """", "")
+      strNrRachAIPP = mid(strNrRachAIPP, 18, 7)
+
+      oMCPolecenie.m_nPodmiotTYPE = TYPEID_N5KLIENT
+      oMCPolecenie.m_nPodmiotID = trans_.findobjid(TYPEID_N5KLIENT, "SUBSTRING('0000000'+strindeks,LEN(strindeks)+1,7)='"+ strNrRachAIPP +"'")
+ 	
+      oMCPolecenie.m_strDaneKontr_Line1 = replace(arrFields(9), """", "")
+      oMCPolecenie.m_strSzczegoly_Line1 = replace(arrFields(10), """", "")
+    
+      m_pArrayMCPolecenia.add oMCPolecenie 
+    else
+      MCASHTRACE("Millenium_AIPP4 ingoring invalid line #" + cstr(iLine) + ":" + m_pArrayMCRows.value(iLine)) 
+    end if
+  next
+    
+  MCASHTRACE("Millenium_AIPP4 end")  
+  
+  from_stream_Millenium_AIPP4 = true
+end function
+
+public function from_stream_Raifeissen_MT940(byval pStream) : from_stream_Raifeissen_MT940 = false
+   
+#ifdef _DEBUG
+		trans_.message 1002 , 0 , "Parsowanie pliku: wynik w mcash.log" 
+#endif
+	MCASHTRACE("Raifeissen_MT940 begin")
+	
+  dim strTmp: strTmp = pStream.getstring
+  m_pArrayMCRows.separate strTmp , vbNewLine
+
+  dim iLine
+  dim strPrefix
+  dim oMCPolecenie : set oMCPolecenie = nothing
+  dim strNrRBFirmy : strNrRBFirmy = ""
+  
+  for iLine = 0 to m_pArrayMCRows.upperIndex
+    strPrefix = Left(Trim(m_pArrayMCRows.value(iLine)),4)
+    select case strPrefix
+    case ":25:"
+      strNrRBFirmy = mid(Trim(m_pArrayMCRows.value(iLine)), 7)
+    case ":61:"
+      set oMCPolecenie = new CMultiCashPOLECENIE
+      oMCPolecenie.m_strNrRachZlec = strNrRBFirmy
+      MCASHTRACE("Raifeissen_MT940 statement start")
+	    m_pArrayMCPolecenia.add oMCPolecenie
+    end select
+    
+    if not oMCPolecenie is nothing then
+      if not oMCPolecenie.from_string_mt940(m_pArrayMCRows.value(iLine)) then
+        MCASHTRACE("Raifeissen_MT940 fail")
+	      exit function
+      end if
+    else
+      MCASHTRACE("Raifeissen_MT940 ignoring:" + m_pArrayMCRows.value(iLine))      
+    end if
+  next
+  
+  from_stream_Raifeissen_MT940 = true
+  
+  MCASHTRACE("Raifeissen_MT940 end")
+end function
+
+public function from_stream_BNPParibas_MT940(byval pStream) : from_stream_BNPParibas_MT940 = false
+   
+#ifdef _DEBUG
+		trans_.message 1002 , 0 , "Parsowanie pliku: wynik w mcash.log" 
+#endif
+	MCASHTRACE("BNPParibas_MT940 begin")
+	
+  dim strTmp: strTmp = pStream.getstring
+  m_pArrayMCRows.separate strTmp , vbNewLine
+
+  dim iLine
+  dim strPrefix
+  dim oMCPolecenie : set oMCPolecenie = nothing
+  dim strNrRBFirmy : strNrRBFirmy = ""
+  
+  for iLine = 0 to m_pArrayMCRows.upperIndex
+    strPrefix = Left(Trim(m_pArrayMCRows.value(iLine)),4)
+    select case strPrefix
+    case ":25:"
+      strNrRBFirmy = mid(Trim(m_pArrayMCRows.value(iLine)), 8)
+    case ":61:"
+      set oMCPolecenie = new CMultiCashPOLECENIE
+      oMCPolecenie.m_strNrRachZlec = strNrRBFirmy
+      MCASHTRACE("BNPParibas_MT940 statement start")
+	    m_pArrayMCPolecenia.add oMCPolecenie
+    end select
+    
+    if not oMCPolecenie is nothing then
+      if not oMCPolecenie.from_string_mt940_ex(m_pArrayMCRows.value(iLine),MULTICASH_IMPORT_FORMAT_BNPPARIBAS_MT940) then
+        MCASHTRACE("BNPParibas_MT940 fail")
+	      exit function
+      end if
+    else
+      MCASHTRACE("BNPParibas_MT940 ignoring:" + m_pArrayMCRows.value(iLine))      
+    end if
+  next
+  
+  from_stream_BNPParibas_MT940 = true
+  
+  MCASHTRACE("BNPParibas_MT940 end")
+end function
+'-------------------------------------------------------
+
+	public function process_polecenia_import(byval pRejesrDok) : process_polecenia_import = false
+		MCASHTRACE("")
+		MCASHTRACE("PROCESS IMPORT")
+		dim iter
+		for iter = 0 to m_pArrayMCPolecenia.upperIndex
+			if not m_pArrayMCPolecenia.value(iter).process_import(pRejesrDok) then
+				exit function
+			end if
+		next
+		process_polecenia_import = true
+	end function
+
+
+	public function process_polecenia_export:process_polecenia_export = false
+		MCASHTRACE("")
+		MCASHTRACE("PROCESS EXPORT")
+		dim iter
+		for iter = 0 to m_pArrayMCPolecenia.upperIndex
+			if not m_pArrayMCPolecenia.value(iter).process_export then
+				exit function
+			end if
+		next
+		process_polecenia_export = true
+	end function
+
+
+	public function to_stream(byref pOutputStream):to_stream = false
+		MCASHTRACE("")
+		MCASHTRACE("TOSTREAM")
+		dim iter
+		dim strPolecenie:strPolecenie = ""
+		for iter=0 to m_pArrayMCPolecenia.UpperIndex
+			strPolecenie = m_pArrayMCPolecenia.value(iter).to_string
+			if strPolecenie <> "" then
+				pOutputStream.write strPolecenie
+			else
+				exit function
+			end if
+		next
+		to_stream = true
+	end function
+
+
+
+	public function from_cursor(byval cursor):from_cursor = false
+		MCASHTRACE("")
+		MCASHTRACE("FROM_CURSOR")
+		dim elem
+		dim pMCPOLECENIE
+		for each elem in cursor
+			set pMCPOLECENIE = new CMultiCashPOLECENIE
+			if pMCPOLECENIE.from_platnosc(elem) then
+				m_pArrayMCPolecenia.add pMCPOLECENIE	
+			end if
+		next
+		from_cursor = true
+	end function
+
+
+
+end class
+
+
+dim g_pMCC
+dim g_idBankZlec: g_idBankZlec = clng(0)
+
+'---------------------- revision year 2012 --------------------------------------
+function init_import_Millenium_MT940(pInputStream)
+	set g_pMCC = new CMultiCashContext
+	init_import_Millenium_MT940 = g_pMCC.from_stream_Millenium_MT940(pInputStream)
+end function
+
+function init_import_Millenium_AIPP4(pInputStream)
+	set g_pMCC = new CMultiCashContext
+	init_import_Millenium_AIPP4 = g_pMCC.from_stream_Millenium_AIPP4(pInputStream)
+end function
+
+function init_import_ING_MT942(pInputStream)
+	set g_pMCC = new CMultiCashContext
+	init_import_ING_MT942 = g_pMCC.from_stream_ING_MT942(pInputStream)
+end function
+
+function init_import_Raifeissen_MT940(pInputStream)
+	set g_pMCC = new CMultiCashContext
+	init_import_Raifeissen_MT940 = g_pMCC.from_stream_Raifeissen_MT940(pInputStream)
+end function
+
+function init_import_BNPParibas_MT940(pInputStream)
+	set g_pMCC = new CMultiCashContext
+	init_import_BNPParibas_MT940 = g_pMCC.from_stream_BNPParibas_MT940(pInputStream)
+end function
+'-------------------------------------------- 
+
+function init_MultiCash_import_MT940(pInputStream)
+	set g_pMCC = new CMultiCashContext
+	init_MultiCash_import_MT940 = g_pMCC.from_stream_MT940(pInputStream)	
+end function
+
+function init_MultiCash_import_STA(pInputStream)
+	set g_pMCC = new CMultiCashContext
+	init_MultiCash_import_STA = g_pMCC.from_stream_STA(pInputStream)	
+end function
+
+function init_MultiCash_import(byval pStream)
+	set g_pMCC = new CMultiCashContext
+	g_pMCC.m_eFileFormat = 1
+	init_MultiCash_import = g_pMCC.from_stream(pStream)	
+end function
+
+function init_VideoTelFormat2_import(byval pStream)
+	set g_pMCC = new CMultiCashContext
+	g_pMCC.m_eFileFormat = 2
+	init_VideoTelFormat2_import = g_pMCC.from_stream(pStream)	
+end function
+
+function init_MultiCash_export(byval pCursor)
+#ifdef APPCONFIG_CHECK_BANK_MULTICASH
+	g_idBankZlec = fire_choice_list(TYPEID_N5BANK,"Wybór banku","strNazwa","","","")
+#endif
+	set g_pMCC = new CMultiCashContext
+	init_MultiCash_export = g_pMCC.from_cursor(pCursor)
+end function
+
+
+function process_import(byval pRejestrDok):process_import = false
+  process_import = g_pMCC.process_polecenia_import(pRejestrDok)
+end function
+
+
+function process_export(byref pOutputStream):process_export = false
+	if g_pMCC.process_polecenia_export then
+		process_export = g_pMCC.to_stream(pOutputStream)
+	end if
+end function
+  
+]]>
+    </script>
+  </config>
+  <body></body>
+</page>
+
+

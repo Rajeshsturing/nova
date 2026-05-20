@@ -1,0 +1,206 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#comment NX_READY
+
+NX_FORM_BUILDER - buduje formularze na podstawie repository
+
+#include "h1000.h"
+
+#ifndef CRSR_DEFAULT
+#define CRSR_DEFAULT	1
+#endif
+
+-->
+<page>
+<config>
+<script>
+<![CDATA[
+#include "50561"
+
+class nx_form_builder
+	private m_oNXAsp		'nx aspator <- do niego piszemy
+	private m_oNXObjDef
+	private m_iTypeId
+	private m_iFormColSpan
+	private m_strFormUsage
+
+	public sub class_initialize()
+		m_iFormColSpan = 2
+		m_strFormUsage = ""			'default
+	end sub
+
+	public sub class_terminate()  'OK
+	end sub
+
+	public sub init(byref oNXAsp,byval iTypeId)
+		set m_oNXAsp = oNXAsp
+		m_iTypeId = iTypeId
+		set m_oNXObjDef = nx_.apprep.objects.get_object(iTypeId)
+	end sub
+
+	public function write_field_ex(byval strFieldName,byval strUsage)
+		dim oNXFieldDef : set oNXFieldDef = m_oNXObjDef.fields.get_field(strFieldName)
+		dim strFieldBuildVBCode : strFieldBuildVBCode  = oNXFieldDef.get_form_builder(m_strFormUsage)
+		if strFieldBuildVBCode = "" then
+			write_stock_field oNXFieldDef
+		else
+		end if
+
+		set write_field_ex = me
+	end function
+
+	public function begin_form()
+		m_oNXAsp.newtable.newsection "tbody",m_iFormColSpan
+		set begin_form = me
+	end function
+	public function end_form()
+		set m_oNXAsp.table = nothing
+		m_oNXAsp.flush
+	end function
+
+	public function begin_flat_section(byval strHumanName)
+		m_oNXAsp.newgroup 1,strHumanName
+		set begin_flat_section = me
+	end function
+	public function end_flat_section()
+		set m_oNXAsp.row_group = nothing
+		set end_flat_section = me
+	end function
+	
+	public function newrow()
+		set newrow = m_oNXASP.newrow()
+	end function
+
+	public function write_field(byval strFieldName)
+		set write_field = write_field_ex(strFieldName,m_strFormUsage)
+	end function
+
+	'-------------------------------------------------
+	public property let form_colspan(byval iTotalColSpan)
+		m_iFormColSpan = iTotalColSpan
+	end property
+	
+	public property let form_usage(byval strFormUsage)
+		m_strFormUsage = strFormUsage
+	end property
+
+
+	public property get nxub_
+		set nxub_ = m_oNXAsp
+	end property
+
+	'-------------------------------------------------
+	private sub write_stock_field(byref oNXFieldDef)
+		select case oNXFieldDef.reltype
+		case RELT_EMBED
+			write_stock_embedded_field oNXFieldDef
+		case RELT_ENUM
+			write_stock_enum_field oNXFieldDef
+		case RELT_REF
+			write_stock_ref_field oNXFieldDef
+		end select
+	end sub
+
+	private sub write_stock_embedded_field(byref oNXFieldDef)
+
+		select case oNXFieldDef.sqltype
+		case SQLdate
+			m_oNXAsp.c_labelex oNXFieldDef.human_name,oNXFieldDef.required,""
+			m_oNXAsp.c_date_field oNXFieldDef.name,1
+		case SQLlong
+		case SQLcurrency
+			m_oNXAsp.c_labelex oNXFieldDef.human_name,oNXFieldDef.required,""
+			m_oNXAsp.c_currency_field oNXFieldDef.name,12,"",2,1
+		case else
+			if oNXFieldDef.sqltype < SQLsmall then
+				dim iLength : iLength = control_len_from_sqltype(oNXFieldDef.sqltype)
+				if iLength > 0 then
+					m_oNXAsp.c_labelex oNXFieldDef.human_name,oNXFieldDef.required,""
+					m_oNXAsp.c_edit_field oNXFieldDef.name,iLength,1
+				else
+					'multiline
+					write_stock_multiline_field oNXFieldDef
+				end if
+			end if
+		end select
+	end sub
+
+	private function control_len_from_sqltype(byval iSQLType)
+		'todo: 'zaokraglac' dlugosci aby kazde pole nie mial innej dlugosci na 
+		'formularzu (typoszereg dlugosci pol)
+		
+		dim iLength
+		iLength = iSQLType
+		if iLength > 8192 then
+			iLength = iLength - 8192
+		end if
+		if iLength >= 256 then
+			'multiline
+			iLength = -1
+		else
+			if iLength > 54 then
+				iLength = 54
+			end if
+		end if
+		control_len_from_sqltype = iLength
+	end function
+
+	private sub write_stock_enum_field(byref oNXFieldDef)
+		m_oNXAsp.c_labelex oNXFieldDef.human_name,oNXFieldDef.required,""
+		m_oNXAsp.newcell
+		
+		dim oEnumArray : set oEnumArray = nx_create_enum_array(m_iTypeId,oNXFieldDef.name)
+		
+		'--------- compute colspan
+		
+		dim iColSpan : iColSpan = clng(sqr(oEnumArray.count/1.4))
+		if iColSpan < 1 then
+			iColSpan = 1
+		else
+			if iColSpan > 5 then
+				iColSpan = 5
+			end if
+		end if
+		
+		m_oNXAsp.e_radioex_array oNXFieldDef.name,"style='STYLE_TABLE_BODY' colspan='" + cstr(iColSpan) + "'", oEnumArray
+
+	end sub
+	
+	private sub write_stock_multiline_field(byref oNXFieldDef)
+		'todo: zwijanie multiline'a to nie sekcja :)
+		'tylko podobny mechanizm powiekszajacy/zmniejszajacy
+		m_oNXAsp.newnestedgroup 2,oNXFieldDef.human_name
+		m_oNXAsp.newrow
+		m_oNXAsp.newcellex m_iFormColSpan,""
+		m_oNXAsp.e_multiline_field oNXFieldDef.name,0,0
+		set m_oNXAsp.row_group = nothing
+	end sub
+
+	private sub write_stock_ref_field(byref oNXFieldDef)
+		m_oNXAsp.newcell.e_label_rtlink_open_obj _
+			oNXFieldDef.human_name,oNXFieldDef.name,oNXFieldDef.required
+		
+		dim oNXRefObjectDef : set oNXRefObjectDef = oNXFieldDef.get_ref_object(0)
+		dim oNXRefSearchFldDef : set oNXRefSearchFldDef = oNXRefObjectDef.default_search_field
+		dim iLength : iLength = control_len_from_sqltype(oNXRefSearchFldDef.sqltype)
+		if iLength < 0 then
+			iLength = 20
+		end if
+		
+		m_oNXAsp.c_edit_ref oNXFieldDef.name, iLength,"-2",NX_CURSOR, _
+			oNXRefObjectDef.get_picture_id("choice_on_form"),1
+	end sub
+end class
+
+function new_nx_form_builder(byref oNXAsp,byval iTypeId)
+	dim oNXFormBuilder : set oNXFormBuilder = new nx_form_builder
+	oNXFormBuilder.init oNXAsp,iTypeId
+	set new_nx_form_builder = oNXFormBuilder
+end function
+]]>
+
+</script>
+</config>
+	<body>
+	</body>
+</page>

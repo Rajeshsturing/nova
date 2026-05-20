@@ -1,0 +1,909 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+Przyjęcie korespondencji
+ALWAYS MANUAL
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1002.h"
+#include "h1201.h"
+#include "h1203.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1200.h"
+#include "h1222.h"
+#include "h1220.h"
+#include "h1232.h"
+#include "h1233.h"
+
+
+#comment id muszą być po kolei - patrz rebuild_buttons
+#define CTRLID_BTN_ZACHOWAJ		 301
+
+#define CTRLID_POWIADOM_CELL		 329
+
+#define CTRLID_BTN_ROW				 400
+#define CTRLID_BTN_ROW2				 401
+
+#define CTRLID_BTN_KONTYNUACJA		 501
+#define CTRLID_BTN_PODZAD			 502
+#define CTRLID_OPERATIONS_ROW		132
+
+#ifdef _ABAKUS
+#define CTRLID_KLIENT_EDIT	133
+#endif
+
+
+
+
+#define CTRLID_NADAWCA			1
+#define CTRLID_ADRESAT			2
+#define CTRLID_PLIK				3
+#define CTRLID_TYPDOK			4
+#define CTRLID_KLIENT			5
+#define CTRLID_PRACKLIENT		6
+#define CTRLID_POPZADANIE_LBL	7
+#define CTRLID_NADZADANIE_LBL	8
+#define CTRLID_SECURITY			9
+#define CTRLID_POWIADOM			10
+#define CTRLID_PICTURE_STATUS	11
+#define CTRLID_INFO_TEXT		12
+#define CTRL_SUBJECT			13
+#define CTRLID_NROBCY			14
+#define CTRLID_STRESZCZENIE		15
+
+#define CTRLID_KLIENT_OBIEKT_EDIT	101
+
+#define RCELL_SPAN				1
+#define FORM_SPAN				2
+
+#comment ZFF_TREE_SHOW- pokazanie drzewa
+
+-->
+<page style='STYLE_PAGE'>
+<config>
+	<title>
+	
+	Przyjęcie korespondencji
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+
+	</title>
+
+<startfocus>CTRL_SUBJECT</startfocus>
+
+
+<typeid>TYPEID_N5ZADANIE</typeid>
+<script><![CDATA[
+
+'klocki do tego formularza
+#include "50104"
+
+#include "50128"
+
+'std_choice_list_hli
+#include "50200"
+
+'getCurrentWykonawca
+#include "50203"
+
+'section_*
+#include "50222"
+
+'open_wref_grid_elem
+#include "50610"
+
+'selectfile
+#include "50123"
+
+
+'AddComputerName
+#include "50211"
+
+
+
+#include "50101_horui"
+'tree services
+#include "50617"
+
+
+
+VB_KLIENT_PRACOWNIK(CTRLID_PRACKLIENT,pKlient,pKlientPracownik)
+QVE_OBJECT_RELATED_QUERY(CTRLID_KLIENT_OBIEKT_EDIT,pKlient,klob_pKlient)
+
+function OnRecordChange
+end function
+
+'-------------------------------------------------------------------------
+' Dodajemy nowy dokument do listy zalacznikow zadania
+'-------------------------------------------------------------------------
+function zadanie_add_new()
+	if (not page_.root.listZalaczniki.exists(1) and page_.root.isnew) then
+		dim pZadanieNieZal
+		set pZadanieNieZal=page_.root.listZalaczniki.AddNew()
+
+		dim pDokument
+		set pDokument=trans_.newobj( TYPEID_N5DOKUMENT )
+		if not page_.root.pKlient is nothing then
+			set pDokument.wpNadawca = page_.root.pKlient
+		end if
+
+		set pZadanieNieZal.wrefZal=pDokument
+
+		'ustawiamy brak modyfikacji
+		trans_.usermodif(false)
+	end if
+end function
+
+'-------------------------------------------------------------------------
+' Pobiera obiekt dokumentu znajdujacego sie na pierwszej pozycji 
+' w liscie zalacznikow
+'-------------------------------------------------------------------------
+function zadanie_get(): set zadanie_get=nothing
+	if (page_.root.listZalaczniki.exists(1)) then
+		dim pRefZal
+		set pRefZal=page_.root.listZalaczniki.get(1).wrefZal
+		
+		if (not pRefZal is nothing) then
+			if (pRefZal.type=TYPEID_N5DOKUMENT) then
+				set zadanie_get=pRefZal
+			end if
+		end if
+	end if
+end function
+
+
+function fenableedit():fenableedit = true
+	if page_.root.nIsSecurity = clng(1) then
+		if not HORUI(STDR_UPDATE,TYPEID_N5ZADANIE,page_.root.IdObj) then
+			exit function
+		end if
+	end if
+	fenableedit = std_fenableedit()
+end function
+
+private sub rebuild_configuration
+	dim pConfigObject : set pConfigObject = nothing
+	dim pConfigModule : set pConfigModule = nothing	
+	rebuild_operation_buttons_n page_.root.zad_pRejestrDok,CTRLID_OPERATIONS_ROW, pConfigObject, pConfigModule , 1, 7
+end sub
+
+function cust_operation_hli(byref pHLI)
+	std_cust_operation_hli_ex pHLI,page_.root.zad_pRejestrDok,page_.root,1,page_
+end function
+
+function fsearch()
+	dim pSearchChoice : set pSearchChoice = doc_.getmodule(60115)
+	pSearchChoice.addAdditionalWhere "n5zadanie.zad_pRejestrDok=" + CStr(page_.root.zad_pRejestrDok.idobj)
+	fsearch = pSearchChoice.std_search(page_)
+	set pSearchChoice = nothing
+end function
+
+function foptions
+	FORCE_REALOAD_OBJECT(page_.root.zad_pRejestrDok)
+
+	if doc_.getmodule(60175).dok_rej_preferences_ex(page_.root.zad_pRejestrDok.idobj,TYPEID_N5ZADANIE,1) then
+		
+		FORCE_REALOAD_OBJECT(page_.root.zad_pRejestrDok)
+
+		'apply settings
+		rebuild_configuration
+	end if
+end function
+'-------------------------------------------------------------------------
+' Zdarzenia na otwracie - sprawdzamy upranienia i inicjujemy dane
+'-------------------------------------------------------------------------
+function fopen()
+	if not HARUI(UOR_READ(TYPEID_N5ZADANIE)) then
+		fopen = false
+		exit function
+	end if	
+
+	section_fopen THIS_FILE
+
+	if (page_.root.isnew) then
+		'dla nowego rekordu dodajemy nowy dokument jako zalacznik
+		'naszego zadania
+		zadanie_add_new
+	end if
+
+	page_.cmdenabled CMD_SAVEFORM, false
+	tsrs_fopen()
+	rebuild_configuration
+
+	fopen=true
+end function
+
+'-------------------------------------------------------------------------
+' Zdarzenia na nowy - dodatkowo inicjujemy nowy dokument
+'-------------------------------------------------------------------------
+function fnew()
+	dim bResult
+	bResult=std_fnew()
+
+	if (bResult) then
+		'dla nowego rekordu dodajemy nowy dokument jako zalacznik
+		'naszego zadania
+		zadanie_add_new
+	end if
+
+	fnew=bResult
+
+
+end function
+
+
+'-------------------------------------------------------------------------
+' Ustawianie i pobieranie numeru dokumentu obcego z zalacznika
+'-------------------------------------------------------------------------
+function c##CTRLID_NROBCY##_ongetdata(byref oCtrl)
+	c##CTRLID_NROBCY##_ongetdata=true
+
+	dim pZadanie
+	set pZadanie=zadanie_get()
+
+	if (pZadanie is nothing) then
+		exit function
+	end if
+
+	oCtrl.value=pZadanie.strNumDokObcy
+end function
+
+function c##CTRLID_NROBCY##_ondataentered(oCtrl, value)
+	c##CTRLID_NROBCY##_ondataentered=true
+
+	dim pZadanie
+	set pZadanie=zadanie_get()
+
+	if (pZadanie is nothing) then
+		exit function
+	end if
+
+	pZadanie.strNumDokObcy=mid(oCtrl.value, 1, 64)
+end function
+
+'-------------------------------------------------------------------------
+' Ustawianie i pobieranie tematu dokumentu, ktory jest równy tematowi
+' naszego zadania
+'-------------------------------------------------------------------------
+function c##CTRL_SUBJECT##_ongetdata(byref oCtrl)
+	c##CTRL_SUBJECT##_ongetdata=true
+	oCtrl.value=page_.root.strTemat
+end function
+
+function c##CTRL_SUBJECT##_ondataentered(oCtrl, value)
+	c##CTRL_SUBJECT##_ondataentered=true
+
+	page_.root.strTemat=mid(oCtrl.value, 1, 128)
+
+	dim pZadanie
+	set pZadanie=zadanie_get()
+
+	if (pZadanie is nothing) then
+		exit function
+	end if
+
+	pZadanie.strTematDokum=mid(oCtrl.value, 1, 128)
+end function
+
+
+'-------------------------------------------------------------------------
+' Ustawianie i pobieranie strzeszczenia dokumentu, ktore jest rowne
+' opisowi zadania
+'-------------------------------------------------------------------------
+function c##CTRLID_STRESZCZENIE##_ongetdata(byref oCtrl)
+	c##CTRLID_STRESZCZENIE##_ongetdata=true
+	oCtrl.value=page_.root.strOpis
+end function
+
+function c##CTRLID_STRESZCZENIE##_ondataentered(oCtrl, value)
+
+	c##CTRLID_STRESZCZENIE##_ondataentered=true
+
+	page_.root.strOpis=mid(value, 1, 1024)
+
+	dim pZadanie
+	set pZadanie=zadanie_get()
+
+	if (pZadanie is nothing) then
+		exit function
+	end if
+
+	pZadanie.strStreszczenie=mid(oCtrl.value, 1, 256)
+end function
+
+
+
+
+'-------------------------------------------------------------------------
+' Ustawianie typu dokumentu
+'-------------------------------------------------------------------------
+function c##CTRLID_TYPDOK##_ongetdata(byref oCtrl)
+	c##CTRLID_TYPDOK##_ongetdata=true
+
+	dim pZadanie
+	set pZadanie=zadanie_get()
+
+	if (pZadanie is nothing) then
+		exit function
+	end if
+
+	if (not pZadanie.pTypDokumentu is nothing) then
+		oCtrl.value=pZadanie.pTypDokumentu.strNazwa
+	else
+		oCtrl.value="Wybierz z listy --->"
+	end if
+end function
+
+function c##CTRLID_TYPDOK##_ondataentered(oCtrl, value)
+	dim pZadanie
+	set pZadanie=zadanie_get()
+
+	if value = "" then
+		set pZadanie.pTypDokumentu = nothing
+	end if
+
+	c##CTRLID_TYPDOK##_ongetdata oCtrl
+	c##CTRLID_TYPDOK##_ondataentered=false
+end function
+
+
+
+
+'-------------------------------------------------------------------------
+' Ustawianie adresata dokumentu
+'-------------------------------------------------------------------------
+function c##CTRLID_ADRESAT##_ongetdata(byref oCtrl)
+	c##CTRLID_ADRESAT##_ongetdata=true
+
+	dim pZadanie
+	set pZadanie=zadanie_get()
+
+	if (pZadanie is nothing) then
+		exit function
+	end if
+
+	if pZadanie.wpAdresat is nothing then
+		oCtrl.text = "Wybierz z listy --->"
+	else
+		dim strText:strText=""
+
+		select case pZadanie.wpAdresat.type
+			
+		case TYPEID_N5KLIENT_PRACOWNIK
+			strText=pZadanie.wpAdresat.n5klient_pracownik_as_text()
+
+		case TYPEID_N5PRACOWNIK
+			strText=pZadanie.wpAdresat.n5pracownik_as_text()
+
+		case TYPEID_N5KLIENT
+			strText=pZadanie.wpAdresat.n5klient_as_text()
+
+		end select
+
+		oCtrl.text = strText
+	end if
+
+end function
+
+function c##CTRLID_ADRESAT##_ondataentered(oCtrl, value)
+
+	dim pZadanie
+	set pZadanie=zadanie_get()
+
+	if oCtrl.value = "" then
+		set pZadanie.wpAdresat = nothing
+	end if
+
+	c##CTRLID_ADRESAT##_ongetdata oCtrl
+	c##CTRLID_ADRESAT##_ondataentered=false
+end function
+
+
+function wybierz_adresata():wybierz_adresata=true
+	dim pZadanie
+	set pZadanie=zadanie_get()
+
+	if (pZadanie is nothing) then
+		exit function
+	end if
+
+	
+	dim choice : choice = fire_choice_list( TYPEID_N5PRACOWNIK,"Wybór", "strNazwisko", "", "", "")
+
+	if choice <> 0 then
+		set pZadanie.wpAdresat=trans_.getobj(TYPEID_N5PRACOWNIK, choice)
+		if not pZadanie.wpAdresat is nothing then
+			'page_.ctrl(100).text=pZadanie.wpAdresat.strNazwisko
+			
+			dim idWykonawca
+			idWykonawca=trans_.findobjid(TYPEID_N5WYKONAWCA, "wrefObiekt=" + CStr(pZadanie.wpAdresat.idobj) + " and wrefObiekt_wrt=TYPEID_N5PRACOWNIK")
+			if (idWykonawca>0) then
+				dim pWykonawca
+				set pWykonawca=trans_.getobj(TYPEID_N5WYKONAWCA, idWykonawca)
+				
+				if (not pWykonawca is nothing) then
+					set page_.root.pWykonawca=pWykonawca
+				end if
+			end if
+
+		end if
+	end if
+
+end function
+
+
+
+
+
+'-------------------------------------------------------------------------
+' Ustawianie nadawcy dokumentu
+'-------------------------------------------------------------------------
+function c##CTRLID_NADAWCA##_ongetdata(byref oCtrl)
+
+	c##CTRLID_NADAWCA##_ongetdata=true
+
+	dim pZadanie
+	set pZadanie=zadanie_get()
+
+	if (pZadanie is nothing) then
+		oCtrl.text = "Wybierz z listy --->"
+		exit function
+	end if
+
+	if pZadanie.wpNadawca is nothing then
+		oCtrl.text = "Wybierz z listy --->"
+	else
+		dim strText:strText=""
+
+		select case pZadanie.wpNadawca.type
+			
+		case TYPEID_N5KLIENT_PRACOWNIK
+			strText=pZadanie.wpNadawca.n5klient_pracownik_as_text()
+
+		case TYPEID_N5PRACOWNIK
+			strText=pZadanie.wpNadawca.n5pracownik_as_text()
+
+		case TYPEID_N5KLIENT
+			strText=pZadanie.wpNadawca.n5klient_as_text()
+
+		end select
+
+		oCtrl.text = strText
+	end if
+
+end function
+
+function c##CTRLID_NADAWCA##_ondataentered(oCtrl, value)
+
+	dim pZadanie
+	set pZadanie=zadanie_get()
+
+	if oCtrl.value = "" then
+		set pZadanie.wpNadawca = nothing
+	end if
+
+	c##CTRLID_NADAWCA##_ongetdata oCtrl
+	c##CTRLID_NADAWCA##_ondataentered=false
+end function
+
+
+function wybierz_nadawce():wybierz_nadawce=true
+	dim pZadanie
+	set pZadanie=zadanie_get()
+
+	if (pZadanie is nothing) then
+		exit function
+	end if
+
+	dim nTypeId:nTypeId=0
+	
+	dim pPageSuggest
+	set pPageSuggest=doc_.getmodule(43002)
+
+	dim nObjectId
+	nObjectId = pPageSuggest.wildref_choose(pZadanie, "wpNadawca", "strNazwisko;strNazwisko;strNazwa", ";eAktywny=1;")
+
+	nTypeId = pPageSuggest.getTypeID()
+
+	if (nObjectId>0) then
+		
+		set pZadanie.wpNadawca=trans_.getobj(nTypeId, nObjectId)
+
+		if (pZadanie.wpNadawca.type=TYPEID_N5KLIENT) then
+			set page_.root.pKlient=pZadanie.wpNadawca
+		elseif (pZadanie.wpNadawca.type=TYPEID_N5KLIENT_PRACOWNIK) then
+			set page_.root.pKlient=pZadanie.wpNadawca.pKlient
+		end if
+
+	end if
+
+end function
+
+'-------------------------------------------------------------------------
+' Typ dokumentu
+'-------------------------------------------------------------------------
+function choose_zad(): choose_zad=true
+
+	dim pZadanie
+	set pZadanie=zadanie_get()
+
+	if (pZadanie is nothing) then
+		exit function
+	end if
+	
+	dim choice : choice = fire_choice_list( TYPEID_N5TYPDOKUMENTU,"","","","","")
+
+	if choice <> 0 then
+		set pZadanie.pTypDokumentu=trans_.getobj(TYPEID_N5TYPDOKUMENTU, choice)
+	end if
+
+end function
+
+
+#include "50100"
+
+
+
+function wybierz_plik(): wybierz_plik=true
+
+	dim strPath
+	strPath=SelectFile("c:\", "", "")
+
+	dim pZadanie
+	set pZadanie=zadanie_get()
+
+	if (pZadanie is nothing) then
+		exit function
+	end if
+
+
+	if (len(strPath)>0) then
+		pZadanie.fPlik.Attach strPath
+		pZadanie.strFileName=AddComputerName(strPath)
+	end if
+
+end function
+
+
+
+function c##CTRLID_PLIK##_ongetdata(byref oCtrl): c##CTRLID_PLIK##_ongetdata=true
+
+	dim pZadanie
+	set pZadanie=zadanie_get()
+
+	if (pZadanie is nothing) then
+		exit function
+	end if
+
+
+	if pZadanie.fPlik.isEmpty() then
+		oCtrl.text = "Wybierz plik --->"
+	else
+		oCtrl.text=FormatPathWithCompName(pZadanie.strFileName)
+		'page_.ctrl(507).disable=true
+		'page_.ctrl(508).disable=true
+	end if
+	
+end function
+
+function c##CTRLID_PLIK##_ondataentered(ctrl, value)
+	'scieżek nie można wpisywać ręcznie
+	dim pZadanie
+	set pZadanie=zadanie_get()
+	if value = "" then
+		pZadanie.fPlik.Empty
+		pZadanie.strFileName=""
+		set pZadanie.pUzytkWypoz=nothing
+		pZadanie.strCheckoutFileName=""	
+	end if
+	c##CTRLID_PLIK##_ongetdata(ctrl)
+	c##CTRLID_PLIK##_ondataentered=false
+end function
+
+
+QVE_REF_OPEN_FORM(CTRLID_KLIENT,pKlient)
+QVE_KLIENT_RELATED_QUERY(CTRLID_PRACKLIENT,pKlient)
+QVE_REF_OPEN_FORM(CTRLID_KLIENT,pKlient)
+QVX_ZADANIE_POPNAD_ZADANIE(CTRLID_POPZADANIE_LBL,CTRLID_NADZADANIE_LBL)
+QVX_ZADANIE_SECURITY(CTRLID_SECURITY)
+QVX_ZADANIE_POWIADOM(CTRLID_POWIADOM)
+
+
+
+sub rebuild_buttons
+	'ukryj wszystkie
+	dim idCtrl
+	for idCtrl = CTRLID_BTN_ZACHOWAJ to CTRLID_BTN_ZACHOWAJ
+		page_.ctrl(idCtrl).hide =true
+	next
+	for idCtrl = CTRLID_BTN_KONTYNUACJA to CTRLID_BTN_PODZAD
+		page_.ctrl(idCtrl).hide =true
+	next
+	
+	dim bShowButtonRow : bShowButtonRow = false
+	dim bShowButtonRow2 : bShowButtonRow2 = false
+	'pokaż potrzebne
+	select case page_.root.nStatus
+		case N5ZADANIE_UTWORZONE
+			if page_.root.pZlecajacy is getCurrentWykonawca() then
+				page_.ctrl(CTRLID_BTN_ZACHOWAJ).hide = false
+				bShowButtonRow = true
+			end if
+		case N5ZADANIE_ZLECONE
+			if page_.root.pWykonawca is getCurrentWykonawca() then
+				bShowButtonRow = true
+			end if
+		case N5ZADANIE_ODEBRANE,N5ZADANIE_WYKONYWANE,N5ZADANIE_WSTRZYMANE
+			'noop
+		case N5ZADANIE_ZAMKNIETE,N5ZADANIE_ZAKONCZONE
+			page_.ctrl(CTRLID_BTN_KONTYNUACJA).hide = false
+			bShowButtonRow2 = true
+	end select
+	'ustaw ostatnią komórkę aby wypełniła
+	page_.ctrl(CTRLID_BTN_ROW).hide = not bShowButtonRow
+	page_.ctrl(CTRLID_BTN_ROW2).hide = not bShowButtonRow2
+
+	show_hide_popnad_zadanie_row
+end sub
+
+
+sub on_root_changed	
+	rebuild_buttons
+	g_cNotify##CTRLID_POWIADOM = "1"
+end sub
+
+
+sub update_controls
+	page_.ctrl(CTRLID_POWIADOM_CELL).hide = (page_.root.pWykonawca is getCurrentWykonawca()) or _
+		(page_.root.nStatus = N5ZADANIE_ZAMKNIETE)
+end sub
+
+
+function zadanie_kontynuacja
+	doc_.postcommand "OPEN_FORM_PROXY_HLI(TYPEID_N5ZADANIE,0) " +_
+		"appvar_zadanie_powiazanie=AV_ZAD_POW_KONTYN appvar_zadanie_powiazanie_idobj=" + cstr(page_.root.idobj)
+end function
+
+function zadanie_przekazanie
+	'zrobienie kontynuacji, ze skopiowaniem "wszystkiego" ale zmianą wykonawcy
+end function
+
+
+
+function zadanie_zachowaj
+	if page_.root.strOpis = "" then
+		if MessageBox("Nie wprowadziłeś streszczenia. Czy kontynuować ?", "Brak treści", vbYesNo, vbQuestion) <> vbYes then
+			exit function
+		end if
+	end if
+	dim strText : strText = "Przyjęcie korespondencji:" + page_.root.strTemat
+	zadanie_common N5ZADANIE_ZAKONCZONE,strText,page_.root.pWykonawca
+end function
+
+
+function fsave	
+	dim bSave: bSave=std_fsave()
+	if not bSave then
+		section_fsave THIS_FILE
+	end if	
+	fsave=bSave
+end function
+
+
+QVX_ZADANIE_COMMON_ACTION
+
+
+QVX_ZADANIE_INFO_TEXT(CTRLID_INFO_TEXT)
+QVX_ZADANIE_INFO_PIC(CTRLID_PICTURE_STATUS)
+
+#ifdef _ABAKUS
+class CSuggCustomerInxCustomizer
+	private m_idCtrl
+	public function query(byval strEntered,byref strWhere,byref strOrderBy,byref strJoin)
+    strWhere = strWhere + " and ((n5klient.pPracownik = " + CStr(trans_.var(GVAR_PRACOWNIK_DEDYK)) + ") or (" + CStr(trans_.var(GVAR_PRACOWNIK_DEDYK)) + " = -1))"
+	end function
+	public function before_fill(byref pSubPage)
+		before_fill = false
+	end function
+	public function fill_item(byref pBody, byval pFoundObj)
+		'dodaj element
+		dim pTableCell
+		set pTableCell = pBody.addnew(22,-1).addnew(21,-1)
+		dim pItemHLI : set pItemHLI = doc_.createhli()
+		
+		pItemHLI.prop(GVAR_FUNCTIONHLI) = "std_rs_choose"
+		pItemHLI.prop(PROPC_IDENT) = m_idCtrl
+		pItemHLI.prop(GVAR_TYPEID) = TYPEID_N5KLIENT
+		pItemHLI.prop(GVAR_OBJECT) = pFoundObj.idobj
+		
+		dim pStatic
+		set pStatic = pTableCell.addnew(0,-1)
+		pStatic.text = pFoundObj.strIndeks + " ("+ pFoundObj.strNazwa +")"
+		
+		pItemHLI.prop(1) = pFoundObj.strIndeks		'tekst do wstawienia do kontrolki
+
+		set pStatic.href = pItemHLI
+		fill_item = true
+	end function
+	public function after_fill(byref pSubPage)
+	end function
+	public sub setup(byval nCtrl)
+		m_idCtrl = nCtrl
+	end sub
+end class
+
+class CSuggCustomerNazwaCustomizer
+	private m_idCtrl
+	public function query(byval strEntered,byref strWhere,byref strOrderBy,byref strJoin)
+    strWhere = strWhere + " and ((n5klient.pPracownik = " + CStr(trans_.var(GVAR_PRACOWNIK_DEDYK)) + ") or (" + CStr(trans_.var(GVAR_PRACOWNIK_DEDYK)) + " = -1))"
+	end function
+	public function before_fill(byref pSubPage)
+		before_fill = false
+	end function
+	public function fill_item(byref pBody, byval pFoundObj)
+		'dodaj element
+		dim pTableCell
+		set pTableCell = pBody.addnew(22,-1).addnew(21,-1)
+		dim pItemHLI : set pItemHLI = doc_.createhli()
+		
+		pItemHLI.prop(GVAR_FUNCTIONHLI) = "std_rs_choose"
+		pItemHLI.prop(PROPC_IDENT) = m_idCtrl
+		pItemHLI.prop(GVAR_TYPEID) = TYPEID_N5KLIENT
+		pItemHLI.prop(GVAR_OBJECT) = pFoundObj.idobj
+		
+		dim pStatic
+		set pStatic = pTableCell.addnew(0,-1)
+		pStatic.text = pFoundObj.strNazwa + " ("+ pFoundObj.strIndeks +")"
+		
+		pItemHLI.prop(1) = pFoundObj.strNazwa		'tekst do wstawienia do kontrolki
+
+		set pStatic.href = pItemHLI
+		fill_item = true
+	end function
+	public function after_fill(byref pSubPage)
+	end function
+	public sub setup(byval nCtrl)
+		m_idCtrl = nCtrl
+	end sub
+end class
+
+'customizer_customer_nazwa
+function c##CTRLID_KLIENT_EDIT##_ondataentered(ctrl, value): c##CTRLID_KLIENT_EDIT##_ondataentered=true
+	dim pStdObjDef		: set pStdObjDef = doc_.stdobjdef.getobjdef(page_.roottypeid)
+	dim nRefField		: nRefField = pStdObjDef.getfieldindex("pKlient")	
+	dim nRefTypeId		: nRefTypeId = pStdObjDef.field(nRefField).reftypeid
+	set pStdObjDef = doc_.stdobjdef.getobjdef(nRefTypeId)
+	dim nMatchField		: nMatchField = pStdObjDef.getfieldindex("strNazwa")
+	dim pSuggCust:set pSuggCust = new CSuggCustomerNazwaCustomizer
+	pSuggCust.setup ctrl.ident
+	c##CTRLID_KLIENT_EDIT##_ondataentered = std_rs_dataentered_n(ctrl,ctrl.text,nRefField,nRefTypeId,nMatchField,1,pSuggCust)
+end function
+function c##CTRLID_KLIENT_EDIT##_ongetdata(byref ctrl): c##CTRLID_KLIENT_EDIT##_ongetdata=true
+	c##CTRLID_KLIENT_EDIT##_ongetdata = std_rs_getdata_s(ctrl,"pKlient","strNazwa")
+end function
+#endif
+
+
+]]></script>
+</config>
+<header>
+</header>
+<body>
+
+
+QXF_BEGIN
+
+#ifdef ENABLE_DB11
+		QXX_ZADANIE_INFO_EXT(CTRLID_PICTURE_STATUS,CTRLID_INFO_TEXT,RCELL_SPAN,Status:&nbsp;,PICTURE_CHOICE_N5GRUPAPRODUKTOW,pDokStatus,dcs_strNazwa,CRSR_DEFAULT,max)
+#else
+		QXX_ZADANIE_INFO(CTRLID_PICTURE_STATUS,CTRLID_INFO_TEXT)
+#endif    
+		QXR_SEPARATOR(FORM_SPAN)
+
+		<tr>
+			QXC_LABEL(Nadawca,1)
+			<td>
+				QXE_EDIT_CUSTOM_DELONLY(CTRLID_NADAWCA,40)		
+				QXE_PICTURE_ACTION(-1,PICTURE_SENDER,varFunction=wybierz_nadawce,Wybierz nadawcę dokumentu)
+			</td>
+		</tr>
+
+		<tr>
+			QXC_LABEL(Adresat,1)
+			<td>
+				QXE_EDIT_CUSTOM_DELONLY(CTRLID_ADRESAT,40)
+				QXE_PICTURE_ACTION(-1,PICTURE_RECEIPENT,varFunction=wybierz_adresata,Wybierz adresata dokumentu)
+			</td>
+		</tr>
+
+#ifdef ZFF_TREE_SHOW
+		QXR_SEPARATOR(FORM_SPAN)
+		QXX_ZADANIE_POPNAD_ZADANIE(CTRLID_POPZADANIE_LBL,CTRLID_NADZADANIE_LBL)
+#endif
+
+		<tr>
+			QXC_LABEL_REQ(Temat dokumentu,1)
+			QXC_EDIT_CUSTOM(CTRL_SUBJECT,40,1)
+		</tr>
+
+		<tr>
+			QXC_LABEL(Numer dokumentu obcego,1)
+			QXC_EDIT_CUSTOM(CTRLID_NROBCY,40,1)
+		</tr>
+
+		<tr>
+			QXC_LABEL_REQ(Typ dokumentu,1)
+			<td keepline='true'>
+				QXE_EDIT_CUSTOM_DELONLY(CTRLID_TYPDOK,40)
+				QXE_PICTURE_ACTION(-1,PICTURE_CHOICE_N5TYPDOKUMENTU,varFunction=choose_zad,Wybierz typ dokumentu)
+			</td>							
+		</tr>
+
+
+	<tr>
+		QXC_LABEL(Plik,1)
+		<td keepline='true'>
+			QXE_EDIT_CUSTOM_DELONLY(CTRLID_PLIK,40)
+			QXE_PICTURE_ACTION(-1,PICTURE_CHOOSE_FILE,varFunction=wybierz_plik,Wybór pliku)
+		</td>							
+	</tr>
+
+
+	<tr>	
+		QXC_LABEL_OPEN_REQ(CTRLID_KLIENT,Klient,1)
+#ifdef _ABAKUS
+		<td width='min' keepline='true'>
+			QXE_EDIT_CUSTOM(CTRLID_KLIENT_EDIT,40)
+			QXE_PICTURE_CHOICE(PICTURE_CHOICE_N5KLIENT,pKlient,strNazwa,CRSR_DEFAULT)
+		</td>  
+#else
+		QXC_EDIT_REF(-1,40,PICTURE_CHOICE_N5KLIENT,pKlient,strNazwa,CRSR_DEFAULT,1)
+#endif    
+	</tr>
+
+	<tr>						
+		QXC_LABEL(Pracownik klienta,1)
+		QXC_EDIT_REF_CQ(CTRLID_PRACKLIENT,40,PICTURE_CHOICE_N5KLIENT_PRACOWNIK,pKlientPracownik,strNazwisko,1)
+	</tr>
+	<tr>						
+		QXC_LABEL(Obiekt klienta,1)
+		QXC_EDIT_REF_CQ(CTRLID_KLIENT_OBIEKT_EDIT,40,PICTURE_CHOICE_N5KLIENT_OBIEKT,zad_pKLOB,klob_strNazwa,1)
+	</tr>
+
+
+	QXR_EDIT_REF_REQ(Typ działania,-1,40,PICTURE_CHOICE_N5TYPDZIALANIA,pTypDzialania,strNazwa,CRSR_N5TYPDZIALANIA_KORESPONDENCJA_NAZWY,1)
+
+
+	QXS_BEGIN_OPT(445,Streszczenie dokumentu,2)
+	<tr>
+		<td colspan='2'>
+			QXE_MULTILINE_CUSTOM(CTRLID_STRESZCZENIE,10000,HEIGHT_FOR_MULTILINE)
+		</td>
+	</tr>
+	QXS_END_OPT(2)
+
+
+	QXX_ZADANIE_SECURITY(CTRLID_SECURITY)
+
+
+
+	<tr style='STYLE_ROW_BTN' name='CTRLID_BTN_ROW'>
+		<td colspan='RCELL_SPAN' keepline='true'>
+			QXE_BUTTON(CTRLID_BTN_ZACHOWAJ,0,Zachowaj,varFunction=zadanie_zachowaj,1)
+		</td>
+		QXC_ZADANIE_POWIADOM(CTRLID_POWIADOM_CELL,CTRLID_POWIADOM,Powiadom)
+	</tr>
+	<tr style='STYLE_ROW_BTN' name='CTRLID_BTN_ROW2'>
+		<td colspan='FORM_SPAN' keepline='true'>
+			QXE_BUTTON(CTRLID_BTN_KONTYNUACJA,0,Kontynuacja,varFunction="zadanie_zakoncz_i_kontynuuj",1)
+			QXE_BUTTON(CTRLID_BTN_PODZAD,0,Podzadanie,varFunction="zadanie_podzadanie",1)
+		</td>
+	</tr>
+	QXX_OPERATIONS(CTRLID_OPERATIONS_ROW,FORM_SPAN)
+QXF_END
+
+</body>
+</page>

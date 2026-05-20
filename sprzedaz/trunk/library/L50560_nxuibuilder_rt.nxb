@@ -1,0 +1,183 @@
+#ifndef _LIBRARY_50560_
+#define _LIBRARY_50560_
+
+#comment '-- NX_READY -----------------------------------------------------------------
+#comment ' Funkcje runtimeowego wsparcia dla stron (form,raport) generowanych z nxui_
+#comment ' obsluga linkow, sekcji, nx_fire_choice
+#comment '----------------------------------------------------------------------------
+
+#comment '----------------------------------------------------------------------------
+#comment ' nx_fopen/nx_fclose
+#comment '----------------------------------------------------------------------------
+function nx_fopen()
+	nx_section_restore_state
+	nx_fopen = true
+end function
+
+function nx_fclose()
+	nx_section_store_state
+end function
+#comment ----------------------------------------------------------------------------
+#comment  open form
+#comment ----------------------------------------------------------------------------
+
+#comment zwraca string do hyperlinka do otwarcia strony dla obiektu
+function nx_gethli_open_form_usage(byval iType,byval idObj,byval eUsage)
+	nx_gethli_open_form_usage = nx_.convert.formatter( _
+		"varCmd=CMD_OPEN_STATIC_PAGE varDestPage=60180 varNewThread=1 varTypeId=%1 varObject=%2 varFormUsage=%3") _
+		.add(iType).add(idObj).add(eUsage).done()
+end function
+
+#comment funkcja otwiera strone dla podanego obiektu
+sub nx_fire_open_form_usage(byval iType,byval idObj,byval eUsage)
+	doc_.postcommand nx_gethli_open_form_usage(iType,idObj,eUsage)
+end sub
+
+#comment funkcja otwiera strone dla podanego obiektu 
+sub nx_fire_open_form_usage_obj(byref pObject,byval eUsage)
+	if not pObject is nothing then
+		nx_fire_open_form_usage pObject.Type,pObject.idObj,eUsage
+	end if
+end sub
+
+
+#comment funkcja otwiera strone dla obiektu wskazanego w referencji _field_ 
+#comment roota strony, przekazanej z hyperlinka
+#comment vs1 = nazwa pola <ref>
+sub nx_fire_open_form_usage_refhli(byref pHLI)
+	nx_fire_open_form_usage_obj page_.root.field(pHLI.prop(1)),1
+end sub
+
+#comment funkcja otwiera strone dla obiektu wskazanego w referencji _field_ 
+#comment elementu listy roota strony, przekazanej z hyperlinka
+#comment vs1 = nazwa pola <ref>
+#comment vs2 = nazwa pola <list>
+#comment PROPC_ROW = nr elementu listy (silnik)
+sub nx_fire_open_form_usage_list_refhli(byref pHLI)
+	if page_.root.field(pHLI.prop(2)).exists(pHLI.prop(PROPC_ROW)) then
+		nx_fire_open_form_usage_obj page_.root.field(pHLI.prop(2)).get(pHLI.prop(PROPC_ROW)).field(pHLI.prop(1)),1
+	end if
+end sub
+
+#comment '----------------------------------------------------------------------------
+#comment 'edycja referencji poprzez otwarcie podpowiedzi
+#comment '----------------------------------------------------------------------------
+function nx_choose_reference(byref pObject,byval strReferenceField,byval strSearchField)
+	dim oNXObjDef : set oNXObjDef = nx_.apprep.objects.get_object(pObject.type)
+	dim oNXFieldDef: set oNXFieldDef = oNXObjDef.fields.get_field(strReferenceField)
+	
+	'todo: custom query
+	dim iRefTypeId : iRefTypeId = oNXFieldDef.get_reftypeid(0)
+	dim oNXRefObjDef : set oNXRefObjDef = oNXFieldDef.get_ref_object(0)
+	if strSearchField = "-2" then
+		strSearchField = "" 'maps to default
+	end if
+	dim strCondition : strCondition = oNXFieldDef.get_fixed_ref_condition(iRefTypeId)
+	if strCondition <> "" then
+		strCondition = replace(strCondition,"{0}",oNXRefObjDef.table_name)
+	end if
+	dim idChoosen: idChoosen = nx_fire_choice_list(iRefTypeId,"",strCondition,strSearchField)
+	if idChoosen > 0 then
+		set pObject.field(strReferenceField) = trans_.getobj(iRefTypeId,idChoosen)
+	end if
+end function
+
+#comment '----------------------------------------------------------------------------
+#comment 'edycja referencji dla root'a (wolane z nxraport.dll)
+#comment '----------------------------------------------------------------------------
+function nx_choose_reference_for_root_hli(byref pHLI)
+	dim strReferenceField : strReferenceField = pHLI.prop(1)
+	dim strSearchField : strSearchField = pHLI.prop(2)
+	nx_choose_reference page_.root,strReferenceField,strSearchField
+end function
+
+#comment '----------------------------------------------------------------------------
+#comment 'section
+#comment '----------------------------------------------------------------------------
+dim g_strNXSectionInitialState : g_strNXSectionInitialState = ""
+
+sub nx_section_restore_state()
+	g_strNXSectionInitialState = doc_.getmodule(60560).nx_section_load_state_forwarer(page_.get_this(),100000 + THIS_FILE)
+end sub
+
+sub nx_section_store_state()
+	doc_.getmodule(60560).nx_section_save_state_forwarder page_.get_this(),100000 + THIS_FILE,g_strNXSectionInitialState
+end sub
+
+sub nx_section_open_close_all(byval bOpenAlways)
+	doc_.getmodule(60560).nx_open_close_all_sections page_.get_this(),bOpenAlways
+end sub
+
+function nx_section_hideshow_hli(byref pHLI)
+	nx_section_hideshow pHLI.prop(PROPC_CONTROL)
+end function
+
+sub nx_section_hideshow(byval idPictureCtrl)
+	doc_.getmodule(60560).nx_section_hideshow_forwarder page_.get_this(),idPictureCtrl
+end sub
+
+#comment '----------------------------------------------------
+#comment 'wybor pojedynczego obiektu danego typu, z opcjonalnym filtrem
+#comment '
+#comment 'nx_fire_choice_list
+#comment '----------------------------------------------------
+function nx_fire_choice_list(byval iTypeId,byval strTitle,byval strWhere,byval strSearchField)
+	dim pM43009 : set pM43009 = doc_.getmodule(43009)
+	pM43009.prepare_single_selection iTypeId,strTitle, strWhere,strSearchField
+	nx_fire_choice_list = pM43009.run_browser()
+end function
+
+#comment '----------------------------------------------------
+#comment 'wybor pojedynczego obiektu danego typu, z opcjonalnym filtrem
+#comment 'ale zablokowanym dodawaniem nowych
+#comment '
+#comment 'nx_fire_choice_list_disable_addnew
+#comment '----------------------------------------------------
+function nx_fire_choice_list_disable_addnew(byval iTypeId,byval strTitle,byval strWhere)
+	dim pM43009 : set pM43009 = doc_.getmodule(43009)
+	pM43009.prepare_single_selection iTypeId,strTitle, strWhere,""
+	pM43009.disable_addnew true
+	nx_fire_choice_list_disable_addnew = pM43009.run_browser()
+end function
+
+#comment '----------------------------------------------------
+#comment 'wybor wielu obiektow danego typu, z opcjonalnym filtrem
+#comment '
+#comment 'nx_fire_multi_choice_list
+#comment '----------------------------------------------------
+function nx_fire_multi_choice_list(byval iTypeId,byval strTitle,byval strWhere)
+	dim pM43009 : set pM43009 = doc_.getmodule(43009)
+	pM43009.prepare_multi_selection iTypeId,strTitle, strWhere,""
+	set nx_fire_multi_choice_list = pM43009.run_multi_browser()
+end function
+
+#comment '----------------------------------------------------
+#comment ' wybor pojedynczego elementu z przygotowanej tablicy
+#comment ' 
+#comment ' nx_fire_array_choice_list
+#comment '----------------------------------------------------
+function nx_fire_array_choice_list(byval iTypeId,byval strTitle,byval strHeader, _
+	byref oBOWIArray)
+	nx_fire_array_choice_list = nx_fire_array_choice_list_ex(iTypeId,strTitle,strHeader, _
+		oBOWIArray,false,nothing,nothing)
+end function
+
+function nx_fire_array_choice_list_ex(byval iTypeId,byval strTitle,byval strHeader, _
+	byref oBOWIArray,byval bMultiChoice,byref pCustomRowBuilder,byref pCustomChoose)
+	dim pM43009 : set pM43009 = doc_.getmodule(43009)
+	pM43009.prepare_array_browser iTypeId,strTitle,strHeader,oBOWIArray
+	pM43009.set_options true,bMultiChoice
+	if not pCustomChoose is nothing then
+		pM43009.set_custom_choose_delegate pCustomChoose
+	end if
+	if not pCustomRowBuilder is nothing then
+		pM43009.set_custom_rowbuilder_delegate pCustomRowBuilder
+	end if
+	if bMultiChoice then
+		set nx_fire_array_choice_list_ex = pM43009.run_multi_browser()
+	else
+		nx_fire_array_choice_list_ex = pM43009.run_browser()
+	end if
+end function
+
+#endif

@@ -1,0 +1,138 @@
+#include "h1000.h"
+#ifndef L50133_PLACE_OBJ_HELPER_
+#define L50133_PLACE_OBJ_HELPER_
+#define intMaxDniNaZadanie	4
+
+function place_aktywna_umowa(byval pPracownik,byval dDataParam):set place_aktywna_umowa = nothing
+	if not pPracownik is nothing then
+		dim id_umowa:id_umowa = trans_.FindObjId(TYPEID_N5PLUMOWA , "pPracownik="+cstr(pPracownik.idobj)+" and dDataOd<=" + trans_.afc.convert.date2SQL( dDataParam ) + " and ( dDataDo>=" + trans_.afc.convert.date2SQL( dDataParam ) + " or dDataDo= " + trans_.afc.convert.date2SQL(trans_.afc.globals.nulldate()) + " )"  )
+		if id_umowa > 0 then
+			set place_aktywna_umowa = trans_.getobj(TYPEID_N5PLUMOWA,id_umowa)		
+		end if
+	end if
+end function
+
+function place_umowa_ostatnia(byval pPracownik,byval dDataParam):set place_umowa_ostatnia = nothing
+	if not pPracownik is nothing then
+		dim id_umowa:id_umowa = trans_.FindObjId(TYPEID_N5PLUMOWA , "pPracownik="+cstr(pPracownik.idobj)+" and dDataOd<=" + trans_.afc.convert.date2SQL( dDataParam ) + " and ( dDataDo>=" + trans_.afc.convert.date2SQL( dDataParam ) + " or dDataDo= " + trans_.afc.convert.date2SQL(trans_.afc.globals.nulldate()) + " )"  )
+		if id_umowa = clng(0) then
+			dim strSQL: strSQL = "select top 1 'u_idobj'=u.IdObj from n5plumowa u inner join n5pracownik p on u.pPracownik = p.IdObj " + vbNewLine +_ 
+								"where p.idobj = "+cstr(pPracownik.idobj)+" and (u.dDataOd is not null) and (u.dDataDo is not null) " + vbNewLine +_
+								"order by u.dDataDo desc"
+			dim oRS: set oRS = trans_.createadors(strSQL)
+			if oRS.recordCount > clng(0) then
+				set place_umowa_ostatnia = trans_.getobj(TYPEID_N5PLUMOWA,clng(oRS(0).value))		
+			end if
+		end if
+	end if  
+end function
+
+'MessageBoxAndForget
+#include "50122"
+
+
+function zrodlo_wyn_fsave(byval obj):zrodlo_wyn_fsave = true
+	'jesli nie wstawiono zadnego skladnika
+	if obj.listSkladnik.count() = 0 then
+		if MessageBoxAndForget("Nie wprowadzi³eœ ¿adnego sk³adnika wynagrodzeñ - czy chcesz kontynuowaæ?", "Rejestracja Ÿród³a wyngrodzeñ", vbYesNo, vbQuestion , USERPROF_BRAK_SKLADNIKOW_WYN) <> vbYes then
+			trans_.message 1002 , 0 , "Brak sk³adników wynagrodzeñ."
+			zrodlo_wyn_fsave = false
+			exit function	
+		end if
+	end if
+end function
+
+
+
+
+'funkcja sprawdzaj¹ca kolzije w datach nieobecnosci
+'"wychodzi" z nieobecnosci lub choroby, sprawdza najpierw obiekty bie¿¹cego typu a potem te alternatywne (choroba dla nieobecnosci i na odwrot)
+function place_check_if_collision (byval obj , byval hname):place_check_if_collision=false
+
+	DEBUG_MESSAGE("place_check_if_collision")
+	'najpierw szukamy wsrod obiektów tego samego typu
+
+	dim strWhere
+	strWhere = trans_.afc.convert.Formatter("idobj<>%1 and pPracownik=%4 and ( ( (%2 between dDataOd and dDataDo) or (%3 between dDataOd and dDataDo) )  or ( (dDataOd between %2 and %3) or (dDataDo  between %2 and %3) ) )") _
+		(obj.idobj) _
+		(trans_.afc.convert.date2SQL(obj.dDataOd)) _
+		(trans_.afc.convert.date2SQL(obj.dDataDo)) _
+		(cstr(obj.pPracownik.idobj)) _
+		.Done()
+	DEBUG_MESSAGE("place_check_if_collision:strWhere=:" + strWhere )	
+	dim id
+	id = trans_.findobjid(obj.type,strWhere)
+	if id <> 0 then
+		trans_.message 1002 , 0 , "Kolizja w datach - danego dnia pracownik mo¿e byc nieobecny TYLKO z jednego powodu. Znaleziono obiekt typu " +  hname + " nale¿¹cy do tego samego przedzia³u co wystawiany w³aœnie dokument."
+		exit function
+	end if
+
+	strWhere = trans_.afc.convert.Formatter("pPracownik=%4 and ( ( (%2 between dDataOd and dDataDo) or (%3 between dDataOd and dDataDo) )  or ( (dDataOd between %2 and %3) or (dDataDo  between %2 and %3) ) )") _
+		(obj.idobj) _
+		(trans_.afc.convert.date2SQL(obj.dDataOd)) _
+		(trans_.afc.convert.date2SQL(obj.dDataDo)) _
+		(cstr(obj.pPracownik.idobj)) _
+		.Done()
+	
+	if obj.type = TYPEID_N5PLCHOROBA then
+		id = trans_.findobjid(TYPEID_N5PLNIEOB,strWhere)
+		hname = "NIEOBECNOŒÆ"
+	else
+		id = trans_.findobjid(TYPEID_N5PLCHOROBA,strWhere)
+		hname = "CHOROBA"
+	end if
+
+	if id <> 0 then
+		trans_.message 1002 , 0 , "Kolizja w datach - danego dnia pracownik mo¿e byc nieobecny TYLKO z jednego powodu. Znaleziono obiekt typu " +  hname + "  nale¿¹cy do tego samego przedzia³u co wystawiany w³aœnie dokument."
+		exit function
+	end if
+if this_.type = 10202 then
+	if obj.eTyp = 3 then
+		dim dRokObecny : dRokObecny = year(trans_.var(GVAR_TODAY))
+		dim dDataPierwsza : dDataPierwsza =cDate("01/01/"+cStr(dRokObecny))
+		dim dDataOst : dDataOst =cDate("31/12/"+cStr(dRokObecny))
+
+		dim rs : set rs = trans_.createadors(trans_.afc.convert.Formatter("select 'roznica'=sum(case when year(ddatado)-year(ddataod) > 0 then "+_
+								" case  when year(ddatado)=%3 then datediff(d,%6,ddatado)+1 else datediff(d,ddataod,%7)+1 end else "+_
+								" datediff(d,ddataod,ddatado)+1 end) from n5plnieob where ppracownik=%1 and ((year(ddataod)=%3 and year(ddatado)=%3 )or (year(ddataod)=%3 and year(ddatado)=%4)"+_
+								" or ((year(ddataod)=%5 and year(ddatado)=%3))) and etyp=3").add(cstr(obj.pPracownik.idobj)).add(year(obj.dDataDo)).add(dRokObecny).add(dRokObecny+1).add(dRokObecny-1).add(trans_.afc.convert.date2SQL(dDataPierwsza)).add(trans_.afc.convert.date2SQL(dDataOst)).Done())
+		dim intIloscDniUrlopu 'ilosc dni urlopu na zadanie juz wziete
+		dim intIloscDniUrlopuDoWziecia	'ilosc dni urlopu do wziecia
+		if ((not rs.EOF) or (rs.fields("roznica").value <> 1))  then
+			intIloscDniUrlopu = rs.fields("roznica").value
+		else
+			intIloscDniUrlopu = 0
+		end if
+		
+		if  (intIloscDniUrlopu > intMaxDniNaZadanie) then
+			trans_.message 1002 , 0 ,"Wykorzystano juz wszystkie dni urlopu na ¿¹danie "
+			exit function
+		else
+			if year(obj.dDataOd) <> year(obj.dDataDo) then
+				if year(obj.dDataOd) = dRokObecny then
+					intIloscDniUrlopuDoWziecia = DateDiff("d",obj.dDataOd,cStr(dRokObecny)+"-12-31")+1
+				else
+					intIloscDniUrlopuDoWziecia = DateDiff("d",cStr(dRokObecny)+"-01-01",obj.dDataDo)+1
+				end if
+			else
+				intIloscDniUrlopuDoWziecia = DateDiff("d",obj.dDataOd,obj.dDataDo)+1
+			end if
+			if intIloscDniUrlopuDoWziecia > intMaxDniNaZadanie then
+				trans_.message 1002 , 0 ,"Podano za du¿y przedzia³ dni urlopowych "
+				exit function
+			else
+				if (intIloscDniUrlopuDoWziecia + intIloscDniUrlopu ) > intMaxDniNaZadanie then
+					trans_.message 1002 , 0 ,"Iloœæ dni urlopowych przekracza dopuszczalna iloœæ. Pracownik ma juz wykorzystanych "+cStr(intIloscDniUrlopu)+" dni urlopu"
+					exit function
+				else
+					trans_.message 1002 , 0 ,"Urlop na ¿¹danie zosta³ zapisany"
+				end if
+			end if 
+		end if
+	end if
+end if
+	place_check_if_collision=true
+end function
+
+
+#endif

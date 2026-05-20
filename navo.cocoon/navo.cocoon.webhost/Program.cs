@@ -99,9 +99,15 @@ namespace navo.cocoon.webhost
 
                 Console.WriteLine(oException.ToString());
 
-                Console.WriteLine("Press any key to stop.");
+                if (Environment.GetEnvironmentVariable("NAVO_COCOON_CONTAINER") != "1")
+                {
+                    Console.WriteLine("Press any key to stop.");
+                }
                 Console.WriteLine($"==================================================================");
-                Console.ReadKey();
+                if (Environment.GetEnvironmentVariable("NAVO_COCOON_CONTAINER") != "1")
+                {
+                    Console.ReadKey();
+                }
             }
         }
 

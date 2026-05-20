@@ -1,0 +1,354 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+REV:KB:20030124
+
+#include "h1000.h" 
+#include "h1200.h" 
+#include "h1229.h"
+#include "h1231.h" 
+
+-->
+<class>
+	<identifier>TYPEID_N5TRANSAKCJA</identifier>
+	<table>n5transakcja</table>
+	<humanname>Transakcja</humanname>
+	<idobj/>
+	<embedded>
+		<name>strSymTrans</name>
+		<sqltype>SQLvc64</sqltype>
+		<humanname>Symbol transakcji</humanname>
+	</embedded>
+	<ref>
+		<name>pWaluta</name>
+		<humanname>Waluta transakcji</humanname>
+		<typeid>TYPEID_N5JEDNOSTKA</typeid>
+	</ref>
+	<wildref>
+		<name>wrefPodmiot</name>
+		<humanname>Podmiot transakcji</humanname>
+		<typeid>TYPEID_N5KLIENT</typeid>
+		<typeid>TYPEID_N5PRACOWNIK</typeid>
+		<typeid>TYPEID_N5INSTYTUCJA</typeid>
+		<typeid>TYPEID_N5BANK</typeid>
+		<typeid>TYPEID_N5FIRMA</typeid>
+	</wildref>
+	<embedded>
+		<name>dDataRozp</name>
+		<sqltype>SQLdate</sqltype>
+		<humanname>Data rozpoczęcia</humanname>
+	</embedded>
+	<!--
+		Data rozpoczęcia transakcji
+	-->
+	<embedded>
+		<name>dDataWym</name>
+		<sqltype>SQLdate</sqltype>
+		<humanname>Data wymagalnosci</humanname>
+	</embedded>
+	<embedded>
+		<name>dDataZamk</name>
+		<sqltype>SQLdate</sqltype>
+		<humanname>Data zamknięcia</humanname>
+		<default>null</default>
+	</embedded>
+	<!--
+		Data zamknięcia transakcji
+	-->
+	<embedded>
+		<name>curWn</name>
+		<sqltype>SQLcurrency</sqltype>
+		<humanname>Kwota Wn (w wal. transakcji)</humanname>
+	</embedded>
+	<embedded>
+		<name>curMa</name>
+		<sqltype>SQLcurrency</sqltype>
+		<humanname>Kwota Ma (w wal. transakcji)</humanname>
+	</embedded>
+	<enum>
+		<name>eTyp</name>
+		<humanname>Typ transakcji</humanname>
+		<default>N5TRANSAKCJA_ZOBOWIAZANIE</default>
+		<item>zobowiązanie</item>
+		<item>należność</item>
+	</enum>
+	<enum>
+		<name>eStatus</name>
+		<humanname>Status transakcji</humanname>
+		<default>N5TRANSAKCJA_OTWARTA</default>
+		<item>otwarta</item>
+		<item>zamknięta</item>
+	</enum>
+	<embedded>
+		<name>curWnEwid</name>
+		<sqltype>SQLcurrency</sqltype>
+		<humanname>Kwota Wn</humanname>
+		<default>0.0</default>
+	</embedded>
+	<embedded>
+		<name>curMaEwid</name>
+		<sqltype>SQLcurrency</sqltype>
+		<humanname>Kwota Ma</humanname>
+		<default>0.0</default>
+	</embedded>
+	<enum>
+		<name>eTypOdset</name>
+		<humanname>Typ transakcji</humanname>
+		<default>N5TRANSAKCJA_ODSETKI_USTAWOWE</default>
+		<item>ustawowe</item>
+		<item>umowne</item>
+		<item>nie naliczaj</item>
+	</enum>
+
+	<embedded>
+		<name>curOdsetkiUmowne</name>
+		<sqltype>SQLcurrency</sqltype>
+		<humanname>Odsetki</humanname>
+		<default>0.0</default>
+	</embedded>
+
+	<ref>
+		<name>pNotaOds</name>
+		<humanname>Waluta transakcji</humanname>
+		<typeid>TYPEID_N5NOTAODS</typeid>
+		<optional/>
+	</ref>
+	<enum>
+		<name>trn_eRodzaj</name>
+		<humanname>Rodzaj transakcji</humanname>
+		<default>1</default>
+		<item>należność za towary i usługi</item>
+		<item>przedpłata lub zaliczka</item>
+		<item>nadpłata</item>
+	</enum>
+	<embedded>
+		<name>trn_curKurs</name>
+		<sqltype>SQLqty</sqltype>
+		<humanname>Kurs</humanname>
+		<default>1.0</default>
+	</embedded>
+
+
+  XDF_REF_OPT(trn_pHandlowiec,TYPEID_N5PRACOWNIK,Handlowiec)
+
+#ifdef ENABLE_DB14
+  <embedded>
+    <name>trn_curWnVAT</name>
+    <sqltype>SQLcurrency</sqltype>
+    <humanname>Wn VAT</humanname>
+    <default>0.0</default>
+  </embedded>
+  <embedded>
+    <name>trn_curMaVAT</name>
+    <sqltype>SQLcurrency</sqltype>
+    <humanname>Ma VAT</humanname>
+    <default>0.0</default>
+  </embedded>
+#endif
+
+  <cursors>
+	DEFAULT_CURSOR(wg symboli,strSymTrans)
+  <cursor>
+    <identifier>CRSR_N5TRANSAKCJA_WG_SYMBOLU_BEZ_DOSTAW</identifier>
+    <humanname>wg symboli</humanname>
+    <join></join>
+    <where>IdObj not in (select pTransakcja from n5sprzedaz where pRejestrDok in (select IdObj from n5rejestrdok where eTyp in (N5REJESTRDOK_DOSTAWA,N5REJESTRDOK_KOR_DOSTAWA)))</where>
+    <orderby>strSymTrans</orderby>
+  </cursor>  
+</cursors>
+
+<script>
+<![CDATA[
+
+'getCurrentFirma
+#include "50203"
+
+'MessageBox
+#include "50122"
+
+'przelicz walute
+#include "50523"
+
+'trans_oper
+#include "50525"
+
+function n5transakcja_as_text()
+	dim strText : strText = this_.strSymTrans + " ("
+	if this_.wrefPodmiot is nothing then
+		strText = strText + "podmiot nieokreślony"
+	else
+		strText = strText + this_.wrefPodmiot.text
+	end if
+	strText = strText + ")"
+	n5transakcja_as_text=strText
+end function
+
+function n5transakcja_check_unique() : n5transakcja_check_unique = false
+	if this_.wrefPodmiot is nothing then
+		trans_.message 0,0,"Brak podmiotu transakcji"
+		exit function
+	end if
+
+	dim strWhere : strWhere = trans_.afc.convert.Formatter("strSymTrans='%1' and wrefPodmiot=%2 and wrefPodmiot_wrt=%3") _
+		(trans_.afc.convert.DoubleApostrophe(this_.strSymTrans)) _
+		(this_.wrefPodmiot.idobj)(this_.wrefPodmiot.type).Done()
+
+	dim idTrans: idTrans = trans_.findobjid(TYPEID_N5TRANSAKCJA,strWhere)
+	if idTrans <> 0 and idTrans <> this_.idobj then
+		trans_.message 0,0,"Istnieje już transakcja o symbolu " + this_.strSymTrans +_
+			" dla podmiotu " + this_.wrefPodmiot.text
+		exit function
+	end if
+	n5transakcja_check_unique = true
+end function
+
+function n5transakcja_initnew()
+	set this_.pWaluta = getCurrentFirma().pWaluta
+
+	if trans_.isvar(GVAR_CURRENT_CUSTOMER) then
+		if trans_.var(GVAR_CURRENT_CUSTOMER) <> 0 then
+			set this_.wrefPodmiot = trans_.getobj(TYPEID_N5KLIENT,trans_.var(GVAR_CURRENT_CUSTOMER))
+		end if
+	end if
+
+	if this_.wrefPodmiot is nothing then
+		if trans_.isvar(GVAR_CURRENT_EMPLOYEE) then
+			if trans_.var(GVAR_CURRENT_EMPLOYEE) <> 0 then
+				set this_.wrefPodmiot = trans_.getobj(TYPEID_N5PRACOWNIK,clng(trans_.var(GVAR_CURRENT_EMPLOYEE)))
+			end if
+		end if
+	end if
+
+	if this_.wrefPodmiot is nothing then
+		if trans_.isvar(GVAR_CURRENT_BANK) then
+			if trans_.var(GVAR_CURRENT_BANK) <> 0 then
+				set this_.wrefPodmiot = trans_.getobj(TYPEID_N5BANK,clng(trans_.var(GVAR_CURRENT_BANK)))
+			end if
+		end if
+	end if
+
+	if this_.wrefPodmiot is nothing then
+		if trans_.isvar(GVAR_CURRENT_INSTYTUCJA) then
+			if trans_.var(GVAR_CURRENT_INSTYTUCJA) <> 0 then
+				set this_.wrefPodmiot = trans_.getobj(TYPEID_N5INSTYTUCJA,clng(trans_.var(GVAR_CURRENT_INSTYTUCJA)))
+			end if
+		end if
+	end if
+  
+	'waluta transakcji
+	if trans_.isvar(APPVAR_TRANSAKCJA_WALUTA) then
+		if trans_.var(APPVAR_TRANSAKCJA_WALUTA) <> 0 then
+			set this_.pWaluta = trans_.getobj(TYPEID_N5JEDNOSTKA,clng(trans_.var(APPVAR_TRANSAKCJA_WALUTA)))
+		end if
+	end if 
+  
+	'kurs uznania/obciążenia
+	if trans_.isvar(APPVAR_TRANSAKCJA_KURS) then
+		this_.trn_curKurs = ccur(trans_.var(APPVAR_TRANSAKCJA_KURS))
+	end if  
+
+	if trans_.isvar(APPVAR_TRANSAKCJA_KWOTA_WN) then
+		this_.curWn = ccur(trans_.var(APPVAR_TRANSAKCJA_KWOTA_WN))
+		this_.curWnEwid = this_.curWnEwid + przelicz_walute(this_.curWn,this_.trn_curKurs)
+	end if
+	if trans_.isvar(APPVAR_TRANSAKCJA_KWOTA_MA) then
+		this_.curMa = ccur(trans_.var(APPVAR_TRANSAKCJA_KWOTA_MA))
+		this_.curMaEwid = this_.curMaEwid + przelicz_walute(this_.curMa,this_.trn_curKurs)
+	end if
+  
+#ifdef ENABLE_DB11 
+	if trans_.isvar(APPVAR_TRANSAKCJA_PLATNOSC) then
+		if trans_.var(APPVAR_TRANSAKCJA_PLATNOSC) <> clng(0) then
+			if MessageBox("Czy przenieść kwoty z płatności na transakcję?", "Dodawanie transakcji", vbYesNo, vbQuestion) <> vbYes then
+				trans_.var(APPVAR_TRANSAKCJA_PLATNOSC) = clng(0)
+				this_.curWn = ccur(0)
+				this_.curWnEwid = ccur(0)
+				this_.curMa = ccur(0)
+				this_.curMaEwid = ccur(0)
+			end if
+		end if
+	end if
+#endif
+  
+	if this_.curWn > this_.curMa then
+		this_.eTyp = clng(N5TRANSAKCJA_NALEZNOSC)
+	else
+		this_.eTyp = clng(N5TRANSAKCJA_ZOBOWIAZANIE)
+	end if
+	n5transakcja_initnew = true
+end function
+
+function n5transakcja_auto_status()
+	if (this_.curWn = this_.curMa) and (this_.curWn <> 0.0) then
+		this_.eStatus = clng(N5TRANSAKCJA_ZAMKNIETA)
+	else
+#ifdef _ALMA_TREND
+		if (this_.curWn = 0.0) and (this_.curMa = 0.0) then
+			this_.eStatus = clng(N5TRANSAKCJA_ZAMKNIETA)    
+		else
+			'zamknięcie transakcji w przypadku nadpłaty na należności
+			if (this_.eTyp = clng(N5TRANSAKCJA_NALEZNOSC)) and (this_.curWn <> 0.0) and (this_.curMa > this_.curWn) then
+				this_.eStatus = clng(N5TRANSAKCJA_ZAMKNIETA)      
+			else
+				this_.eStatus = clng(N5TRANSAKCJA_OTWARTA)  
+			end if
+		end if
+#else
+		this_.eStatus = clng(N5TRANSAKCJA_OTWARTA)
+#endif    
+	end if
+end function
+
+
+
+function n5transakcja_befins()
+#ifdef ENABLE_DB11
+	if trans_.isvar(APPVAR_TRANSAKCJA_PLATNOSC) then
+		if trans_.isvar(APPVAR_TRANSAKCJA_PLATNOSC) <> clng(0) then
+			'dodaj trop
+			trans_.var(GVAR_OPERATION_MODE) = clng(OPERATION_MODE_UPGRADE)  
+			doc_.getmodule(60121).empty_trans(this_.idobj)
+		end if
+	end if
+#endif  
+	n5transakcja_auto_status
+	n5transakcja_befins = n5transakcja_check_unique()
+end function
+
+#ifndef ENABLE_DB11_TROP
+
+function n5transakcja_befupd()
+	if trans_.var(GVAR_OPERATION_MODE) = clng(OPERATION_MODE_UPGRADE) then
+		n5transakcja_befupd = true
+		exit function
+	end if
+  
+	n5transakcja_auto_status
+	n5transakcja_befupd = n5transakcja_check_unique()
+end function
+
+
+
+function n5transakcja_curWn_change(oldval):n5transakcja_curWn_change = true
+	this_.curWnEwid = this_.curWnEwid + przelicz_walute(this_.curWn - oldval, this_.trn_curKurs )	
+end function
+
+function n5transakcja_curMa_change(oldval):n5transakcja_curMa_change = true
+	this_.curMaEwid = this_.curMaEwid + przelicz_walute(this_.curMa - oldval, this_.trn_curKurs )
+end function
+
+
+function n5transakcja_trn_curKurs_change(oldval):n5transakcja_trn_curKurs_change = true
+	this_.curWnEwid = przelicz_walute(this_.curWn, this_.trn_curKurs )	
+	this_.curMaEwid = przelicz_walute(this_.curMa, this_.trn_curKurs )
+end function
+
+#endif
+
+
+]]>
+</script>
+	
+	
+	
+	
+</class>

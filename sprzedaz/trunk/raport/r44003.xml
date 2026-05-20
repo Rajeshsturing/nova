@@ -1,0 +1,664 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1250_raport_macros.h"
+
+#define CREATOR_TITLE		Manager windykacji
+
+
+#define C_FIELD_KL_FIRST_EXPR		max(t_klient.strIndeks)
+#define C_FIELD_KL_SECOND_EXPR		max(t_klient.strNazwa)
+
+
+#define CTRLID_RESULT_TABLE		101
+#define CTRLID_REDIRECT_CHKBOX	102
+
+#define PRIV_PROP_ROW_TYPE		222
+#define ROW_TYPE_DETAIL			1
+#define ROW_TYPE_SUMMARY		2
+
+#define COLOR_FUTURE  RGB(0,196,0)
+
+#define CHR_ENTER     13
+#define CHR_SPACE     7
+
+-->
+<page style='STYLE_PAGE'>
+	<config>
+		<title>
+	CREATOR_TITLE
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+		<script>
+<![CDATA[
+
+'NX_TRACE_SUB_START
+
+#include "50519"
+
+'------------------------------------------------
+' przedzialy czasowe w ktorych umieszczamy klienta
+'------------------------------------------------
+'-- dodanie funkcji realize_publication dla wezwanie_do_zaplaty
+
+#include "50518"
+
+'-- dodanie funkcji AddComputerName dla wezwanie_do_zaplaty
+
+#include "50211" 
+
+#include "50200"
+#include "50212"
+
+#define SEGMENTS_COUNT		5
+dim g_oSegments(SEGMENTS_COUNT,3)
+
+'-- col(0) - minimal delay
+'-- col(1) - maximal delay
+'-- col(2) - action name
+'------------------------------------------------ 
+function init_segments
+	g_oSegments(0,0) = 0
+	g_oSegments(0,1) = 3
+	g_oSegments(0,2) = "Informacja o saldzie"
+
+	g_oSegments(1,0) = g_oSegments(0,1) + 1
+	g_oSegments(1,1) = 7
+	g_oSegments(1,2) = "Informacja o saldzie"
+
+	g_oSegments(2,0) = g_oSegments(1,1) + 1
+	g_oSegments(2,1) = 14
+	g_oSegments(2,2) = "Wezw. do zapłaty"
+
+	g_oSegments(3,0) = g_oSegments(2,1) + 1
+	g_oSegments(3,1) = 21
+	g_oSegments(3,2) = "Wezw. do zapłaty 2"
+
+	g_oSegments(4,0) = g_oSegments(3,1) + 1
+	g_oSegments(4,1) = 9999
+	g_oSegments(4,2) = "Ostateczne wezw."
+end function
+
+'------------------------------------------------
+'-- standardowa funkcja wolana przy otwarciu strony
+function fopen : fopen = false
+	init_segments
+	frefresh
+	fopen = true
+end function
+
+'------------------------------------------------
+'-- makra sterujace wydrukiem
+
+VB_PRINT_LANDSCAPE_COMMON
+VB_PRINTPREV_LANDSCAPE_COMMON
+
+'------------------------------------------------
+'-- standardowa funkcja wolana na przycisk 'odswiez'
+function frefresh
+	dim pModRapEngine : set pModRapEngine = doc_.getmodule(60108)
+
+	dim pParamArray : set pParamArray = get_default_param()
+	if pModRapEngine.show_raport_param_dialog(pParamArray,"CREATOR_TITLE") = 0 then
+		exit function
+	end if
+	dim pPerforming : set pPerforming = doc_.performing("Trwa przygotowanie danych...")
+	
+	fill_results pModRapEngine,pParamArray
+end function
+
+'------------------------------------------------
+'-- tworzenie tablicy parametrow dla raportu
+function get_default_param()
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+
+	pParamArray.add doc_.afc.rap.param.new_date_range("Data wymagalności").bindexpr("t_trans.dDataWym")
+	pParamArray.add doc_.afc.rap.param.new_int("Dni spóźnienia") _
+		.bindexpr("(" + doc_.afc.convert.date2SQL(trans_.var(GVAR_TODAY)) +  " - t_trans.dDataWym)")
+	pParamArray.add doc_.afc.rap.param.new_text("Indeks klienta").bindexpr("t_klient.strIndeks") 
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwa klienta").bindexpr("t_klient.strNazwa") 
+	pParamArray.add doc_.afc.rap.param.new_text("Grupa klientów").bindexpr("t_gr_klient.strNazwa") 
+
+	set get_default_param = pParamArray
+end function
+
+'------------------------------------------------
+'-- wypelnianie wynikami
+function fill_results(byref pModRapEngine,byref pParamArray)
+	dim strSegmentCase
+	strSegmentCase = "case "
+	dim iSegment
+	for iSegment = 0 to SEGMENTS_COUNT - 1
+		strSegmentCase = strSegmentCase + " when convert(int," +_
+		doc_.afc.convert.date2SQL(trans_.var(GVAR_TODAY)) + " - t_trans.dDataWym) between " +_
+		cstr(g_oSegments(iSegment,0)) + " and " + cstr(g_oSegments(iSegment,1)) + " then " + cstr(iSegment)
+	next
+	strSegmentCase = strSegmentCase + " else -1 end"
+
+	dim strSQL
+	
+	strSQL = "select 'c_segnr'=max(" + strSegmentCase + "),'c_field_first'=C_FIELD_KL_FIRST_EXPR,'c_field_second'=C_FIELD_KL_SECOND_EXPR, " +_
+	"'c_podmiot_idobj'= t_trans.wrefPodmiot,'c_podmiot_type'= t_trans.wrefPodmiot_wrt " +_
+	"from n5transakcja as t_trans " +_
+	"inner join n5klient as t_klient on t_trans.wrefPodmiot = t_klient.idobj and t_trans.wrefPodmiot_wrt =TYPEID_N5KLIENT " +_
+	"inner join n5grupaklient t_gr_klient on t_klient.pGrupaKlient= t_gr_klient.idobj " +_
+	"where t_trans.curWn <> t_trans.curMa and t_trans.eTyp=N5TRANSAKCJA_NALEZNOSC and %1 and %2 and %3 and %4 and %5 " +_ 
+	"group by t_trans.wrefPodmiot,t_trans.wrefPodmiot_wrt " +_
+	"order by c_segnr,c_field_first "
+
+	dim strSQLSub : strSQLSub = "select 'c_datarozp'=t_trans.dDataRozp,'c_datawym'=t_trans.dDataWym, " +_
+	"'c_symb'=t_trans.strSymTrans,'c_trans_idobj'=t_trans.IdObj, " +_
+	"'c_wntrans'=t_trans.curWn,'c_matrans'= t_trans.curMa,'c_saldotrans'=t_trans.curWn-t_trans.curMa, " +_ 
+	"'c_waluta'=t_waluta.strSkrot,'c_prec'=3,'c_typ'=t_trans.eTyp, " +_
+	"'c_wnewid'=t_trans.curWnEwid,'c_maewid'=t_trans.curMaEwid,'c_saldoewid'=t_trans.curWnEwid-t_trans.curMaEwid " +_
+	"from n5transakcja as t_trans " +_
+	"inner join n5jednostka as t_waluta on t_trans.pWaluta = t_waluta.IdObj " +_
+	"where t_trans.curWn <> t_trans.curMa and t_trans.eTyp=N5TRANSAKCJA_NALEZNOSC and %1 and %2 and t_trans.wrefPodmiot=%PODMIOT% and t_trans.wrefPodmiot_wrt =TYPEID_N5KLIENT " +_
+	"order by c_datarozp,c_symb "
+
+	strSQL = pModRapEngine.query_apply_actual_param(strSQL,pParamArray)
+	strSQLSub = pModRapEngine.query_apply_actual_param(strSQLSub,pParamArray)
+
+	dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(page_.ctrl(CTRLID_RESULT_TABLE))
+	pTB.section_body.removeall	
+
+	dim nRecNr : nRecNr = 0
+	dim oRS : set oRS = trans_.createadors(strSQL)
+	dim iLimit : iLimit = 1000
+	dim iLastSegment : iLastSegment = -9999
+	do while not oRS.EOF
+		iSegment = clng(oRS("c_segnr"))
+		if iLastSegment <> iSegment then
+			ui_end_segment iLastSegment,pTB
+			ui_start_segment iSegment,pTB
+			iLastSegment = iSegment
+		end if
+		ui_build_customer oRS,pTB,strSQLSub
+
+		oRS.MoveNext
+		
+		if nRecNr > iLimit then
+			exit do
+		end if
+		nRecNr = nRecNr + 1
+	loop
+	ui_end_segment iLastSegment,pTB
+end function
+
+'------------------------------------------------
+'-- zakonczenie segmentu (przedzialu czasowego)
+function ui_end_segment(iSegment,byref pTB)
+	if iSegment <> -9999 then
+	end if
+end function
+
+'------------------------------------------------
+'-- rozpoczecie segmentu (przedzialu czasowego)
+function ui_start_segment(iSegment,byref pTB)
+	pTB.newrow
+	pTB.row.styleitem = STYLE_TABLE_HEADER
+	pTB.row.fontsize=5
+	pTB.newcell
+	pTB.cell.colspan=5
+	if iSegment >= 0 and iSegment < SEGMENTS_COUNT then
+		pTB.addtext "Należności opóźnione pomiędzy " + cstr(g_oSegments(iSegment,0)) + " a " + cstr(g_oSegments(iSegment,1)) + " dni"
+	else
+		pTB.addtext "Przyszłe należności"
+	end if
+end function
+
+function section_hideshow_hli(byref pHLI)
+	doc_.afc.formsection.section_hideshow page_, pHLI.prop(100)
+end function
+
+'------------------------------------------------
+'-- wypisanie jednego klienta
+
+function ui_build_customer(byref oRS,byref pTB,byval strSQLSub)
+	dim iSegment : iSegment = clng(oRS("c_segnr"))
+
+	dim iRecNr : iRecNr = 0
+
+	dim iPodmiotIdObj : iPodmiotIdObj = clng(oRS("c_podmiot_idobj"))
+
+	'---- section == customer
+	with pTB.newrow.row
+		.styleitem=STYLE_GROUP_HEADER
+		set .userprop = doc_.createhli()
+		.userprop.prop(PROPC_SECTION_START) = clng(1)
+		.userprop.prop(PROPC_SECTION_HIDDEN) = clng(0)
+		.userprop.prop(PROPC_SECTION_REQ) = clng(0)
+	end with
+
+	with pTB.newcell.addctrl(CTRL_TYPE_PICTURE, -1).element
+		.image = PICTURE_SMALL_MINUS
+		.width = SIZE_FOR_PLUS
+		.height = SIZE_FOR_PLUS
+		.ignoresysdisable true
+		.tip="Zwiń"
+		set .hli= doc_.createhli()
+		.hli.prop(GVAR_FUNCTIONHLI) = "section_hideshow_hli"
+		.hli.prop(100) = clng(.ident)
+	end with
+	with pTB.cell
+		.keepline=true
+		.colspan=3
+	end with
+	dim strHeader : strHeader = cstr(oRS("c_field_first")) + " (" + cstr(oRS("c_field_second")) + ")"
+	pTB.addtexthli strHeader,_
+		doc_.createhlistr("OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5KLIENT," + cstr(iPodmiotIdObj) +",USAGE_VIEW)")
+	pTB.element.bold=true
+
+	pTB.newcell
+	pTB.cell.keepline = true
+	
+	dim pCheckBox
+
+	if iSegment >= 0 and iSegment < SEGMENTS_COUNT then
+
+		pTB.addctrl CTRL_TYPE_CHECKBOX,-1
+		set pCheckBox = pTB.element
+		with pCheckBox
+			.customredirect = clng(CTRLID_REDIRECT_CHKBOX)
+			.transfer = page_.createtransfer("custom")
+			.border = 0
+		end with
+		pTB.element.addnew CTRL_TYPE_STATIC,-1	'pusty tekst ("do zaznaczania")
+		pCheckBox.value = "1"
+
+		pTB.addctrl CTRL_TYPE_BUTTON,-1
+		pTB.element.styleitem = STYLE_BUTTON
+		pTB.element.text = g_oSegments(iSegment,2)
+		dim oBtnHLI : set oBtnHLI = doc_.createhli()
+		
+		oBtnHLI.prop(GVAR_FUNCTIONHLI) = "action_hli"
+		oBtnHLI.prop(100) = pTB.row.ident
+		oBtnHLI.prop(101) = clng(iPodmiotIdObj)
+		oBtnHLI.prop(102) = clng(iSegment)
+    
+
+		set pTB.element.hli = oBtnHLI
+	end if
+
+	strSQLSub = replace(strSQLSub,"%PODMIOT%",cstr(iPodmiotIdObj))
+	dim oRSSub : set oRSSub = trans_.createadors(strSQLSub)
+	
+	dim curSaldoTrans
+	dim curSaldoClient : curSaldoClient = ccur(0.0)
+	do while not oRSSub.EOF
+	  dim iDays : iDays = clng(trans_.var(GVAR_TODAY) - cdate(oRSSub("c_datawym")))
+	  pTB.newrow
+		if iRecNr mod 2 = 0 then
+			pTB.row.styleitem = STYLE_ROW_EVEN
+		end if
+		pTB.newcell.addtext(cstr(oRSSub("c_symb")))
+    if iDays < 0 then
+      pTB.element.forecolor= COLOR_FUTURE
+    end if 
+		pTB.newcell.addtext(cstr(iDays)).cell.align=ALIGN_RIGHT
+    if iDays < 0 then
+      pTB.element.forecolor= COLOR_FUTURE
+    end if 
+
+		curSaldoTrans = ccur(oRSSub("c_saldoewid"))
+		curSaldoClient = curSaldoClient + curSaldoTrans
+
+		pTB.newcell.addtext(doc_.afc.display.money(curSaldoTrans,"")).cell.align=ALIGN_RIGHT
+    if iDays < 0 then
+      pTB.element.forecolor= COLOR_FUTURE
+    end if 
+
+		if iSegment >= 0 and iSegment < SEGMENTS_COUNT then		
+			pTB.newcell.addctrl CTRL_TYPE_CHECKBOX,-1
+			pTB.cell.keepline = true
+			set pCheckBox = pTB.element
+			with pCheckBox
+				.border = 0
+			end with
+			pTB.element.addnew CTRL_TYPE_STATIC,-1	'pusty tekst ("do zaznaczania")
+			pCheckBox.value = "1"
+		end if
+
+		set pTB.row.userprop = doc_.createhli()
+		with pTB.row.userprop
+			.prop(PRIV_PROP_ROW_TYPE) = clng(ROW_TYPE_DETAIL)
+			.prop(101) = clng(oRSSub("c_trans_idobj"))
+		end with
+
+		oRSSub.MoveNext
+		iRecNr = iRecNr + 1
+	loop
+	
+	'---- custommer summary
+	with pTB.newrow.row
+		set .userprop = doc_.createhli()
+		.userprop.prop(PRIV_PROP_ROW_TYPE) = clng(ROW_TYPE_SUMMARY)
+	end with
+	pTB.newcell.cell.colspan = 2
+	pTB.newcell.addtext(doc_.afc.display.money(curSaldoClient,"")).cell.align=ALIGN_RIGHT
+	pTB.element.bold=true
+
+	'---- section end
+	with pTB.newrow.row
+		.hide = true
+		set .userprop = doc_.createhli()
+		.userprop.prop(PROPC_SECTION_END) = clng(1)
+	end with
+	'---- ---- 
+
+end function
+
+
+function c##CTRLID_REDIRECT_CHKBOX##_ongetdata(byref oCtrl)
+	c##CTRLID_REDIRECT_CHKBOX##_ongetdata = true
+end function
+
+function c##CTRLID_REDIRECT_CHKBOX##_ondataentered(byref oCtrl, byval newValue)
+	c##CTRLID_REDIRECT_CHKBOX##_ondataentered = true
+	dim oRow : set oRow = oCtrl.parent.parent
+	set oRow = oRow.nextelement
+	do while not oRow is nothing
+
+		if not oRow.userprop is nothing then
+			if oRow.userprop.exists(PRIV_PROP_ROW_TYPE) then
+				if oRow.userprop.prop(PRIV_PROP_ROW_TYPE) = clng(ROW_TYPE_SUMMARY) then
+					exit do
+				end if
+				if oRow.userprop.prop(PRIV_PROP_ROW_TYPE) = clng(ROW_TYPE_DETAIL) then
+					oRow.cell(4).element(1).value = newValue
+				end if
+			end if
+		end if
+
+		set oRow = oRow.nextelement
+	loop
+end function
+
+function wezwanie_do_zaplaty2(byval vIdobjPodm,byref oNXArray)
+  
+  dim oBtnHLI : set oBtnHLI = doc_.createhli()
+	dim iTypDokumentu : iTypDokumentu = trans_.findobjid(TYPEID_N5TYPDOKUMENTU,"strNazwa='Wezwania do zapłaty'")
+	if iTypDokumentu <= 0 then
+		nx_.trace.fatal "FKK001","Brak typu dokumentu 'Wezwania do zapłaty'"
+		exit function
+	end if
+	
+	dim idDPC : idDPC = trans_.findobjid(TYPEID_N5DPC, "ePubType=" + CStr(N5DPC_PUBTYPE_WEZWANIE_DO_ZAPLATY))
+	if idDPC < 1 then
+		idDPC = fire_choice_list( TYPEID_N5DPC , "Publikacja typu 'Wezwanie do zapłaty'" ,"strNazwa","ePubType=" + CStr(N5DPC_PUBTYPE_WEZWANIE_DO_ZAPLATY) ,"",""	)	
+		if idDPC = 0 then
+			nx_.trace.fatal "FKK002","Brak publikacji typu 'Wezwania do zapłaty'"
+			exit function
+		end if
+	end if
+
+	dim oHLIResult : set oHLIResult = doc_.createhli()
+	dim strN: strN=""
+	dim iter
+	for iter = 0 to oNXArray.upper_index
+	  strN=strN+cstr(oNXArray(iter))+","
+	next
+	trans_.var(6001)=strN
+	
+  if not is_email_publication(idDPC) then
+	  realize_publication idDPC, trans_.getobj(TYPEID_N5KLIENT,vIdobjPodm),false,oHLIResult
+  else
+    dim pM60153 : set pM60153 = doc_.getmodule(60153)
+    pM60153.choose_mail 0, vIdobjPodm, 0
+    dim sStrEmail : sStrEmail =  pM60153.get_g_sStrMail
+    if sStrEmail="" then
+      MessageBox  "Nie wysłano maila ... ","Informacja...", vbOKOnly, vbInformation 
+      exit function
+    else
+      'tworzymy załącznik korzystając z funkcji realize_hardcopy_email (realize_hardcopy zwracająca ścieżkę pliku)
+       dim pM60170:set pM60170 = doc_.getmodule(60170)
+       dim pSO : set pSO = doc_.createstreamobj()
+       dim pPublication : set pPublication = trans_.getobj(TYPEID_N5DPC,idDPC)
+       dim strPath : strPath = pM60170.realize_hardcopy_email(pPublication,trans_.getobj(TYPEID_N5KLIENT,vIdobjPodm),false,nothing)
+       
+       if strPath = "" then
+         MessageBox  "Błąd załącznika, nie wysłano maila... ","Informacja...", vbOKOnly, vbInformation 
+         exit function
+       end if
+       pSO.attach strPath
+
+       'treść wiadomości
+       dim strMessage : strMessage = strRows(strPath)
+       
+       dim pM60293 : set pM60293 = doc_.getmodule(60293)
+       if not send_email(sStrEmail,g_oSegments(trans_.var(6002),2),pSO,"Załącznik.doc",strMessage) then
+         MessageBox  "Błąd załącznika, nie wysłano maila... ","Informacja...", vbOKOnly, vbInformation 
+         exit function
+       else
+         MessageBox "Twoja wiadomość zostala wysłana", "Zakończono wysyłanie", vbOKOnly, vbInformation
+       end if
+    end if
+  end if
+	
+
+	dim strPlikWezwaniaDoZaplaty : strPlikWezwaniaDoZaplaty = ""
+	'see realize_hardcopy implementation
+	if oHLIResult.exists(3030) then
+		strPlikWezwaniaDoZaplaty = oHLIResult.prop(3030)
+	end if
+
+	dim idWDZ_Dokument : idWDZ_Dokument = clng(0)
+	if strPlikWezwaniaDoZaplaty <> "" then
+		
+		dim oWDZ_Dokument : set oWDZ_Dokument = trans_.newobj(TYPEID_N5DOKUMENT)
+		oWDZ_Dokument.strTematDokum = _
+			left("Wezwanie do zapłaty z " + doc_.afc.display.fulldate(trans_.var(GVAR_TODAY)) + " do " +_
+			trans_.getobj(TYPEID_N5KLIENT,vIdobjPodm).strSkrot,127)
+
+		set oWDZ_Dokument.pTypDokumentu = trans_.getobj(TYPEID_N5TYPDOKUMENTU,iTypDokumentu)
+		set oWDZ_Dokument.wpAdresat =  trans_.getobj(TYPEID_N5KLIENT,vIdobjPodm)
+		
+		oWDZ_Dokument.dDataWeWy = trans_.var(GVAR_TODAY)
+		oWDZ_Dokument.dDataRejestracji = trans_.var(GVAR_TODAY)
+		oWDZ_Dokument.dok_dDataGenNastFry = dateserial(2199,12,31)
+		oWDZ_Dokument.dok_dDataWystNastFry = dateserial(2199,12,31)
+
+		oWDZ_Dokument.nForma = cLng(1)
+		oWDZ_Dokument.strFileName = AddComputerName(strPlikWezwaniaDoZaplaty)
+		oWDZ_Dokument.fPlik.attach strPlikWezwaniaDoZaplaty
+		idWDZ_Dokument = oWDZ_Dokument.idobj
+
+		if not trans_.saveobjects() then
+			nx_.trace.fatal "FKK003","Nie można zachować dokumentu wezwania do zapłaty"
+			exit function
+		end if
+		set oWDZ_Dokument = nothing
+    
+    Create_FileDriveObject
+    dim pPerforming : set pPerforming = doc_.performing("Otwieranie dokumentu...")
+    Run strPlikWezwaniaDoZaplaty
+    set pPerforming = nothing
+    
+	end if
+
+	dim pUtility : set pUtility = doc_.getmodule(60158)
+	'wybór typu działania gdy brak
+	dim idTypDzialania : idTypDzialania = pUtility.supply_typ_dzialania_on_iid_id(N5TYPDZIALANIA_IID_NOTATKA)
+	if idTypDzialania <= 0 then
+		exit function
+	end if
+
+	trans_.var(APPVAR_REJESTR_TYP) = N5REJESTRDOK_ZADANIA
+	trans_.var(GVAR_CURSOR) = clng(0)
+	dim pOpenFormNotatka : set pOpenFormNotatka = doc_.getmodule(60129).prepare_form_open_command(TYPEID_N5ZADANIE,0,0)
+	if pOpenFormNotatka is nothing then
+		exit function
+	end if
+	dim pFormZadanie : set pFormZadanie = doc_.getpagehli(pOpenFormNotatka)
+	if pFormZadanie is nothing then
+		exit function
+	end if
+
+	with pFormZadanie.root
+		.strTemat = "Wezwanie do zapłaty"
+		set .pTypDzialania=trans_.getobj(TYPEID_N5TYPDZIALANIA,idTypDzialania)
+		.nStatus=clng(N5ZADANIE_ZAMKNIETE)
+		.strOpis = "Wezwanie do zapłaty"
+		set .pZlecajacy=getCurrentWykonawca()
+		set .pWykonawca=getCurrentWykonawca()
+		set .pKlient= trans_.getobj(TYPEID_N5KLIENT,vIdobjPodm)
+		if idWDZ_Dokument <> 0 then
+			set .listZalaczniki.addnew().wrefZal = trans_.getobj(TYPEID_N5DOKUMENT,idWDZ_Dokument)
+		end if
+	end with
+
+	pFormZadanie.domodalauto()
+end function
+
+
+'----------------------------------------------
+'wysyłanie maila zawierającego treść załącznika
+'----------------------------------------------
+function send_email(byval strEmail, byval strSubject, byref pInputStream, byval strAttchName, byval strMessage)
+  NX_TRACE_SUB_START("Wysylka maila " + strSubject + " do " + strEmail)
+  dim pM20136 : set pM20136 = doc_.getmodule(20136)
+  
+  'do kogo
+  pM20136.set_recipents_email strEmail
+  'tytuł
+  pM20136.setSubject strSubject
+  'treść
+  pM20136.setMessage strMessage
+  
+  'załącznik
+  dim pAttachment
+  set pAttachment=new CMailAttachment
+  set pAttachment.pSO=pInputStream
+  pAttachment.strName = strAttchName
+  pM20136.addAttachment pAttachment
+
+  'wyślij
+  send_email = pM20136.send_internal()
+  
+  NX_TRACE_END
+
+end function
+
+'------------------------------------
+'odczytuje kolejne słowa z pliku word
+'------------------------------------
+function strRows(byval strPath) : strRows = ""
+  dim oWordApp : set oWordApp = doc_.system.activex("Word.Application")
+  dim oWordDoc : set oWordDoc = oWordApp.Documents.Open(strPath)
+  oWordDoc.Activate
+  
+  dim iter
+  for iter = 1 to oWordDoc.Words.count
+   strRows = strRows + ltrim(oWordDoc.Words(iter).text)
+  next
+
+  strRows = rebuildTable(strRows)
+  
+  oWordDoc.Close
+  oWordApp.Quit
+end function       
+
+'--------------
+'rebuild tabeli
+'--------------
+function rebuildTable(byval strRows)
+  dim iPos1 : iPos1 = InStr(strRows,"LP" + chr(CHR_ENTER))
+  dim iPos2 : iPos2 = InStr(strRows,"Łącznie")
+  
+  if iPos1 > 0 and iPos2 > 0 then
+    rebuildTable = rebuildMsg(iPos1,iPos2,strRows)
+  else
+    iPos1 = InStr(strRows,"Transakcja")
+    iPos2 = InStr(strRows,"Razem do")
+    if iPos1 > 0 and iPos2 > 0 then
+      rebuildTable = rebuildMsg(iPos1,iPos2,strRows)
+    else  
+      rebuildTable = strRows
+    end if
+  end if
+end function
+
+function rebuildMsg(byval iPos1, byval iPos2, byval strRows)
+  'rozdzielenie wiadomości na 3 części
+  dim strPart1 : strPart1 = Mid(strRows,1,iPos1-1)  
+  dim strTable : strTable = Mid(strRows,iPos1,iPos2 - iPos1 - 1)
+  dim strPart2 : strPart2 = Mid(strRows,iPos2)  
+  
+  dim tab : tab = Split(Replace(strTable,chr(CHR_SPACE),""), chr(CHR_ENTER))
+  dim iter
+  for iter = 0 to ubound(tab)
+    if tab(iter) = "" then
+      tab(iter) = vbNewLine
+    end if
+  next
+  strTable = Replace(Join(tab, "  "),vbNewLine + "  ",vbNewLine)
+  
+  rebuildMsg = strPart1 + strTable + strPart2
+end function
+
+function action_hli(byref oHLI)
+	dim iPodmiotIdobj : iPodmiotIdobj = clng(oHLI.prop(101))
+	dim iSegment : iSegment = clng(oHLI.prop(102))
+	dim oNXArray : set oNXArray = nx_.new_array()
+
+	dim oRow : set oRow = page_.ctrl(oHLI.prop(100))
+	set oRow = oRow.nextelement
+	do while not oRow is nothing
+
+		if not oRow.userprop is nothing then
+			if oRow.userprop.exists(PRIV_PROP_ROW_TYPE) then
+				if oRow.userprop.prop(PRIV_PROP_ROW_TYPE) = clng(ROW_TYPE_SUMMARY) then
+					exit do
+				end if
+				if oRow.userprop.prop(PRIV_PROP_ROW_TYPE) = clng(ROW_TYPE_DETAIL) then
+					if oRow.cell(4).element(1).value = "1" then
+						dim idTrans : idTrans =  clng(oRow.userprop.prop(101))
+						oNXArray.add idTrans
+					end if
+				end if
+			end if
+		end if
+
+		set oRow = oRow.nextelement
+	
+	loop
+  
+	if oNXArray.upper_index >= clng(0) then
+		trans_.var(6002)=iSegment
+		wezwanie_do_zaplaty2 iPodmiotIdobj,oNXArray
+	else
+		trans_.message 7000, 0, "Nie wybrano transakcji."
+	end if
+	
+end function
+
+]]>
+</script>
+	</config>
+	<body>
+		<table>
+			<tbody>
+				<tr>
+					<td>
+						<picture image='80139' tip='Wypełnij raport' width='1000' height='1000' href='varFunction="frefresh"' />
+					</td>
+				</tr>
+				<tr>
+					<td>
+						<table border='1' name='CTRLID_RESULT_TABLE'>
+							<tbody backcolor='white' border='0' />
+						</table>
+					</td>
+				</tr>
+			</tbody>
+		</table>
+	</body>
+</page>

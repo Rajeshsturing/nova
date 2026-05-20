@@ -1,0 +1,778 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1222.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1250_raport_macros.h"
+
+#define CREATOR_TITLE	Produkcja
+
+#define CTRLID_ROW_BUTTONS       101
+#define CTRLID_RESULT_TABLE      102
+#define CTRLID_ACTION_TABLE      103
+#define CTRLID_PREV_BUTTON       104
+#define CTRLID_NEXT_BUTTON       105
+#define CTRLID_REALIZE_BUTTON    106
+#define CTRLID_ROW_CHECKBOX      112
+
+#define PROP_BUF_INX             201
+#define PROP_ROW_IDENT           202
+#define PROP_CHANGE_STATUS       203
+
+#define MAX_ROW_NR      20
+#define CONST_PARAM_NR  4
+
+#comment Kolejne numery kolumn na raporcie
+#define KOL_NR_ZLECENIA         2
+#define KOL_ILOSC_ZLEC          3
+#define KOL_SCIEZKA_KODU        4
+#define KOL_DATA_ROZP           5
+#define KOL_DATA_ZAK            6
+#define KOL_TYP_ZASOBU          7
+#define KOL_NAZWA_ZASOBU        8
+#define KOL_NAZWA_PROD          9
+#define KOL_TYP_PROD            10
+#define KOL_NAZWA_RECEPT        11
+#define KOL_KOD_OPERACJI        12
+#define KOL_KROTNOSC            13
+#define KOL_STATUS_OPER         14
+#define KOL_ILOSC_DO_WYK        15
+#define KOL_ILOSC_GOTOWA        16
+#define KOL_ILOSC_WYKON         17
+
+#comment pierwsza kolumna
+#define KOL_FIRST              KOL_NR_ZLECENIA
+#comment ostatnia kolumna
+#define KOL_LAST               KOL_ILOSC_WYKON
+
+#define CHECKBOX_WIDTH         700
+
+-->
+<page style='STYLE_PAGE'>
+	<config>
+		<title>
+	CREATOR_TITLE
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+		<script>
+<![CDATA[
+
+'MessageBox
+#include "50122"
+
+'cDrawReport,cButton
+#include "50526"
+
+'prop_util, prop_util_item
+#include "50134"
+
+'fire_choice_list
+#include "50200"
+
+'GetMenu
+#include "50506"
+
+'MessageBox
+#include "50122"
+
+dim oPU : set oPU = nothing
+dim oPUCopy : set oPUCopy = nothing
+
+'maksymalne wcięcie
+dim g_nMaxInd
+
+'-----------------------------------------------
+'standardowa funkcja wolana przy otwarciu strony
+'-----------------------------------------------
+function fopen : fopen = false 
+  'utworzenie nowego prop_util
+  frefresh()
+  fopen = true
+end function
+
+'-----------------
+'rysuj cały raport
+'-----------------
+sub drawRaport(byref g_oDrawRep)
+  if oPU.count() >= 0 then
+    drawPageButtons
+    drawResultTable g_oDrawRep
+    drawActionTable
+  else
+    drawBrakDanych
+  end if
+end sub
+
+'--------------------------------
+'przyciski do przełączania strony
+'--------------------------------
+sub drawPageButtons
+  dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(page_.ctrl(CTRLID_ROW_BUTTONS))
+  pTB.section_body.removeall
+  pTB.newrow.newcell
+  
+  'button prev
+  dim pNewHli : set pNewHli = doc_.createhli()
+  pNewHli.prop(GVAR_FUNCTIONHLI) = "prevPage"
+  pNewHli.prop(PROP_ROW_IDENT) = pTB.row.ident
+  pTB.addctrl CTRL_TYPE_BUTTON, -1
+  with pTB.element
+    .customredirect = clng(CTRLID_PREV_BUTTON)
+	  .transfer = page_.createtransfer("custom")
+    set .hli = pNewHli
+    .text = "<<"
+    .size = 9
+    .styleitem = STYLE_BUTTON
+  end with  
+  pTB.cell.align = ALIGN_RIGHT
+
+  'button next
+  set pNewHli = doc_.createhli()
+  pNewHli.prop(GVAR_FUNCTIONHLI) = "nextPage"
+  pNewHli.prop(PROP_ROW_IDENT) = pTB.row.ident
+  pTB.addctrl CTRL_TYPE_BUTTON, -1
+  with pTB.element
+    .customredirect = clng(CTRLID_NEXT_BUTTON)
+	  .transfer = page_.createtransfer("custom")
+    set .hli = pNewHli
+    .text = ">>"
+    .size = 9
+    .styleitem = STYLE_BUTTON      
+  end with  
+  pTB.cell.align = ALIGN_RIGHT
+end sub
+
+'-----------------
+'tabela z wynikami
+'-----------------
+sub drawResultTable(byref g_oDrawRep)
+  dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(page_.ctrl(CTRLID_RESULT_TABLE))
+  pTB.section_body.removeall
+  drawHeader pTB, g_oDrawRep
+  drawBody pTB, g_oDrawRep
+  'drawFooter pTB
+end sub
+
+'------------
+'tabela akcji
+'------------
+sub drawActionTable
+  dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(page_.ctrl(CTRLID_ACTION_TABLE))
+  pTB.section_body.removeall
+  pTB.newrow.newcell
+  dim giveButton : set giveButton = new cButton
+  giveButton.newButton pTB, CTRLID_REALIZE_BUTTON, "wydanie", "RP", 13, ALIGN_LEFT, false
+  giveButton.newButton pTB, CTRLID_REALIZE_BUTTON, "edit_prop", "Edycja", 13, ALIGN_LEFT, false
+  pTB.newcell
+  giveButton.newButton pTB, CTRLID_REALIZE_BUTTON, "gotowa", "Ilość gotowa", 13, ALIGN_RIGHT, false
+  giveButton.newButton pTB, CTRLID_REALIZE_BUTTON, "wykonana", "Ilość wykonana", 13, ALIGN_RIGHT, false
+end sub
+
+'----------------------------------
+'komunikat w przypadku braku danych
+'----------------------------------
+sub drawBrakDanych
+  dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(page_.ctrl(CTRLID_RESULT_TABLE))
+  pTB.section_body.removeall
+  pTB.newrow
+  pTB.row.styleitem = STYLE_TABLE_HEADER
+  pTB.row.fontsize=4
+  pTB.newcell.addtext "Brak danych spełniających podane kryteria"  
+end sub
+
+'---------------
+'nagłowek tabeli
+'---------------
+sub drawHeader(byref pTB, byref g_oDrawRep)
+  pTB.newrow
+  pTB.row.styleitem = STYLE_TABLE_HEADER
+  pTB.row.fontsize = 4
+  g_oDrawRep.drawCellHead pTB, 1, "", 500, "", 1, 1, false
+  g_oDrawRep.drawCellHead pTB, 1, "LP", 500, "", 1, 1, false
+  g_oDrawRep.drawCellHead pTB, KOL_NR_ZLECENIA, "Nr zlecenia", 2500, "", 1, 1, false
+  g_oDrawRep.drawCellHead pTB, KOL_ILOSC_ZLEC, "Ilość zlec", 800, "", 1, 1, false
+  g_oDrawRep.drawCellHead pTB, KOL_SCIEZKA_KODU, "Ścieżka kodu op", 1800, "", 1, 1, false
+  g_oDrawRep.drawCellHead pTB, KOL_DATA_ROZP, "Data rozp", 1800, "", 1, 1, false
+  g_oDrawRep.drawCellHead pTB, KOL_DATA_ZAK, "Data zakończenia", 1800, "", 1, 1, false
+  g_oDrawRep.drawCellHead pTB, KOL_TYP_ZASOBU, "Typ zasobu", 1800, "", 1, 1, false
+  g_oDrawRep.drawCellHead pTB, KOL_NAZWA_ZASOBU, "Zasób", 1800, "", 1, 1, false
+  g_oDrawRep.drawCellHead pTB, KOL_NAZWA_PROD, "Produkt", 1800, "", 1, 1, false
+  g_oDrawRep.drawCellHead pTB, KOL_TYP_PROD, "Typ", 700, "", 1, 1, false
+  g_oDrawRep.drawCellHead pTB, KOL_NAZWA_RECEPT, "Recepta", 2000, "", 1, 1, false
+  g_oDrawRep.drawCellHead pTB, KOL_STATUS_OPER, "Status", 1200, "", 1, 1, false
+  g_oDrawRep.drawCellHead pTB, KOL_ILOSC_DO_WYK, "Ilość do wyk", 1000, "", 1, 1, false
+  g_oDrawRep.drawCellHead pTB, KOL_ILOSC_GOTOWA, "Ilość gotowa", 1000, "", 1, 1, false
+  g_oDrawRep.drawCellHead pTB, KOL_ILOSC_WYKON, "Ilość wykon", 1000, "", 1, 1, false
+end sub
+
+'-----------------
+'pojedynczy wiersz
+'-----------------
+sub drawRow(byref pTB, byref oPUI, byref g_oDrawRep, byval nLP)
+  'id operacji produkcyjnej
+  dim idProp : idProp = oPUI.m_idProp 
+  
+  pTB.newrow
+  set pTB.row.userprop = doc_.createhli()
+  pTB.row.userprop.prop(PROP_BUF_INX) = nLP - 1  
+  'właściwości całego wiersza
+  pTB.row.fontsize = 3  
+  pTB.row.backcolor = setRowStyle(nLP)
+  dim crColor : crColor = setRowStyle(nLP)
+  
+  'wybrane obiekty
+  dim oZlecProd : set oZlecProd = nothing
+  dim oPozZlecProd : set oPozZlecProd = nothing
+  dim oTypZasobu : set oTypZasobu = nothing
+  dim oZasob : set oZasob = nothing 
+  dim oProdukt : set oProdukt = nothing
+  dim oRecepta : set oRecepta = nothing
+  if oPUI.m_idZlecProd > clng(0) then
+    set oZlecProd = trans_.getobj(TYPEID_N5ZLECPROD,oPUI.m_idZlecProd)
+    set oPozZlecProd = oZlecProd.listPozycje.get(oPUI.m_iLPZP)
+  end if
+  if oPUI.m_idTypZasobu > clng(0) then
+    set oTypZasobu = trans_.getobj(TYPEID_N5TYPZASOBPROD,oPUI.m_idTypZasobu)
+  end if
+  if oPUI.m_idZasob > clng(0) then
+    set oZasob = trans_.getobj(TYPEID_N5ZASOBPROD,oPUI.m_idZasob)
+  end if
+  if oPUI.m_idProdukt > clng(0) then
+    set oProdukt = trans_.getobj(TYPEID_N5PRODUKT,oPUI.m_idProdukt)
+  end if
+  if oPUI.m_idOperacja > clng(0) then
+    set oRecepta = trans_.getobj(TYPEID_N5RECEPTA,oPUI.m_idOperacja)
+  end if
+  
+  'checkbox
+  dim pCheckBox   
+  pTB.newcell
+  pTB.addctrl CTRL_TYPE_CHECKBOX,-1
+  set pCheckBox = pTB.element
+  with pCheckBox
+    .customredirect = clng(CTRLID_ROW_CHECKBOX)
+    .transfer = page_.createtransfer("custom")
+    .border = 0
+    .width = setWidthInd(oPUI.m_strOP)
+  end with
+  pTB.cell.align = ALIGN_RIGHT
+  pTB.element.addnew CTRL_TYPE_STATIC, -1
+  
+  g_oDrawRep.drawCell     pTB, cstr(nLP), "Verdana", ALIGN_RIGHT, 0, 0, ""
+  if not oZlecProd is nothing then
+    g_oDrawRep.drawCell     pTB, "", "Verdana", ALIGN_LEFT, TYPEID_N5ZLECPROD, oZlecProd.idobj, oZlecProd.strNrDok
+    g_oDrawRep.drawCellCur  pTB, 0, oPozZlecProd.curIloscOpak, "Verdana", 4, 8, "", crColor
+  else
+    g_oDrawRep.drawCell     pTB, "", "Verdana", ALIGN_LEFT, 0, 0, ""
+    g_oDrawRep.drawCellCur  pTB, 0, ccur(0), "Verdana", 4, 10, "", crColor    
+  end if
+  g_oDrawRep.drawCell     pTB, oPUI.m_strOP, "Verdana", ALIGN_LEFT, 0, 0, ""
+  g_oDrawRep.drawCellDate pTB, 0, oPUI.m_dDataRozp, "Verdana", crColor
+  g_oDrawRep.drawCellDate pTB, 0, oPUI.m_dDataZak, "Verdana", crColor
+  if not oTypZasobu is nothing then
+    g_oDrawRep.drawCell     pTB, oTypZasobu.tzp_strNazwa, "Verdana", ALIGN_LEFT, 0, 0, ""
+  else
+    g_oDrawRep.drawCell     pTB, "", "Verdana", ALIGN_LEFT, 0, 0, ""    
+  end if
+  if not oZasob is nothing then
+    g_oDrawRep.drawCell     pTB, oZasob.zsp_strNazwa, "Verdana", ALIGN_LEFT, 0, 0, ""
+  else
+    g_oDrawRep.drawCell     pTB, "", "Verdana", ALIGN_LEFT, 0, 0, ""    
+  end if
+  if not oProdukt is nothing then
+    g_oDrawRep.drawCell     pTB, oProdukt.strNazwa, "Verdana", ALIGN_LEFT, 0, 0, ""
+    g_oDrawRep.drawCell     PTB, strTyp(oProdukt.prod_cWyrob,oProdukt.prod_cSurowiec), "Verdana", ALIGN_LEFT, 0, 0, ""
+  else
+    g_oDrawRep.drawCell     pTB, "", "Verdana", ALIGN_LEFT, 0, 0, ""
+    g_oDrawRep.drawCell     pTB, "", "Verdana", ALIGN_LEFT, 0, 0, ""
+  end if
+  if not oRecepta is nothing then
+    g_oDrawRep.drawCell     pTB, oRecepta.strNazwa, "Verdana", ALIGN_LEFT, 0, 0, ""
+  else
+    g_oDrawRep.drawCell     pTB, "", "Verdana", ALIGN_LEFT, 0, 0, ""
+  end if
+  g_oDrawRep.drawCell     pTB, strStatus(oPUI.m_eStatus), "Verdana", ALIGN_LEFT, 0, 0, ""
+  g_oDrawRep.drawCellCur  pTB, 0, oPUI.m_curIloscDoWyk, "Verdana", 4, 10, "", crColor
+  g_oDrawRep.drawCellCur  pTB, 0, oPUI.m_curIloscGotow, "Verdana", 4, 10, "", crColor
+  g_oDrawRep.drawCellCur  pTB, 0, oPUI.m_curIloscWykon, "Verdana", 4, 10, "", crColor
+end sub
+  
+'-----------------------------------
+'zwraca status operacji produkcyjnej
+'-----------------------------------
+function strStatus(byval eStatus)
+  select case eStatus
+    case 1
+      strStatus = "Sym"
+    case 2
+      strStatus = "Zlec"
+    case 3
+      strStatus = "Do wyk"
+    case 4
+      strStatus = "W real"
+    case 5
+      strStatus = "Zreal"
+    case else
+      strStatus = "Inny"
+  end select
+end function
+  
+'----------------------------------------------------------
+'zwraca typ produktu W-wyrób, S-surowiec, WS-wyrób/surowiec
+'----------------------------------------------------------
+function strTyp(byval cWyrob, byval cSurowiec) : strTyp = ""
+  if cWyrob = "1" and cSurowiec = "1" then
+    strTyp = "WS"
+  else
+    if cWyrob = "1" then
+      strTyp = "W"
+    elseif cSurowiec = "1" then
+      strTyp = "S"
+    else
+      strTyp = ""
+    end if
+  end if
+end function
+
+'---------------
+'kolejne wiersze
+'---------------
+sub drawBody(byref pTB, byref g_oDrawRep)
+  'pierwszy wiersz przedziału
+  dim nFirstRow : nFirstRow = (g_oDrawRep.m_nRange - 1) * MAX_ROW_NR + 1  
+  dim iter, oPUI
+  dim iLicz : iLicz = cint(1)
+  for iter = (nFirstRow - 1) to oPU.count()
+    set oPUI = oPU.get_item(iter)
+    drawRow pTB, oPUI, g_oDrawRep, iter + 1
+    if iLicz = MAX_ROW_NR then
+      exit for
+    end if
+    iLicz = iLicz + 1
+  next
+end sub
+  
+'-------------------
+'podsumowanie tabeli
+'-------------------
+sub drawFooter(byref pTB)
+  'TODO:
+end sub
+
+'-----------------
+'poprzednia strona
+'-----------------
+function prevPage(pHLI)
+  g_oDrawRep.m_nRange = g_oDrawRep.m_nRange - 1
+  if g_oDrawRep.m_nRange = 1 then
+    dim oRow : set oRow = page_.ctrl(pHLI.prop(PROP_ROW_IDENT))
+    oRow.cell(1).element(1).disable = true
+  end if
+  drawResultTable g_oDrawRep
+end function
+
+'---------------
+'następna strona
+'---------------
+function nextPage(pHLI)
+  g_oDrawRep.m_nRange = g_oDrawRep.m_nRange + 1
+  if g_oDrawRep.m_nRange = g_oDrawRep.m_nNumRange then
+    dim oRow : set oRow = page_.ctrl(pHLI.prop(PROP_ROW_IDENT))
+    oRow.cell(1).element(2).disable = true
+  end if  
+  drawResultTable g_oDrawRep
+end function                      
+
+'--------------------------------------------
+'ustawia kolor dla wiersza w zależności od LP
+'--------------------------------------------
+function setRowStyle(iLP)
+  if iLP mod 2 = 0 then
+	  setRowStyle = ROW_COLOR
+  else
+    setRowStyle = WHITE_COLOR
+  end if   
+end function
+
+'-------------------
+'kolorowanie wiersza
+'-------------------
+function changeRowColor(byref oRow, byval newValue)
+  if newValue = "1" then
+    'wiersz na żółto
+    oRow.backcolor = YELLOW_COLOR
+  else
+    'usuń żółty kolor
+    if oRow.userprop.exists(PROP_BUF_INX) then
+      dim iLP : iLP = oRow.userprop.prop(PROP_BUF_INX) + 1
+      oRow.backcolor = setRowStyle(iLP)
+    end if
+  end if
+  changeRowColor = oRow.backcolor
+end function
+
+'-----------------------------------
+'zwraca true jeśli modyfikowano PROP
+'-----------------------------------
+function compare_PUI(byval nIndex) : compare_PUI = false
+  dim oPUI : set oPUI = oPU.get_item(nIndex)
+  dim oPUIBuf : set oPUIBuf = oPUCopy.get_item(nIndex)
+  if (not oPU.compare_item(oPUI,oPUIBuf)) or (oPUIBuf.m_curIloscWykon > ccur(0)) then
+    compare_PUI = true
+  else
+    compare_PUI = false
+  end if
+end function
+
+'------------
+'edycja propa
+'------------
+function edit_prop()
+  if g_oRepDict.getDictionary().count <> clng(0) then
+    dim pMsgPage : set pMsgPage = doc_.getmodule(60325)
+    dim nMsgPageRes : nMsgPageRes = pMsgPage.drawPageEdit(oPU,oPUCopy,g_oRepDict,new cDrawReport)
+    if nMsgPageRes = 1 then
+      zapisz()
+    else
+      'przywróć dane początkowe
+      dim iter
+      set oPUCopy = new_prop_util()
+      for iter = 0 to oPU.count()
+        dim oPUI : set oPUI = oPU.get_item(iter)
+        dim oPUIClone : set oPUIClone = oPUCopy.clone_item(oPUI)
+        'wyzerowanie ilości wykonanej
+        oPUIClone.m_curIloscWykon = ccur(0)
+        oPUCopy.add_item oPUIClone, false
+      next
+    end if
+  else
+    trans_.message 7000, 0, "Nie wybrano operacji."
+    exit function
+  end if
+end function
+
+'-------------------
+'potwierdzenie zmian
+'-------------------
+function zapisz()
+  dim oPUIBuf, iter
+  'sprawdź czy wprowadzano zmiany
+  dim bModify : bModify = false
+  for iter = 0 to oPUCopy.count()
+    if compare_PUI(iter) then
+      bModify = true
+      exit for
+    end if
+  next
+  if bModify then
+    for iter = 0 to oPUCopy.count()
+      set oPUIBuf = oPUCopy.get_item(iter)
+      if compare_PUI(iter) then
+        oPU.apply_item oPUIBuf
+      end if
+    next
+    oPU.save()
+    fRefresh()
+  else
+    trans_.message 7000, 0, "Nie wprowadzano zmian."
+    exit function
+  end if
+end function
+
+'-----------------
+'wydanie materiału
+'-----------------
+function wydanie()
+  if g_oRepDict.getDictionary().count <> clng(0) then
+    if isRawMaterial() then
+      dim pMsgPage : set pMsgPage = doc_.getmodule(60325)
+      dim nMsgPageRes : nMsgPageRes = pMsgPage.drawPageRawMat(oPUCopy,g_oRepDict,new cDrawReport)
+      if nMsgPageRes = 1 then
+        'utwórz RP
+        createRP oPUCopy
+      else
+        'przywróć dane początkowe
+        dim iter
+        set oPUCopy = new_prop_util()
+        for iter = 0 to oPU.count()
+          dim oPUI : set oPUI = oPU.get_item(iter)
+          dim oPUIClone : set oPUIClone = oPUCopy.clone_item(oPUI)
+          'wyzerowanie ilości wykonanej
+          oPUIClone.m_curIloscWykon = ccur(0)
+          oPUCopy.add_item oPUIClone, false
+        next
+      end if
+    else
+      trans_.message 7000, 0, "Nie wybrano surowca."
+      exit function       
+    end if
+  else
+    trans_.message 7000, 0, "Nie wybrano operacji."
+    exit function  
+  end if
+end function
+
+'--------------------------------
+'zwraca true gdy wybrano surowiec
+'--------------------------------
+function isRawMaterial() : isRawMaterial = false
+  dim iter, oPUI
+  for iter = 0 to oPUCopy.count()
+    set oPUI = oPUCopy.get_item(iter)
+    if g_oRepDict.exists(iter) and oPUI.m_eTyp = N5PROPT_SUROWIEC then
+      isRawMaterial = true
+      exit function
+    end if
+  next
+end function
+
+'----------------------------------
+'sprawdza ilość gotową do produkcji
+'----------------------------------
+function gotowa()
+  dim pM60327 : set pM60327 = doc_.getmodule(60327)
+  dim oPQ : set oPQ = pM60327.new_prop_query()
+  
+  'załadowanie PROP'ow o danym where i order by
+  oPQ.load_prop "","idobj desc"
+
+  'operacje możliwe do wykonania
+  oPQ.set_ready_prop()
+  
+  fRefresh()
+end function
+
+'-----------------------
+'sprawdza ilość wykonaną
+'-----------------------
+function wykonana()
+  dim pM60327 : set pM60327 = doc_.getmodule(60327)
+  dim oPQ : set oPQ = pM60327.new_prop_query()
+  
+  'załadowanie PROP'ow o danym where i order by
+  oPQ.load_prop "","idobj desc"
+
+  'wykonane
+  oPQ.set_made_prop()
+  
+  fRefresh()  
+  
+  dim oPUI : set oPUI = oPU.get_item(oPU.count()) 
+  if oPUI.m_curIloscDoWyk = oPUI.m_curIloscWykon then
+    MessageBox "Zlecenie jest zrealizowane w całości" , "Zlecenie produkcyjne", vbOKOnly, vbInformation
+  end if  
+end function
+
+'---------
+'tworzy RP
+'---------
+function createRP(byref oPUCopy)
+  dim iter, pPoz
+  trans_.var(APPVAR_REJESTR_TYP) = clng(N5REJESTRDOK__RP)
+  dim pOpenFormRP : set pOpenFormRP = doc_.getmodule(60129).prepare_form_open_command(TYPEID_N5DOKMAG,0,0)
+  if pOpenFormRP is nothing then
+    exit function
+  end if
+  dim pFormRP : set pFormRP = doc_.getpagehli(pOpenFormRP)
+  if pFormRP is nothing then
+    exit function
+  end if
+  
+  dim oPUI
+  for iter = 0 to oPUCopy.count()
+    set oPUI = oPUCopy.get_item(iter)
+    if oPUI.m_eTyp = N5PROPT_SUROWIEC and oPUI.m_idProdukt > clng(0) and oPUI.m_idOpak > clng(0) and oPUI.m_curIloscWykon > ccur(0) then
+      set pPoz = pFormRP.root.listPozycje.addnew()
+      set pPoz.pProdukt = trans_.getobj(TYPEID_N5PRODUKT,oPUI.m_idProdukt)
+      set pPoz.pOpak = pPoz.pProdukt.listOpakowania.get(pPoz.pProdukt.listOpakowania.findonid(oPUI.m_idOpak))
+      pPoz.curIloscOpak = ccur(oPUI.m_curIloscWykon)
+    end if
+  next
+  set pFormRP.root.wrefDokHandl = trans_.getobj(TYPEID_N5ZLECPROD,oPUCopy.get_item(0).m_idZlecProd)
+  pFormRP.domodalauto()
+
+  if pFormRP.root.strNrDok <> "" then
+    zapisz()
+  end if
+  
+end function
+
+'--------------
+'odśwież raport
+'--------------
+function fRefresh()
+  'obiekt prop_util
+  set oPU = new_prop_util()
+  dim strWhere : strWhere = ""
+  dim strOrderBy : strOrderBy = "idobj"
+  
+  'załadowanie PROP'ow z bazy
+  oPU.load_set strWhere, strOrderBy
+  
+  'kopia PROP'ow
+  dim iter
+  set oPUCopy = new_prop_util()
+  for iter = 0 to oPU.count()
+    dim oPUI : set oPUI = oPU.get_item(iter)
+    dim oPUIClone : set oPUIClone = oPUCopy.clone_item(oPUI)
+    'wyzerowanie ilości wykonanej
+    oPUIClone.m_curIloscWykon = ccur(0)
+    oPUCopy.add_item oPUIClone, false
+  next
+  
+  'słownik
+  set g_oRepDict = new cRepDict
+  
+  'wyświetlenie PROP'ow
+  g_nMaxInd = maxInd
+  set g_oDrawRep = new cDrawReport
+  g_oDrawRep.m_nNumRange = recRangeNr()
+  drawRaport g_oDrawRep
+end function
+
+'------------------------------
+'zlicza max wcięcie dla wierszy
+'------------------------------
+function maxInd : maxInd = clng(0)
+  dim iter,strPath
+  for iter = 0 to oPUCopy.count()
+    strPath = oPUCopy.get_item(iter).m_strOP
+    findMaxInd maxInd, strPath
+  next
+end function
+
+'------------------------------------
+'zlicza ilosc wystąpień '/' w stringu
+'------------------------------------
+sub findMaxInd(byref maxInd, byval strPath)
+  dim iter
+  dim nLicz : nLicz = 0
+  for iter = 1 to Len(strPath)
+    if Mid(strPath,iter,1) = "/" then
+      nLicz = nLicz + 1
+    end if
+  next
+  if nLicz > maxInd then
+    maxInd = nLicz
+  end if
+end sub
+
+'--------------------------------
+'ustawia szerokość wcięcia dla LP
+'--------------------------------
+function setWidthInd(byval strPath) : setWidthInd = ""  
+  dim iNr : iNr = 0
+  findMaxInd iNr, strPath
+  setWidthInd = CHECKBOX_WIDTH + (-(iNr - g_nMaxInd)*400)  
+end function
+
+'------------------------
+'zlicza ilość przedziałów
+'------------------------
+function recRangeNr()
+  dim dblNr : dblNr = (oPU.count()+1)/MAX_ROW_NR
+  if dblNr - Int(dblNr) > 0 then
+    recRangeNr = Int(dblNr) + 1
+  else
+    recRangeNr = Int(dblNr)
+  end if
+end function
+
+'------------------------
+'kontrolki dla przycisków
+'------------------------
+function c##CTRLID_PREV_BUTTON##_ongetdata(byref oCtrl) : c##CTRLID_PREV_BUTTON##_ongetdata = true
+  if oPU.count() >= 0 then
+    if g_oDrawRep.m_nRange = 1 then
+      oCtrl.disable = true
+    else
+      oCtrl.disable = false
+    end if
+  else
+    oCtrl.disable = true
+  end if
+end function
+
+function c##CTRLID_NEXT_BUTTON##_ongetdata(byref oCtrl) : c##CTRLID_NEXT_BUTTON##_ongetdata = true
+  if oPU.count() >= 0 then
+    if g_oDrawRep.m_nRange = g_oDrawRep.m_nNumRange then
+      oCtrl.disable = true
+    else
+      oCtrl.disable = false
+    end if
+  else
+    oCtrl.disable = true
+  end if
+end function
+
+function c##CTRLID_REALIZE_BUTTON##_ongetdata(byref oCtrl) : c##CTRLID_REALIZE_BUTTON##_ongetdata = true
+  if oPU.count() >= 0 then
+    oCtrl.disable = false
+  else
+    oCtrl.disable = true
+  end if
+end function
+
+'-------------------------
+'kontrolki dla checkbox'ów
+'-------------------------
+function c##CTRLID_ROW_CHECKBOX##_ongetdata(byref oCtrl) : c##CTRLID_ROW_CHECKBOX##_ongetdata = true
+end function
+
+function c##CTRLID_ROW_CHECKBOX##_ondataentered(byref oCtrl, byval newValue) : c##CTRLID_ROW_CHECKBOX##_ondataentered = false
+  dim nIndex, oPUI
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+    if oRow.userprop.exists(PROP_BUF_INX) then
+      nIndex = oRow.userprop.prop(PROP_BUF_INX)
+      if newValue = "1" then
+        g_oRepDict.add nIndex, oPUCopy.get_item(nIndex)
+      else
+        g_oRepDict.removeDictObj nIndex
+      end if
+    end if
+  end if
+  'kolorowanie
+  changeRowColor oRow, newValue  
+  c##CTRLID_ROW_CHECKBOX##_ondataentered = true
+end function
+
+]]>
+</script>
+	</config>
+	<body>
+    <table border="0">
+      <tbody>
+				<tr>
+					<td width='22000'>
+						<table name='CTRLID_ROW_BUTTONS'>
+							<tbody />
+						  </table>
+					</td>         
+				</tr>        
+				<tr>
+					<td width='22000'>
+						<table border='1' name='CTRLID_RESULT_TABLE'>
+							<tbody backcolor='white' bordercolor='#006697' />
+						  </table>
+					</td>         
+				</tr>
+        <tr>
+          <td align='left'>
+            <table name='CTRLID_ACTION_TABLE'>
+              <tbody />
+            </table>
+          </td>
+        </tr>
+      </tbody>
+		</table>
+	</body>
+</page>

@@ -1,0 +1,270 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!-- 
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+-->
+<page>
+<config>
+<script>
+<!--
+	naliczenie płac - plugins
+-->
+<![CDATA[
+'OBJECT_SORTER
+#include "50618"
+
+
+'plobject_noname_text
+'pl_skladnik_noname_text
+#include "50630"
+
+
+
+
+
+
+private sub put_podsumowanie(byref pTB,byref pSubKonto,byval curSuma)
+	pTB.newrow.row.styleitem = STYLE_ROW_EVEN
+	pTB.newcell
+	pTB.addtext(trans_.afc.display.quantity(curSuma,pSubKonto.pJednostka.strSkrot,pSubKonto.pJednostka.nDokladnosc-1)).cell.align=ALIGN_RIGHT
+	pTB.newcell
+	pTB.cell.colspan = 2
+end sub
+
+#define RANK_EXPESSION	.pSubKonto.strKod + cstr(.idobj)
+NAVOARRAY_OBJECT_SORTER(csort_pldekret_wg_kont_navoarray,RANK_EXPESSION)
+
+sub plug_naliczenie_dekrety_wg_kont(byref pContainer,byval idNaliczenie)
+
+	dim pPlugInTable : set pPlugInTable = pContainer.addnew(CTRL_TYPE_TABLE,-1)
+	pPlugInTable.border = 1
+
+	dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(pPlugInTable)
+	dim pNaliczenie : set pNaliczenie = trans_.getobj(TYPEID_N5PLNALICZENIE,idNaliczenie)
+	
+	if pNaliczenie.listDekret.exists(1) then
+		pTB.section_head.newrow.row.styleitem=STYLE_TABLE_HEADER
+		pTB.newcell.addtext("Kwota")
+		pTB.newcell.addtext("Opis").cell.width = 3000
+		pTB.newcell.addtext("Tytułem").cell.width = MAXIMIZE_SIZE
+		pTB.section_body
+		pPlugInTable.body.styleitem = STYLE_TABLE_BODY
+
+		dim pDekret
+
+		dim curSuma
+		dim pLastKonto : set pLastKonto = nothing
+		curSuma = ccur(0.0)
+		
+		'załaduj tablicę dekretami
+		dim pArrOfDek : set pArrOfDek = doc_.afc.new_navoarray()
+		for each pDekret in pNaliczenie.listDekret
+			pArrOfDek.add pDekret
+		next
+		'posortuj wg kont
+		set pArrOfDek.Operations = new csort_pldekret_wg_kont_navoarray
+		pArrOfDek.Sort
+    
+#ifdef _IOW
+		dim curFundPracy: curFundPracy = ccur(0.0)
+		dim curFGSP: curFGSP = ccur(0.0)
+#endif    
+
+		dim iter
+		for iter = 0 to pArrOfDek.UpperIndex()
+			set pDekret = pArrOfDek.Value(iter)
+			if not (pDekret.pSubKonto is pLastKonto) then
+				if not pLastKonto is nothing then
+					put_podsumowanie pTB,pLastKonto,curSuma
+				end if
+				set pLastKonto = pDekret.pSubKonto
+				curSuma = ccur(0.0)
+				pTB.newrow
+				pTB.newcell
+				pTB.cell.colspan = 3
+				pTB.addtext(pLastKonto.strNazwa).element.bold = true
+			end if
+      
+#ifdef _IOW
+			if pLastKonto.strNazwa = "Fundusz Pracy" then
+				curFundPracy = pDekret.curKwota
+			end if
+			if pLastKonto.strNazwa = "FGSP" then
+				curFGSP = pDekret.curKwota
+			end if   
+#endif      
+      
+			pTB.newrow
+			pTB.newcell
+			if pDekret.curKwota <> ccur(0.0) then
+				dim curKwota: curKwota = pDekret.curKwota
+#ifdef _IOW
+				if pLastKonto.strNazwa = "Ub. spol. - firma" then
+					curKwota = curKwota + curFundPracy + curFGSP
+				end if        
+#endif
+				pTB.addtext(trans_.afc.display.quantity(curKwota,pDekret.pSubKonto.pJednostka.strSkrot,pDekret.pSubKonto.pJednostka.nDokladnosc-1)).cell.align=ALIGN_RIGHT
+				curSuma = curSuma + curKwota
+			end if
+			pTB.newcell.addtext(pDekret.strOpis)		
+			pTB.newcell
+			if not pDekret.wrefDokument is nothing then 
+				pTB.addtexthli pDekret.wrefDokument.text, _
+				doc_.createhlistr( doc_.afc.convert.formatter(" OPEN_FORM_PROXY_HLI_USAGE(%1,%2,USAGE_VIEW) ") _
+					.add(cstr(pDekret.wrefDokument.type)).add(cstr(pDekret.wrefDokument.idobj)).done() )
+			end if
+		next
+		if not pLastKonto is nothing then
+			put_podsumowanie pTB,pLastKonto,curSuma
+		end if
+	else
+		pTB.newrow.row.styleitem = STYLE_TABLE_BODY
+		pTB.newcell.addtext("brak dekretów")
+	end if
+end sub
+
+sub plug_naliczenie_nal_storage(byref pPage,byref pContainer,byref pNalStorage,byval idRedirect,byval nDispLevel)
+	
+	dim pPlugInTable : set pPlugInTable = pContainer.addnew(CTRL_TYPE_TABLE,-1)
+	pPlugInTable.border = 1
+
+	dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(pPlugInTable)
+	dim iter : iter = 1
+#ifdef _IOW
+	dim curFundPracy: curFundPracy = ccur(0.0)
+	dim curFGSP: curFGSP = ccur(0.0)
+#endif
+ 
+	do while true
+		dim pDisplayItem : set pDisplayItem = pNalStorage.get_display_item(iter)
+		
+		if pDisplayItem is nothing then
+			exit do
+		end if
+    
+#ifdef _IOW
+		if pDisplayItem.get_text() = "Fundusz Pracy" then
+			curFundPracy = pDisplayItem.get_computed_value().curvalue
+		end if
+		if pDisplayItem.get_text() = "FGSP" then
+			curFGSP = pDisplayItem.get_computed_value().curvalue
+		end if   
+#endif
+
+		if pDisplayItem.get_level() >= nDispLevel then
+
+			pTB.newrow
+			pTB.newcell.cell.width = MAXIMIZE_SIZE
+			pTB.row.styleitem = STYLE_TABLE_BODY
+
+			' ITEM_TYPE_PLAIN_TEXT = 1 - tylko tekst
+			' ITEM_TYPE_TEXT_CURRENCY_RO = 2 - tekst + liczba (wyswietlanie)
+			' ITEM_TYPE_TEXT_CURRENCY_EDIT = 3 - tekst + liczba (do edycji)
+			' ITEM_TYPE_SUBTITLE = 4 - subtitle
+			
+			' ITEM_TYPE_TEXT_DATE_EDIT = 5 - tekst + data (do edycji)
+			' ITEM_TYPE_TEXT_YEAR_MONTH_EDIT = 6 - tekst + do edycji (rok + mc)
+
+			select case pDisplayItem.get_type()
+			case 1
+				pTB.cell.colspan = 2
+				pTB.addtext pDisplayItem.get_text()
+				pTB.element.bold = pDisplayItem.get_bold()
+			case 2
+				pTB.addtext pDisplayItem.get_text()
+				pTB.element.bold = pDisplayItem.get_bold()
+				pTB.newcell.cell.align = ALIGN_RIGHT
+				pTB.addtext trans_.afc.display.quantity(pDisplayItem.get_curvalue(),	_
+					pDisplayItem.get_unit(),pDisplayItem.get_precision())
+			case 3 '<currency>
+				pTB.addtext pDisplayItem.get_text()
+				pTB.element.bold = pDisplayItem.get_bold()
+				pTB.newcell.cell.align = ALIGN_RIGHT
+        
+#ifdef _IOW
+				if pDisplayItem.get_text() = "Ubezpieczenie spoleczne - firma" then
+					pDisplayItem.get_computed_value().curvalue = pDisplayItem.get_computed_value().curvalue + curFundPracy + curFGSP
+				end if
+#endif
+        
+				with pTB.addctrl(CTRL_TYPE_CURRENCY,-1).element
+					.size = 12
+					.border = 0
+					.unit = pDisplayItem.get_unit()
+					.precision = pDisplayItem.get_precision()
+					.customredirect = clng(idRedirect)
+					.transfer = pPage.createtransfer("custom")
+					
+					dim pUserPropHLI : set pUserPropHLI = doc_.createhli()
+					pUserPropHLI.prop(100) = 3 
+					set pUserPropHLI.prop(1) = pDisplayItem.get_computed_value()
+					set .userprop = pUserPropHLI
+				end with
+			case 4
+				pTB.row.styleitem = STYLE_ROW_EVEN
+				pTB.cell.colspan = 2
+				with pTB.addtext(pDisplayItem.get_text()).element
+					.bold = true
+					.fontsize = 5
+				end with
+			case 5 '<date>
+				pTB.addtext pDisplayItem.get_text()
+				pTB.element.bold = pDisplayItem.get_bold()
+				pTB.newcell.cell.align = ALIGN_RIGHT
+				with pTB.addctrl(CTRL_TYPE_DATE,-1).element
+					.border = 0
+					.size=10
+					.customredirect = clng(idRedirect)
+					.transfer = pPage.createtransfer("custom")
+					set pUserPropHLI = doc_.createhli()
+					pUserPropHLI.prop(100) = 5 
+					set pUserPropHLI.prop(1) = pDisplayItem.get_computed_value()
+					set .userprop = pUserPropHLI
+				end with
+			case 6 '<int> <int>
+				pTB.addtext pDisplayItem.get_text()
+				pTB.element.bold = pDisplayItem.get_bold()
+				with pTB.newcell.cell
+					.align = ALIGN_RIGHT
+					.keepline = true
+				end with
+				with pTB.addctrl(CTRL_TYPE_INTEDIT,-1).element
+					.border = 0
+					.size = 4
+					.customredirect = clng(idRedirect)
+					.transfer = pPage.createtransfer("custom")
+					set pUserPropHLI = doc_.createhli()
+					pUserPropHLI.prop(100) = 6
+					set pUserPropHLI.prop(1) = pDisplayItem.get_computed_value()
+					set .userprop = pUserPropHLI
+				end with
+				pTB.addtext "-"
+				with pTB.addctrl(CTRL_TYPE_INTEDIT,-1).element
+					.border = 0
+					.size = 2
+					.customredirect = clng(idRedirect)
+					.transfer = pPage.createtransfer("custom")
+					set pUserPropHLI = doc_.createhli()
+					pUserPropHLI.prop(100) = 106
+					set pUserPropHLI.prop(1) = pDisplayItem.get_computed_value()
+					set .userprop = pUserPropHLI
+				end with
+
+			end select
+		end if
+
+		iter = iter + 1
+	loop
+end sub
+
+]]>
+</script>
+</config>
+	<body>
+	</body>
+</page>

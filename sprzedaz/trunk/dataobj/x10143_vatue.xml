@@ -1,0 +1,200 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+
+#include "h1000.h" 
+#include "h1200.h"
+#include "h1203.h"
+#include "h1205.h"
+
+
+<class>
+	<identifier>TYPEID_N5VATUE</identifier>
+	<table>n5vatue</table>
+	<humanname>Rozliczenie VAT UE</humanname>
+	<idobj/>
+	
+
+	XDF_PIT_REJESTRACJA(vtue)
+
+	XDF_PIT_PLATNIK(vtue)
+
+
+	<list>
+		<name>vtue_listWDT</name>
+		<humanname>Wewnątrzwspólnotowa dostawa towarów</humanname>
+		<typeid>TYPEID_N5POZVATUE</typeid>
+	</list>
+
+	<list>
+		<name>vtue_listWNT</name>
+		<humanname>Wewnątrzwspólnotowe nabycie towarów</humanname>
+		<typeid>TYPEID_N5POZVATUE</typeid>
+	</list>
+
+	<list>
+		<name>vtue_listWSU</name>
+		<humanname>Wewnątrzwspólnotowe świadczenie usuług</humanname>
+		<typeid>TYPEID_N5POZVATUE</typeid>
+	</list> 
+
+	XDF_LONG(vtue_lStronyWDT,Dołączone formularze VAT-UE_A)					
+	<!-- Dołączone fomularze WDT -->
+
+	XDF_LONG(vtue_lStronyWNT,Dołączone formularze VAT-UE_B)					
+	<!-- Dołączone fomularze WNT -->
+
+	XDF_LONG(vtue_lKwartal,Kwartał rozliczeniowy)					
+	<!-- Kwartał rozliczeniowy -->
+
+	<embedded>												
+		<name>vtue_strImieSkl</name>					
+		<sqltype>SQLvc32</sqltype>							
+		<humanname>Imię osoby składającej</humanname>						
+	</embedded>
+
+	<embedded>												
+		<name>vtue_strNazwiskoSkl</name>					
+		<sqltype>SQLvc64</sqltype>							
+		<humanname>Nazwisko osoby składającej</humanname>						
+	</embedded>
+
+	<embedded>												
+		<name>vtue_strTelSkl</name>					
+		<sqltype>SQLvc64</sqltype>							
+		<humanname>Telefon kontaktowy osoby składającej</humanname>						
+	</embedded>
+
+	<embedded>									
+		<name>vtue_dDataSkl</name>			
+		<sqltype>SQLdate</sqltype>				
+		<humanname>Data skladania formularzy</humanname>
+	</embedded>		
+	
+#ifdef ENABLE_DB16
+	<list>
+		<name>vtue_listPTPM</name>
+		<humanname>Przemieszczenia towarów w procedurze magazynu typu CALL-OFF</humanname>
+		<typeid>TYPEID_N5POZVATUE</typeid>
+	</list>
+#endif
+
+<cursors>
+	<cursor>
+		<identifier>CRSR_DEFAULT</identifier>
+		<humanname>po idobj</humanname>
+		<join></join>
+		<where></where>
+		<orderby>idobj</orderby>
+	</cursor>
+</cursors>
+
+<script>
+<![CDATA[
+#include "50100"
+#include "50203"
+#include "50126"
+#include "50120"
+
+
+#ifndef APPCONFIG_DEKLARACJE
+
+INIT_PLATIK_FROM_CURRENT_FIRMA(vtue,n5vatue)
+
+#endif
+
+
+function n5vatue_initnew()
+
+#ifndef APPCONFIG_DEKLARACJE
+	set this_.vtue_pUzytRej = GetCurrentUser()
+	this_.n5vatue_vtue_pUzytRej_change nothing
+	n5vatue_init_from_current_firma
+	this_.n5vatue_custom_init
+#endif
+	
+	select case Month(trans_.var(GVAR_TODAY))
+	case 1,2,3
+	this_.vtue_dDataOd = DateSerial(Year(trans_.var(GVAR_TODAY)),1,1)
+	this_.vtue_dDataDo = DateSerial(Year(trans_.var(GVAR_TODAY)),3,31)
+	this_.vtue_lKwartal = clng("1")
+	case 4,5,6
+	this_.vtue_dDataOd = DateSerial(Year(trans_.var(GVAR_TODAY)),4,1)
+	this_.vtue_dDataDo = DateSerial(Year(trans_.var(GVAR_TODAY)),6,30)
+	this_.vtue_lKwartal = clng("2")
+	case 7,8,9
+	this_.vtue_dDataOd = DateSerial(Year(trans_.var(GVAR_TODAY)),7,1)
+	this_.vtue_dDataDo = DateSerial(Year(trans_.var(GVAR_TODAY)),9,30)
+	this_.vtue_lKwartal = clng("3")
+	case 10,11,12
+	this_.vtue_dDataOd = DateSerial(Year(trans_.var(GVAR_TODAY)),10,1)
+	this_.vtue_dDataDo = DateSerial(Year(trans_.var(GVAR_TODAY)),12,31)
+	this_.vtue_lKwartal = clng("4")
+	end select
+
+	dim dLastDay: dLastDay = Dateserial(Year(trans_.var(GVAR_TODAY)),Month(trans_.var(GVAR_TODAY))+1,0)
+	this_.vtue_dDataOd = DateSerial(Year(trans_.var(GVAR_TODAY)),Month(trans_.var(GVAR_TODAY)),1)
+	this_.vtue_dDataDo = DateSerial(Year(trans_.var(GVAR_TODAY)),Month(trans_.var(GVAR_TODAY)),Day(dLastDay))
+
+	n5vatue_initnew = true
+
+end function
+
+function n5vatue_custom_init
+	set this_.vtue_pUrzadSkarbowy = getCurrentFirma().pUrzadSkarbowyPD
+	if not this_.vtue_pUrzadSkarbowy is nothing then
+		this_.vtue_strUS = this_.vtue_pUrzadSkarbowy.strNazwa
+	end if
+	dim oFirma : set oFirma = getCurrentFirma()
+  
+	this_.vtue_strImiePlatnik = oFirma.frm_strImie
+	this_.vtue_strNazwiskoPlatnik = oFirma.frm_strNazwisko
+	this_.vtue_dDataUrPlatnik = oFirma.frm_dDataUr
+  
+end function
+
+function n5vatue_checkDates()
+	
+	n5vatue_checkDates = false
+
+	if this_.dDataOd >= this_.dDataDo then
+		trans_.message 6500 , 0 , "błędne daty"
+		exit function
+	end if
+
+	n5vatue_checkDates = true
+end function
+
+
+#ifndef APPCONFIG_DEKLARACJE
+
+function n5vatue_vtue_pUrzadSkarbowy_change(oldval):n5vatue_vtue_pUrzadSkarbowy_change = true
+	if not this_.vtue_pUrzadSkarbowy is nothing then
+		this_.vtue_strUS = this_.vtue_pUrzadSkarbowy.text
+	else
+		this_.vtue_strUS = ""
+	end if
+end function
+
+function n5vatue_vtue_pUzytRej_change(oldval):n5vatue_vtue_pUzytRej_change = true
+	if not this_.vtue_pUzytRej is nothing then
+		if not this_.vtue_pUzytRej.pWykonawca is nothing then
+			if not this_.vtue_pUzytRej.pWykonawca.wrefObiekt is nothing then
+				if this_.vtue_pUzytRej.pWykonawca.wrefObiekt.type = TYPEID_N5PRACOWNIK or this_.vtue_pUzytRej.pWykonawca.wrefObiekt.type = TYPEID_N5KLIENT_PRACOWNIK then 
+					this_.vtue_strImieRej = this_.vtue_pUzytRej.pWykonawca.wrefObiekt.strImie
+					this_.vtue_strNazwiskoRej = this_.vtue_pUzytRej.pWykonawca.wrefObiekt.strNazwisko
+					exit function
+				end if
+			end if
+		end if
+	end if
+	this_.vtue_strImieRej = ""
+	this_.vtue_strNazwiskoRej = ""
+end function
+
+
+#endif
+
+]]>
+</script>
+	
+		
+</class>

@@ -1,0 +1,126 @@
+#ifndef LIBRARY_50509
+#define LIBRARY_50509
+
+
+#ifdef APPCONFIG_PROD_STORE_INFO_BY_NXM
+
+#comment '--------------------------------------------------------
+#comment ' aktualny stan jednego magazynu
+#comment '--------------------------------------------------------
+function get_stan_mag_for_prod_opak_mag(byval idMag,byval idProd , byval idOpak)
+	dim oHQR : set oHQR = doc_.nxm_net_.new_host_query("eb_product_stock")
+	with oHQR
+		.value_param "product_id", clng(idProd)
+		.value_param "subproduct_id", clng(idOpak)
+		.value_param "warehouse_id", clng(idMag)
+	end with  
+ 
+	Dim oNXMRS : Set oNXMRS = oHQR.execute()
+	if oNXMRS.EOF then
+		get_stan_mag_for_prod_opak_mag = ccur(0.0)
+	else
+		get_stan_mag_for_prod_opak_mag = ccur(oNXMRS.Fields("quantity").Value)
+	end if
+end function
+
+#else
+
+#comment '--------------------------------------------------------
+#comment ' aktualny stan jednego magazynu
+#comment '--------------------------------------------------------
+function get_stan_mag_for_prod_opak_mag(byval idMag,byval idProd , byval idOpak)
+	dim oNXArray : set oNXArray = nx_.new_array()
+	oNXArray.add(idMag)
+	get_stan_mag_for_prod_opak_mag = get_stan_mag_for_prod_opak_mag_many(oNXArray, idProd, idOpak)
+end function
+#comment '--------------------------------------------------------
+#comment ' aktualny stan wybranych magazynow
+#comment '--------------------------------------------------------
+function get_stan_mag_for_prod_opak_mag_many(byval oNXArray,byval idProd , byval idOpak)
+	dim strIdMag
+	dim iter 
+
+	strIdMag = "-1"
+	for iter = 0 to oNXArray.upper_index
+		strIdMag = strIdMag + "," + cstr(oNXArray(iter))
+	next
+	
+	dim strQuery : strQuery = nx_.convert.formatter( _
+		"select isnull(sum(gms_curIlosc),0) from n5gmstan where gms_pProd=%1 and gms_pOpak=%2 and gms_pMag in (%3)") _
+		.add(idProd).add(idOpak).add(strIdMag).done()
+	dim oRS : set oRS = trans_.createadors(strQuery)
+	if oRS.EOF then
+		get_stan_mag_for_prod_opak_mag_many = ccur(0.0)
+	else
+		get_stan_mag_for_prod_opak_mag_many = ccur(oRS(0))
+	end if
+end function
+
+#endif
+
+#comment '--------------------------------------------------------
+#comment ' aktualny stan jednego magazynu z operacj¹ magazynow¹
+#comment '--------------------------------------------------------
+function get_stan_mag_for_prod_opak_mag_oper(byval idMag, byval idProd , byval idOpak, byval nNumOp)
+	get_stan_mag_for_prod_opak_mag_oper = ccur(0.0)
+	dim strQuery: strQuery = doc_.afc.convert.formatter( _
+	" select sum(gmo_curIlosc) as iloscPo  from n5gmop " + vbNewLine + _
+	" where gmo_pProd = %1 and gmo_pOpak = %2 and gmo_pMag = %3 " + vbNewLine + _
+	" and gmo_nNumOp <= %4" + vbNewLine + _
+	" group by gmo_pProd , gmo_pOpak " + vbNewLine + _
+	" " + vbNewLine + _
+	" " ) _
+	.add(cstr(idProd)) _
+	.add(cstr(idOpak)) _
+	.add(cstr(idMag)) _
+	.add(cstr(nNumOp)) _
+	.done()
+	dim oRS: set oRS = trans_.createadors(strQuery)
+	if oRS.EOF then
+		get_stan_mag_for_prod_opak_mag_oper = ccur(0.0)
+	else
+		get_stan_mag_for_prod_opak_mag_oper = ccur(oRS(0).value)
+	end if  
+end function
+#comment '--------------------------------------------------------
+#comment ' zwraca ostatnia cene zakupu i jej walute (w [out] curCena,[out] idWaluta
+#comment '--------------------------------------------------------
+
+function get_ost_cena_zakupu(byval idProd,byval idOpak,byref curCena,byref idWaluta)
+	dim strQuery : strQuery = nx_.convert.formatter( _
+		"select top 1 c_curCenaNettoWal,p_pwaluta from vlist_n5zakup_listpozycje " +_
+		"where c_pProdukt=%1 and c_pOpak=%2 and p_pPopZakup=0 " +_
+		" order by p_ddatawyst desc, p_idobj desc ").add(idProd).add(idOpak).done()
+	dim oRS : set oRS = trans_.createadors(strQuery)
+	if oRS.EOF then
+		get_ost_cena_zakupu = false
+		curCena = ccur(0.0)
+		idWaluta = clng(0)
+	else
+		get_ost_cena_zakupu = true
+		curCena = ccur(oRS(0))
+		idWaluta = clng(oRS(1))
+	end if 
+end function
+
+#comment '--------------------------------------------------------
+#comment ' zwraca ostatnia cene dostawy
+#comment '--------------------------------------------------------
+function get_ost_cena_dostawy(byval idProd,byval idOpak,byref curCena)
+	dim strQuery : strQuery = nx_.convert.formatter("select top 1 gmo_curcena from n5gmop " +_
+		"where gmo_pProd=%1 and gmo_pOpak=%2 and " +_
+		"gmo_nNumOp in (select nnumoper from n5dokmag where ntypdok in (N5REJESTRDOK__PZ,N5REJESTRDOK__PW,N5REJESTRDOK__PP)) " +_
+		"order by gmo_nNumOp desc, gmo_nLP desc").add(idProd).add(idOpak).done()
+	
+	dim oRS : set oRS = trans_.createadors(strQuery)
+
+	if oRS.EOF then
+		get_ost_cena_dostawy = false
+		curCena = ccur(0.0)
+	else
+		get_ost_cena_dostawy = true
+		curCena = ccur(oRS(0))
+	end if 
+end function
+
+#endif

@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+PAGE_AKTUALIZACJA_KLIENTA
+
+#include "h1000.h"
+#include "h1220.h"
+#include "h1222.h"
+#include "h1240.h"
+
+-->
+<page style='STYLE_PAGE'>
+<config>
+<title>
+Aktualizacja 'wielkości' klienta
+#ifdef _DEBUG
+[THIS_FILE]
+#endif
+</title>
+<startpos>center</startpos>
+<script>
+  <![CDATA[
+'nx_trace
+#include "50519"
+#include "50200"
+#include "50122"
+#include "50203"
+
+dim pKodArray: set pKodArray = doc_.afc.new_navoarray()
+dim pRateArray: set pRateArray = doc_.afc.new_navoarray()
+
+function fopen()
+  'sprawdź czy użytkownik posiada uprawnienie na aktualizację wielkości klienta
+  dim strWhere : strWhere = "select idobj from n5sod where strNazwa like 'Pozwól na zmianę wielkości klienta'"
+  if doc_.getmodule(60106).FindFreeRight(strWhere) then
+    fopen = true
+  else
+    fopen = false
+    trans_.message 7000, 0, "Nie posiadasz uprawnieniń do aktualizacji wielkości klienta."
+    exit function
+  end if     
+end function
+
+function query()
+  query = "select 'idklient'=t_klient.idobj,'zysk'=sum(trs_curWartSP) + sum(trs_curWartMag) " + vbNewLine +_
+          "from #tmp_rentowsp " + vbNewLine +_ 
+	        "   inner join n5produkt as t_prod on trs_pProdukt = t_prod.idobj " + vbNewLine +_
+	        "   inner join n5opakowanie_produktu as t_opak on trs_pOpak = t_opak.idobj " + vbNewLine +_
+	        "   inner join n5sprzedaz as t_sprz on trs_pSprz = t_sprz.idobj " + vbNewLine +_
+	        "   inner join n5klient as t_klient on t_sprz.pKlient = t_klient.IdObj " + vbNewLine +_
+	        "   inner join n5grupaklient as t_grklient on t_klient.pGrupaKlient = t_grklient.IdObj " + vbNewLine +_    
+          "where t_sprz.pRozlVat <> 0 and %2 and %3 " + vbNewLine +_
+          "group by t_klient.idobj"
+end function
+
+function update_customer()
+  'przygotowanie stawek
+  dim strSQLRate, oRSRate
+  strSQLRate = "select strKod,curWartosc from n5plstawka where strKod in ('A','B','C','D') order by curWartosc"
+  set oRSRate = trans_.createadors(strSQLRate)
+  if oRSRate.recordCount <> clng(4) then
+    trans_.message 7000, 0, "Nie wprowadzono wymaganych progów 'wielkości' klienta jako stawek o kodzie: 'A', 'B', 'C', 'D'"
+    page_.goback
+    exit function
+  else
+    do while not oRSRate.EOF
+      pKodArray.add cstr(oRSRate(0).value)
+      pRateArray.add ccur(oRSRate(1).value)
+      oRSRate.movenext
+    loop
+  end if
+
+  dim pM60233: set pM60233 = doc_.getmodule(60233)
+  dim pRentSP: set pRentSP = pM60233.new_rent_sp()
+  dim pParamArray: set pParamArray = doc_.afc.new_navoarray()
+  dim pParamOkres: set pParamOkres = pRentSP.get_okres_param()
+  pParamArray.add pParamOkres
+  pParamArray.add doc_.afc.rap.param.new_text("Indeks klienta").bindexpr("t_klient.strIndeks")
+  pParamArray.add doc_.afc.rap.param.new_text("Grupa klientów").bindexpr("t_grklient.strNazwa")
+  
+  dim pMRapEngine : set pMRapEngine = doc_.getmodule(60108)
+  if pMRapEngine.show_raport_param_dialog(pParamArray,"Aktualizacja klientów") = 0 then
+    exit function
+  end if
+  
+  dim pPerf : set pPerf = doc_.performing("Trwa przygotowywanie wyników...")
+  pRentSP.fill_dok_handl pParamArray.value(0)
+  pRentSP.fill_dok_mag_related
+      
+  dim oKlient
+  dim strSQL: strSQL = pMRapEngine.query_apply_actual_param(query(),pParamArray)
+  dim oRS: set oRS = trans_.createadors(strSQL)
+  dim nLP: nLP = 1
+  dim nCount: nCount = oRS.recordCount
+  pPerf.text = "Trwa aktualizacja klientów: "
+  do while not oRS.EOF
+    set oKlient = trans_.getobj(TYPEID_N5KLIENT,clng(oRS("idklient").value))
+    oKlient.strCecha3 = getRate(ccur(oRS("zysk").value))
+    if not trans_.saveobjects() then
+    end if
+    pPerf.text = "Trwa aktualizacja klientów: wykonano " + CStr(Int(nLP/nCount*100)) + "%"
+    nLP = nLP + 1
+    oRS.movenext
+  loop
+  set pPerf = nothing  
+  
+  MessageBox "Operacja zakończona.", "Aktulizacja danych klientów", vbOKOnly, vbInformation
+  pRentSP.manual_done()
+  set pRentSP = nothing
+  set pM60233 = nothing
+  page_.goback
+end function
+
+function getRate(curZysk)
+  if curZysk <= ccur(pRateArray.value(0)) then
+    getRate = cstr(pKodArray.value(0))
+  elseif curZysk > ccur(pRateArray.value(0)) and curZysk <= ccur(pRateArray.value(1)) then
+    getRate = cstr(pKodArray.value(1))  
+  elseif curZysk > ccur(pRateArray.value(1)) and curZysk <= ccur(pRateArray.value(2)) then
+    getRate = cstr(pKodArray.value(2))  
+  elseif curZysk > ccur(pRateArray.value(2)) then 
+    getRate = cstr(pKodArray.value(3))  
+  end if
+end function
+
+function on_cancel()
+  page_.goback
+end function
+
+]]></script>
+</config>
+<body>
+	<table>
+		<tbody>
+			<tr>
+				<td style='STYLE_TABLE_INFO' colspan='2'>      
+					<text>Operacja aktualizuje 'wielkość' klienta na podstawie zysku osiągniętego ze sprzedaży dla tego klienta.</text>         
+				</td>
+			</tr>
+			<tr style='STYLE_ROW_BTN' >
+				<td align='right' colspan='2' keepline='true'>         
+					QXE_BUTTON(-1,0,Aktualizuj,varFunction="update_customer",1)
+					QXE_BUTTON(-1,0,Zamknij,varFunction="on_cancel",1)
+				</td>
+			</tr>
+		</tbody>
+	</table>
+</body>
+</page>

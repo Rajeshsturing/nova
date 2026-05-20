@@ -1,0 +1,1372 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#define NOWY_KALENDARZ
+#comment '------------------------------------------------------------
+#include "h1000.h"
+#include "h1001.h"
+#include "h1222.h"
+#include "h1231.h"
+#include "h1200.h"
+#include "h1220.h"
+#include "h1240.h"
+#include "h1250.h"
+#include "h1203.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1004.h"
+#include "h1201.h"
+#include "h1232.h"
+
+#define CTRLID_CALENDAR_CONTAINER   	101
+#define ctrlid_glowna     99
+#define CTRLID_CALENDAR_TABLE		      103
+#define CTRLID_REDIRECT_CHKBOX	    	104
+
+#define CTRLID_CALENDAR_SUM           105
+#define CTRLID_CALENDAR_PODSUMOWANIE  106
+#define CTRLID_CALENDAR_LEGENDA       107
+#define CTRL_TABMANAGER               108
+
+#define FORM_SPAN			22
+#define RESULT_SPAN		3
+
+
+#define TRANS_VAR			303
+
+#define COL_DZIEN_ROBOCZY        RGB(255,255,255) 
+#define COL_DZIEN_WOLNY          RGB(192,192,192) 
+#define COL_DZIEN_CHOROBA        RGB(239,118,139) 
+#define COL_DZIEN_URLOP          RGB(142,223,134)
+
+#define COL_NIEOB_NIEUSP         RGB(73,169,56)
+#define COL_NIEOB_USPR_PLAT      RGB(50,148,94)
+#define COL_URLOP_WYCH           RGB(179,234,172)
+#define COL_URLOP_NZAD           RGB(171,223,130)
+#define COL_URLOP_BEZPL          RGB(29,225,0)
+#define COL_URLOP_OPIEK          RGB(118,255,0)
+#define COL_URLOP_WYPOCZ         RGB(123,206,62)
+#define COL_URLOP_OKOLI          RGB(81,209,58)
+#define COL_URLOP_SZKOLE         RGB(189,240,190)
+#define COL_URLOP_PROFIL         RGB(26,235,20)
+#define COL_URLOP_BEZPLA_ZPRAC   RGB(22,207,18)
+
+#define TIP_URLOP_WYCH           "urlop wychowawczy"
+#define TIP_URLOP_NZAD           "urlop na żadanie"
+#define TIP_URLOP_BEZPL          "urlop bezpłatny"
+#define TIP_URLOP_OPIEK          "urlop opiekuńczy"
+#define TIP_URLOP_WYPOCZ         "urlop wypoczynkowy"
+#define TIP_URLOP_OKOLI          "urlop okolicznościowy"
+#define TIP_URLOP_SZKOLE         "urlop szkoleniowy"
+#define TIP_URLOP_PROFIL         "urlop profilaktyczny"
+#define TIP_URLOP_BEZPLA_ZPRAC   "urlop bezpłatny z powodu pracodawcy"
+#define TIP_NIEOB_NIEUSP         "nieobecność nieusprawiedliwiona"
+#define TIP_NIEOB_USPR_PLAT      "nieobecność usprawiedliwiona płatna"
+
+
+-->
+<page style='STYLE_PAGE'>
+  <config>
+    <title>Kalendarz czasu pracy</title>
+    <script>
+      <![CDATA[
+
+#include "50105"
+#include "50106"
+#include "50207"
+#include "50202"
+#include "50122"
+#include "50126"
+#include "50131"
+'CCardBuilder
+'harui
+#include "50101"
+
+'fire_choice_list
+#include "50200"
+
+dim g_Ptb,g_identBody
+
+dim nazwa_nieobecnosci(1,14)
+dim skrot_nieobecnosci(1,13)
+dim strSQL
+dim pParamArray : set pParamArray = nothing
+dim pModRapEngine : set pModRapEngine = doc_.getmodule(60108)
+dim odswiez
+dim pSelectIdobjPrac : set pSelectIdobjPrac =  nx_.new_array()
+dim pSelectOption : set pSelectOption = nx_.new_array()		'opcje wybrane przez uzytkownika - co ma wyswietlac dla kazdego wybranego pracownika
+dim iIndeksSelectIdobjPrac	'indeks z tabeli pSelectIdobjPrac dla ktorego generujemy frefresh 
+dim aCzasPracy(12,31)
+dim aCzasPracyBuf(12,31)
+dim aCzasPracyUmowa(12,31)
+dim aDniWolne(12,31) 'wypelniane dla kazdego pracownika z osobna - dni wolne pracownika (1-ma wolne, 0-pracuje)
+dim aTypNieob(12,31) 'wypelniane dla kazdego pracownika z osobna - typ nieobecnosci (13-dni pracy(umowa-pracuje),12-choroba, 0-pracuje, 1-11-eTyp z tabeli n5plnieob
+dim aDniPrzepr(12,31) 'ilosc godzin przepracowanych w tygodniu
+dim strOptions
+dim nadgodziny(12,31) 'ilosc nadgodzin danego dnia
+dim podsumowanie(1,14) 'ilosc wszystkiego razem
+
+
+dim g_pCursor : set g_pCursor = nothing
+dim g_oPozDok: set g_oPozDok = doc_.system.activex("Scripting.Dictionary")
+
+function fopen():fopen = false
+
+  set pParamArray = get_default_param()
+  if pModRapEngine.show_raport_param_dialog(pParamArray,"Kalendarz czasu pracy") = 0 then
+  	exit function
+  end if
+  
+  nazwa_nieobecnosci(1,1) = "Przepracowano"
+  nazwa_nieobecnosci(1,2) = "Nadgodziny"
+  nazwa_nieobecnosci(1,3) = "Nieobecność nieusprawiedliwiona"
+  nazwa_nieobecnosci(1,4) = "Urlop wypoczynkowy"
+  nazwa_nieobecnosci(1,5) = "Urlop na żądanie" 
+  nazwa_nieobecnosci(1,6) = "Urlop okolicznościowy"
+  nazwa_nieobecnosci(1,7) = "Urlop wychowawczy"
+  nazwa_nieobecnosci(1,8) = "Urlop szkoleniowy"
+  nazwa_nieobecnosci(1,9) = "Urlop bezpłatny"
+  nazwa_nieobecnosci(1,10) = "Urlop profilaktyczny"
+  nazwa_nieobecnosci(1,11) = "Urlop opiekuńczy"
+  nazwa_nieobecnosci(1,12) = "Urlop bezpłatny z powodu pracodawcy"
+  nazwa_nieobecnosci(1,13) = "Nieobecność usprawiedliwiona płatna"
+  nazwa_nieobecnosci(1,14) = "Choroba"
+  skrot_nieobecnosci(1,1) = "NG"
+  skrot_nieobecnosci(1,2) = "NN"
+  skrot_nieobecnosci(1,3) = "UWp"
+  skrot_nieobecnosci(1,4) = "UNż"
+  skrot_nieobecnosci(1,5) = "UOk"
+  skrot_nieobecnosci(1,6) = "UWC"
+  skrot_nieobecnosci(1,7) = "US"
+  skrot_nieobecnosci(1,8) = "UB"
+  skrot_nieobecnosci(1,9) = "UP"
+  skrot_nieobecnosci(1,10) = "UOp"
+  skrot_nieobecnosci(1,11) = "UBp"
+  skrot_nieobecnosci(1,12) = "NU"
+  skrot_nieobecnosci(1,13) = "C"
+
+  dim ptbGl : set ptbGl = page_.ctrl(ctrlid_glowna).parent
+  page_.ctrl(ptbGl.ident).removeall
+  g_identBody = ptbGl.ident
+
+
+  fill_all pModRapEngine, pParamArray
+
+  fopen = true
+end function
+
+
+VB_PRINT_LANDSCAPE_COMMON
+VB_PRINTPREV_LANDSCAPE_COMMON
+
+
+
+function get_default_param()
+	set pParamArray = doc_.afc.new_navoarray()
+	pParamArray.add doc_.afc.rap.param.new_text("Imie pracownika").bindexpr("prac.strImie")
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwisko pracownika").bindexpr("prac.strNazwisko")
+	pParamArray.add doc_.afc.rap.param.new_text("Pesel pracownika").bindexpr("prac.strPesel")
+
+	set get_default_param = pParamArray
+	
+end function
+
+function change_czas_pracy (byval dni, byval typ, byval czas_pracy,iter,jiter)
+
+					dim dDateSearch : dDateSearch=cStr(iter)+"/"+cStr(jIter)+"/"+cStr(year(g_dCurrentDate))
+					dim DayOfWeek : DayOfWeek=weekday(cDate(dDateSearch))
+					if DayOfWeek=1 then
+						DayOfWeek=8
+					end if
+					if (inStr(DayOfWeek-1,dni,"1")=DayOfWeek-1 and (typ=1))then
+						aCzasPracy(iter,jIter)=cint(czas_pracy)
+					end if
+					if (inStr(DayOfWeek-1,dni,"1")=DayOfWeek-1 and (typ<>1))then
+						aCzasPracy(iter,jIter)=ccur(0)
+					end if
+
+end function
+
+function wylicz_max_dni_w_miesiacu (byval iIter, byref maxDayMonth)
+
+if ((iIter=4)or (iIter=6) or (iIter=9) or (iIter=11)) then
+	maxDayMonth=30
+else
+		if ((iIter=2) and ( ((year(g_dCurrentDate) mod 4 = 0 ) and (year(g_dCurrentDate) mod 100 <>0)) or (year(g_dCurrentDate) mod 400 =0) )) then
+					maxDayMonth=29
+		else
+				if (iIter=2) then
+						maxDayMonth=28
+				else
+						maxDayMonth=31
+				end if
+		end if
+end if
+
+end function
+
+function  wylicz_czas_pracy (byval dzienod, byval dziendo,byval miesiacod, byval miesiacdo, byval rok, byval typ, byval dni, byval tczasCalk )
+
+  dim iIter,jIter,maxDayMonth,dDateSearch,DayOfWeek
+  if miesiacod=miesiacdo then
+				for jIter=dzienod to dziendo 
+            change_czas_pracy dni, typ,tczasCalk,miesiacod,jiter
+				next
+			else
+				for iIter=miesiacod to miesiacdo
+     					'obliczenie ile max dni ma dany miesiac
+              wylicz_max_dni_w_miesiacu iIter,maxDayMonth
+					    if iIter=miesiacod then
+						    for jIter=dzienod to maxDayMonth
+							    'sprawdzenie jaki to jest dzien tygodnia i czy znajduje sie on w kalendarzu pracy-jesli tak to do tabeli aCzasPracy wpisujemy czas pracy pracownikow gdy jest to dzien rob a 0 jesli to czas wolny
+                  change_czas_pracy dni, typ,tczasCalk,iiter,jiter
+						    next
+					    else
+						if iIter=miesiacdo then
+							for jIter=1 to dziendo
+                change_czas_pracy dni, typ,tczasCalk,iiter,jiter
+							next
+						else
+							for jIter=1 to maxDayMonth
+                change_czas_pracy dni, typ,tczasCalk,iiter,jiter
+							next
+						end if
+					end if
+				next
+			end if
+
+end function
+
+'odejmuje dni od dnia jutrzejszego do końca roku
+function delete_rem_day()
+  dim dTomDate: dTomDate = dateAdd("d",1,g_dCurrentDate)
+  dim i,j,miesiac,dzien
+  miesiac = Month(dTomDate)
+  dzien = Day(dTomDate)
+  for i = miesiac to 12
+    for j = dzien to 31
+      aCzasPracy(i,j) = ccur(0)
+    next
+    dzien = 1
+  next
+  'zapamiętaj kalendarz na bieżący rok
+  for i = 1 to 12
+    for j = 1 to 31
+      aCzasPracyBuf(i,j) = aCzasPracy(i,j)
+    next
+  next
+end function
+
+'uzupełnia tabelę dniami wg umowy
+function delete_day(byval idPrac)
+  dim strSQL
+  strSQL = "select 'dataod'=ddataod,'datado'=ddatado from n5plumowa " + vbNewLine +_
+		       "where ppracownik=" + CStr(idPrac) + " and (year(ddataod)=" + cStr(year(g_dCurrentDate)) + " or year(ddatado)=" + cStr(year(g_dCurrentDate)) + vbNewLine +_
+		       "or (year(ddataod)<="+cStr(year(g_dCurrentDate)) +" and year(ddatado)=1899) " + vbNewLine +_
+		       "or (year(ddataod)<"+cStr(year(g_dCurrentDate)) +" and year(ddatado)>="+cStr(year(g_dCurrentDate)) +"))"
+  dim oRS: set oRS = trans_.createadors(strSQL)
+  dim dDataOd,dDataDo,i,j
+  if oRS.recordCount > clng(0) then
+    do while not oRS.EOF
+      dDataOd = CDate(oRS("dataod").value)
+      dDataDo = CDate(oRS("datado").value)
+      if dDataOd < DateSerial(Year(g_dCurrentDate),1,1) then
+        dDataOd = DateSerial(Year(g_dCurrentDate),1,1)
+      end if
+      if dDataDo > g_dCurrentDate or dDataDo = trans_.afc.globals.nulldate() then
+        dDataDo = g_dCurrentDate
+      end if
+      
+      do while dDataOd <= dDataDo
+        aCzasPracyUmowa(Month(dDataOd),Day(dDataOd)) = clng(1)
+        dDataOd = DateAdd("d",1,dDataOd)
+      loop
+      oRS.movenext
+    loop
+    for i = 1 to 12
+      for j = 1 to 31    
+        if aCzasPracy(i,j) > clng(0) and aCzasPracyUmowa(i,j) = clng(0) then
+          aCzasPracy(i,j) = aCzasPracyUmowa(i,j)
+        end if
+      next
+    next    
+  end if
+end function
+
+function setCalendar()
+  dim i,j
+  for i = 1 to 12
+    for j = 1 to 31
+      aCzasPracy(i,j) = aCzasPracyBuf(i,j)
+      aCzasPracyUmowa(i,j) = clng(0)
+    next
+  next
+end function
+
+function fill_all(byref pModRapEngine,byref pParamArray)
+
+		g_dCurrentDate = trans_.var(GVAR_TODAY) 
+		dim SQL : SQL = "select 'dataOd'=ddataod,'dataDo'=ddatado,'czasOd'=tczasod,'czasDo'=tczasdo,'cdni'=cdnityg,"+_
+						"'eTyp'=eTypOkresu from n5plpozkalcp where  year(ddataod)="+cStr(year(g_dCurrentDate))
+		dim oSQL: set oSQL=trans_.createadors(SQL)
+		dim miesiacOd,dzienOd,tczasod,tczasdo,miesiacDo,dzienDo,tczasCalk
+		dim dDateSearch,DayOfWeek,maxDayMonth
+		
+    do while not oSQL.EOF
+			miesiacOd=Month(oSQL.fields("dataOd"))
+			miesiacDo=Month(oSQL.fields("dataDo"))
+			dziendo=Day(oSQL.fields("dataDo"))
+			dzienod=Day(oSQL.fields("dataOd"))
+			tczasod=ccur(oSQL.fields("czasod")/100)-cInt(oSQL.fields("czasod")/100)
+			tczasdo=ccur(oSQL.fields("czasdo")/100)-cInt(oSQL.fields("czasdo")/100)
+		
+			    if tczasdo = 0 then
+				    tczasdo=ccur(oSQL.fields("czasdo")/100)
+			    else
+				    tczasdo=ccur(cInt(oSQL.fields("czasdo")/100)+(oSQL.fields("czasdo")/100-cInt(oSQL.fields("czasdo")/100))/60)
+			    end if
+			
+			    if tczasod = 0 then
+				    tczasod=ccur(oSQL.fields("czasod")/100)
+			    else
+				    tczasod=ccur(cInt(oSQL.fields("czasod")/100)+((oSQL.fields("czasod")/100-cInt(oSQL.fields("czasod")/100))*100)/60)
+			    end if
+          
+			    tczasCalk=tczasdo-tczasod
+          
+			    if cInt(tczasCalk)-tczasCalk >0 then
+				    tczasCalk=tczasCalk-1
+				    tczasCalk=ccur(cInt(tCzasCalk)*100+(tczasCalk+1-cInt(tCzasCalk))*60)
+			    else
+				    tczasCalk=ccur(cInt(tCzasCalk)*100+(tczasCalk-cInt(tCzasCalk))*60)
+			    end if
+          
+			    dim iIter,jIter
+		      
+          wylicz_czas_pracy dzienod, dziendo, miesiacod, miesiacdo, year(g_dCurrentDate), oSQL.fields("eTyp"),oSQL.fields("cdni"),tczasCalk
+
+      oSQL.moveNext
+		loop
+
+    'odejmij dni od jutra do końca roku
+    delete_rem_day
+    
+	  dim bRow : bRow=false'czy zapytanie zwraca jakies wiersze
+	 
+	  dim strOkres : strOkres=""
+	  dim year_ : year_ = year(trans_.var(GVAR_TODAY))
+
+		strOkres="and ((u.dDataOd <= {d '"+cStr(year_)+"-12-31'}) and u.dDataDo >= {d '"+cStr(year_)+"-01-01'} or u.dDataDo={d '1899-12-31'})"
+	  
+      strSQL="select distinct 'idobj'=prac.idobj from n5pracownik as prac inner join n5miejscowosc as m on m.idobj=prac.pmiejscowosc "+_
+			 "inner join n5plumowa as u on u.ppracownik=prac.idobj "+_
+			 "where %1 and %2 and %3 "'+ strOkres
+	  strSQL = pModRapEngine.query_apply_actual_param(strSQL,pParamArray)
+	  dim oRS : set oRS = trans_.createadors(strSQL)
+
+	  'usuwany wszystkie idobj pracownikow wybrane w poprzednim zapytaniu select
+	  pSelectIdobjPrac.removeall
+	  pSelectOption.removeall
+	  strOptions = "1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1"	'opcje do wyswietlenia- na poczatku wszystko dla kazdego pracownika
+									'dwie pierwsze liczy to 1-godziny przepracowane 2-godziny nie przepracowane
+									'pozostale liczby to typ nieobecnosci gdzie 0-pracuje, 13-ma umowe i pracuje, 12-choroba, 1-11-typ nieobecnosci z tabeli n5plnieob
+
+	do while not oRS.EOF
+		bRow=true
+		pSelectIdobjPrac.add oRS.fields("idobj").value
+		pSelectOption.add strOptions
+		g_strWykonawcaWhere = "pWykonawca=" + cstr(getCurrentWykonawcaID())    
+		oRS.moveNext
+	loop
+
+	if bRow then
+		
+		if not HARUI(UAR_CMDID(CMDID_RAPORT_KALENDARZ_MIESIAC)) then
+			exit function
+		end if
+		g_eCalMode = 3
+	dim iter
+	
+    g_Ptb = g_identBody
+    
+		show_kryteria_selekcji g_Ptb
+  
+  for iter=0 to 14 
+    podsumowanie(1,iter)=0
+  next
+  
+  dim pPerf : set pPerf = doc_.performing("Trwa generowanie raportu...")
+	for iter=0 to pSelectIdobjPrac.upper_index
+    setCalendar
+    delete_day pSelectIdobjPrac(iter)
+		oblicz_dni_pracy_i_wolne iter
+    godziny_przepracowane iter
+    
+    dim ptbGl1 : set ptbGl1 = page_.ctrl(g_identBody)
+    dim intpTB1 : intpTB1 = ptbGl1.addnew(CTRL_TYPE_TABLE,-1).ident
+    page_.ctrl(intpTB1).border=1
+   
+    page_.ctrl(intpTB1).border=1
+
+		iIndeksSelectIdobjPrac=iter
+    page_.addxml g_identBody, "<br></br>"
+    page_.addxml g_identBody, "<ff/>"
+
+		frefresh 0, intpTB1
+		
+	next	
+  
+    dim ctrl_glowna : set ctrl_glowna = page_.ctrl(g_identBody)
+    dim ident_podsum_legen : ident_podsum_legen = ctrl_glowna.addnew(CTRL_TYPE_TABLE,-1).ident
+    dim pTB_podsum_legen : set pTB_podsum_legen = doc_.afc.new_tb(nothing).attach(page_.ctrl(ident_podsum_legen))
+    pTB_podsum_legen.newrow
+    pTB_podsum_legen.newcell
+    pTB_podsum_legen.cell.colspan=2
+    pTB_podsum_legen.newrow
+    pTB_podsum_legen.newcell.addctrl CTRL_TYPE_TABLE,CTRLID_CALENDAR_PODSUMOWANIE  
+    pTB_podsum_legen.newcell.addctrl CTRL_TYPE_TABLE,CTRLID_CALENDAR_LEGENDA 
+
+     show_podsumowanie 
+     show_legenda 
+    set pPerf = nothing
+	else
+		show_kryteria_selekcji g_identBody
+	end if
+
+
+
+
+end function
+
+function show_legenda()
+
+	dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(page_.ctrl(CTRLID_CALENDAR_LEGENDA ))
+  pTB.newrow
+  pTB.row.fontsize=5
+	pTB.newcell.addtext ("Legenda:")
+  dim iter
+  for iter = 1 to 13
+    pTB.newrow
+    pTB.row.fontsize=5
+  	pTB.newcell.addtext skrot_nieobecnosci(1,iter)+" - "+nazwa_nieobecnosci(1,iter+1)
+  next
+  
+  pTB.newrow
+  
+end function
+
+function show_kryteria_selekcji(byval pTB)
+
+    dim ptbGl : set ptbGl = page_.ctrl(pTB)
+    page_.ctrl(ptbGl.ident).removeall
+    set pTB = ptbGl
+
+    dim intpTB : intpTB = ptbGl.addnew(CTRL_TYPE_TABLE,-1).ident
+    page_.ctrl(intpTB).border=1
+
+    set pTB = doc_.afc.new_tb(nothing).attach(page_.ctrl(intpTB))
+		pTB.newrow
+    pTB.row.border=0
+		pTB.newcell.addtext ("Kryteria selekcji:")
+		pTB.cell.height = clng(22)
+    pTB.cell.colspan=20
+		pTB.element.bold= true
+
+		pTB.newrow
+    pTB.row.border=0
+		dim strKryteria : strKryteria=""
+		strKryteria=kryteria_selekcji(0)+kryteria_selekcji(1)+kryteria_selekcji(2)
+		if strKryteria="" then
+			strKryteria="brak"
+		end if
+		pTB.newcell.addtext strKryteria
+		pTB.cell.height = clng(12)
+
+end function
+
+function  godziny_przepracowane (byref iter)
+dim year_ : year_ = year(trans_.var(GVAR_SYSDATE))
+'dim tczasod,tczasdotczasCalk,maxDayMonth
+dim czasdzienny
+dim miesiacOd,dzienOd,tczasod,tczasdo,miesiacDo,dzienDo,tczasCalk
+g_dCurrentDate = trans_.var(GVAR_TODAY) 	
+dim strSQLPrzep : strSQLPrzep = "select 'czasOd'=rcp_ddatarozp,'czasDo'=rcp_ddatazakon ,'czas'=rcp_tczasprzepr,'czassdzienny'=(rcp_tczasprzepr/(datediff(d,rcp_ddatarozp,rcp_ddatazakon)+1)) "+_
+  "from n5plrcp where rcp_ppracownik="+cStr(pSelectIdobjPrac(iter))+" and ((year(rcp_ddatarozp)<"+cStr(year_)+" and year(rcp_ddatazakon)="+cStr(year_)+") "+_
+  "or (year(rcp_ddatarozp)<"+cStr(year_)+" and year(rcp_ddatazakon)>"+cStr(year_)+") "+_
+  "or (year(rcp_ddatarozp)="+cStr(year_)+" and year(rcp_ddatazakon)="+cStr(year_)+"))"
+dim oResult : set oResult = trans_.createadors(strSQLPrzep)
+dim iIter,jIter
+
+      for iIter=1 to 12
+			      for jIter=1 to 31
+              aDniPrzepr(iIter,jIter)=0
+            next
+      next
+
+		do while not oResult.EOF
+    
+			  miesiacOd=Month(oResult.fields("czasOd"))
+			  miesiacDo=Month(oResult.fields("czasDo"))
+			  dziendo=Day(oResult.fields("czasDo"))
+			  dzienod=Day(oResult.fields("czasOd"))
+       
+			 czasdzienny=cInt(oResult.fields("czassdzienny")/100)+(oResult.fields("czassdzienny")/100-cInt(oResult.fields("czassdzienny")/100))/60
+
+      if miesiacod=miesiacdo then
+				for jIter=dzienod to dziendo 
+					aDniPrzepr(miesiacod,jIter)=czasdzienny
+				next
+			else
+				for iIter=miesiacod to miesiacdo
+					'obliczenie ile max dni ma dany miesiac
+          wylicz_max_dni_w_miesiacu iIter,maxDayMonth
+				
+					if iIter=miesiacod then
+						for jIter=dzienod to maxDayMonth
+								aDniPrzepr(iIter,jIter)=czasdzienny
+						next
+					else
+						if iIter=miesiacdo then
+							for jIter=1 to dziendo
+								aDniPrzepr(iIter,jIter)=czasdzienny
+							next
+						else
+							for jIter=1 to maxDayMonth
+  								aDniPrzepr(iIter,jIter)=czasdzienny
+							next
+						end if
+					end if
+				next
+			end if
+
+    oResult.movenext
+
+      loop
+'obliczanie nadgodzin
+wylicz_nadgodziny pSelectIdobjPrac(iter)
+
+end function
+
+function wylicz_nadgodziny (byval idobjPrac)
+
+dim miesiacOd, miesiacDo, dziendo,  dzienod
+dim strSQLNad : strSQLNad = "select 'czasod'=p_ddataod,'czasdo'=p_ddatado,'ilosc'=c_curparam1, "+_
+                            "'ilosc_dni'=datediff(d,p_ddataod,p_ddatado)+1 from dbo.vlist_n5plpozostale_listSkladnik as v "+_
+                            "inner join n5plschematnal as s "+_
+                            " on s.idobj=v.c_pschemat "+_
+                            " where s.strnazwa like 'nadgodziny%' and "+_
+                            "p_ppracownik="+cStr(idobjPrac) 
+dim oResultNad : set oResultNad = trans_.createadors(strSQLNad)
+dim NadgodzinaDnia,iIter,jIter,maxDayMonth
+for iIter=1 to 12
+			for jIter=1 to 31
+        nadgodziny(iIter,jIter)=ccur(0)
+      next
+next
+
+		do while not oResultNad.EOF
+    
+			  miesiacOd=Month(oResultNad.fields("czasOd"))
+			  miesiacDo=Month(oResultNad.fields("czasDo"))
+			  dziendo=Day(oResultNad.fields("czasDo"))
+			  dzienod=Day(oResultNad.fields("czasOd"))
+       dim dni_prac : dni_prac = 0  
+       dim dDateSearch,DayOfWeek
+       '--------------
+       if miesiacod=miesiacdo then
+				for jIter=dzienod to dziendo 
+          wylicz_dni_pracy miesiacdo, jiter, dni_prac
+				next
+			else
+				for iIter=miesiacod to miesiacdo
+					'obliczenie ile max dni ma dany miesiac
+          wylicz_max_dni_w_miesiacu iIter,maxDayMonth
+			
+					if iIter=miesiacod then
+						for jIter=dzienod to maxDayMonth
+              wylicz_dni_pracy iIter, jIter, dni_prac
+						next
+					else
+						if iIter=miesiacdo then
+							for jIter=1 to dziendo
+                wylicz_dni_pracy iIter, jIter, dni_prac
+				  		next
+						else
+							for jIter=1 to maxDayMonth
+                  wylicz_dni_pracy iIter, jIter, dni_prac
+							next
+						end if
+					end if
+				next
+			end if
+
+      if ccur(dni_prac) <> ccur(0) then
+        NadgodzinaDnia = cint(((ccur(oResultNad.fields("ilosc"))/(ccur(dni_prac)))))
+      else
+        NadgodzinaDnia = cint(0)
+      end if
+ 
+      if miesiacod=miesiacdo then
+				for jIter=dzienod to dziendo 
+					nadgodziny(miesiacod,jIter)=NadgodzinaDnia
+				next
+			else
+				for iIter=miesiacod to miesiacdo
+					'obliczenie ile max dni ma dany miesiac
+           wylicz_max_dni_w_miesiacu iIter,maxDayMonth
+					if iIter=miesiacod then
+						for jIter=dzienod to maxDayMonth
+								nadgodziny(iIter,jIter)=NadgodzinaDnia
+						next
+					else
+						if iIter=miesiacdo then
+							for jIter=1 to dziendo
+								nadgodziny(iIter,jIter)=NadgodzinaDnia
+							next
+						else
+							for jIter=1 to maxDayMonth
+  								nadgodziny(iIter,jIter)=NadgodzinaDnia
+							next
+						end if
+					end if
+				next
+			end if
+
+    oResultNad.movenext
+
+loop
+
+end function
+
+function wylicz_dni_pracy (byval dzien,byval miesiac,byref dni_prac)
+
+dim dDateSearch : dDateSearch=cStr(dzien)+"/"+cStr(miesiac)+"/"+cStr(year(g_dCurrentDate))
+dim DayOfWeek : DayOfWeek=weekday(cDate(dDateSearch))
+	if not( DayOfWeek=1 or DayOfWeek = 7)then
+						      dni_prac = dni_prac+1
+	end if
+                
+end function
+
+function oblicz_dni_pracy_i_wolne(byref iter)
+
+		dim strSQLPrac : strSQLPrac= "select 'dataOd'=ddataod,'dataDo'=ddatado, 'typ'=etyp from n5plnieob "+_
+									"where ppracownik="+cStr(pSelectIdobjPrac(iter))+" and year(ddataod)="+cStr(year(g_dCurrentDate)) +_
+									" union "+_
+									"select 'dataOd'=ddataod,'dataDo'=ddatado, 'typ'=12 from n5plchoroba "+_
+									"where ppracownik="+cStr(pSelectIdobjPrac(iter))+" and year(ddataod)="+cStr(year(g_dCurrentDate)) +_
+									" union "+_
+									"select 'dataod'=ddataod,'dataDo'=ddatado, 'typ'=13 from n5plumowa "+_
+									"where ppracownik="+cStr(pSelectIdobjPrac(iter))+" and (year(ddataod)="+cStr(year(g_dCurrentDate)) +" or year(ddatado)="+cStr(year(g_dCurrentDate))+_
+									"or (year(ddataod)<="+cStr(year(g_dCurrentDate)) +" and year(ddatado)=1899)"+_
+									"or (year(ddataod)<"+cStr(year(g_dCurrentDate)) +" and year(ddatado)>="+cStr(year(g_dCurrentDate)) +"))"
+
+		dim miesiacOd,dzienOd,tczasod,tczasdo,miesiacDo,dzienDo,tczasCalk
+		dim dDateSearch,DayOfWeek,maxDayMonth
+
+	 	dim oResult : set oResult=trans_.createadors(strSQLPrac)
+		dim	typNieob,iIter,jIter
+		
+		'wyzerowanie dniwolnych i typnieob dla kazdego pracownika
+		
+		for iIter=1 to 12
+			for jIter=1 to 31
+				aDniWolne(iIter,jIter)=0
+				aTypNieob(iIter,jIter)=0
+        nadgodziny(iIter,jIter) = 0
+			next
+		next
+	
+		dim rokod,rokdo
+		do while not oResult.EOF
+			'aDniWolne(12,31),aTypNieob(12,31)
+			miesiacOd=Month(oResult.fields("dataOd"))
+			miesiacDo=Month(oResult.fields("dataDo"))
+			dziendo=Day(oResult.fields("dataDo"))
+			dzienod=Day(oResult.fields("dataOd"))
+			typNieob=oResult.fields("typ")
+			rokod=year(oResult.fields("dataOd"))
+			rokdo=year(oResult.fields("dataDo"))
+			if rokOd< rokDo then
+				miesiacDo=12
+			end if
+			if rokOd < year(g_dCurrentDate) then
+				dziendo=31
+				dzienod=1
+				miesiacDo=12
+				miesiacOd=1
+			end if
+			if miesiacod = miesiacdo then
+				for jIter=dzienod to dziendo 
+					if typNieob <> 13 then
+						aDniWolne(miesiacod,jIter)=1
+					end if
+					aTypNieob(miesiacod,jIter)=typNieob
+				next
+			else
+				for iIter=miesiacod to miesiacdo
+          wylicz_max_dni_w_miesiacu iIter,maxDayMonth
+          
+					if iIter=miesiacod then
+						for jIter=dzienod to maxDayMonth
+							if typNieob <> 13 then
+								aDniWolne(iIter,jIter)=1
+							end if
+							aTypNieob(iIter,jIter)=typNieob
+						next
+					else
+						if iIter=miesiacdo then
+							for jIter=1 to dziendo
+								if typNieob <> 13 then
+									aDniWolne(iIter,jIter)=1
+								end if
+								aTypNieob(iIter,jIter)=typNieob
+							next
+						else
+							for jIter=1 to maxDayMonth
+								if typNieob <> 13 then
+									aDniWolne(iIter,jIter)=1
+								end if
+								aTypNieob(iIter,jIter)=typNieob
+							next
+						end if
+					end if
+				next
+			end if
+			
+			oResult.movenext
+		loop
+
+end function
+
+
+function kryteria_selekcji(intOption)
+dim strKryteria : strKryteria=""
+if (pparamarray.value(intOption).mode <> 1 ) then
+	strKryteria=strKryteria+"Pole : "+cStr(pparamarray.value(intOption).ParamName)
+	if pparamarray.value(intOption).mode =2 then
+		strKryteria=strKryteria+" równe "+cStr(pparamarray.value(intOption).first_value)
+	end if
+	if pparamarray.value(intOption).mode = 3 then
+		strKryteria=strKryteria+" rozpoczyna się od "+cStr(pparamarray.value(intOption).first_value)
+	end if
+	if pparamarray.value(intOption).mode = 4 then
+		strKryteria=strKryteria+" zawiera "+cStr(pparamarray.value(intOption).first_value)
+	end if
+	if pparamarray.value(intOption).mode = 5 then
+		strKryteria=strKryteria+" pomiędzy "+cStr(pparamarray.value(intOption).first_value)+" i "+cStr(pparamarray.value(intOption).last_value)
+	end if
+end if
+
+kryteria_selekcji=strKryteria
+
+end function
+
+function kryteria_selekcji_data()
+
+dim strKryteria : strKryteria=""
+if (pparamarray.value(3).mode <> 1) then
+	strKryteria=strKryteria+"Pole : "+cStr(pparamarray.value(0).ParamName)
+	if (pparamarray.value(3).mode = 2)   then
+		strKryteria=strKryteria+" zawiera się w bierzącym roku ("+cStr(year(g_dCurrentDate))+")"
+	end if
+	if pparamarray.value(3).mode = 3 then
+		strKryteria=strKryteria+" zawiera się w bierzącym miesiącu "+cStr(month(g_dCurrentDate))+" ("+cStr(year(g_dCurrentDate))+")"
+	end if
+	if pparamarray.value(3).mode = 4 then
+		strKryteria=strKryteria+" zawiera się w dniu dzisiejszym ("+cStr(g_dCurrentDate)+")"
+	end if
+	if pparamarray.value(3).mode = 5 then
+		strKryteria=strKryteria+" po "+cStr(pparamarray.value(3).first_value)
+	end if
+	if pparamarray.value(3).mode = 6 then
+		strKryteria=strKryteria+" przed "+cStr(pparamarray.value(3).first_value)
+	end if
+	if pparamarray.value(3).mode = 7 then
+		strKryteria=strKryteria+" zawiera się pomiędzy "+cStr(pparamarray.value(3).first_value)+" i "+cStr(pparamarray.value(3).last_value)
+	end if
+end if
+kryteria_selekcji_data=strKryteria
+
+end function
+
+
+
+function c##CTRLID_REDIRECT_CHKBOX##_ongetdata(byref oCtrl)											
+																									
+	c##CTRLID_REDIRECT_CHKBOX##_ongetdata = true													
+																									
+end function																						
+																									
+function c##CTRLID_REDIRECT_CHKBOX##_ondataentered(byref oCtrl, byval newValue)						
+	
+	dim idobjPrac, intOpt														
+	idobjPrac=oCtrl.userprop(101)																
+	intOpt = oCtrl.userprop(100)	
+	intOpt = intOpt-1
+	dim tabOption : tabOption = Split(pSelectOption(idobjPrac),",")
+	tabOption(intOpt)=newValue
+	pSelectOption(idobjPrac)= Join(tabOption,",")	
+	
+	dim iter
+
+  dim pPerforming : set pPerforming = doc_.performing("Trwa przygotowanie danych...")
+
+	show_kryteria_selekcji g_identBody
+
+  for iter=0 to 14 
+    podsumowanie(1,iter)=0
+  next
+
+	for iter=0 to pSelectIdobjPrac.upper_index
+		iIndeksSelectIdobjPrac=iter
+		oblicz_dni_pracy_i_wolne iter
+    
+    dim ptbGl1 : set ptbGl1 = page_.ctrl(g_identBody)
+    dim intpTB1 : intpTB1 = ptbGl1.addnew(CTRL_TYPE_TABLE,-1).ident
+    page_.ctrl(intpTB1).border=1
+   
+		iIndeksSelectIdobjPrac=iter
+    
+		frefresh 1,intpTB1
+    page_.addxml g_identBody, "<br></br>"
+    page_.addxml g_identBody, "<ff/>"
+
+	next
+  
+    dim ctrl_glowna : set ctrl_glowna = page_.ctrl(g_identBody)
+    dim ident_podsum_legen : ident_podsum_legen = ctrl_glowna.addnew(CTRL_TYPE_TABLE,-1).ident
+    dim pTB_podsum_legen : set pTB_podsum_legen = doc_.afc.new_tb(nothing).attach(page_.ctrl(ident_podsum_legen))
+    pTB_podsum_legen.newrow
+    pTB_podsum_legen.newcell
+    pTB_podsum_legen.cell.colspan=2
+    pTB_podsum_legen.newrow
+    pTB_podsum_legen.newcell.addctrl CTRL_TYPE_TABLE,CTRLID_CALENDAR_PODSUMOWANIE  
+    pTB_podsum_legen.newcell.addctrl CTRL_TYPE_TABLE,CTRLID_CALENDAR_LEGENDA 
+
+    show_podsumowanie
+    show_legenda 
+
+	
+	c##CTRLID_REDIRECT_CHKBOX##_ondataentered = true												
+																									
+end function	
+
+
+
+#comment '------------------------------------------------------------
+#include "50203"
+#include "50222"
+
+dim g_dCurrentDate
+dim g_eCalMode
+dim g_strWykonawcaWhere
+
+function get_where_any(byval strWhereTypTermin)
+	get_where_any = _
+		"(n5zadanie.nStatus between N5ZADANIE_ZLECONE and N5ZADANIE_ZAKONCZONE) " + _
+		" and " + strWhereTypTermin + _
+		" and (" + g_strWykonawcaWhere + ")"
+end function
+
+function get_cursor_terminowe()
+	set get_cursor_terminowe = trans_.createrawcursor(TYPEID_N5ZADANIE, _
+		get_where_any("(n5zadanie.eTypterminRozp <> N5ZADANIE_ENDTYP_NAJSZYBCIEJ and " + _
+		" n5zadanie.eTypterminRozp <> N5ZADANIE_ENDTYP_OBOJETNY)"),"","")
+end function
+
+function get_where_asap()
+	get_where_asap = _
+		get_where_any("(n5zadanie.eTypterminRozp = N5ZADANIE_ENDTYP_NAJSZYBCIEJ)")
+end function
+
+function get_where_other()
+	get_where_other = _
+		get_where_any("(n5zadanie.eTypterminRozp = N5ZADANIE_ENDTYP_OBOJETNY)")
+end function
+
+
+
+function frefresh(byref opt, byval pTB_ident)
+
+		build_month_view g_dCurrentDate, opt,pTB_ident
+		frefresh = true
+
+end function
+
+function build_month_view(byval dMainDate, byval rem_all, byval ptb_ident)
+
+dim oParaCtrl
+dim strSQL
+dim indeksPrac : indeksPrac = iIndeksSelectIdobjPrac
+dim idobjPrac : idobjPrac = pSelectIdobjPrac(iIndeksSelectIdobjPrac)
+
+	strSQL = "select 'pImie'=prac.strImie,'pNazwisko'=prac.strNazwisko,'pUlica'=prac.strUlica,"+_
+			"'pNrDomu'=prac.strNrDomu,'pNrLok'=prac.strNrLokalu,'pKod'=prac.strKod,"+_
+			"'pMiasto'=m.strNazwa from n5pracownik as prac inner join n5miejscowosc as m "+_
+			"on prac.pMiejscowosc=m.idobj where prac.idobj="+cStr(idobjPrac)
+	dim oRS : set oRS = trans_.createadors(strSQL)
+	dim pCBModule : set pCBModule = doc_.getmodule(60231)
+  
+	dim pTBTools : set pTBTools = doc_.afc.new_tb(nothing).attach(page_.ctrl(ptb_ident))
+  
+	pTBTools.newrow
+  pTBTools.row.border = 0
+	pTBTools.newcell.addtext ""
+  pTBTools.newrow
+  pTBTools.row.border = 0
+	pTBTools.newcell.addtext ""
+	
+	pTBTools.newrow
+  pTBTools.row.fontsize=4
+  pTBTools.row.border = 0
+	pTBTools.newcell.addtext oRS.fields("pImie")+" "+oRS.fields("pNazwisko")
+	dim phli : set phli = doc_.createhli()
+
+	pTBTools.newcell
+	pTBTools.cell.keepline = false
+	pTBTools.cell.width=clng(100)
+	pTBTools.addctrl(CTRL_TYPE_CHECKBOX,-1).element.border = 0
+	pTBTools.element.customredirect = clng(CTRLID_REDIRECT_CHKBOX)
+				
+	pTBTools.element.transfer = page_.createtransfer("custom")
+	set pHli = doc_.createhli()
+	pHli.prop(100) = clng(1)
+	pHli.prop(101) = clng(iIndeksSelectIdobjPrac)
+	set pTBTools.element.userprop = pHli
+	
+	dim tab : tab = Split(pSelectOption(iIndeksSelectIdobjPrac),",")
+	
+	pTBTools.element.addnew(CTRL_TYPE_STATIC, -1).text = "Dni przepracowane"
+	with pTBTools.element
+		.width=clng(3345)
+		.value = cStr(tab(0))
+	end with
+	
+	if oRS.fields("pUlica") <> " " then
+		pTBTools.newrow
+    pTBTools.row.border = 0
+    pTBTools.row.fontsize=4
+		if oRS.fields("pNrLok") <> ""  then
+			pTBTools.newcell.addtext "ul. "+oRS.fields("pUlica")+" "+oRS.fields("pNrDomu")+"/"+oRS.fields("pNrLok")
+		else
+			pTBTools.newcell.addtext "ul. "+oRS.fields("pUlica")+" "+oRS.fields("pNrDomu")
+		end if
+	end if
+	if oRS.fields("pUlica") = " " then
+		pTBTools.newrow
+    pTBTools.row.border = 0
+    pTBTools.row.fontsize=4
+		pTBTools.newcell.addtext oRS.fields("pKod")+" "+oRS.fields("pMiasto")
+	end if
+	pTBTools.newcell
+	pTBTools.cell.keepline = false
+	pTBTools.cell.width=clng(100)
+	pTBTools.addctrl(CTRL_TYPE_CHECKBOX,-1).element.border = 0
+	pTBTools.element.customredirect = clng(CTRLID_REDIRECT_CHKBOX)
+				
+	pTBTools.element.transfer = page_.createtransfer("custom")
+	set pHli = doc_.createhli()
+	pHli.prop(100) = clng(2)
+	pHli.prop(101) = clng(iIndeksSelectIdobjPrac)
+	set pTBTools.element.userprop = pHli
+			
+	pTBTools.element.addnew(CTRL_TYPE_STATICEX, -1).text = "Dni nieprzepracowane"
+	pTBTools.element.width=clng(3245)
+	pTBTools.element.value = cStr(tab(1))
+	pTBTools.newcell
+	pTBTools.addctrl CTRL_TYPE_PICTURE, -1
+	with pTBTools.element
+		.image=clng(PICTURE_CHOICE_N5MAGAZYN)
+		.width=Clng(HEIGHT_FOR_12PX)
+		.height=Clng(HEIGHT_FOR_12PX)
+		.tip="Wybór z listy"
+		set .hli= doc_.createhli()
+		.hli.prop(GVAR_FUNCTIONHLI) = "opcje_nieobecnosci"
+		.hli.prop(102) = clng(iIndeksSelectIdobjPrac)
+	end with
+
+	if oRS.fields("pUlica") <> " " then
+		pTBTools.newrow
+    pTBTools.row.fontsize=4
+    pTBTools.row.border = 0
+		pTBTools.newcell.addtext oRS.fields("pKod")+" "+oRS.fields("pMiasto")
+	end if
+	pTBTools.newrow
+  pTBTools.row.border = 0
+	pTBTools.newcell.addtext ""
+	pTBTools.newrow
+	pTBTools.newcell
+
+
+	dim oCalBldrMth : set oCalBldrMth = pCBModule.get_calendar_builder(pTBTools.cell,4,dMainDate)
+	oCalBldrMth.extracols = 15
+	oCalBldrMth.build_frame
+	oCalBldrMth.extracell(-1,1).element(1).text = " d "
+	oCalBldrMth.extracell(-1,2).element(1).text = " h "
+ 	oCalBldrMth.extracell(-1,3).element(1).text = " NG"
+
+  oCalBldrMth.extracell(-1,4).element(1).text = " NN"
+ 	oCalBldrMth.extracell(-1,5).element(1).text = " UWp"
+ 	oCalBldrMth.extracell(-1,6).element(1).text = " UNż"
+ 	oCalBldrMth.extracell(-1,7).element(1).text = " UOk"
+ 	oCalBldrMth.extracell(-1,8).element(1).text = " UWC"
+ 	oCalBldrMth.extracell(-1,9).element(1).text = " US"
+ 	oCalBldrMth.extracell(-1,10).element(1).text = " UB"
+ 	oCalBldrMth.extracell(-1,11).element(1).text = " UP"
+ 	oCalBldrMth.extracell(-1,12).element(1).text = " UOp"
+  oCalBldrMth.extracell(-1,13).element(1).text = " UBp"
+ 	oCalBldrMth.extracell(-1,14).element(1).text = " NU"
+ 	oCalBldrMth.extracell(-1,15).element(1).text = " C"
+  
+	dim dDate,dDate1,dDate2
+	dim dDay,dMonth
+	dDate1 = cdate(oCalBldrMth.firstday)
+	dDate2 = cdate(oCalBldrMth.lastday)
+    Dim pKalCP : set pKalCP = doc_.system.activex("navopl.KalCP") 
+    pKalCP.init trans_.afc, page_.root, dDate1, dDate2
+	dim dniRobocze(12,1)
+  dim nieobecnosci(12,12)
+  
+  'korekta godzin choroby (pomniejszamy godziny choroby w dniach wolnych)
+  dim korekta(12)
+	dim iSumKor : iSumKor = clng(0)
+  
+  dim godzinyrobocze(12,1),nadgodzina(12,1)
+	dim iter,jter,intGodzinPrzepr(12,1),intDniPrzepr(12,1)
+	dim tab_opcje 
+	for iter=0 to 12
+		dniRobocze(iter,1)=ccur(0)
+		godzinyRobocze(iter,1)=ccur(0)
+    intGodzinPrzepr(iter,1)=ccur(0)
+    intDniPrzepr(iter,1)=ccur(0)
+    nadgodzina(iter,1)=ccur(0)
+	next
+  for iter=0 to 12
+    for jter=0 to 12
+      nieobecnosci(iter,jter)=0
+    next
+    korekta(iter) = 0
+  next  
+
+	for dDate = dDate1 to dDate2
+		dDay=Day(dDate)
+		dMonth=Month(dDate)
+		oCalBldrMth.currentday = dDate
+		if ((aDniWolne(dMonth,dDay) = 1) or (aCzasPracy(dMonth,dDay)=0)) then
+			if ((aDniWolne(dMonth,dDay) = 1) and (aTypNieob(dMonth,dDay)<12) ) then
+				tab_opcje = Split(pSelectOption(iIndeksSelectIdobjPrac),",")
+				if ((tab_opcje(aTypNieob(dMonth,dDay)+2)=1) and (tab_opcje(1)=1) and (aCzasPracy(dMonth,dDay)>0)) then
+          dniRobocze(dMonth,1) = dniRobocze(dMonth,1) + 1
+          godzinyRobocze(dMonth,1) = godzinyRobocze(dMonth,1) + ccur(aCzasPracy(dMonth,dDay)/100)
+          podsumowanie(1,aTypNieob(dMonth,dDay)+2) = podsumowanie(1,aTypNieob(dMonth,dDay)+2)+1
+          select case aTypNieob(dMonth,dDay)
+          case 1
+                    oCalBldrMth.cell.backcolor = COL_NIEOB_NIEUSP
+                    oCalBldrMth.addtext "U/"+cStr(aCzasPracy(dMonth,dDay)/100)
+                    oCalBldrMth.element.tip = TIP_NIEOB_NIEUSP
+          case 2
+          					oCalBldrMth.cell.backcolor = COL_URLOP_WYPOCZ
+           					oCalBldrMth.addtext "U/"+cStr(aCzasPracy(dMonth,dDay)/100)
+           					oCalBldrMth.element.tip = TIP_URLOP_WYPOCZ
+          case 3
+          					oCalBldrMth.cell.backcolor = COL_URLOP_NZAD
+                    oCalBldrMth.addtext "U/"+cStr(aCzasPracy(dMonth,dDay)/100)
+                    oCalBldrMth.element.tip = TIP_URLOP_NZAD
+          case 4
+          					oCalBldrMth.cell.backcolor = COL_URLOP_OKOLI
+                    oCalBldrMth.addtext "U/"+cStr(aCzasPracy(dMonth,dDay)/100)
+                    oCalBldrMth.element.tip = TIP_URLOP_OKOLI
+          case 5
+          					oCalBldrMth.cell.backcolor = COL_URLOP_WYCH
+                    oCalBldrMth.addtext "U/"+cStr(aCzasPracy(dMonth,dDay)/100)
+                    oCalBldrMth.element.tip = TIP_URLOP_WYCH
+          case 6
+          					oCalBldrMth.cell.backcolor = COL_URLOP_SZKOLE
+                    oCalBldrMth.addtext "U/"+cStr(aCzasPracy(dMonth,dDay)/100)
+                    oCalBldrMth.element.tip = TIP_URLOP_SZKOLE
+          case 7
+          					oCalBldrMth.cell.backcolor = COL_URLOP_BEZPL
+                    oCalBldrMth.addtext "U/"+cStr(aCzasPracy(dMonth,dDay)/100)
+                    oCalBldrMth.element.tip = TIP_URLOP_BEZPL
+          case 8
+          					oCalBldrMth.cell.backcolor = COL_URLOP_PROFIL
+                    oCalBldrMth.addtext "U/"+cStr(aCzasPracy(dMonth,dDay)/100)
+                    oCalBldrMth.element.tip = TIP_URLOP_PROFIL
+          case 9
+          					oCalBldrMth.cell.backcolor = COL_URLOP_OPIEK
+                    oCalBldrMth.addtext "U/"+cStr(aCzasPracy(dMonth,dDay)/100)
+                    oCalBldrMth.element.tip = TIP_URLOP_OPIEK
+          case 10
+           					oCalBldrMth.cell.backcolor = COL_URLOP_BEZPLA_ZPRAC
+                    oCalBldrMth.addtext "U/"+cStr(aCzasPracy(dMonth,dDay)/100)
+                    oCalBldrMth.element.tip = TIP_URLOP_BEZPLA_ZPRAC
+          case 11
+                    oCalBldrMth.cell.backcolor = COL_NIEOB_USPR_PLAT
+                    oCalBldrMth.addtext "U/"+cStr(aCzasPracy(dMonth,dDay)/100)
+                    oCalBldrMth.element.tip = TIP_NIEOB_USPR_PLAT
+          case else
+          					oCalBldrMth.cell.backcolor = COL_DZIEN_URLOP
+                    oCalBldrMth.addtext "U/"+cStr(aCzasPracy(dMonth,dDay)/100)
+           					oCalBldrMth.element.tip = "Urlop"
+          end select
+          nieobecnosci(aTypNieob(dMonth,dDay),dMonth)=nieobecnosci(aTypNieob(dMonth,dDay),dMonth)+1
+				else	
+					oCalBldrMth.cell.backcolor = COL_DZIEN_WOLNY
+				end if
+			else
+				if ((aDniWolne(dMonth,dDay) = 1) and (aTypNieob(dMonth,dDay)=12) ) then
+					tab_opcje = Split(pSelectOption(iIndeksSelectIdobjPrac),",")
+					if ((tab_opcje(aTypNieob(dMonth,dDay)+2)=1) and (tab_opcje(1)=1)) then 'and (aCzasPracy(dMonth,dDay)>0)) then
+            dniRobocze(dMonth,1) = dniRobocze(dMonth,1) + 1
+            godzinyRobocze(dMonth,1) = godzinyRobocze(dMonth,1) + (aCzasPracy(dMonth,dDay)/100)
+            podsumowanie(1,14) = podsumowanie(1,14) + 1
+						oCalBldrMth.cell.backcolor = COL_DZIEN_CHOROBA
+						oCalBldrMth.addtext "C/"+cStr(aCzasPracy(dMonth,dDay)/100)
+            if cStr(aCzasPracy(dMonth,dDay)/100) = "0" then
+              korekta(dMonth) = korekta(dMonth) + 8
+              iSumKor = iSumKor + 8
+            end if 
+						oCalBldrMth.element.tip = "Choroba"
+            nieobecnosci(aTypNieob(dMonth,dDay),dMonth)=nieobecnosci(aTypNieob(dMonth,dDay),dMonth)+1
+					else
+						oCalBldrMth.cell.backcolor = COL_DZIEN_WOLNY
+					end if
+				else
+					oCalBldrMth.cell.backcolor = COL_DZIEN_WOLNY
+				end if
+			end if
+		else
+			if ((aDniWolne(dMonth,dDay) = 0) and (aTypNieob(dMonth,dDay)=13)) then
+				tab_opcje = Split(pSelectOption(iIndeksSelectIdobjPrac),",")
+				if (tab_opcje(0)=1) then
+					dniRobocze(dMonth,1)=dniRobocze(dMonth,1)+1
+          godzinyRobocze(dMonth,1) = godzinyRobocze(dMonth,1) + (aCzasPracy(dMonth,dDay)/100)
+         ' if aDniPrzepr(dMonth,dDay) <> 0 then
+            intDniPrzepr(dMonth,1)=intDniPrzepr(dMonth,1)+1
+         ' end if
+          oCalBldrMth.cell.backcolor = COL_DZIEN_ROBOCZY
+          podsumowanie(1,1) = podsumowanie(1,1) + 1
+          oCalBldrMth.addtext cStr(nadgodziny(dMonth,dDay)+(aCzasPracy(dMonth,dDay)/100))+"/"+cStr(aCzasPracy(dMonth,dDay)/100)
+					intGodzinPrzepr(dMonth,1)=intGodzinPrzepr(dMonth,1)+trans_.afc.convert.roundn(aCzasPracy(dMonth,dDay)/100,2) + nadgodziny(dMonth,dDay)
+          nadgodzina(dMonth,1) = nadgodzina(dMonth,1) + nadgodziny(dMonth,dDay)
+          podsumowanie(1,2) = podsumowanie(1,2) + nadgodziny(dMonth,dDay)
+  			else
+					oCalBldrMth.cell.backcolor = COL_DZIEN_WOLNY
+				end if
+			else
+				oCalBldrMth.cell.backcolor = COL_DZIEN_WOLNY
+			end if
+		end if
+	next
+
+	dim intGodzinyAll,intDniAll
+  dim intGodzinyPrzeprAll,intDniPrzeprAll,intNadgodzinyAll,intNieobAll(12,1)
+	intGodzinyAll = 0
+	intDniAll = 0
+  intGodzinyPrzeprAll=0
+  intDniPrzeprAll=0
+  intNadgodzinyAll=0
+  for iter=0 to 12
+    intNieobAll(iter,1)=0
+  next
+	dim nYear : nYear = year(dMainDate)
+  oCalBldrMth.add_extra_row 1,"Razem:"
+	for iter = 1 to 12
+		dim dD1 : dD1 = dateserial(nYear,iter,1)
+		dim dD2 : dD2 = dateserial(nYear,iter+1,0)
+		oCalBldrMth.extracell(iter,1).addnew(CTRL_TYPE_STATIC,-1).text = cstr(intDniPrzepr(iter,1))+"/"+cstr(dniRobocze(iter,1))
+		intDniAll=intDniAll+dniRobocze(iter,1)
+    intDniPrzeprAll = intDniPrzeprAll + intDniPrzepr(iter,1)
+		oCalBldrMth.extracell(iter,2).addnew(CTRL_TYPE_STATIC,-1).text =_
+			cStr(trans_.afc.convert.roundn(intGodzinPrzepr(iter,1),2))+"/"+cstr(godzinyRobocze(iter,1))
+		intGodzinyAll=intGodzinyAll+godzinyRobocze(iter,1)
+    intGodzinyPrzeprAll=intGodzinyPrzeprAll+intGodzinPrzepr(iter,1)
+    intNadgodzinyAll=intNadgodzinyAll+nadgodzina(iter,1)
+    intNieobAll(1,1) =intNieobAll(1,1)+nieobecnosci(1,iter)
+    intNieobAll(2,1) =intNieobAll(2,1)+nieobecnosci(2,iter)
+    intNieobAll(3,1) =intNieobAll(3,1)+nieobecnosci(3,iter)
+    intNieobAll(4,1) =intNieobAll(4,1)+nieobecnosci(4,iter)
+    intNieobAll(5,1) =intNieobAll(5,1)+nieobecnosci(5,iter)
+    intNieobAll(6,1) =intNieobAll(6,1)+nieobecnosci(6,iter)
+    intNieobAll(7,1) =intNieobAll(7,1)+nieobecnosci(7,iter)
+    intNieobAll(8,1) =intNieobAll(8,1)+nieobecnosci(8,iter)
+    intNieobAll(9,1) =intNieobAll(9,1)+nieobecnosci(9,iter)
+    intNieobAll(10,1) =intNieobAll(10,1)+nieobecnosci(10,iter)
+    intNieobAll(11,1) =intNieobAll(11,1)+nieobecnosci(11,iter)
+    intNieobAll(12,1) =intNieobAll(12,1)+nieobecnosci(12,iter)
+    oCalBldrMth.extracell(iter,3).addnew(CTRL_TYPE_STATIC,-1).text = cStr(nadgodzina(iter,1))
+    oCalBldrMth.extracell(iter,4).addnew(CTRL_TYPE_STATIC,-1).text = cStr(nieobecnosci(1,iter)*8)+"/"+cStr(nieobecnosci(1,iter))
+    oCalBldrMth.extracell(iter,5).addnew(CTRL_TYPE_STATIC,-1).text = cStr(nieobecnosci(2,iter)*8)+"/"+cStr(nieobecnosci(2,iter))
+    oCalBldrMth.extracell(iter,6).addnew(CTRL_TYPE_STATIC,-1).text = cStr(nieobecnosci(3,iter)*8)+"/"+cStr(nieobecnosci(3,iter))
+    oCalBldrMth.extracell(iter,7).addnew(CTRL_TYPE_STATIC,-1).text = cStr(nieobecnosci(4,iter)*8)+"/"+cStr(nieobecnosci(4,iter))
+    oCalBldrMth.extracell(iter,8).addnew(CTRL_TYPE_STATIC,-1).text = cStr(nieobecnosci(5,iter)*8)+"/"+cStr(nieobecnosci(5,iter))
+    oCalBldrMth.extracell(iter,9).addnew(CTRL_TYPE_STATIC,-1).text = cStr(nieobecnosci(6,iter)*8)+"/"+cStr(nieobecnosci(6,iter))
+    oCalBldrMth.extracell(iter,10).addnew(CTRL_TYPE_STATIC,-1).text = cStr(nieobecnosci(7,iter)*8)+"/"+cStr(nieobecnosci(7,iter))
+    oCalBldrMth.extracell(iter,11).addnew(CTRL_TYPE_STATIC,-1).text = cStr(nieobecnosci(8,iter)*8)+"/"+cStr(nieobecnosci(8,iter))
+    oCalBldrMth.extracell(iter,12).addnew(CTRL_TYPE_STATIC,-1).text = cStr(nieobecnosci(9,iter)*8)+"/"+cStr(nieobecnosci(9,iter))
+    oCalBldrMth.extracell(iter,13).addnew(CTRL_TYPE_STATIC,-1).text = cStr(nieobecnosci(10,iter)*8)+"/"+cStr(nieobecnosci(10,iter))
+    oCalBldrMth.extracell(iter,14).addnew(CTRL_TYPE_STATIC,-1).text = cStr(nieobecnosci(11,iter)*8)+"/"+cStr(nieobecnosci(11,iter))
+    oCalBldrMth.extracell(iter,15).addnew(CTRL_TYPE_STATIC,-1).text = cStr(nieobecnosci(12,iter)*8 - korekta(iter))+"/"+cStr(nieobecnosci(12,iter))
+	next
+  
+  oCalBldrMth.add_extra_row 3,cStr(intDniPrzeprAll)+"/"+cStr(intDniAll)
+  oCalBldrMth.add_extra_row 2,cStr(intGodzinyPrzeprAll)+"/"+cStr(intGodzinyAll)
+  oCalBldrMth.add_extra_row 3,cStr(intNadgodzinyAll)
+  
+  for iter=1 to 11
+      oCalBldrMth.add_extra_row iter+3,cStr(intNieobAll(iter,1)*8)+"/"+cStr(intNieobAll(iter,1))
+  next
+  oCalBldrMth.add_extra_row 12+3,cStr(intNieobAll(12,1)*8 - iSumKor)+"/"+cStr(intNieobAll(iter,1))
+	
+	dim oZadaniaCursor : set oZadaniaCursor = get_cursor_terminowe()
+		
+	dim oZadanie
+	for each oZadanie in oZadaniaCursor
+		dim dTaskDateStart : dTaskDateStart = oZadanie.dDataTerminRozp
+		dim dTaskDateEnd : dTaskDateEnd = oZadanie.dDataTerminZak
+
+		if dTaskDateStart = doc_.afc.globals.nulldate() then
+			dTaskDateStart = dTaskDateEnd
+		end if
+		if dTaskDateEnd = doc_.afc.globals.nulldate() then
+			dTaskDateEnd = dTaskDateStart
+		end if
+
+		for dDate = oCalBldrMth.firstday to oCalBldrMth.lastday
+			if dTaskDateStart <= dDate and dTaskDateEnd >= dDate then
+				oCalBldrMth.currentday = dDate
+				with oCalBldrMth.cell
+					if .userprop is nothing then
+						set .userprop = doc_.createhlistr("vn1=0") ' licznik elementow
+					end if
+					set oParaCtrl = oCalBldrMth.cell.addnew(CTRL_TYPE_PARAGRAPH,-1)
+					oParaCtrl.border = 0
+					
+					if .userprop.prop(1) mod 2 then
+						oParaCtrl.backcolor=RGB(255,255,255)
+					else
+						oParaCtrl.backcolor=RGB(&HE6,&HE6,&HFA)
+					end if
+					
+					add_zadanie_info oParaCtrl,oZadanie,(dTaskDateStart = dDate),(dTaskDateEnd = dDate)
+					
+					.userprop.prop(1) = .userprop.prop(1) + 1
+				end with
+			end if
+		next
+	next
+end function
+
+function opcje_nieobecnosci(byref pHLI)
+
+dim pModule : set pModule = doc_.getmodule(43147)
+pModule.init cStr(pSelectOption(pHLI(102)))
+pModule.doModalAuto()
+pSelectOption(pHLI(102)) = trans_.var(303)
+dim iter
+
+  for iter=0 to 14 
+    podsumowanie(1,iter)=0
+  next
+
+	show_kryteria_selekcji g_pTB
+  dim pPerforming : set pPerforming = doc_.performing("Trwa przygotowanie danych...")
+
+for iter=0 to pSelectIdobjPrac.upper_index
+	iIndeksSelectIdobjPrac=iter
+	oblicz_dni_pracy_i_wolne iter
+  
+    dim ptbGl1 : set ptbGl1 = page_.ctrl(g_identBody)
+    dim intpTB1 : intpTB1 = ptbGl1.addnew(CTRL_TYPE_TABLE,-1).ident
+    page_.ctrl(intpTB1).border=1
+   
+    page_.ctrl(intpTB1).border=1
+
+		iIndeksSelectIdobjPrac=iter
+    page_.addxml g_identBody, "<br></br>"
+    page_.addxml g_identBody, "<ff/>"
+
+		frefresh 1, intpTB1
+
+next
+
+    dim ctrl_glowna : set ctrl_glowna = page_.ctrl(g_identBody)
+    dim ident_podsum_legen : ident_podsum_legen = ctrl_glowna.addnew(CTRL_TYPE_TABLE,-1).ident
+    dim pTB_podsum_legen : set pTB_podsum_legen = doc_.afc.new_tb(nothing).attach(page_.ctrl(ident_podsum_legen))
+    pTB_podsum_legen.newrow
+    pTB_podsum_legen.newcell
+    pTB_podsum_legen.cell.colspan=2
+    pTB_podsum_legen.newrow
+    pTB_podsum_legen.newcell.addctrl CTRL_TYPE_TABLE,CTRLID_CALENDAR_PODSUMOWANIE  
+    pTB_podsum_legen.newcell.addctrl CTRL_TYPE_TABLE,CTRLID_CALENDAR_LEGENDA 
+
+
+  show_podsumowanie 
+  show_legenda 
+
+
+end function
+
+function add_podsumowanie(byref pTB, byval nazwa_podsumowania, byval wartosc_podsumowania)
+
+  dim strPodsumowanie : strPodsumowanie = nazwa_podsumowania+": " + cStr(wartosc_podsumowania)
+  
+  if (nazwa_podsumowania = "Nadgodziny") then
+      if wartosc_podsumowania = 1 then
+          strPodsumowanie = strPodsumowanie + " godzina"
+      else
+          strPodsumowanie = strPodsumowanie + " godzin"
+      end if
+  else
+    if wartosc_podsumowania = 1 then
+       strPodsumowanie = strPodsumowanie + " dzień"
+    else
+        strPodsumowanie = strPodsumowanie + " dni"
+    end if
+  end if
+  pTB.newrow
+  pTB.row.fontsize=5
+	pTB.newcell.addtext strPodsumowanie
+
+end function
+
+function show_podsumowanie()
+
+
+	dim pTBSuma : set pTBSuma = doc_.afc.new_tb(nothing).attach(page_.ctrl(CTRLID_CALENDAR_PODSUMOWANIE)).section_foot.removeall
+  dim iter
+  
+  pTBSuma.newrow
+  pTBSuma.row.fontsize=5
+	pTBSuma.newcell.addtext "Razem :"
+  
+  for iter = 1 to 14 
+    add_podsumowanie pTBSuma,nazwa_nieobecnosci(1,iter),podsumowanie(1,iter)
+  next
+  
+
+end function
+
+function choose_object_id()
+
+end function
+#comment '------------------------------------------------------------
+
+]]>
+
+    </script>
+  </config>
+
+  <body>
+          <table border='1' name='ctrlid_glowna'>
+            <tbody>
+              <tr>
+                <td>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+  </body>
+
+</page>

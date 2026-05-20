@@ -1,0 +1,275 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+RAPTEMPLATE_DOKUMENTY_ZAKSIEGOWANE
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1250.h"
+
+#define RAPORT_TITLE Dokumenty zaksięgowane
+
+#macro RXE_TEXT_LINK_FORM_VVV(_type_val_,_idobj_,_val_)	\
+<text href='<%so.write rapeng_.href_open_form_proxy(_type_val_,_idobj_)%>'><![CDATA[<%so.write cstr(_val_)%>]]></text>
+
+-->
+<page style='36'>
+<config>
+<title>RAPORT_TITLE</title>
+<script>
+<![CDATA[
+
+<%
+function query()
+	dim strTmp
+	strTmp = "(%1 or %2 or %3)"
+	'brak
+	if pParamDK.selected.value(0) then
+		strTmp = replace(strTmp , "%1" , "pDowodKsieg=0")
+	else
+		strTmp = replace(strTmp , "%1" , "pDowodKsieg=-1")
+	end if
+	'bufor
+	if pParamDK.selected.value(1) then
+		strTmp = replace(strTmp , "%2" , "pDowodKsieg in (select idobj from n5dowodksieg where eStatus=N5_DEKRET_STATUS_BUFOR)")
+	else
+		strTmp = replace(strTmp , "%2" , "pDowodKsieg=-1")
+	end if
+	'zaksiegowany
+	if pParamDK.selected.value(2) then
+		strTmp = replace(strTmp , "%3" , "pDowodKsieg in (select idobj from n5dowodksieg where eStatus=N5_DEKRET_STATUS_ZAKS)")
+	else
+		strTmp = replace(strTmp , "%3" , "pDowodKsieg=-1")
+	end if
+
+	dim strQueryWhere
+  strQueryWhere = " %1 and (" + strTmp + ")"
+	strQueryWhere = rapeng_.query_apply_actual_param(strQueryWhere,pParamArray)
+
+query = "select * from (select 'rejestr'=(select strNazwa from n5rejestrdok where IdObj = pRejestrDok),pRejestrDok, " + vbNewLine +_
+  " 'data'=dDataOper,'nr_dok'=strNrDok,'kwota'=curKwotaPodm,'podmiot'=wrefPodmiot, " + vbNewLine +_
+  " 'podmiot_wrt'=wrefPodmiot_wrt,'idobj'=IdObj,'type'=10150 from n5platnosc " + vbNewLine +_
+  " where pSchematDekr=0 and dDataOper" + strQueryWhere + vbNewLine +_
+  " union all " + vbNewLine +_
+  " select 'rejestr'=(select strNazwa from n5rejestrdok where IdObj = pRejestrDok),pRejestrDok, " + vbNewLine +_
+  " 'data'=dDataWyst,'nr_dok'=strNrDok,'kwota'=curSumaBrutto,'podmiot'=pKlient, " + vbNewLine +_
+  " 'podmiot_wrt'=10108,'idobj'=IdObj,'type'=10129 from n5sprzedaz " + vbNewLine +_ 
+  " where pSchematDekr=0 and dDataWyst" + strQueryWhere + vbNewLine +_
+  " union all " + vbNewLine +_				 
+  " select 'rejestr'=(select strNazwa from n5rejestrdok where IdObj = pRejestrDok),pRejestrDok, " + vbNewLine +_
+  " 'data'=dDataOtrzym,'nr_dok'=strNrDok,'kwota'=curSumaBrutto,'podmiot'=pDostawca, " + vbNewLine +_
+  " 'podmiot_wrt'=10108,'idobj'=IdObj,'type'=10176 from n5zakup " + vbNewLine +_ 
+  " where pSchematDekr=0 and dDataOtrzym" + strQueryWhere + vbNewLine +_
+  " union all " + vbNewLine +_				   
+  " select 'rejestr'=(select strNazwa from n5rejestrdok where IdObj = pRejestrDok),pRejestrDok, " + vbNewLine +_
+  " 'data'=dDataWyst,'nr_dok'=strNrDok,'kwota'=curSumaMag,'podmiot'=pKlient, " + vbNewLine +_
+  " 'podmiot_wrt'=10108,'idobj'=IdObj,'type'=10162 from n5dokmag " + vbNewLine +_ 
+  " where pSchematDekr=0 and dDataWyst" + strQueryWhere + vbNewLine +_
+  ") as pom where %3" + vbNewLine +_
+  " order by 'rejestr'"
+  
+  query = rapeng_.query_apply_actual_param(query,pParamArray)
+  
+  query = Replace(query,"dDataOper (","(dDataOper")
+  query = Replace(query,"dDataWyst (","(dDataWyst")
+  query = Replace(query,"dDataOtrzym (","(dDataOtrzym")
+end function
+%>
+<%
+private function getCurrentRKSId()
+	if trans_.isvar(GVAR_ROKKSIEG) then
+		getCurrentRKSId = trans_.var(GVAR_ROKKSIEG)
+	else
+		getCurrentRKSId = 0
+	end if
+end function
+
+dim pParamDK
+
+function default_param()
+	dim pParamArray: set pParamArray = doc_.afc.new_navoarray()
+
+	pParamArray.add doc_.afc.rap.param.new_date_range("Data wystawienia").bindexpr("")
+  
+	set pParamDK = doc_.afc.rap.param.new_choice("Dowód księgowy")
+	pParamDK.multiple = true
+	doc_.afc.rap.param.init_on_query pParamDK, trans_, _
+	"select '<brak>',-1  union select '<w buforze>', 0 union select '<zaksięgowane>', 1  order by 1"
+	pParamArray.add pParamDK 
+  
+	dim pParam2: Set pParam2 = doc_.afc.rap.param.new_choice("Rejestr").bindexpr("pom.pRejestrDok")
+	doc_.afc.rap.param.init_on_query pParam2, trans_ ,_
+		"select strNazwa, idobj from n5rejestrdok where (pRokKsieg = 0 or pRokKsieg = " + cstr(getCurrentRKSId()) +_
+		") and eTyp in (N5REJESTRDOK_KASOWY,N5REJESTRDOK_BANKOWY,N5REJESTRDOK_FAKT_SP,N5REJESTRDOK_KOR_FAKT_SP," +_
+    "N5REJESTRDOK_RACH,N5REJESTRDOK_KOR_RACH,N5REJESTRDOK_PARAGON,N5REJESTRDOK_KOR_PARAGON,N5REJESTRDOK_FAKT_EXP," +_
+    "N5REJESTRDOK_KOR_FAKT_EXP,N5REJESTRDOK_KOREKTA_WDT,N5REJESTRDOK_WDT,N5REJESTRDOK_FAKTURA_ZALICZKOWA," +_
+    "N5REJESTRDOK_FAKTURA_ZALICZKOWA_KOR,N5REJESTRDOK_FAKT_ZAK,N5REJESTRDOK_WNT,N5REJESTRDOK_KOREKTA_WNT," +_
+    "N5REJESTRDOK_KOR_FAKT_ZAK,N5REJESTRDOK_FAKT_IMP,N5REJESTRDOK_KOR_FAKT_IMP,N5REJESTRDOK_FAKT_ZAK_RR," +_
+    "N5REJESTRDOK_KOR_FAKT_ZAK_RR,N5REJESTRDOK__PZ,N5REJESTRDOK__WZ,N5REJESTRDOK__ZD,N5REJESTRDOK__ZZ," +_
+    "N5REJESTRDOK__PW,N5REJESTRDOK__RW,N5REJESTRDOK__PP,N5REJESTRDOK__RP,N5REJESTRDOK__MM,N5REJESTRDOK__MP," +_
+    "N5REJESTRDOK__MR,N5REJESTRDOK__IP,N5REJESTRDOK__IR) order by strNazwa "
+	pParamArray.add pParam2  
+
+	set default_param = pParamArray
+end function
+%>
+<%
+function write_actual_param(byref pActualParam)
+dim iter
+dim bAnyWritten : bAnyWritten = false
+if not pActualParam is nothing then
+for iter = 0 to pActualParam.upperIndex
+if pActualParam.value(iter).get_desc() <> "" then 
+bAnyWritten = true
+	so.write "<t size='5' /><text fontsize='4'><![CD"+"ATA[" + pActualParam.value(iter).get_desc() + "]"+"]></text><br/>"
+end if
+next
+end if
+if not bAnyWritten then 
+	so.write "<t fontsize='4'>brak</t><br/>"
+end if
+	so.write "<br/>"
+end function
+%>
+<%
+function section_header_1(byref pSection,byref pRec)
+%>
+<tr userprop='propc_section_start="1" propc_section_hidden="0" propc_section_req="0"' fontsize='4'>
+	<td style='27' colspan='6'>
+		<picture name='<%so.write cstr(nSectionPicCounter)%>' tip='Zwiń' ignoresysdisable='true' image='PICTURE_SMALL_MINUS' width='SIZE_FOR_PLUS' height='SIZE_FOR_PLUS' href='vs1022="section_hideshow_hli" vn100="<%so.write cstr(nSectionPicCounter)%>"'/>
+	  RXE_AUTO_TEXT(rejestr)
+</td>
+</tr>
+<%
+nSectionPicCounter=nSectionPicCounter+1
+end function
+%>
+<%
+function section_footer_1(byref pSection)
+%>
+<tr hide='true' userprop='propc_section_end="1"'><td colspan='6' /></tr>
+<%
+end function
+%>
+<%
+function body_row(byref pSection,byref pRec)
+if pRapExec.RecNr mod 2 = 0 then
+%>
+<tr bordercolor='white'>
+<%
+else
+%>
+<tr bordercolor='white' style='37'>
+<%
+end if
+%>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+  <td align='right'>RXE_LP</td>
+	<td>
+    RXE_DATE(data)	
+	</td>
+	<td>
+    RXE_AUTOTEXT_LINK_FORM_CCC(type,idobj,nr_dok)
+	</td>
+	<td>
+      <%
+      dim podmiot: podmiot = clng(pRec("podmiot").value)
+      dim podmiot_wrt: podmiot_wrt = clng(pRec("podmiot_wrt").value)
+      if podmiot > clng(0) and podmiot_wrt > clng(0) then
+        dim oPodmiot: set oPodmiot = trans_.getobj(podmiot_wrt,podmiot)
+        if not oPodmiot is nothing then
+      %>
+        RXE_TEXT_LINK_FORM_VVV(podmiot_wrt,podmiot,oPodmiot.text)
+      <%
+        else
+      %>
+        <text></text>
+      <%
+        end if
+      end if
+      %>
+	</td>
+	<td>
+    RXE_MONEY_VAR(ccur(pRec("podmiot").value))
+	</td>  
+</tr><%
+end function
+%>
+<%
+function body_header(byref pSection,byref pRec)
+%>
+<table border='1'>
+<thead>
+<tr style='21'>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+	<td width='min'><t>LP</t></td>
+  <td width='2500'><t><![CDATA[Data]]></t></td>
+  <td width='min'><t><![CDATA[Dokument]]></t></td>
+  <td width='7000'><t><![CDATA[Podmiot]]></t></td>
+  <td width='min'><t><![CDATA[Kwota]]></t></td>
+</tr>
+</thead>
+<tbody>
+<%
+end function
+%>
+<%
+function body_footer(byref pSection)
+%>
+</tbody>
+</table>
+<%
+end function
+%>
+<%dim nSectionPicCounter : nSectionPicCounter = 10000000%>
+function section_hideshow_hli(byref pHLI)
+doc_.afc.formsection.section_hideshow page_, pHLI.prop(100)
+end function
+]]>
+</script>
+</config>
+<header>
+</header>
+<body>
+<p>
+RAPORT_HEADER(3,0)
+</p>
+
+<p>
+<t size='2'/>
+</p>
+
+<p><text fontsize='7'><![CDATA[RAPORT_TITLE]]></text></p><br/><br/>
+<t fontsize='5' bold='true'>Kryteria selekcji:</t><br/>
+<%
+
+dim pRapExec : set pRapExec = rapeng_.new_engine()
+with pRapExec
+	dim pParamArray : set pParamArray = default_param()
+	rapeng_.merge_params pParamArray,rapeng_.get_raport_param()
+	pRapExec.title = "RAPORT_TITLE"
+
+	if rapeng_.show_raport_param_dialog(pParamArray,"RAPORT_TITLE") <> 0 then
+		pRapExec.put_final_query query()
+		rapeng_.set_raport_param pParamArray
+    
+		.add_body_ex getref("body_header"),getref("body_footer"),getref("body_row")
+    .add_group_section 0,getref("section_header_1"),getref("section_footer_1")
+    
+		write_actual_param(rapeng_.get_raport_param())
+  end if
+
+	if not .perform then
+	  so.write "<p style='21'><t>Brak danych spełniających podane kryteria</t></p>"
+	end if
+%>
+<%
+end with
+%>
+</body>
+<footer>
+</footer>
+</page>

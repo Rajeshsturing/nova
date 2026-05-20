@@ -1,0 +1,592 @@
+<?xml version="1.0" encoding="windows-1250"?>
+<!--
+#comment NX_READY
+
+export do SAP
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1231.h"
+
+--> 
+<page xmlns="http://tempuri.org/u60615_export_SAP.xsd">
+<config>
+<script>
+<![CDATA[ 
+
+'class CExcel
+#include "50201"
+#include "50212"
+#include "50203"
+#include "50519"
+
+'tablica przechowująca parametry tworzonego eksportu
+dim g_oParamArray : set g_oParamArray = nothing
+
+'1 - przed 2013 r.
+'2 - 2013 r.
+'3 - 2014 r.
+dim iRaportVersion : iRaportVersion = 1
+
+dim pFSO: set pFSO=CreateObject("Scripting.FileSystemObject")
+
+sub safe_delete_file(byval strFileName)
+	on error resume next
+	pFSO.DeleteFile strFileName,true
+	on error goto 0
+end sub
+'-----------------------------
+' funkcja inicjująca eksport
+'-----------------------------
+function fopen()
+  'trans_.var(102)=1
+
+  iRaportVersion = trans_.var(101)
+  
+	fopen = facquireparam()
+	if not fopen then
+		exit function
+	end if
+	
+	dim pPerf : set pPerf = doc_.performing("Eksport danych do SAP...")
+
+	NX_TRACE_START_STREAM("Eksport danych do SAP",nothing)
+	
+  'rozpocznij ekport dokumentów sprzedaży
+	export_dok_do_SAP
+
+	set pPerf = nothing
+
+	NX_TRACE_SHOW_LOG(1)
+	fopen = false
+end function
+
+
+'---------------------------------------------------
+' funkcja tworząca parametry wykonywanego eksportu
+'---------------------------------------------------
+dim pRaportMomentParam
+function get_default_param()
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+
+  if iRaportVersion = 3 then
+	  set pRaportMomentParam = doc_.afc.rap.param.new_date("Analizowany moment").bindexpr("")
+	  pParamArray.add pRaportMomentParam    
+  else
+	  dim oZakresDatParam : set oZakresDatParam = doc_.afc.rap.param.new_date_range("Data wystawienia").bindexpr("%DATADOK%")
+    pParamArray.add oZakresDatParam    
+  end if
+
+  pParamArray.add doc_.afc.rap.param.new_text("Nazwa dostawcy").bindexpr("isnull(%DOSTNAZWA%,'')")
+	
+  if iRaportVersion = 2 or iRaportVersion = 3 then
+    pParamArray.add doc_.afc.rap.param.new_text("Grupa klientów").bindexpr("isnull(%GRKLNAZWA%,'')")
+	end if
+  
+	set get_default_param = pParamArray
+end function
+
+
+'----------------------------------------------------------------
+' funkcja otwierająca okno dialogowe wyboru parametrów eksportu
+'----------------------------------------------------------------
+function facquireparam : facquireparam = false
+
+	dim pModRapEngine : set pModRapEngine = doc_.getmodule(60108)
+	dim oParamArray : set oParamArray = get_default_param()
+
+if trans_.isvar(102) then  
+  oParamArray.value(0).mode = PARAM_DATE_MODE_RANGE
+  oParamArray.value(0).first_value = trans_.var(GVAR_TODAY)
+	oParamArray.value(0).last_value = trans_.var(GVAR_TODAY)
+
+  oParamArray.value(1).mode = PARAM_TEXT_MODE_CONTAIN
+  oParamArray.value(1).first_value = "brother"
+
+  oParamArray.value(2).mode = PARAM_TEXT_MODE_CONTAIN
+  oParamArray.value(2).first_value = "brother"
+end if
+  
+	if pModRapEngine.show_raport_param_dialog(oParamArray, "Parametry eksportu") = 0 then
+		exit function
+	end if
+
+  set g_oParamArray = oParamArray
+
+	'--- force generation of where parts in parameters
+	g_oParamArray.Value(0).get_where_part trans_
+	g_oParamArray.Value(1).get_where_part trans_
+
+	dim strInfo : strInfo = _
+		vbLf + g_oParamArray.Value(0).get_desc() + _
+		vbLf + g_oParamArray.Value(1).get_desc()
+
+	facquireparam = true
+end function
+
+
+'----------------------------------------
+' funkcja eksportu danych do pliku .xls
+'----------------------------------------
+function export_dok_do_SAP() : export_dok_do_SAP = false
+	
+	NX_TRACE_SUB_START("Eksport do SAP")
+
+  'ścieżka do pliku z eksportowanymi danymi
+  dim strDestPath : strDestPath = getUserDirectory() + "\Eksport do SAP\"
+  dim strDestPath2: strDestPath2 = "i:\"
+  
+  Create_FileDriveObject
+
+	'tworzymy teraz katalog ale dla danego user'a i dokumentu
+	if (not pFD.IsFolder( strDestPath )) then
+		if (not pFD.CreatePath(strDestPath)) then
+			exit function
+		end if
+	end if
+	
+if iRaportVersion = 2 or iRaportVersion = 3 then
+  'katalogi dla nowy i 2014
+  if iRaportVersion = 2 then
+    strDestPath = strDestPath + "SELL\"
+  else
+    strDestPath = strDestPath + "STOCK\"
+  end if
+	if (not pFD.IsFolder( strDestPath )) then
+		if (not pFD.CreatePath(strDestPath)) then
+			exit function
+		end if
+	end if  
+
+  if not doc_.getmodule(60253).gm_ensure_accuracy_ui(true) then
+    trans_.message 1002 , 0 , "Nie udało się zaktualizować cen magazynowych. Sprawdź przyczynę za pomocą raportów magazynowych."
+    exit function
+  end if
+else
+	strDestPath = strDestPath + "Sellout_Labelmarket_" + CStr(Year(Now)) + "_" + CStr(Month(Now)) + ".xls"
+end if
+  
+  'zapytanie SQL pobierające dane do eksportu
+  dim strSQL
+  if iRaportVersion = 1 then 
+  strSQL = "select 's_ddatawyst'=s.p_ddatawyst,'s_strnrdok'=s.p_strNrDok,'k_strindeks'=k.strIndeks,'k_strnazwa'=k.strNazwa, " +_
+                        "'p_strindeks'=p.strIndeks,'p_strnazwa'=p.strNazwa,'p_strindeks'=p.strIndeks,'s_curiloscopak'=s.c_curiloscopak, " +_
+                        "'z_wartnetto'=isnull((s.c_curiloscopak *  " +_
+                        "              (select top 1 z.c_curCenaNettoWal from vlist_n5zakup_listPozycje as z " +_
+                        "              inner join n5rejestrdok as r on z.p_pRejestrDok = r.idobj " +_
+                        "              inner join n5produkt as prod on z.c_pprodukt = prod.idobj " +_
+                        "              left outer join n5klient as dost on prod.prod_pDostawca = dost.idobj " +_
+                        "              where (r.eTyp = N5REJESTRDOK_WNT) and prod.strIndeks = p.strIndeks and " +_
+                        "              [%4] and z.p_ddatawyst <= [%5] " +_
+                        "              order by z.p_ddatawyst desc)),0), " +_
+                        "'s_curwartnettoEUR'=isnull((s.c_curwartnetto / (select AVG(curSprzedWal) from n5kurswalut as k " +_ 
+                        "                                         inner join n5jednostka as jZ on k.pWalZ = jZ.idobj " +_
+                        "                                         inner join n5jednostka as jNa on k.pWalN = jNa.idobj " +_  
+                        "                                         where jZ.strSkrot like '%EUS%' and jNa.strSkrot like '%PLN%' and " +_   
+                        "                                         [%1])),0), " +_
+                        "'k_strnazwa'=k.strNazwa,'k_adres'=k.strUlica + ' ' + k.strNrDomu, " +_
+                        "'m_miasto'=m.strNazwa,'k_strkod'=k.strKod,'k_strnip'=k.strNIP,'kr_strskrot'=kr.strSkrot,'Dummy_Field'='*' " +_
+                        "from vlist_n5sprzedaz_listPozycje as s " +_
+                        "inner join n5klient as k on s.p_pklient = k.idobj " +_
+                        "inner join n5miejscowosc as m on k.pMiejscowosc = m.idobj " +_
+                        "inner join n5kraj as kr on k.pKraj = kr.idobj " +_
+                        "inner join n5produkt as p on s.c_pprodukt = p.idobj " +_
+                        "left outer join n5klient as d on p.prod_pDostawca = d.idobj " +_
+                        "where [%2] and [%3] " +_
+                        "order by k.strNazwa, s.p_strnrdok"
+                        
+ dim strWhere1, strWhere2, strWhere3, strWhere4, strWhere5, strWhere6, strWhere7
+	strWhere1 = replace(g_oParamArray.Value(0).get_where_part(trans_),"%DATADOK%","dData")
+  strWhere2 = replace(g_oParamArray.Value(0).get_where_part(trans_),"%DATADOK%","s.p_ddatawyst")
+  strWhere3 = replace(g_oParamArray.Value(1).get_where_part(trans_),"%DOSTNAZWA%","d.strNazwa")
+  strWhere4 = replace(g_oParamArray.Value(1).get_where_part(trans_),"%DOSTNAZWA%","dost.strNazwa")
+  strWhere5 = trans_.afc.convert.date2SQL(g_oParamArray.Value(0).last_value)
+  
+  strSQL = replace(strSQL,"[%1]",strWhere1)
+  strSQL = replace(strSQL,"[%2]",strWhere2)
+  strSQL = replace(strSQL,"[%3]",strWhere3)
+  strSQL = replace(strSQL,"[%4]",strWhere4)
+  strSQL = replace(strSQL,"[%5]",strWhere5)
+                          
+  elseif iRaportVersion = 2 then
+  '26 - Euro
+  '5 - EUR
+  dim strSQL0 : strSQL0 = "if exists (select * from sysobjects where name='labelmarket_export_sap_2013') " +_
+  "delete from dbo.labelmarket_export_sap_2013 " +_
+  "else " +_
+  "create table dbo.labelmarket_export_sap_2013 (" +_
+  "idobj_produkt integer, " +_
+  "idobj_sprzedaz integer, " +_
+  "produkt_indeks varchar(512)," +_
+  "produkt_nazwa varchar(512)," +_
+  "sprzed_ilosc decimal(14,4)," +_
+  "zakup_wart_netto decimal(14,4)," +_
+  "sprzed_wart_netto decimal(14,4)," +_
+  "sprzed_kurs decimal(14,4)," +_
+  "zakup_kurs decimal(14,4)," +_
+  "klient_nip varchar(512)," +_
+  "klient_nazw varchar(512)," +_
+  "klient_adres varchar(512)," +_
+  "klient_kod varchar(512)," +_
+  "klient_miasto varchar(512)," +_
+  "sprzed_datawyst datetime," +_
+  "egz_nr varchar(512)" +_
+  ")"
+  trans_.execsql strSQL0
+  
+  dim strSQL1 : strSQL1 = "insert into dbo.labelmarket_export_sap_2013 select prod.idobj, vlsp.p_idobj, prod.strIndeks, prod.strNazwa, vlsp.c_curiloscopak - isnull(vlsp_org.c_curiloscopak, 0)," +_
+" isnull((select AVG(gmo_curcena) from n5gmop where gmo_pprod = vlsp.c_pprodukt and gmo_nNumOp = isnull((select top 1 nNumOper from n5dokmag where wrefdokhandl=vlsp.p_idobj order by nNumOper),0)), 0.0),"+_
+" vlsp.c_curwartnetto - isnull(vlsp_org.c_curwartnetto, 0),"+_
+" case vlsp.p_pwaluta when 26 then 1.0 else " +_
+" isnull((select curSprzedWal from n5kurswalut where idobj = (select top 1 idobj from n5kurswalut kw_ where kw_.pWaln = vlsp.p_pwaluta " +_
+" and kw_.pWalz = 26 and kw_.dData <= vlsp.p_dDatawyst order by kw_.dData desc)), 0.0) " +_
+" end, " +_
+" case vlsp.p_pwaluta when 26 then 1.0 else " +_
+" isnull((select curSprzedWal from n5kurswalut where idobj = (select top 1 idobj from n5kurswalut kw_ where kw_.pWaln = vlsp.p_pwaluta " +_
+" and kw_.pWalz = 26 and kw_.dData < isnull((select top 1 dDataWyst from n5dokmag where wrefdokhandl=vlsp.p_idobj order by nNumOper), '2005-01-01') order by kw_.dData desc)), 0.0) " +_
+" end, " +_
+" k.strNIP, k.strNazwa, k.strUlica + ' ' + k.strNrDomu, k.strKod, m.strNazwa, vlsp.p_dDatawyst, "+_
+" isnull((select top 1 egz.egze_strNrSeryjny from n5egzemplarz egz join vlist_n5dokmag_dm_listEgzemplarze vldmeg on egz.idobj = vldmeg.c_pdmeg_pegz "+_
+" where egz.egze_pProdukt = vlsp.c_pprodukt and vldmeg.p_wrefdokhandl=vlsp.p_idobj and vldmeg.p_wrefdokhandl_wrt=10129 order by vldmeg.coll_lp),'') " +_
+" from vlist_n5sprzedaz_listPozycje as vlsp "+_
+" left outer join vlist_n5sprzedaz_listpozycje vlsp_org on vlsp.p_ppopsprzed = vlsp_org.p_idobj and vlsp.coll_lp = vlsp_org.coll_lp "+_
+" inner join n5produkt as prod on vlsp.c_pprodukt = prod.idobj " +_
+" inner join n5klient as k on vlsp.p_pklient = k.idobj " +_
+" inner join n5grupaklient as grk on k.pGrupaKlient = grk.idobj " +_
+" inner join n5miejscowosc as m on k.pMiejscowosc = m.idobj "+_
+" where vlsp.p_prejestrdok not in (select IdObj from n5rejestrdok where eTyp in (N5REJESTRDOK_DOSTAWA,N5REJESTRDOK_KOR_DOSTAWA)) and [%1] "
+
+strSQL1 = replace(strSQL1, "[%1]", replace(g_oParamArray.Value(0).get_where_part(trans_), "%DATADOK%", "vlsp.p_ddatawyst"))
+
+if g_oParamArray.Value(1).mode <> PARAM_TEXT_MODE_ANY_TEXT then
+strSQL1 = strSQL1 + replace(" and vlsp.c_pprodukt in (select idobj from n5produkt where prod_pDostawca in (select idobj from n5klient as dostawca where [%A] )) ",_
+  "[%A]", replace(g_oParamArray.Value(1).get_where_part(trans_),"%DOSTNAZWA%", "dostawca.strNazwa"))
+end if
+
+strSQL1 = strSQL1 + " and " + replace(g_oParamArray.Value(2).get_where_part(trans_), "%GRKLNAZWA%", "grk.strNazwa")
+
+trans_.execsql strSQL1
+trans_.execsql "commit"
+
+strSQL = "select produkt_indeks, produkt_nazwa, sprzed_ilosc, zakup_wart_netto, sprzed_wart_netto, sprzed_kurs, zakup_kurs, " +_
+" klient_nip, klient_nazw, klient_adres, klient_kod, klient_miasto, sprzed_datawyst, egz_nr from dbo.labelmarket_export_sap_2013 order by klient_nazw, sprzed_datawyst"
+
+else
+  'rok 2014
+  strSQL = "select * from " + vbNewLine +_  
+           "(select 'produkt_indeks'=max(prod.p_strindeks), 'produkt_nazwa'=max(prod.p_strnazwa), " + vbNewLine +_ 
+           "'ilosc_magazyn' = isnull(sum(t_0.gmo_curIlosc),0), " + vbNewLine +_ 
+           "'ilosc_zam_wlasne'=(select isnull(sum(c_curiloscopakpoz),0) from vlist_n5zamowienie_listPozycje zam " + vbNewLine +_ 
+           "inner join n5rejestrdok r on zam.p_prejestrdok = r.idObj " + vbNewLine +_ 
+           "where r.eTyp = N5REJESTRDOK__ZAM_WLASNE and c_pprodukt = prod.p_idobj and c_popak = prod.c_idobj), " + vbNewLine +_ 
+           "'ilosc_zam_obce'=(select isnull(sum(c_curiloscopakpoz),0) from vlist_n5zamowienie_listPozycje zam " + vbNewLine +_ 
+           "	inner join n5rejestrdok r on zam.p_prejestrdok = r.idObj " + vbNewLine +_ 
+           "	inner join n5klient as k on zam.p_pklient = k.idobj " + vbNewLine +_ 
+           "	inner join n5grupaklient as grk on k.pGrupaKlient = grk.idobj " + vbNewLine +_ 
+           "	where r.eTyp = N5REJESTRDOK__ZAM_OBCE and c_pprodukt = prod.p_idobj and c_popak = prod.c_idobj " + vbNewLine +_
+           "	and [%3]) " + vbNewLine +_
+           "from vlist_n5produkt_listOpakowania as prod " + vbNewLine +_ 
+           "left join n5gmop as t_0 on prod.p_idobj =  t_0.gmo_pProd and prod.c_idobj = t_0.gmo_pOpak " + vbNewLine +_
+           "where t_0.gmo_pMag in (select IdObj from n5magazyn where eTyp in (N5TYPMAG_PODSTAWOWY,N5TYPMAG_REZERWACJE)) and (prod.p_eAktywny = N5PRODUKT_AKTYWNY) and prod.p_erodzaj = N5PRODUKT_TOWAR and NUMOPBORDER and [%2] " + vbNewLine +_
+           "group by prod.p_idobj,prod.c_idobj) as pom " + vbNewLine +_ 
+           "where pom.ilosc_magazyn > 0 or pom.ilosc_zam_obce > 0 or pom.ilosc_zam_wlasne > 0 " + vbNewLine +_
+           "order by pom.produkt_nazwa,pom.produkt_indeks" 
+    
+  dim nDummy       
+	strSQL = replace(strSQL,"NUMOPBORDER","t_0.gmo_nNumOp " + doc_.getmodule(43025).rap_param_date_2_gm_num_oper_where(pRaportMomentParam,nDummy))           
+          
+  strSQL = replace(strSQL, "[%1]", replace(g_oParamArray.Value(0).get_where_part(trans_), "%DATADOK%", "vlsp.p_ddatawyst"))
+
+  if g_oParamArray.Value(1).mode <> PARAM_TEXT_MODE_ANY_TEXT then
+    strSQL = replace(strSQL,"and [%2]",replace(vbNewLine + " and prod.p_idobj in (select idobj from n5produkt where prod_pDostawca in (select idobj from n5klient as dostawca where [%A] )) ",_
+    "[%A]", replace(g_oParamArray.Value(1).get_where_part(trans_),"%DOSTNAZWA%", "dostawca.strNazwa")))
+  else
+    strSQL = replace(strSQL,"[%2]","(1=1)")  
+  end if
+
+  strSQL = replace(strSQL,"[%3]",replace(g_oParamArray.Value(2).get_where_part(trans_), "%GRKLNAZWA%", "grk.strNazwa"))
+end if
+ 
+  dim oRS : set oRS = trans_.createadors(strSQL)                                           
+
+if iRaportVersion = 1 then
+  dim pExcel : set pExcel = new CExcel
+
+	if (not pExcel.NewExcel()) then
+		exit function
+	end if
+  
+  'naglowek pliku .xls
+  naglowekPliku(pExcel)
+  'zaczynamy od drugiego wiersza
+  dim nrWiersza : nrWiersza = 2 
+else
+	dim oSO : set oSO = doc_.createstreamobj()
+  dim dtFirst
+  if iRaportVersion = 3 then
+    dtFirst = g_oParamArray.Value(0).first_value
+  else
+    dtFirst = g_oParamArray.Value(0).last_value
+  end if  
+  dim strFileName
+
+  dim tCurTime: tCurTime = doc_.afc.convert.long2time(trans_.var(GVAR_SYSTIME))
+  if iRaportVersion = 2 then
+    strFileName="BPL_DKD_LABE_" + cstr(year(dtFirst)) + trans_.afc.convert.AddZeros(Month(dtFirst),2) + trans_.afc.convert.AddZeros(Day(dtFirst), 2) + "_" + trans_.afc.convert.AddZeros(Hour(tCurTime), 2)  + trans_.afc.convert.AddZeros(Minute(tCurTime), 2) + ".txt"  
+  else
+    strFileName="BPL_STOCKDATA_LABE_" + cstr(year(dtFirst)) + trans_.afc.convert.AddZeros(Month(dtFirst),2) + trans_.afc.convert.AddZeros(Day(dtFirst), 2) + "_" + trans_.afc.convert.AddZeros(Hour(tCurTime), 2)  + trans_.afc.convert.AddZeros(Minute(tCurTime), 2) + ".txt"  
+  end if
+  
+  dim strTmpPath : strTmpPath = "c:\temp\e2b.ansi"
+  dim strTmpPath2 : strTmpPath2 = "c:\temp\e2b.unicode"
+  
+  strDestPath2 = strDestPath2 + strFileName
+  strDestPath = strDestPath + strFileName
+  
+  safe_delete_file strTmpPath
+  safe_delete_file strTmpPath2
+  
+	oSO.attach strTmpPath
+  oSO.rewind
+  
+  nrWiersza = 1
+end if
+
+  'nagłówek 2014
+  if iRaportVersion = 3 then
+    naglowek_2014_txt oSO
+  end if
+  
+  'zawartosc pliku .xls
+  do while not oRS.EOF
+if iRaportVersion = 1 then
+   if ccur(oRS("z_wartnetto"))<>0 then
+      pojWiersz nrWiersza, oRS, pExcel
+   end if
+else
+  if iRaportVersion = 2 then
+      pojWiersz_2013_txt nrWiersza, oRS, oSO
+  else
+      pojWiersz_2014_txt oRS, oSO  
+  end if
+end if
+      nrWiersza = nrWiersza + 1
+    oRS.MoveNext
+  loop  
+  
+if iRaportVersion = 1 then
+	pExcel.SetFileName strDestPath
+	'pExcel.MakeWholeFrame
+
+	pExcel.AutoFitWhole
+  
+	pExcel.CloseExcel
+else
+
+  set oSO =   nothing
+
+  trans_.message 0,0,"temp ansi=" + strTmpPath
+  trans_.message 0,0,"temp unicode=" + strTmpPath2
+  trans_.message 0,0,"dest unicode=" + strDestPath
+  trans_.message 0,0,"dest2 unicode=" + strDestPath2
+  
+  doc_.system.execute "C:\Program Files\NAVO Enterprise 2015\System\ansi2unicode.exe", ".", strTmpPath + " " + strTmpPath2, true, true
+
+	pFSO.CopyFile strTmpPath2, strDestPath, true
+	pFSO.CopyFile strDestPath, strDestPath2, true
+	
+end if
+ 
+  export_dok_do_SAP = true
+  
+  NX_TRACE_END
+
+end function
+
+'-----------------------------------
+'procedura tworząca nagłowek pliku
+'-----------------------------------
+sub naglowekPliku(byval pExcel)
+
+  pojElement pExcel,1,1,"Distributor Account No","red",true,11
+  pojElement pExcel,2,1,"Invoice Date","red",true,11
+  pojElement pExcel,3,1,"Account Sold to Number","red",true,11
+  pojElement pExcel,4,1,"Account Sold to Name","red",true,11
+  pojElement pExcel,5,1,"Account Sold to Key","blue",false,11
+  pojElement pExcel,6,1,"Disty Material Code","red",true,11
+  pojElement pExcel,7,1,"Material Discription","red",true,11
+  pojElement pExcel,8,1,"Brother Material Code","red",true,11
+  pojElement pExcel,9,1,"Industry Standard Code","blue",false,11
+  pojElement pExcel,10,1,"Qty","red",true,11
+  pojElement pExcel,11,1,"Cost Value","red",true,11
+  pojElement pExcel,12,1,"Invoice Value","red",true,11
+  pojElement pExcel,13,1,"Sell out Key","blue",false,11
+  pojElement pExcel,14,1,"Reseller Account Name","red",true,11
+  pojElement pExcel,15,1,"Reseller Name 2","blue",false,11
+  pojElement pExcel,16,1,"Reseller Name 3","blue",false,11
+  pojElement pExcel,17,1,"Reseller Address 1","red",true,11
+  pojElement pExcel,18,1,"Reseller Address 2","blue",false,11
+  pojElement pExcel,19,1,"Reseller Address 3","blue",false,11
+  pojElement pExcel,20,1,"Reseller Address 4","blue",false,11
+  pojElement pExcel,21,1,"Reseller Address 5","blue",false,11
+  pojElement pExcel,22,1,"Reseller City","red",true,11
+  pojElement pExcel,23,1,"Reseller Region","blue",false,11
+  pojElement pExcel,24,1,"Reseller Post Code","red",true,11
+  pojElement pExcel,25,1,"Reseller Country","red",true,11
+  pojElement pExcel,26,1,"Reseller Main Tel","blue",false,11
+  pojElement pExcel,27,1,"Reseller Main Fax","blue",false,11
+  pojElement pExcel,28,1,"Reseller Email","blue",false,11
+  pojElement pExcel,29,1,"Reseller Type","blue",false,11
+  pojElement pExcel,30,1,"Reseller Status","blue",false,11
+  pojElement pExcel,31,1,"Reseller Account Manager","blue",false,11
+  pojElement pExcel,32,1,"Reseller Sales Team","blue",false,11
+  pojElement pExcel,33,1,"Reseller VAT No","blue",false,11
+  pojElement pExcel,34,1,"Contact Prefix","blue",false,11
+  pojElement pExcel,35,1,"Contact Firstname","blue",false,11
+  pojElement pExcel,36,1,"Contact Lastname","blue",false,11
+  pojElement pExcel,37,1,"Contact email","blue",false,11
+  pojElement pExcel,38,1,"Contact Jobtitle","blue",false,11
+  pojElement pExcel,39,1,"Contact Status","blue",false,11
+  pojElement pExcel,40,1,"Dummy Field","red",true,11
+  
+end sub
+
+'----------------------------------------------------
+'procedura tworzy pojedynczy wiersz z zapytania sql 
+'----------------------------------------------------
+sub pojWiersz(byval nrWiersza, byval oRS, byval pExcel)
+
+    pojElement pExcel,1,nrWiersza,"64087","black",false,10
+    pojElement pExcel,2,nrWiersza,conData(CStr(oRS("s_ddatawyst"))),"black",false,10
+    pojElement pExcel,3,nrWiersza,Replace(CStr(oRS("k_strnip")),"-",""),"black",false,10
+    pojElement pExcel,4,nrWiersza,CStr(oRS("k_strnazwa")),"black",false,10
+    pojElement pExcel,5,nrWiersza,CStr(oRS("m_miasto")),"black",false,10
+    pojElement pExcel,6,nrWiersza,CStr(oRS("p_strindeks")),"black",false,10
+    pojElement pExcel,7,nrWiersza,CStr(oRS("p_strnazwa")),"black",false,10
+    pojElement pExcel,8,nrWiersza,Replace(CStr(oRS("p_strindeks")),"-",""),"black",false,10
+    pojElement pExcel,10,nrWiersza,CStr(oRS("s_curiloscopak")),"black",false,10
+    pojElement pExcel,11,nrWiersza,doc_.afc.display.money(oRS("z_wartnetto"),""),"black",false,10
+    pojElement pExcel,12,nrWiersza,doc_.afc.display.money(oRS("s_curwartnettoEUR"),""),"black",false,10
+    pojElement pExcel,14,nrWiersza,CStr(oRS("k_strnazwa")),"black",false,10
+    pojElement pExcel,17,nrWiersza,CStr(oRS("k_adres")),"black",false,10
+    pojElement pExcel,22,nrWiersza,CStr(oRS("m_miasto")),"black",false,10
+    pojElement pExcel,23,nrWiersza,CStr(oRS("k_strkod")),"black",false,10
+    pojElement pExcel,24,nrWiersza,CStr(oRS("k_strkod")),"black",false,10
+    pojElement pExcel,25,nrWiersza,CStr(oRS("kr_strskrot")),"black",false,10
+    pojElement pExcel,33,nrWiersza,Replace(CStr(oRS("k_strnip")),"-",""),"black",false,10
+    pojElement pExcel,40,nrWiersza,"*","black",false,10
+    
+end sub
+
+sub pojWiersz_2013_txt(byval iWiersz, byval oRS, byval oSO)
+
+  oSO.write "64087" + vbTab                                                       'A
+  oSO.write CStr(oRS("produkt_indeks")) + vbTab                                      'B
+  oSO.write CStr(oRS("produkt_indeks")) + vbTab                                      'C
+  oSO.write CStr(oRS("produkt_nazwa")) + vbTab                                       'D
+  oSO.write "" + vbTab                                                            'E
+  oSO.write doc_.afc.display.money(oRS("sprzed_ilosc"),"") + vbTab             'F
+  if ccur(oRS("zakup_kurs")) = ccur(0.0) then
+    oSO.write doc_.afc.display.money(ccur(0.0), "") + vbTab 'G    
+  else
+    oSO.write doc_.afc.display.money(ccur(oRS("zakup_wart_netto")) * ccur(oRS("sprzed_ilosc"))/ccur(oRS("zakup_kurs")), "") + vbTab 'G
+  end if
+  if ccur(oRS("sprzed_kurs")) = ccur(0.0) then
+    oSO.write doc_.afc.display.money(ccur(0.0),"") + vbTab          'H  
+  else
+    oSO.write doc_.afc.display.money(ccur(oRS("sprzed_wart_netto"))/ccur(oRS("sprzed_kurs")),"") + vbTab          'H
+  end if
+  oSO.write "EUR" + vbTab                                                         'I
+  oSO.write CStr(oRS("klient_nip")) + vbTab                                         'J
+  oSO.write CStr(oRS("klient_nazw")) + vbTab                                       'K
+  oSO.write CStr(oRS("klient_adres")) + vbTab                                          'L
+  oSO.write "PL" + vbTab                                                          'M
+  oSO.write CStr(oRS("klient_kod")) + vbTab                                         'N
+  oSO.write CStr(oRS("klient_miasto")) + vbTab                                         'O
+  oSO.write "PL" + Replace(Replace(CStr(oRS("klient_nip")),"-",""),"PL","") + vbTab                         'P
+  oSO.write "" + vbTab                                                            'Q  = CStr(oRS("egz_nr")) 
+  oSO.write "" + vbTab                                                            'R
+  oSO.write conData(CStr(oRS("sprzed_datawyst"))) + vbTab                             'S
+ 
+  oSO.write "" + vbTab                                                            'T
+  oSO.write "" + vbTab                                                            'U
+  oSO.write "" + vbTab                                                            'V
+  oSO.write "" + vbTab                                                            'W
+  oSO.write "" + vbTab                                                            'X
+  oSO.write "" + vbTab                                                            'Y
+  oSO.write "" + vbTab                                                            'Z
+  oSO.write "" + vbTab                                                            'AA
+  oSO.write "" + vbTab                                                            'AB
+
+  oSO.write "SO" + vbTab                                                          'AC
+  oSO.write "*" + vbTab                                                          'AD
+
+  oSO.write vbCrLf
+end sub
+
+sub naglowek_2014_txt(byval oSO)
+  oSO.write "CUSTNO" + vbTab
+  oSO.write "SAPMATNO" + vbTab
+  oSO.write "MATNO" + vbTab
+  oSO.write "MATDESC" + vbTab
+  oSO.write "STOCKDATE" + vbTab
+  oSO.write "STOCK" + vbTab
+  oSO.write "OPENORDERBROTHER" + vbTab
+  oSO.write "OPENORDERCUSTOMER" + vbTab
+  oSO.write "RECORDEND"
+  oSO.write vbCrLf
+end sub
+
+sub pojWiersz_2014_txt(byval oRS, byval oSO)
+  oSO.write "64087" + vbTab
+  oSO.write CStr(oRS("produkt_indeks")) + vbTab
+  oSO.write CStr(oRS("produkt_indeks")) + vbTab
+  oSO.write CStr(oRS("produkt_nazwa")) + vbTab
+  if iRaportVersion = 3 then
+    oSO.write conData(CStr(g_oParamArray.Value(0).first_value)) + vbTab    
+  else
+    oSO.write conData(CStr(g_oParamArray.Value(0).last_value)) + vbTab
+  end if
+  oSO.write CStr(CLng(oRS("ilosc_magazyn"))) + vbTab
+  oSO.write CStr(CLng(oRS("ilosc_zam_wlasne"))) + vbTab
+  oSO.write CStr(CLng(oRS("ilosc_zam_obce"))) + vbTab
+  oSO.write "*"
+  oSO.write vbCrLf
+end sub
+
+'--------------------------------------------------------------------------
+'procedura tworzy pojedyczną komórkę w Excelu (teks, kolor, pogrubienie)
+'--------------------------------------------------------------------------
+sub pojElement(byval pExcel, byval x, byval y, byval strText, byval strColor, byval bBold, byval iFontSize)
+  pExcel.InsertValueXY x, y, strText
+  pExcel.MakeBoldXY x, y, bBold
+  pExcel.SetTextSize x, y, iFontSize
+  if strColor = "red" then
+    pExcel.SetTextColor x, y, RGB(255,0,0)
+  else
+    if strColor = "blue" then
+      pExcel.SetTextColor x, y, RGB(0,0,255)
+    else
+      if strColor = "black" then
+        pExcel.SetTextColor x, y, RGB(0,0,0)
+      end if
+    end if
+  end if
+end sub
+
+'---------------------------------------------------
+'funkcja zamiany daty np. 2008-05-23 => 23/05/2008
+'---------------------------------------------------
+function conData(byval strData)
+  if iRaportVersion = 2 or iRaportVersion = 3 then
+  conData = " " + Mid(strData,9,2) + "." + Mid(strData,6,2) + "." + Mid(strData,1,4)
+  else  
+    conData = " " + Mid(strData,9,2) + "/" + Mid(strData,6,2) + "/" + Mid(strData,1,4)
+  end if
+end function
+
+  ]]> 
+  </script>
+  </config>
+  <body /> 
+  </page>

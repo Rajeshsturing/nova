@@ -1,0 +1,270 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+RAPTEMPLATE_KARTA_WYNAGRODZEN
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1220.h"
+#include "h1240.h"
+#include "h1250.h"
+
+#define RAPORT_TITLE	Karta wynagrodzeń
+#define PARAMNR_CHOICE_LIST		3
+-->
+<page style='36'>
+<config>
+<title>RAPORT_TITLE</title>
+<script>
+<![CDATA[
+VB_PRINT_LANDSCAPE_COMMON
+VB_PRINTPREV_LANDSCAPE_COMMON
+
+<%
+dim g_oArrIdSubKont : set g_oArrIdSubKont = nothing
+
+function prepare_env_query_from_param(byref pParamArray)
+	dim pModule : set pModule = doc_.getmodule(60192)
+	
+	'znajdź id wybranej listy
+	dim pParamCL : set pParamCL = pParamArray.value(PARAMNR_CHOICE_LIST)
+	dim idChoiceList : idChoiceList = pParamCL.values.value(pParamCL.first_selected)
+	
+	'wypełnij tablicę z wybranymi kontami
+	set g_oArrIdSubKont = pModule.plkonto_choicelist_2_array(idChoiceList)
+	
+	'utwórz query do tablicy temp
+	dim strQueryTmp
+	strQueryTmp = "select idobj from n5plnaliczenie t_nal where " +_
+	"pPracownik in (select idobj from n5pracownik t_prac where %1 and %2) and %3 "
+	strQueryTmp = rapeng_.query_apply_actual_param(strQueryTmp, pParamArray)
+	'trans_.message 0,0,strQueryTmp
+
+	'przygotuj wszystko
+	pModule.sql_prepare_tmp_pldekr_sum_tbl g_oArrIdSubKont
+	pModule.sql_prepare_tmp_pldekr_sum_proc g_oArrIdSubKont,true,true, strQueryTmp
+
+	dim strQuery : strQuery = "select 'c_prac_nazwisko_imie'=max(t_prac.strNazwisko + ' ' + t_prac.strImie), " +_
+	"'c_mcnazwa'=max(t_mc.strNazwa),'c_prac_id'=t_prac.idobj "
+
+	dim iter 
+	for iter = 0 to g_oArrIdSubKont.UpperIndex()
+		strQuery = strQuery + ",'scw_" + cstr(g_oArrIdSubKont.value(iter)) + "'=sum(cw_" + cstr(g_oArrIdSubKont.value(iter)) + ")"
+	next
+	
+	strQuery = strQuery + " from #tmp_pldekr_sum as t_sum " +_
+	"inner join n5pracownik as t_prac on t_sum.pPracownik = t_prac.IdObj " +_
+	"inner join n5plnaliczenie as t_nal1 on t_sum.pNaliczenie = t_nal1.IdObj " +_
+	"inner join n5miesiac as t_mc on t_mc.nNumer = month(t_nal1.dDataNal)" +_
+	"group by t_prac.idobj,month(t_nal1.dDataNal)" +_
+	"order by c_prac_nazwisko_imie,month(t_nal1.dDataNal)"
+	
+	prepare_env_query_from_param = strQuery
+end function
+
+
+sub clean_sql_env()
+	dim pModule : set pModule = doc_.getmodule(60192)
+	pModule.sql_clean_tmp_pldekr_sum
+end sub
+%>
+<%
+function default_param()
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwisko").bindexpr("t_prac.strNazwisko")
+	pParamArray.add doc_.afc.rap.param.new_text("Imię").bindexpr("t_prac.strImie")
+	pParamArray.add doc_.afc.rap.param.new_int("Rok").bindexpr("year(t_nal.dDataNal)")
+	
+	'parametr lista wyboru
+	dim pParam : set pParam = doc_.afc.rap.param.new_choice("Widok")
+	doc_.afc.rap.param.init_on_query  pParam , trans_ ,  "select strNazwa,IdObj from choicelist where nTypeId=TYPEID_N5PLSUBKONTO order by strNazwa"
+	pParam.multiple = false
+	pParamArray.add pParam
+
+	set default_param = pParamArray
+end function
+%>
+<%
+function write_actual_param(byref pActualParam)
+	dim iter
+	dim bAnyWritten : bAnyWritten = false
+	if not pActualParam is nothing then
+		for iter = 0 to pActualParam.upperIndex
+			if pActualParam.value(iter).get_desc() <> "" then 
+				bAnyWritten = true
+				so.write "<t size='5' /><text fontsize='4'><![CD"+"ATA[" + pActualParam.value(iter).get_desc() + "]"+"]></text><br/>"
+			end if
+		next
+	end if
+	if not bAnyWritten then 
+		so.write "<t fontsize='4'>brak</t><br/>"
+	end if
+	so.write "<br/>"
+end function
+%>
+<%
+function body_row(byref pSection,byref pRec)
+if pRapExec.RecNr mod 2 = 0 then
+%>
+<tr bordercolor='white'>
+<%
+else
+%>
+<tr bordercolor='white' style='37'>
+<%
+end if
+%>
+	<td align='right'>RXE_TEXT(c_mcnazwa)</td>
+	<%
+	dim iter 
+	for iter = 0 to g_oArrIdSubKont.UpperIndex()
+		%>
+		<td align='right'><t>
+		<%
+			so.write doc_.afc.display.money(pRec("scw_" + cstr(g_oArrIdSubKont.value(iter))),"")
+		%>
+		</t></td>
+	<%
+	next
+	%>
+</tr><%
+end function
+%>
+<%
+function body_header(byref pSection,byref pRec)
+%>
+<table border='1'>
+<thead>
+<tr style='21'>
+	<td width='min'><t>Mc</t></td>
+	<%
+	dim iter 
+	for iter = 0 to g_oArrIdSubKont.UpperIndex()
+		%>
+		<td align='right'><text><![CDATA[<%so.write trans_.getobj(TYPEID_N5PLSUBKONTO,g_oArrIdSubKont.value(iter)).strNazwa%>]]></text></td>
+	<%
+	next
+	%>
+</tr>
+</thead>
+<tbody>
+<%
+end function
+%>
+<%
+function body_footer(byref pSection)
+%>
+</tbody>
+<tfoot>
+<tr style='21'>
+	<td style='27' colspan='1' />
+	<%
+	dim iter 
+	for iter = 0 to g_oArrIdSubKont.UpperIndex()
+		%>
+		<td style='27' align='right'><t>
+		<%so.write doc_.afc.display.money(pRapExec.body.counter(iter).result,"")%>
+		</t></td>
+	<%
+	next
+	%>
+</tr>
+</tfoot>
+</table>
+<%
+end function
+%>
+<%
+function section_header_1(byref pSection,byref pRec)
+%>
+<tr userprop='propc_section_start="1" propc_section_hidden="0" propc_section_req="0"' fontsize='4'>
+	<td style='27' colspan='<%so.write cstr(3+g_oArrIdSubKont.Count())%>'>
+		<picture name='<%so.write cstr(nSectionPicCounter)%>' tip='Zwiń' ignoresysdisable='true' image='PICTURE_SMALL_MINUS' width='SIZE_FOR_PLUS' height='SIZE_FOR_PLUS' href='vs1022="section_hideshow_hli" vn100="<%so.write cstr(nSectionPicCounter)%>"'/>
+	RXE_TEXT_LINK_FORM_VCC(TYPEID_N5PRACOWNIK,c_prac_id,c_prac_nazwisko_imie)
+</td>
+</tr>
+<%
+nSectionPicCounter=nSectionPicCounter+1
+end function
+%>
+<%
+function section_footer_1(byref pSection)
+%>
+<tr hide='true' userprop='propc_section_end="1"'><td colspan='<%so.write cstr(3+g_oArrIdSubKont.Count())%>' /></tr>
+<tr style='21'>
+	<td style='27' colspan='1' />
+	<%
+	dim iter 
+	for iter = 0 to g_oArrIdSubKont.UpperIndex()
+		%>
+		<td style='27' align='right'><t>
+		<%so.write doc_.afc.display.money(pSection.counter(iter).result,"")%>
+		</t></td>
+	<%
+	next
+	%>
+</tr>
+<%
+end function
+%>
+<%dim nSectionPicCounter : nSectionPicCounter = 10000000%>
+function section_hideshow_hli(byref pHLI)
+doc_.afc.formsection.section_hideshow page_, pHLI.prop(100)
+end function
+]]>
+</script>
+</config>
+<header>
+</header>
+<body>
+<p>
+RAPORT_HEADER(3,0)
+</p>
+
+<p>
+<t size='2'/>
+</p>
+
+<p><text fontsize='7'><![CDATA[RAPORT_TITLE]]></text></p><br/><br/>
+<t fontsize='5' bold='true'>Kryteria selekcji:</t><br/>
+<%
+	dim pRapExec : set pRapExec = rapeng_.new_engine()
+	with pRapExec
+
+	'tu ręcznie zamiast prepare
+	dim pParamArray : set pParamArray = default_param()
+	rapeng_.merge_params pParamArray,rapeng_.get_raport_param()
+	pRapExec.title = "RAPORT_TITLE"
+
+	if rapeng_.show_raport_param_dialog(pParamArray,"RAPORT_TITLE") <> 0 then
+		pRapExec.put_final_query prepare_env_query_from_param(pParamArray)
+		rapeng_.set_raport_param pParamArray
+		'dodaj sumatory
+		dim pBody : set pBody = .add_body_ex(getref("body_header"),getref("body_footer"),getref("body_row"))
+		dim iter 
+		for iter = 0 to g_oArrIdSubKont.UpperIndex()
+			pBody.add_sumator("scw_" + cstr(g_oArrIdSubKont.value(iter)))
+		next
+
+		dim oGSection : set oGSection = .add_group_section(0,getref("section_header_1"),getref("section_footer_1"))
+		for iter = 0 to g_oArrIdSubKont.UpperIndex()
+			oGSection.add_sumator("scw_" + cstr(g_oArrIdSubKont.value(iter)))
+		next
+		
+		write_actual_param pParamArray
+		'wywołaj procedurę napełniającą
+		doc_.getmodule(60192).sql_fill_tmp_pldekr_sum
+
+		if not .perform then
+			so.write "<p style='21'><t>Brak danych spełniających podane kryteria</t></p>"
+		end if
+		
+		clean_sql_env
+	%>
+	<%
+	end if
+	end with
+%>
+</body>
+<footer>
+</footer>
+</page>

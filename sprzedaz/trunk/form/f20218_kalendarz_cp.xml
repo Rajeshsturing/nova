@@ -1,0 +1,285 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+
+PAGE_FORM_KALENDARZ_CP
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220_pictureid.h"
+#include "h1222_form_macros.h"
+#include "h1228.h"
+#include "h1232.h"
+#include "h1240_appvar.h"
+
+#define SECID_PODSTAWOWE			1001
+#define SECID_POZYCJE				1002
+#define SECID_UWAGI					1003
+#define SECID_DIAGRAM				1004
+
+#define CTRLID_DIAGRAM_HOST			 101
+
+#define CTRLID_UWAGI					102
+
+#define FORM_SPAN					  4
+#define RCELL_SPAN					  3
+
+
+
+-->
+
+<page style='STYLE_PAGE'>
+  <config>
+    <title>
+      Kalendarz czasu pracy
+      #ifdef _DEBUG
+      [THIS_FILE]
+      #endif
+    </title>
+
+    <typeid>TYPEID_N5PLKALCP</typeid>
+    <script>
+      <![CDATA[
+
+'std_choice_list_hli
+#include "50200"
+'section_*
+#include "50222"
+
+'list_*
+#include "50223"
+
+#include "50101"
+
+function fsave
+	dim bSave: bSave=std_fsave()
+	if not bSave then
+		section_fsave THIS_FILE
+	end if	
+	fsave=bSave
+end function
+
+function fopen
+#ifdef _ABAKUS
+	if HARUI_FREE(UAR_OGRANICZONY_DOSTEP_DANE_KLIENTA) then
+    fopen = false
+    exit function
+  end if
+#endif 
+
+	if not std_fopen() then
+		fopen = false
+		exit function
+	end if
+
+	section_fopen THIS_FILE
+end function
+
+function fclose
+	section_fclose THIS_FILE
+end function
+
+dim colorDzienRob : colorDzienRob = rgb(255,255,255)
+dim colorDzienWolny : colorDzienWolny = rgb(192,192,192)
+
+dim g_IdObject : g_IdObject = clng(0)
+
+function c##CTRLID_DIAGRAM_HOST##_ongetdata(byref oCtrl): c##CTRLID_DIAGRAM_HOST##_ongetdata=true
+	if g_IdObject <> page_.root.IdObj then
+		g_IdObject = page_.root.IdObj
+		dim pContainer : set pContainer = page_.ctrl(CTRLID_DIAGRAM_HOST)
+		pContainer.removeall
+	end if
+end function
+
+
+function fill_diagram()
+	dim pCBModule : set pCBModule = doc_.getmodule(60231)
+	dim pContainer : set pContainer = page_.ctrl(CTRLID_DIAGRAM_HOST)
+	pContainer.removeall
+	dim dMainDate : dMainDate = trans_.var(GVAR_TODAY)
+	dim oCalBldrRok : set oCalBldrRok = pCBModule.get_calendar_builder(pContainer,4,dMainDate)
+	oCalBldrRok.extracols = 2
+	oCalBldrRok.build_frame
+	oCalBldrRok.extracell(-1,1).element(1).text = " d "
+	oCalBldrRok.extracell(-1,2).element(1).text = " h "
+
+	dim dDate,dDate1,dDate2
+	dDate1 = cdate(oCalBldrRok.firstday)
+	dDate2 = cdate(oCalBldrRok.lastday)
+    Dim pKalCP : set pKalCP = doc_.system.activex("navopl.KalCP") 
+    pKalCP.init trans_.afc, page_.root, dDate1, dDate2
+
+	for dDate = dDate1 to dDate2
+		oCalBldrRok.currentday = dDate
+		if pKalCP.get_day_info(dDate).is_dzien_rob_plan() then
+			oCalBldrRok.cell.backcolor = colorDzienRob
+			oCalBldrRok.addtext "R"
+			oCalBldrRok.element.tip = "Dzień roboczy"
+		else
+			oCalBldrRok.cell.backcolor = colorDzienWolny
+		end if
+	next
+	dim iter
+	dim nYear : nYear = year(dMainDate)
+	for iter = 1 to 12
+		dim dD1 : dD1 = dateserial(nYear,iter,1)
+		dim dD2 : dD2 = dateserial(nYear,iter+1,0)
+		oCalBldrRok.extracell(iter,1).addnew(CTRL_TYPE_STATIC,-1).text = cstr(pKalCP.dni_rob_plan(dD1,dD2))
+
+		oCalBldrRok.extracell(iter,2).addnew(CTRL_TYPE_STATIC,-1).text =_
+			cstr(clng(-Int(-pKalCP.min_rob_plan(dD1,dD2)/60)))
+	next
+end function
+
+function assign_to_contracts
+  dim strWhere : strWhere = ""
+  dim pM43009 : set pM43009 = doc_.getmodule(43009)
+  pM43009.prepare_multi_selection TYPEID_N5PLUMOWA, "Wybór umów", strWhere, "dDataOd"
+  dim oNXArray : set oNXArray = pM43009.run_multi_browser()
+   if not oNXArray is nothing then
+   dim oSubTrans : set oSubTrans = trans_.createsubtran()
+    dim idUmowa
+    for each idUmowa in oNXArray
+      dim oUmowa: set oUmowa = trans_.getobj(TYPEID_N5PLUMOWA, idUmowa) 
+	    set oUmowa.pKalendarz = trans_.getobj(TYPEID_N5PLKALCP, page_.rootidobj)
+    next
+  end if
+  trans_.saveobjects()
+end function
+
+]]>
+    </script>
+  </config>
+  <header>
+  </header>
+
+  <body>
+    QXF_BEGIN
+    QXS_BEGIN_FLAT(SECID_PODSTAWOWE,Informacje podstawowe,FORM_SPAN)
+    QXR_EDIT_FIELD_REQ(Nazwa,-1,32,strNazwa,RCELL_SPAN)
+    <!--
+		<tr>
+			<td width='max'>
+				QXE_LABEL(Obowiązuje od)
+			</td>
+			QXC_DATE_FIELD(-1,dDataOd,1)
+			QXC_LABEL(do,1)
+			QXC_DATE_FIELD(-1,dDataDo,1)
+		</tr>
+		-->
+    QXX_STATUS_RADIO2(eAktywny,RCELL_SPAN)
+#ifdef _HJORT
+    <tr>
+      <td colspan="FORM_SPAN">
+        QXE_BUTTON(-1,10,Przypisz do umów,varFunction="assign_to_contracts")
+      </td>
+    </tr>
+#endif
+    QXS_END_FLAT(FORM_SPAN)
+
+    QXR_SEPARATOR(FORM_SPAN)
+
+
+    QXS_BEGIN_FLAT(SECID_POZYCJE,Pozycje,FORM_SPAN)
+    <tr>
+      <td colspan='FORM_SPAN'>
+        <grid width='max' style='STYLE_TABLE'>
+          <transfer mode='grid_list'>
+            <field>listPozycje</field>
+          </transfer>
+          <thead style='STYLE_TABLE_HEADER'>
+            <tr>
+              <td colspan='2'>
+                <t>Rozpoczęcie</t>
+              </td>
+              <td colspan='2'>
+                <t>Zakończenie</t>
+              </td>
+              <td rowspan='2' width='min'>
+                <text>Dni tygodnia</text>
+              </td>
+              <td rowspan='2' width='min'>
+                <text>Typ</text>
+              </td>
+            </tr>
+            <tr>
+              <td width='min'>
+                <text>Data</text>
+              </td>
+              <td width='min'>
+                <text>Czas</text>
+              </td>
+              <td width='min'>
+                <text>Data</text>
+              </td>
+              <td width='min'>
+                <text>Czas</text>
+              </td>
+            </tr>
+          </thead>
+          <tbody style='STYLE_TABLE_BODY'>
+            <tr>
+              <td>
+                SXE_DATE_FIELD(-1,dDataOd)
+              </td>
+              <td>
+                SXE_TIME_FIELD(-1,tCzasOd)
+              </td>
+              <td>
+                SXE_DATE_FIELD(-1,dDataDo)
+              </td>
+              <td>
+                SXE_TIME_FIELD(-1,tCzasDo)
+              </td>
+              <td>
+                <checkbox colspan='5' border='0'>
+                  <transfer mode='row_edit_field'>
+                    <field>cDniTyg</field>
+                  </transfer>
+                  <t>poniedziałek</t>
+                  <t>wtorek</t>
+                  <t>środa</t>
+                  <t>czwartek</t>
+                  <t>piątek</t>
+                  <t>sobota</t>
+                  <t>niedziela</t>
+                </checkbox>
+              </td>
+              <td>
+                <radio border='0'>
+                  <transfer mode='row_edit_field'>
+                    <field>eTypOkresu</field>
+                  </transfer>
+                  <t tip='Okres roboczy'>roboczy</t>
+                  <t tip='Okres wolny od pracy'>wolny</t>
+                  <t tip='Dni wolne ustawowo np. niedziele i święta'>wolny ustawowo</t>
+                </radio>
+              </td>
+            </tr>
+          </tbody>
+        </grid>
+      </td>
+    </tr>
+    QXS_END_FLAT(FORM_SPAN)
+
+    QXS_BEGIN_FLAT(SECID_DIAGRAM,Diagram,FORM_SPAN)
+    <tr>
+      QXC_BUTTON(-1,0,Pokaż diagram,varFunction="fill_diagram",FORM_SPAN)
+    </tr>
+    <tr>
+      <td name='CTRLID_DIAGRAM_HOST' colspan='FORM_SPAN'>
+        <transfer mode='custom' />
+      </td>
+    </tr>
+    QXS_END_FLAT(FORM_SPAN)
+
+    QXS_MULTILINE(SECID_UWAGI,CTRLID_UWAGI,strUwagi,Uwagi,FORM_SPAN)
+
+    QXF_END
+
+  </body>
+  <footer>
+  </footer>
+</page>

@@ -1,0 +1,180 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1200.h"
+#include "h1220_pictureid.h"
+
+#define CTRLID_RESULT_TABLE		100
+#define CTRLID_FILTER_MODE		101
+
+-->
+<page style='STYLE_PAGE'>
+<config>
+<title></title>
+<script>
+
+<![CDATA[
+#define FILTER_DO_WYDANIA			1
+#define FILTER_DO_SPRZEDAZY			2
+
+#define MODE_SPRZEDAZ_VS_WZ			1
+
+dim g_nBaseTypeId : g_nBaseTypeId = clng(0)
+dim g_nIdObj : g_nIdObj = clng(0)
+dim g_strFilterMode : g_strFilterMode = "111111111111111"
+
+dim g_nDisplayType : g_nDisplayType = clng(0)
+'--------------------------------------------------
+'public:funkcje do skonfigurowania z zewnątrz
+'--------------------------------------------------
+function set_base_object(byval nTypeId,nIdObj)
+	g_nBaseTypeId = nTypeId
+	g_nIdObj = nIdObj
+end function
+
+function set_filter_mode(strMode)
+	g_strFilterMode = strMode
+end function
+
+function set_display_type(nDisplayType)
+	g_nDisplayType = nDisplayType
+
+	select case g_nDisplayType
+	case MODE_SPRZEDAZ_VS_WZ
+		page_.ctrl(CTRLID_FILTER_MODE).removeall
+		page_.ctrl(CTRLID_FILTER_MODE).addnew(0,-1).text = "Do wydania"
+		page_.ctrl(CTRLID_FILTER_MODE).addnew(0,-1).text = "Do zafakturowania"
+		set_filter_mode "11"
+	end select
+
+end function
+'--------------------------------------------------
+'private:funkcje wewnętrzne
+'--------------------------------------------------
+function c##CTRLID_FILTER_MODE##_ongetdata(byref oCtrl)
+	oCtrl.value = g_strFilterMode 
+end function
+
+function c##CTRLID_FILTER_MODE##_ondataentered(byref oCtrl, byval newValue) : c##CTRLID_FILTER_MODE##_ondataentered = true
+	g_strFilterMode = newValue
+end function
+
+function frefresh
+	trans_.discard
+	dim pM60261 : set pM60261 = doc_.getmodule(60261)
+	dim pDHMBalance : set pDHMBalance = pM60261.new_dhm_balance()
+	dim pDokument : set pDokument = trans_.getobj(g_nBaseTypeId,g_nIdObj)
+	if g_nBaseTypeId = TYPEID_N5SPRZEDAZ then
+		pM60261.fill_dhm_balance_from_n5sprzedaz pDHMBalance,pDokument
+	end if
+	fill_results pDHMBalance
+	page_.topelement.title = "Bilans dokumentu: " + pDokument.text
+end function
+
+function fill_results(byref pDHMBalance)
+	dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(page_.ctrl(CTRLID_RESULT_TABLE))
+	pTB.section_head.removeall
+	pTB.newrow
+	pTB.newcell.addtext("Nazwa produktu").element.bold = true
+	pTB.newcell.addtext("Nazwa opakowania").element.bold = true
+
+	select case g_nDisplayType
+	case MODE_SPRZEDAZ_VS_WZ
+		pTB.newcell.addtext("Ilość sprzedana").element.bold = true
+		pTB.newcell.addtext("Ilość wydana").element.bold = true
+		pTB.newcell.addtext("Do wydania").element.bold = true
+		pTB.newcell.addtext("Do zafakturowania").element.bold = true
+	end select
+	pTB.section_body.removeall	
+	
+	dim iter
+	dim pDHMBalanceItem
+	for iter = 0 to pDHMBalance.get_count() - 1
+		set pDHMBalanceItem = pDHMBalance.get_pos(iter)
+
+		with pDHMBalanceItem
+			if fill_row(pDHMBalanceItem,pTB) then
+				pTB.row.bordercolor = rgb(255,255,255)
+				if iter mod 2 = 0 then
+					pTB.row.styleitem = STYLE_ROW_EVEN
+				end if
+			end if
+		end with
+	next
+end function
+
+#macro ADDNUMBER_FROM_DHMBI(_col_)	\
+	pTB.newcell.cell.align=ALIGN_RIGHT		\
+	if pDHMBalanceItem.m_curValue(_col_) <> 0 then	\
+		pTB.addtext doc_.afc.display.quantity(pDHMBalanceItem.m_curValue(_col_),pDHMBalanceItem.m_strUnit,pDHMBalanceItem.m_nPrecision)	\
+	end if
+
+function fill_row(byref pDHMBalanceItem,byref pTB) : fill_row = false
+	
+	'==== filtrowanie ======
+
+	if mid(g_strFilterMode,FILTER_DO_WYDANIA,1) = "1" and pDHMBalanceItem.m_curValue(4) > 0.0 then
+		fill_row = true
+	end if
+	if mid(g_strFilterMode,FILTER_DO_SPRZEDAZY,1) = "1" and pDHMBalanceItem.m_curValue(5) > 0.0 then
+		fill_row = true
+	end if
+	
+	if not fill_row then
+		exit function
+	end if
+	'==== ============ ======
+
+	pTB.newrow
+	pTB.newcell.addtext pDHMBalanceItem.m_strProdNazwa
+	pTB.newcell.addtext pDHMBalanceItem.m_strOpakNazwa
+	
+	select case g_nDisplayType
+	case MODE_SPRZEDAZ_VS_WZ
+
+		ADDNUMBER_FROM_DHMBI(0)
+		ADDNUMBER_FROM_DHMBI(3)
+		ADDNUMBER_FROM_DHMBI(4)
+		ADDNUMBER_FROM_DHMBI(5)
+	end select
+	
+	fill_row = true
+end function
+
+]]>
+</script>
+</config>
+	<body>
+		<table>
+			<tbody>
+				<tr>
+					<td>
+						<picture image='80139' tip='Wypełnij raport' width='1000' height='1000' href='varFunction="frefresh"' />
+						<checkbox name='CTRLID_FILTER_MODE'>
+							<transfer mode='custom' />
+							<t>a</t>
+							<t>a</t>
+						</checkbox>
+						<!--
+						<picture image='PICTURE_CHOICE_N5ZAMOWIENIE' tip='Utwórz zamówienia' width='1000' height='1000' href='varFunction="create_zam_wl"' />
+						<picture image='PICTURE_CHOICE_N5ZLECPROD' tip='Utwórz zlecenia produkcyjne' width='1000' height='1000' href='varFunction="create_zlprod"' />
+						-->
+					</td>
+				</tr>
+				<tr>
+					<td>
+						<table border='1' name='CTRLID_RESULT_TABLE'>
+							<thead>
+								<tr style='STYLE_TABLE_HEADER'>
+								</tr>
+							</thead>
+							<tbody backcolor='white'>
+							</tbody>
+						</table>
+					</td>
+				</tr>
+			</tbody>
+		</table>		
+	</body>
+</page>
+

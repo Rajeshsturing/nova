@@ -1,0 +1,356 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1201.h"
+#include "h1220.h"
+#include "h1222.h"
+#include "h1240.h"
+#include "h1231.h"
+
+-->
+<page style='STYLE_PAGE'>
+<config>
+<script>
+<!--
+	Moduł produkcja - funkcje usługowe
+-->
+<![CDATA[
+
+'prop_util_item
+#include "50134"
+
+'--------------------
+'zarządzanie PROP'ami
+'--------------------
+class prop_query
+  public m_pArrayIlosc     'ilość jednostkowa
+  public m_pArrayKrotnosc  'krotność z receptury
+  public m_oPU             'prop_util
+  
+  private sub class_initialize()
+    set m_pArrayIlosc = doc_.afc.new_navoarray()
+    set m_pArrayKrotnosc = doc_.afc.new_navoarray()
+    set m_oPU = new_prop_util()
+  end sub
+  
+  private sub class_terminate() 'OK
+    set m_pArrayIlosc = nothing
+    set m_pArrayKrotnosc = nothing
+    set m_oPU = nothing
+  end sub
+  
+  '----------------------------------
+  'napełnienie bufora PROP'ami z bazy
+  '----------------------------------
+  public sub load_prop(byval strWhere, byval strOrderBy)
+    m_oPU.load_set strWhere, strOrderBy
+  end sub
+  
+  '-------------------------
+  'ustawia ilość jednostkową
+  '-------------------------
+  public sub set_ilosc_jedn()
+    dim iter, oPUI
+    for iter = 0 to m_oPU.count()
+      set oPUI = m_oPU.get_item(iter)
+      m_pArrayIlosc.add get_ilosc(oPUI)
+    next
+  end sub
+  
+  '-------------------------
+  'pobiera ilość jednostkową
+  '-------------------------
+  public function get_ilosc(byref oPUI)
+    dim oRec : set oRec = nothing
+    if oPUI.m_idOperacja > clng(0) then
+      'liście
+      set oRec = trans_.getobj(TYPEID_N5RECEPTA,oPUI.m_idOperacja)
+    else
+      'korzeń
+      dim strWhere : strWhere = "idobj in (select c_pRecepta from vlist_n5zlecprod_listPozycje where p_idobj = " +_
+                                + cstr(oPUI.m_idZlecProd) + " and coll_lp = " + cstr(oPUI.m_iLPZP) + ")"
+      dim idRec : idRec = trans_.findobjid(TYPEID_N5RECEPTA,strWhere)
+      if idRec > clng(0) then
+        set oRec = trans_.getobj(TYPEID_N5RECEPTA,idRec)
+      end if
+    end if
+    if not oRec is nothing then
+      get_ilosc = get_ilosc_rec(oRec,oPUI)
+    end if
+  end function
+  
+  '---------------------------------------------
+  'pobiera ilośc jednostkową z pozycji receptury
+  '---------------------------------------------
+  public function get_ilosc_rec(byref oRec, byref oPUI) : get_ilosc_rec = clng(0)
+    dim oPozRec
+    select case oPUI.m_eTyp
+      case N5PROPT_SUROWIEC
+        for each oPozRec in oRec.listSurowce
+          if oPozRec.pProdukt.idobj = oPUI.m_idProdukt and oPozRec.pOpak.idobj = oPUI.m_idOpak then
+            get_ilosc_rec = oPozRec.curIloscOpak
+            exit function
+          end if
+        next
+      case N5PROPT_WYROB
+        for each oPozRec in oRec.listWyrob
+          if oPozRec.pProdukt.idobj = oPUI.m_idProdukt and oPozRec.pOpak.idobj = oPUI.m_idOpak then
+            get_ilosc_rec = oPozRec.curIloscOpak
+            exit function
+          end if
+        next 
+      case N5PROPT_PRACA
+        for each oPozRec in oRec.listCzynnosci
+          if oPozRec.pProdukt.idobj = oPUI.m_idProdukt and oPozRec.pOpak.idobj = oPUI.m_idOpak then
+            get_ilosc_rec = oPozRec.curIloscOpak
+            exit function
+          end if
+        next 
+      case N5PROPT_ZASOB
+        for each oPozRec in oRec.rcpt_listZasob
+          if oPozRec.prz_pTypZasobu.idobj = oPUI.m_idTypZasobu then
+            get_ilosc_rec = oPozRec.prz_curIlosc
+            exit function
+          end if
+        next    
+    end select    
+  end function
+  
+  '--------------------------
+  'ustawia krotność z recepty
+  '--------------------------
+  public sub set_krotnosc()
+    dim iter, oPUI
+    for iter = 0 to m_oPU.count()
+      set oPUI = m_oPU.get_item(iter)
+      m_pArrayKrotnosc.add get_krotnosc(oPUI)
+    next    
+  end sub
+  
+  '----------------------------
+  'pobiera krotność z receptury
+  '----------------------------
+  public function get_krotnosc(byref oPUI) : get_krotnosc = ccur(0)
+    dim strSQL, oRS
+    if oPUI.m_idOperacja > clng(0) then
+      'liście
+      strSQL = "select c_pro_curkrotnosc from vlist_n5recepta_rcpt_listOper where c_pro_precepta = " + cstr(oPUI.m_idOperacja)
+      set oRS = trans_.createadors(strSQL)
+    else
+      'korzeń
+      strSQL = "select c_curiloscopak from vlist_n5zlecprod_listPozycje where p_idobj = " +_ 
+               cstr(oPUI.m_idZlecProd) + " and coll_lp = " + cstr(oPUI.m_iLPZP)
+      set oRS = trans_.createadors(strSQL)
+    end if
+    if oRS.recordCount > clng(0) then
+      get_krotnosc = ccur(oRS(0).value)
+    end if    
+  end function
+  
+  '---------------------------------------------
+  'pobranie ilości z RP powiązanych ze zleceniem
+  '---------------------------------------------
+  public sub set_ilosc_RP()
+    dim iter, oPUI    
+    for iter = 0 to m_oPU.count()
+      set oPUI = m_oPU.get_item(iter)
+      if oPUI.m_eTyp = N5PROPT_SUROWIEC then
+        dim curIlosc : curIlosc = get_ilosc_RP(oPUI)
+        if curIlosc > ccur(0) then
+          oPUI.m_curIloscWykon = ccur(curIlosc)
+        end if
+      end if
+    next     
+  end sub
+  
+  '------------------
+  'pobiera ilość z RP
+  '------------------
+  public function get_ilosc_RP(byref oPUI) : get_ilosc_RP = ccur(0)
+    dim strSQL
+    strSQL = "select sum(c_curiloscopak) from vlist_n5dokmag_listPozycje " + vbNewLine +_ 
+             "where p_ntypdok = N5REJESTRDOK__RP and p_wrefdokhandl = " + cstr(oPUI.m_idZlecProd) + vbNewLine +_ 
+             "and c_pprodukt = " + cstr(oPUI.m_idProdukt) + " and c_popak = " + cstr(oPUI.m_idOpak) + vbNewLine +_ 
+             "group by c_pprodukt,c_popak"
+    dim oRS : set oRS = trans_.createadors(strSQL)
+    if oRS.recordCount > clng(0) then
+      if ccur(oRS(0).value) > ccur(0) then
+        get_ilosc_RP = ccur(oRS(0).value)
+      end if
+    end if
+  end function
+  
+  '----------------------------
+  'wybór magazynów dla surowców
+  '----------------------------
+  public function set_magazyn() : set_magazyn = ""
+    dim pModRapEngine : set pModRapEngine = doc_.getmodule(60108)
+    dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+	  pParamArray.add doc_.getmodule(43025).new_filtr_magazyn("idobj","N5TYPMAG_PODSTAWOWY,N5TYPMAG_ZWROTY,N5TYPMAG_PRODUKCJAWTOKU,N5TYPMAG_REZERWACJE")
+    if pModRapEngine.show_raport_param_dialog(pParamArray,"Magazyn surowców") = 0 then
+      exit function
+    end if
+    dim strSQL : strSQL = pModRapEngine.query_apply_actual_param("%1",pParamArray)
+    strSQL = replace(strSQL,"'","")
+    strSQL = replace(strSQL,"(","")
+    strSQL = replace(strSQL,")","")
+    strSQL = replace(strSQL,"idobj IN ","")
+    strSQL = replace(strSQL,"idobj = ","")
+    set_magazyn = strSQL
+  end function
+
+  '-------------------------------------------------------------------------
+  'ustawia stan magazynowy dla PROP'ow w buforze (STAN_MAG + ILOSC_WYKONANA)
+  '-------------------------------------------------------------------------
+  public function set_stan() : set_stan = true
+    dim strIdMag : strIdMag = set_magazyn()
+    if strIdMag = "" then
+      trans_.message 7000, 0, "Nie wybrano magazynu."
+      set_stan = false
+      exit function
+    end if
+    dim pM60300 : set pM60300 = doc_.getmodule(60300)
+    dim iter, oPUI, strSQL, oRS
+    for iter = 0 to m_oPU.count()
+      set oPUI = m_oPU.get_item(iter)
+      if oPUI.m_idProdukt > clng(0) and oPUI.m_idOpak > clng(0) then
+        strSQL = pM60300.bqry_stan_mag_for_prod_opak(oPUI.m_idProdukt,oPUI.m_idOpak,strIdMag)
+        set oRS = trans_.createadors(strSQL)
+        if oRS.recordCount > clng(0) then
+          dim curIlosc : curIlosc = ccur(0)
+          do while not oRS.EOF
+            curIlosc = curIlosc + ccur(oRS("c_ilosc_opak").value)
+            oRS.movenext
+          loop
+          oPUI.m_curIloscGotow = curIlosc
+        end if
+      end if
+      oPUI.m_curIloscGotow = oPUI.m_curIloscGotow + oPUI.m_curIloscWykon
+    next
+  end function
+  
+  '---------------------------------------
+  'ustawia dostępność dla zasobu/czynności
+  '---------------------------------------
+  public sub set_dost()
+    dim iter
+    for iter = 0 to m_oPU.count()
+      dim oPUI : set oPUI = m_oPU.get_item(iter)
+      if oPUI.m_eTyp = N5PROPT_PRACA or oPUI.m_eTyp = N5PROPT_ZASOB then
+        oPUI.m_curIloscGotow = ccur(99999)
+        oPUI.m_curIloscGotow = oPUI.m_curIloscGotow + oPUI.m_curIloscWykon
+      end if  
+    next    
+  end sub
+  
+  '--------------------------------------
+  'wyznacza operacje możliwe do wykonania
+  '--------------------------------------
+  public sub set_ready_prop()
+    'pobranie ilości jednostkowej
+    set_ilosc_jedn()
+    'pobranie krotności
+    set_krotnosc()
+    'stany magazynowe dla surowców
+    if not set_stan() then
+      exit sub
+    end if
+    'dostępność dla zasobów
+    set_dost()    
+ 
+    dim iter, oPUI
+    for iter = 0 to m_oPU.count() - 1
+      set oPUI = m_oPU.get_item(iter)
+      if m_pArrayIlosc.value(iter) > ccur(0) then
+        oPUI.m_curIloscGotow = Int(oPUI.m_curIloscGotow/m_pArrayIlosc.value(iter))
+      end if
+    next
+    'minimalna ilość do wykonania dla korzenia
+    set oPUI = m_oPU.get_item(m_oPU.count())
+    oPUI.m_curIloscGotow = set_min_gotow()
+    
+    'minimalna ilość do wykonania dla liści
+    for iter = 0 to m_oPU.count() - 1
+      set oPUI = m_oPU.get_item(iter)
+      oPUI.m_curIloscGotow = ccur(oPUI.m_curIloscGotow * m_pArrayIlosc.value(iter))
+    next    
+
+    'zapisz zmiany
+    m_oPU.save()
+  end sub
+  
+  '-------------------------
+  'sprawdza co jest wykonane
+  '-------------------------  
+  public sub set_made_prop()
+    'pobranie ilości jednostkowej
+    set_ilosc_jedn()
+    'pobranie krotności
+    set_krotnosc()
+    'pobranie ilości z RP dla surowców
+    set_ilosc_RP()
+
+    'minimalna ilość do wykonania dla korzenia
+    dim oPUI : set oPUI = m_oPU.get_item(m_oPU.count())
+    oPUI.m_curIloscWykon = ccur(set_min_wykon())
+    
+    'zapisz zmiany
+    m_oPU.save()    
+  end sub
+  
+  '---------------------------------------------------------
+  'wyznacza minimalną ilość gotową do wykonania dla korzenia
+  '---------------------------------------------------------
+  public function set_min_gotow()
+    dim iter, oPUI
+    set oPUI = m_oPU.get_item(0)
+    if m_pArrayKrotnosc.value(0) > ccur(0) then
+      set_min_gotow = oPUI.m_curIloscGotow/m_pArrayKrotnosc.value(0)
+    end if
+    for iter = 0 to m_oPU.count() - 1
+      set oPUI = m_oPU.get_item(iter)
+      if m_pArrayKrotnosc.value(iter) > ccur(0) then
+        if oPUI.m_curIloscGotow/m_pArrayKrotnosc.value(iter) < set_min_gotow then
+          set_min_gotow = ccur(oPUI.m_curIloscGotow/m_pArrayKrotnosc.value(iter))
+        end if
+      end if  
+    next
+  end function
+
+  '----------------------------------------------
+  'wyznacza minimalną ilość wykonaną dla korzenia
+  '----------------------------------------------
+  public function set_min_wykon() : set_min_wykon = ccur(0)
+    dim iter, oPUI
+    set oPUI = m_oPU.get_item(0)
+    if m_pArrayKrotnosc.value(0) > ccur(0) and m_pArrayIlosc.value(0) > ccur(0) then
+      set_min_wykon = Int((oPUI.m_curIloscWykon/m_pArrayIlosc.value(0))/m_pArrayKrotnosc.value(0))
+    end if
+    for iter = 0 to m_oPU.count() - 1
+      set oPUI = m_oPU.get_item(iter)
+      if m_pArrayKrotnosc.value(iter) > ccur(0) and m_pArrayIlosc.value(iter) > ccur(0) then
+        if Int((oPUI.m_curIloscWykon/m_pArrayIlosc.value(iter))/m_pArrayKrotnosc.value(iter)) < set_min_wykon then
+          set_min_wykon = ccur(Int((oPUI.m_curIloscWykon/m_pArrayIlosc.value(iter))/m_pArrayKrotnosc.value(iter)))
+        end if
+      end if  
+    next    
+  end function
+
+end class
+
+'----------------------
+'obiekt typu prop_query
+'----------------------
+function new_prop_query()
+  set new_prop_query = new prop_query
+end function
+
+]]>
+</script>
+</config>
+	<body>
+	</body>
+</page>
+

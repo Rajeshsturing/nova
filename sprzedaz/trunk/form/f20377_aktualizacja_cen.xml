@@ -1,0 +1,196 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+PAGE_AKTUALIZACJA_CEN
+
+#include "h1000.h"
+#include "h1220.h"
+#include "h1222.h"
+#include "h1240.h"
+
+#define CTRLID_SRC_OBJECT		101
+#define CTRLID_DEST_OBJECT		102
+
+#if appvar_mode = 0
+#define AKTUALIZACJA_TITLE    Aktualizacja cen
+#else
+#define AKTUALIZACJA_TITLE    Aktualizacja stawek VAT
+#define CTRLID_STAWKI_TEXT    103
+#endif
+
+-->
+<page style='STYLE_PAGE'>
+<config>
+<title>
+AKTUALIZACJA_TITLE
+#ifdef _DEBUG
+[THIS_FILE]
+#endif
+</title>
+<startpos>center</startpos>
+<script>
+  <![CDATA[
+'nx_trace
+#include "50519"
+#include "50200"
+#include "50122"
+#include "50203"
+
+function fopen() : fopen = true
+  if trans_.isvar(APPVAR_MODE) then
+    if trans_.var(APPVAR_MODE) = 1 then
+      'tylko administrator ma prawo do zmiany stawek
+      dim idAdminUser : idAdminUser = trans_.findobjid(TYPEID_N5UZYTKOWNIK, "strLogin='" + ADMIN_LOGIN + "'")
+      if idAdminUser <> trans_.var(GVAR_USER) then
+        trans_.message 7000, 0, "Tylko administrator może dokonać zmiany stawek VAT."
+        fopen = false
+        exit function
+      end if
+      
+      page_.ctrl(CTRLID_STAWKI_TEXT).value = "Operacja aktualizuje stawki VAT dla wszystkich produktów zgodnie z nowelizacją ustawy o VAT w 2011 roku"
+      dim pGlobProf : set pGlobProf = nx_get_globprofile_obj(GLOBPROF_STAWKI_VAT2011)
+      if pGlobProf is nothing then
+        set pGlobProf = trans_.newobj(TYPEID_GLOBPROFILE)
+        pGlobProf.indeks = clng(GLOBPROF_STAWKI_VAT2011)
+        pGlobProf.Wartosc = cstr(0)
+        if not trans_.saveobjects then
+          trans_.message 7000, 0, "Nie można ustawić profilu dla nowych stawek VAT."
+          fopen = false
+          exit function
+        end if
+      else
+        if pGlobProf.Wartosc = cstr(1) then
+          page_.ctrl(CTRLID_STAWKI_TEXT).value = "Operacja cofnie stawki VAT do obowiązujących w 2010 roku"          
+        end if
+      end if
+    end if
+  end if
+end function
+
+function update_prices()
+  dim bFirst : bFirst = true
+
+  NX_TRACE_START_STREAM("Aktualizacja cen",nothing)
+
+	dim strSQL : strSQL = "select 'idobj'=p_idobj from vlist_n5produkt_listopakowania where " +_
+	" left(c_opak_strRZC,1) in ('1','2') and " +_
+	" p_prod_cCheckPrice <> '0' " +_
+	" order by p_strNazwa"
+	dim pPerf : set pPerf = doc_.performing("Aktualizacja cen...")
+
+	dim oRS : set oRS = trans_.createadors(strSQL)
+	
+	do while not oRS.eof
+    if bFirst then
+      if not doc_.getmodule(60253).gm_ensure_accuracy_ui(true) then
+        exit function
+      end if 
+      bFirst = false
+    end if
+    
+		dim oProdukt : set oProdukt = trans_.getobj(TYPEID_N5PRODUKT,clng(oRS("idobj")))
+		oProdukt.n5produkt_update_prices
+		oRS.movenext
+	loop
+	trans_.saveobjects
+	set pPerf = nothing
+
+	NX_TRACE_SHOW_LOG(1)
+end function
+
+function update_prices_all()
+  if not doc_.getmodule(60253).gm_ensure_accuracy_ui(true) then
+    exit function
+  end if 
+
+  NX_TRACE_START_STREAM("Aktualizacja cen",nothing)
+
+	dim strSQL : strSQL = "select 'idobj'=p_idobj from vlist_n5produkt_listopakowania where " +_
+	" left(c_opak_strRZC,1) in ('1','2') " +_
+	" order by p_strNazwa"
+	dim pPerf : set pPerf = doc_.performing("Aktualizacja cen...")
+
+	dim oRS : set oRS = trans_.createadors(strSQL)
+	
+	do while not oRS.eof
+		dim oProdukt : set oProdukt = trans_.getobj(TYPEID_N5PRODUKT,clng(oRS("idobj")))
+		oProdukt.n5produkt_update_prices
+		oRS.movenext
+	loop
+	trans_.saveobjects
+	set pPerf = nothing
+  
+  NX_TRACE_END
+
+end function
+
+function update_vat()
+  'aktualizuj stawki
+  update_stawki_vat()
+
+  dim pGlobProf : set pGlobProf = getglobprofileObj(GLOBPROF_STAWKI_VAT2011)
+  if pGlobProf.Wartosc = cstr(0) then
+    'stawki na 2011 rok
+    setglobprofile GLOBPROF_STAWKI_VAT2011, "1"
+  else
+    'stawki na 2010 rok
+    setglobprofile GLOBPROF_STAWKI_VAT2011, "0"
+  end if
+  if not trans_.saveobjects then
+  end if  
+end function
+
+function update_stawki_vat()
+  dim cursor: set cursor = trans_.createrawcursor(TYPEID_N5PRODUKT,"", "", "")
+  dim oProdukt, nBuf
+  if cursor.exists(1) then
+    dim pPerf : set pPerf = doc_.performing("Trwa aktualizacja stawek VAT...")
+    for each oProdukt in cursor
+      nBuf = oProdukt.eVAT
+      oProdukt.eVAT = oProdukt.prod_nVAT
+      oProdukt.prod_nVAT = nBuf      
+      if not trans_.saveobjects() then
+        trans_.message 7000, 0, "Nie można zmienić stawki dla produktu o indeksie: " + oProdukt.strIndeks
+        exit function
+      end if
+    next
+    set pPerf = nothing
+    MessageBox "Aktualizacja stawek zakończona powodzeniem." , "Aktualizacja stawek VAT", vbOKOnly, vbInformation
+    on_cancel()
+  else
+    MessageBox "Brak produktów do aktualizacji." , "Aktualizacja stawek VAT", vbOKOnly, vbInformation
+    on_cancel()    
+  end if  
+end function
+
+function on_cancel()
+	page_.goback
+end function
+
+]]></script>
+</config>
+<body>
+	<table>
+		<tbody>
+			<tr>
+				<td style='STYLE_TABLE_INFO' colspan='2'>
+#if appvar_mode = 0          
+					<text>Operacja aktualizuje ceny sprzedaży zgodnie z regułami aktualizacji określonymi dla każdego produktu</text>
+#else
+					<text name='CTRLID_STAWKI_TEXT'></text>
+#endif
+				</td>
+			</tr>
+			<tr style='STYLE_ROW_BTN' >
+				<td align='right' colspan='2' keepline='true'>
+#if appvar_mode = 0           
+					QXE_BUTTON(-1,0,Aktualizuj ceny,varFunction="update_prices_all",1)
+#else
+					QXE_BUTTON(-1,0,Zmiana trybu,varFunction="update_vat",1)  
+#endif
+					QXE_BUTTON(-1,0,Zamknij,varFunction="on_cancel",1)
+				</td>
+			</tr>
+		</tbody>
+	</table>
+</body>
+</page>

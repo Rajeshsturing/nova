@@ -1,0 +1,428 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+
+<!--
+Nieobecności
+
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1201.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1222.h"
+#include "h1200.h"
+#include "h1232.h"
+#include "h1228.h"
+#include "h1235_place_form_macros.h"
+
+
+#define CTRLID_UMOWA		1
+#define CTRLID_PRAC			2
+#define CTRLID_UZYTKREJ		3
+#define CTRLID_SCHEM		4
+#define CTRLID_PARAM1		6
+#define CTRLID_PARAM2		7
+#define CTRLID_LP			8
+
+
+#define IDCOLL_PARAM1		3
+#define IDCOLL_PARAM2		4
+
+#define CTRLID_PRAC_EDIT	202
+#define CTRLID_UZYTKMODYF	203
+
+
+#define SECID_PODSTAWOWE			1002
+
+
+#define FORM_SPAN					  4
+#define RCELL_SPAN					  3
+#define GRID_LSUM_SPAN				  6 
+
+-->
+
+<page style='STYLE_PAGE'>
+
+<config>
+	<title>
+Nieobecności 
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+<typeid>TYPEID_N5PLNIEOB</typeid>
+<script>
+  <![CDATA[
+
+
+#include "50200"
+
+'zrodlo_wyn_fsave
+#include "50133"
+
+
+function fsave
+  fsave = false
+  
+  if zrodlo_wyn_fsave(page_.root) then
+	  fsave = false
+	  if not page_.root is nothing then
+		  dim secid : secid=0
+		  if page_.root.isnew() then
+			  secid=page_.secidins
+		  else
+			  secid=page_.secidupd
+		  end if
+		  if secid <> 0 then
+			  if not doc_.getmodule(60106).HARUIimpl(secid) then
+				  exit function
+			  end if
+		  end if
+	  end if
+
+#ifdef ENABLE_DB11
+    if page_.root.eTyp = N5PL_NIEOB_URL_WYP or page_.root.eTyp = N5PL_NIEOB_URL_ZADANIE then
+      if not page_.root.pPracownik is nothing then
+        dim nYear: nYear = Year(trans_.var(GVAR_TODAY))
+        if Year(page_.root.dDataOd) = nYear or Year(page_.root.dDataDo) = nYear then
+          'aktulany urlop
+          dim dDataOd, dDataDo      
+          if Year(page_.root.dDataOd) < nYear then
+            dDataOd = DateSerial(nYear,1,1)
+          else
+            dDataOd = page_.root.dDataOd
+          end if
+          if Year(page_.root.dDataDo) > nYear then
+            dDataDo = DateSerial(nYear,12,31)
+          else
+            dDataDo = page_.root.dDataDo
+          end if        
+          dim pPM: set pPM = doc_.getmodule(60182)
+          dim pKalCP: set pKalCP = doc_.system.activex("navopl.KalCP")
+          dim nDniUrl: nDniUrl = pPM.dni_robocze(pKalCP, 0, page_.root.idobj, dDataOd, dDataDo)
+          if nDniUrl > page_.root.pPracownik.prac_curIloscDniUrlopu then
+            if MessageBox("Dni urlopu wypoczynkowego zostały wykorzystane. Czy mimo tego zapisać nieobecność?" , "Urlop wypoczynkowy", vbYesNo, vbQuestion) <> vbYes then
+              exit function
+            end if
+          end if
+          page_.root.pPracownik.prac_curIloscDniUrlopu = page_.root.pPracownik.prac_curIloscDniUrlopu - nDniUrl
+          if trans_.saveobjects then
+            trans_.message 7000, 0, "Ilość dni urlopu pozostałych do wykorzystania dla pracownika " + page_.root.pPracownik.strImie + " " +_ 
+              page_.root.pPracownik.strNazwisko + ": " + CStr(page_.root.pPracownik.prac_curIloscDniUrlopu)
+            trans_.discard()
+            page_.enableedit = false
+            fsave = true
+          end if  
+        end if  
+      end if
+    else
+      if trans_.saveobjects then
+        trans_.discard()
+        page_.enableedit = false
+        fsave = true
+      end if  
+  end if
+    
+#else    
+	  dim pPerforming : set pPerforming = doc_.performing("Trwa zachowywanie danych")
+	  if not trans_.saveobjects then
+		  trans_.message 1,90000,"Zachowanie danych nieudane. Spójrz na komunikaty poniżej."
+		  fsave = false
+		  exit function
+	  end if
+	  trans_.discard()
+	  page_.enableedit = false
+	  fsave = true
+
+    set pPerforming = nothing
+#endif	
+
+  end if
+
+end function
+
+function fdelete	
+	fdelete = true			
+	if page_.root.isnew() then		
+		exit function					
+	end if			
+	if page_.seciddel <> 0 then
+		if not doc_.getmodule(60106).HARUIimpl(page_.seciddel) then
+			exit function
+		end if
+	end if
+	if doc_.getmodule(60111).message_box(trans_.var(8003),"Czy na pewno usunąć dane ?",vbQuestion,vbYesNo) <> vbYes then 
+		exit function
+	end if
+	if not page_.root.exlock() then	
+		trans_.message 1,90001, "Usunięcie niemożliwe, ponieważ ktoś inny zmienia te dane."  
+		exit function	
+	end if	
+	page_.root.markdel = true	
+	dim pPerforming : set pPerforming = doc_.performing("Trwa usuwanie danych")
+	if not trans_.saveobjects then  
+		std_fundo 
+		trans_.message 1,90001, "Usunięcie danych nieudane. Spójrz na komunikaty poniżej."  
+		std_fdelete = false		
+		exit function		
+	else		
+  
+#ifdef ENABLE_DB11
+  if page_.root.eTyp = N5PL_NIEOB_URL_WYP or page_.root.eTyp = N5PL_NIEOB_URL_ZADANIE then
+    if not page_.root.pPracownik is nothing then
+      dim nYear: nYear = Year(trans_.var(GVAR_TODAY))
+      if Year(page_.root.dDataOd) = nYear or Year(page_.root.dDataDo) = nYear then
+        'aktulany urlop
+        dim dDataOd, dDataDo      
+        if Year(page_.root.dDataOd) < nYear then
+          dDataOd = DateSerial(nYear,1,1)
+        else
+          dDataOd = page_.root.dDataOd
+        end if
+        if Year(page_.root.dDataDo) > nYear then
+          dDataDo = DateSerial(nYear,12,31)
+        else
+          dDataDo = page_.root.dDataDo
+        end if        
+        dim pPM: set pPM = doc_.getmodule(60182)
+        dim pKalCP: set pKalCP = doc_.system.activex("navopl.KalCP")
+        dim nDniUrl: nDniUrl = pPM.dni_robocze(pKalCP, 0, page_.root.idobj, dDataOd, dDataDo)
+        page_.root.pPracownik.prac_curIloscDniUrlopu = page_.root.pPracownik.prac_curIloscDniUrlopu + nDniUrl
+        if trans_.saveobjects then
+          trans_.message 7000, 0, "Ilość dni urlopu pozostałych do wykorzystania dla pracownika " + page_.root.pPracownik.strImie + " " +_ 
+            page_.root.pPracownik.strNazwisko + ": " + CStr(page_.root.pPracownik.prac_curIloscDniUrlopu)          
+        end if
+      end if  
+    end if
+  end if
+#endif  
+  
+		set page_.root = nothing 
+		trans_.discard()		
+		with page_  
+			if not .cursoriter is nothing then		
+				if .cursoriter.gonext then		
+					set .root = .cursoriter.get		
+					if not .root is nothing then  
+						page_.updateview			
+						exit function		
+					end if		
+				end if		
+				if .cursoriter.gofirst then		
+					set .root = .cursoriter.get		
+					if not .root is nothing then  
+						page_.updateview			
+						exit function		
+					end if		
+				end if		
+			end if		
+			set .root = trans_.newobj(.roottypeid)
+			if .root is nothing then
+				.goback
+				exit function
+			end if
+			page_.updateview			
+		end with  
+		trans_.usermodif(false)				
+	end if
+  
+end function
+
+QVE_REF_OPEN_FORM(CTRLID_UMOWA,pUmowa)
+QVE_REF_OPEN_FORM(CTRLID_PRAC,pPracownik)
+QVX_SUGGQUERY_DUMMY(CTRLID_PRAC_EDIT)
+QVE_REF_OPEN_FORM(CTRLID_SCHEM,pSchemat)
+QVX_WPROWADZIL_MODYFIKOWAL(CTRLID_UZYTKREJ,CTRLID_UZYTKMODYF,pUzytRej,pUzytModyf)
+
+QVX_SUGGQUERY_UMOWA(CTRLID_UMOWA)
+
+
+SVE_CURRENCY_CUSTOM_GETDATA_SKLADNIKNALICZEN_PARAM(CTRLID_PARAM1,curParam1,pJednostkaParam1)
+SVE_CURRENCY_CUSTOM_PRICE_DATAENTER(CTRLID_PARAM1,page_.root.listSkladnik,curParam1,1)
+
+SVE_CURRENCY_CUSTOM_GETDATA_SKLADNIKNALICZEN_PARAM(CTRLID_PARAM2,curParam2,pJednostkaParam2)
+SVE_CURRENCY_CUSTOM_PRICE_DATAENTER(CTRLID_PARAM2,page_.root.listSkladnik,curParam2,2)
+
+SVE_LP_SKLADNIKNALICZEN_BLOCK_PARAM(CTRLID_LP,IDCOLL_PARAM1,IDCOLL_PARAM2)
+
+
+'std_choose_schematnal_hli
+#include "50630"
+
+#define INCLUDE_BULID_CHOICELIST_PRACOWNIK
+'Bulid_Choicelist_Pracownik_Row
+#include "50634"
+
+#ifdef APPCONFIG_SCHEMAT_GRUPA_PRACOWNIKOW
+function kopiujSchemat
+
+	if page_.root.isnew() then
+		trans_.message 1002 , 0 , "Dokument musi byc najpierw zapisany"
+		exit function
+	end if
+  
+  'przygotowanie danych (idobj pracowników)
+  if not page_.root.pPracownik is nothing then
+    'wybór filtra dla pracowników
+    dim dialogFiltr : set dialogFiltr = doc_.getpagehli("varCmd=CMD_OPEN_WIZARD_PAGE varDestPage=DIALOG_PRACOWNIK_FILTR")
+    dim nRes : nRes = dialogFiltr.domodalauto()  
+	  dim pCursor : set pCursor = dialogFiltr.cursor_for_active_emp(page_.root)		
+	  if pCursor is nothing then
+		  exit function
+	  end if
+  else
+		trans_.message 1002 , 0 , "Nie wybrano pracownika"
+		exit function    
+  end if
+  
+  'tworzenie nieobecności z automatu
+  do while not pCursor.EOF
+    dim idPrac : idPrac = pCursor("id_prac").value
+    dim idUmowa : idUmowa = pCursor("id_umowa").value
+    dialogFiltr.create_sklad page_.root.idobj, idPrac, idUmowa, TYPEID_N5PLNIEOB
+    pCursor.MoveNext
+  loop
+  
+  MessageBox "Operacja zakończona powodzeniem" , "Nieobecności", vbOKOnly, vbInformation
+  
+end function
+#endif
+
+]]></script>
+</config>
+<header>
+</header>
+<body>
+
+QXF_BEGIN
+	QXS_BEGIN_FLAT(SECID_PODSTAWOWE,Informacje podstawowe,FORM_SPAN)
+		<tr>
+			QXC_LABEL_OPEN_REQ(CTRLID_PRAC,Pracownik,1)
+			<td width='min' keepline='true' colspan='RCELL_SPAN'>								
+				QXE_EDIT_REF_CQ(CTRLID_PRAC_EDIT,40,pPracownik,strNazwisko)					
+				QXE_PICTURE_ACTION(-1,PICTURE_CHOICE_N5PRACOWNIK,varFunctionHLI="std_choice_field_cq_hli" vs1="pPracownik" vs2="strNazwisko" vn3="CTRLID_PRAC_EDIT" vs4="" vs5="Bulid_Choicelist_Pracownik_Row" ,Wybór z listy)
+			</td>
+		</tr>
+		<tr>
+			<td />
+			<td colspan='RCELL_SPAN'>
+				QXE_TEXT_REF(-1,10,pPracownik,strImie)
+				<t>&nbsp;PESEL:&nbsp;</t>
+				QXE_TEXT_REF(-1,10,pPracownik,strPESEL)
+			</td>
+		</tr>
+		<tr>															
+			QXC_LABEL_OPEN_REQ (CTRLID_UMOWA,Umowa,1)
+			<td width='min' colspan='1' keepline='true'>								
+				QXE_TEXT_REF_ASTEXT(-1,44,pUmowa)	
+				QXE_PICTURE_CHOICE_CQ(CTRLID_UMOWA,PICTURE_CHOICE_N5PLUMOWA,pUmowa,dDataOd,)
+			</td>						
+		</tr>
+
+		QXR_DATE_FIELD(Data rejestracji,-1,dDataRej,1)
+		<tr>
+			QXC_LABEL_REQ(Okres od-do,1)
+			<td keepline='true'>
+				QXE_DATE_FIELD(-1,dDataOd)
+				<t>-</t>
+				QXE_DATE_FIELD(-1,dDataDo)
+			</td>
+		</tr>	
+
+		<tr>
+			QXC_LABEL_REQ(Typ nieobecności,2)
+		</tr>
+		<tr>
+			<td colspan='2'>
+				<radio name='e30' colspan='2'>
+					<transfer mode='edit_field'>
+						<field>eTyp</field>
+					</transfer>
+
+						<t>nieobecność nieusprawiedliwiona</t>
+						<t>urlop wypoczynkowy</t>
+						<t>urlop na żądanie</t>
+						<t>urlop okolicznościowy</t>
+						<t>urlop wychowawczy</t>
+						<t>urlop szkoleniowy</t>
+						<t>urlop bezpłatny</t>
+						<t>urlop profilaktyczny</t>
+						<t>urlop opiekuńczy</t>
+						<t>urlop bezpłatny z powodów pracodawcy</t>
+						<t>nieobecność usprawiedliwiona płatna</t>
+#ifdef ENABLE_DB11_F    
+						<t>urlop macierzyński</t>
+						<t>urlop ojcowski</t>  
+#endif
+#ifdef ENABLE_DB15   
+						<t>urlop rodzicielski</t>
+#endif
+				</radio>
+			</td>
+		</tr>
+
+		<tr>	
+			<td colspan='4'>	
+				<grid>	
+					<transfer mode='grid_list'>	
+						<field>listSkladnik</field>	
+					</transfer>	
+					<thead>	
+						<tr style='STYLE_TABLE_HEADER'>
+							<td width='min'><t>LP</t></td>
+							<td width='max'><t>Składnik</t></td>
+							<td><t>Parametr 1</t></td>
+							<td><t>Parametr 2</t></td>
+							<td><t>Termin</t></td>
+						</tr>	
+					</thead>	
+					<tbody>	
+						<tr style='STYLE_TABLE_BODY'>	
+							<td>
+								<t name='CTRLID_LP'><transfer mode='row_custom'/></t>
+							</td>
+							XG_REF_CELL_PLSCHEMNAL
+							XG_CELL_PLPARAM(-1,CTRLID_PARAM1,cConfParam1)
+							XG_CELL_PLPARAM(-1,CTRLID_PARAM2,cConfParam2)
+							SXC_EDIT_REF(-1,10,PICTURE_CHOICE_N5TERMINNAL,listSkladnik,pTerminNal,strNazwa,CRSR_DEFAULT)
+						</tr>	
+					</tbody>	
+				</grid>	
+			</td>	
+		</tr>
+
+		<tr>						
+			QXX_WPROWADZIL_MODYFIKOWAL(CTRLID_UZYTKREJ,CTRLID_UZYTKMODYF,pUzytRej,pUzytModyf,2)
+		</tr>
+  XFOPTEDITFIELD(Kod świadczenia (Płatnik),4,plni_strKodNieobecnosci)
+  
+#ifdef APPCONFIG_SCHEMAT_GRUPA_PRACOWNIKOW  
+  <tr>
+    <td colspan='2'>
+      <table>
+        <tbody>
+          <tr style='STYLE_ROW_BTN'>
+            <td>
+              <button style='STYLE_BUTTON' href='varFunction="kopiujSchemat"' tip='Kopiuje schemat dla wybranych pracowników'>
+                Kopiuj schemat
+              </button>
+            </td>
+            <td width='max'><t /></td>
+          </tr>
+        </tbody>
+      </table>
+    </td>
+  </tr>
+#endif  
+  
+  QXS_END_FLAT(FORM_SPAN)
+  QXF_END
+
+
+</body>
+<footer>
+</footer>
+</page>

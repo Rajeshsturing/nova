@@ -1,0 +1,406 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!-- 17.07.2004 filtr na grupe nie jako checkbox, APPCONFIG_RAPORT_BY_PROD_INX-->
+<!-- 13.01.2005 podgrupy produktow -->
+
+<!--
+
+RAPTEMPLATE_MAG_ROTACJA
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1250.h" 
+
+#define RAPORT_TITLE Rotacja zapasów
+#define ROTACJA_INFINITY	9999999
+
+
+#ifdef APPCONFIG_RAPORT_BY_PROD_INX
+#define C_FIELD_FIRST_EXPR		t_prod.strIndeks
+#define C_FIELD_SECOND_EXPR		t_prod.strNazwa
+#define C_FIELD_FIRST_HUMANNAME 	Indeks
+#define C_FIELD_SECOND_HUMANNAME 	Nazwa
+#else
+#define C_FIELD_FIRST_EXPR		t_prod.strNazwa
+#define C_FIELD_SECOND_EXPR		t_prod.strIndeks
+#define C_FIELD_FIRST_HUMANNAME		Nazwa
+#define C_FIELD_SECOND_HUMANNAME	Indeks
+#endif
+
+#define PARAM_NR_LICZBA_MIESIECY   5
+
+-->
+
+<page style='36'>
+<config>
+<title>RAPORT_TITLE</title>
+<script>
+<![CDATA[
+<%
+dim nDays : nDays = 1
+
+
+function query()
+	query = "select * from (select 'c_mag_nazwa'=t_mag.strNazwa,'c_opak_nazwa'=t_opak.strNazwa, 'c_prod_id'=t_prod.idObj, " +_
+	"'c_field_second' = (C_FIELD_SECOND_EXPR),'c_wartosc'=curWartoscPI,'c_field_first'= (C_FIELD_FIRST_EXPR), 'c_oznprod' = t_prod.strCecha1 ,  " +_	
+	"'c_i_rotacja'= case when t_tmp.curIloscOpakRI = 0 then ROTACJA_INFINITY else " +_
+	"((t_tmp.curIloscOpakB + t_tmp.curIloscOpakB + t_tmp.curiloscopakpi - t_tmp.curiloscopakri) / 2) / t_tmp.curiloscopakri " +_
+	"end " +_
+	",'ilosc_dni'=(select datediff(day, dDataWyst,getdate()) from n5dokmag where nNumOper = " + vbNewLine +_
+	"(select max(gmo_idDost) from n5gmop where gmo_pProd = t_prod.idobj and gmo_pOpak =  t_opak.idobj " + vbNewLine +_
+	"and gmo_pMag = t_mag.idobj)) " + vbNewLine +_
+	" from #tmp_stanmag_moment as t_tmp " +_
+	" inner join n5magazyn as t_mag on t_tmp.pMagazyn = t_mag.IdObj " +_
+	" inner join n5produkt as t_prod on t_tmp.pProdukt = t_prod.IdObj " +_
+	" inner join n5opakowanie_produktu as t_opak on t_tmp.pOpak = t_opak.IdObj " +_
+	" where  t_prod.pGrupaProd in (select tmp_group_idobj from #tmp_prod_hierarchy) "+_
+	" and %1 and %2 and %3) as wyn " + vbNewLine +_
+  " [EXTRA] " + vbNewLine +_
+  " order by c_mag_nazwa,c_i_rotacja desc,c_field_first,c_field_second"
+end function
+%>
+<%
+
+'' jest używane poza default_param()
+dim RaportOkresParam
+dim utilProdHierarchy : set utilProdHierarchy = doc_.getmodule(60246)
+dim pProdHierarchy : set pProdHierarchy = utilProdHierarchy.new_prod_hierarchy()
+
+dim pParamArray
+dim pGrupaParam
+
+
+function default_param()
+	set pParamArray = doc_.afc.new_navoarray()
+
+	pParamArray.add doc_.getmodule(43025).new_filtr_magazyn("t_mag.idobj","N5TYPMAG_PODSTAWOWY,N5TYPMAG_ZWROTY,N5TYPMAG_PRODUKCJAWTOKU,N5TYPMAG_REZERWACJE")
+
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwa produktu").bindexpr("t_prod.strNazwa")
+	pParamArray.add doc_.afc.rap.param.new_text("Indeks produktu").bindexpr("t_prod.strIndeks")
+	set pGrupaParam = doc_.afc.rap.param.new_text("Grupa produktów").bindexpr("strNazwa")
+	pParamArray.add pGrupaParam
+
+	'pParamArray.add doc_.afc.rap.param.new_text("Nazwa grupy").bindexpr("t_grupy.strNazwa")
+	'pParamArray.add doc_.getmodule(43025).new_filtr_grupa_prod("t_prod.pGrupaProd")
+
+	set RaportOkresParam = doc_.afc.rap.param.new_date_range("Analizowany okres").bindexpr("")
+	pParamArray.add RaportOkresParam
+  
+	dim pParamLiczMies: set pParamLiczMies = doc_.afc.rap.param.new_choice("Liczba miesięcy")
+	with pParamLiczMies
+		.multiple = true
+		.names.add "0-3"
+		.values.add 1
+		.selected.add True
+		.names.add "3-6"
+		.values.add 2
+		.selected.add True
+		.names.add "6-9"
+		.values.add 3
+		.selected.add True
+		.names.add "9-12"
+		.values.add 4    
+		.selected.add True
+		.names.add "powyżej 12"
+		.values.add 5
+		.selected.add True    
+	end with
+	pParamArray.add pParamLiczMies 
+
+	set default_param = pParamArray
+end function
+
+function getExtraParam(): getExtraParam = ""
+  dim iter
+  dim nDay90: nDay90 = DateDiff("d",dateadd("m",-3,trans_.var(GVAR_TODAY)),trans_.var(GVAR_TODAY))
+  dim nDay180: nDay180 = DateDiff("d",dateadd("m",-6,trans_.var(GVAR_TODAY)),trans_.var(GVAR_TODAY))
+  dim nDay270: nDay270 = DateDiff("d",dateadd("m",-9,trans_.var(GVAR_TODAY)),trans_.var(GVAR_TODAY))
+  
+  dim strWhere: strWhere = ""
+  for iter = 0 to pParamArray.value(PARAM_NR_LICZBA_MIESIECY).selected.upperIndex
+    if pParamArray.value(PARAM_NR_LICZBA_MIESIECY).selected.value(iter) then
+      if iter = 0 then
+        '0-3
+        strWhere = strWhere + "(wyn.ilosc_dni <= " + CStr(nDay90) + ") or "
+      end if
+      if iter = 1 then
+        '3-6
+        strWhere = strWhere + "(wyn.ilosc_dni > " + CStr(nDay90) + " and wyn.ilosc_dni <= " + CStr(nDay180) + ") or "
+      end if
+      if iter = 2 then
+        '6-9
+        strWhere = strWhere + "(wyn.ilosc_dni > " + CStr(nDay180) + " and wyn.ilosc_dni <= " + CStr(nDay270) + ") or "
+      end if
+      if iter = 3 then
+        '9-12
+        strWhere = strWhere + "(wyn.ilosc_dni > " + CStr(nDay270) + " and wyn.ilosc_dni <= 365) or "
+      end if
+      if iter = 4 then
+        '>12
+        strWhere = strWhere + "(wyn.ilosc_dni > 365) or "
+      end if      
+    end if
+  next
+  if Len(strWhere) > 4 then
+    strWhere = Left(strWhere,Len(strWhere) - 4)
+  end if
+  getExtraParam = "where (" + strWhere + ")"
+end function
+%>
+<%
+function write_actual_param(byref pActualParam)
+	dim iter
+	dim bAnyWritten : bAnyWritten = false
+	if not pActualParam is nothing then
+		
+		for iter = 0 to pActualParam.upperIndex
+			if pActualParam.value(iter).get_desc() <> "" then 
+				bAnyWritten = true
+				so.write "<t size='5' /><text fontsize='4'><![CD"+"ATA[" + pActualParam.value(iter).get_desc() + "]"+"]></text><br/>"
+			end if
+		next
+	end if
+	if not bAnyWritten then 
+		so.write "<t fontsize='4'>brak</t><br/>"
+	end if
+		so.write "<br/>"
+end function
+
+sub prepare_sql_env(byref pActualParam)
+	if not pActualParam is nothing then
+
+		dim where_str : where_str = RaportOkresParam.BindExpr("ddatawyst").get_where_part(trans_)
+		nDays = clng(datediff("d",RaportOkresParam.first_value,RaportOkresParam.last_value))
+
+		dim nNumOpStart : nNumOpStart = clng(0)
+		dim nNumOpEnd : nNumOpEnd = clng(0)
+
+		dim pModUtil : set pModUtil = doc_.getmodule(60253)
+		pModUtil.sql_prepare_tmp_stanmag_moment
+		if pModUtil.convert_date_range_to_num_oper_range(where_str,nNumOpStart,nNumOpEnd) then
+			pModUtil.sql_exec_tmp_stanmag_moment nNumOpStart,nNumOpEnd
+		end if
+	end if
+end sub
+
+sub clean_sql_env()
+	doc_.getmodule(60253).sql_clean_tmp_stanmag_moment()
+end sub
+%>
+<%
+function section_header_1(byref pSection,byref pRec)
+%>
+<tr userprop='propc_section_start="1" propc_section_hidden="0" propc_section_req="0"' fontsize='4'>
+#ifdef _TORAL
+<td style='27' colspan='8'>
+#else
+<td style='27' colspan='7'>
+#endif
+	
+		<picture name='<%so.write cstr(nSectionPicCounter)%>' tip='Zwiń' ignoresysdisable='true' image='PICTURE_SMALL_MINUS' width='SIZE_FOR_PLUS' height='SIZE_FOR_PLUS' href='vs1022="section_hideshow_hli" vn100="<%so.write cstr(nSectionPicCounter)%>"'/>
+	RXE_AUTO_TEXT(c_mag_nazwa)
+</td>
+</tr>
+<%
+nSectionPicCounter=nSectionPicCounter+1
+end function
+%>
+<%
+function section_footer_1(byref pSection)
+%>
+#ifdef _IOW
+<tr hide='true' userprop='propc_section_end="1"'><td colspan='6' /></tr>
+#else
+<tr hide='true' userprop='propc_section_end="1"'><td colspan='5' /></tr>
+#endif
+#ifdef _TORAL
+<tr>
+  <td style='27' colspan='7' />
+	<td style='27' align='right'>
+		<t><%so.write doc_.afc.display.quantity(pSection.counter(0).result,"",2)%></t>
+	</td>
+</tr>
+#endif
+<%
+end function
+%>
+<%
+function body_row(byref pSection,byref pRec)
+if pRapExec.RecNr mod 2 = 0 then
+%>
+<tr bordercolor='white'>
+<%
+else
+%>
+<tr bordercolor='white' style='37'>
+<%
+end if
+%>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+	<td align='right'>RXE_LP</td>
+	<td>
+		RXE_TEXT_LINK_FORM_VCC(TYPEID_N5PRODUKT,c_prod_id,c_field_first)		
+	</td>
+#ifdef _IOW
+	<td>
+		RXE_AUTO_TEXT(c_oznprod)
+	</td>
+#endif
+	<td>
+		RXE_AUTO_TEXT(c_field_second)
+	</td>
+	<td>
+		RXE_AUTO_TEXT(c_opak_nazwa)
+	</td>
+	<td align='right'>
+		<t>
+	<%
+	dim nRotacja : nRotacja = clng(pRec("c_i_rotacja"))
+	if  nRotacja = ROTACJA_INFINITY then
+		so.write "brak danych"
+	else
+		so.write clng(nDays * nRotacja)
+	end if
+	%>
+		</t>
+	</td>
+	<td align='right'>
+		RXE_QUANTITY_CVV(ilosc_dni,"",0)
+	</td> 
+#ifdef _TORAL
+	<td width='min' align='right'>
+		RXE_QUANTITY_CVV(c_wartosc,"",2)
+	</td>
+#endif  
+</tr><%
+end function
+%>
+<%
+function body_header(byref pSection,byref pRec)
+'so.write "<p backcolor='yellow'><text><![CD"+"ATA["+pRapExec.get_final_query() + "]"+"]></text></p><br/>" 
+%>
+<table border='1'>
+<thead>
+<tr style='21'>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+	<td width='min'><t>LP</t></td>
+	<td width='max'>
+		<text><![CDATA[C_FIELD_FIRST_HUMANNAME]]></text>
+	</td>
+#ifdef _IOW
+	<td width='min'>
+		<text><![CDATA[Oznaczenie producenta]]></text>
+	</td>
+#endif
+	<td width='min'>
+		<text><![CDATA[C_FIELD_SECOND_HUMANNAME]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Opakowanie]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Rotacja]]></text>
+	</td>
+	<td width='1400'>
+		<text><![CDATA[Ilość dni]]></text>
+	</td>
+#ifdef _TORAL
+	<td width='min'>
+		<text><![CDATA[Wartość]]></text>
+	</td>
+#endif
+</tr>
+</thead>
+<tbody>
+<%
+end function
+%>
+<%
+function body_footer(byref pSection)
+%>
+</tbody>
+#ifdef _TORAL
+<tfoot>
+<tr style='21'>
+<td style='27' colspan='7' />	
+	<td style='27' align='right'>
+		<t><%so.write doc_.afc.display.quantity(pRapExec.body.counter(0).result,"",2)%></t>
+	</td>
+</tr>
+</tfoot>
+#endif  
+</table>
+<%
+end function
+%>
+<%dim nSectionPicCounter : nSectionPicCounter = 10000000%>
+function section_hideshow_hli(byref pHLI)
+doc_.afc.formsection.section_hideshow page_, pHLI.prop(100)
+end function
+]]>
+</script>
+</config>
+<header>
+</header>
+<body>
+<p>
+RAPORT_HEADER(3,0)
+</p>
+
+<p>
+<t size='2'/>
+</p>
+
+<p><text fontsize='7'><![CDATA[RAPORT_TITLE]]></text></p><br/><br/>
+<%
+if not doc_.getmodule(60253).gm_ensure_accuracy_ui(true) then
+%>
+<p border='1' fontsize='5' forecolor='red' bold='true'><t>Uwaga! Niepoprawny stan magazynu</t></p><br/><br/>
+<%
+end if
+%>
+<t fontsize='5' bold='true'>Kryteria selekcji:</t><br/>
+<%
+
+dim pRapExec : set pRapExec = rapeng_.new_engine()
+with pRapExec
+#ifdef _TORAL
+	.add_body_ex(getref("body_header"),getref("body_footer"),getref("body_row")).add_sumator("c_wartosc")
+	.add_group_section(0,getref("section_header_1"),getref("section_footer_1")).add_sumator("c_wartosc")
+#else
+	.add_body_ex getref("body_header"),getref("body_footer"),getref("body_row")
+	.add_group_section 0,getref("section_header_1"),getref("section_footer_1")
+#endif  
+if .prepare("RAPORT_TITLE",default_param(),rapeng_.get_raport_param(),query()) then
+%>
+<%
+
+	dim pPerf : set pPerf = doc_.performing("Trwa przygotowywanie wyników...")
+		pProdHierarchy.fill_on_prodgrupa_param pGrupaParam
+	set pPerf = nothing
+
+	prepare_sql_env rapeng_.get_raport_param()
+
+  .ReplaceQueryParam "[EXTRA]",getExtraParam() 
+  
+	write_actual_param rapeng_.get_raport_param()
+	if not .perform then
+		so.write "<p style='21'><t>Brak danych spełniających podane kryteria</t></p>"
+	end if
+
+	clean_sql_env
+%>
+<%
+end if
+end with
+
+pProdHierarchy.manual_done() : set pProdHierarchy = nothing
+set utilProdHierarchy = nothing
+
+%>
+</body>
+<footer>
+</footer>
+</page>

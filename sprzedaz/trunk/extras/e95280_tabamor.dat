@@ -1,0 +1,882 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+RAPTEMPLATE_TABELA_AMORTYZ
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1250.h" 
+
+#define CTRLID_BODY_HEADER      1
+#define CTRLID_BODY_FOOTER      2
+#define CTRLID_SECTION_CHECKBOX 3
+#define CTRLID_ROW_CHECKBOX     4
+
+
+#define RAPORT_TITLE Środki trwałe - tabela amortyzacyjna
+
+#macro RXE_AUTO_TEXT_LEN(_val_col_,_len_)								<% if len(cstr(pRec("_val_col_"))) > _len_ then so.write "<text><![CD"+"ATA["+ cstr(pRec("_val_col_")) + "]"+"]></text>" else so.write "<t><![CDA"+"TA["+ cstr(pRec("_val_col_")) + "]"+"]></t>" %>
+
+#define SMALL_FONT 3
+
+#macro VB_ROW_CHECKBOX(_ctrl_,_bCheckBox_,_bRowSec_) :  \
+function c##_ctrl_##_ongetdata(byref pCtrl) : c##_ctrl_##_ongetdata = true :  \
+  if _bCheckBox_ then :  \
+    pCtrl.value = "1" :  \
+  end if :  \
+end function :  \
+function c##_ctrl_##_ondataentered(pCtrl, Value) : c##_ctrl_##_ondataentered = true :  \
+  _bCheckBox_ = false :  \
+  dim oRowPodsum : set oRowPodsum = page_.ctrl(CTRLID_BODY_FOOTER) :  \ 
+  dim oRow : set oRow = pCtrl.parent.parent :  \
+  dim nNumCell : nNumCell = clng(5) :  \
+  dim nNumMies : nNumMies = page_.ctrl(CTRLID_BODY_HEADER).userprop.prop(1) :  \
+  dim nNumKol : nNumKol = nNumCell + 9 + nNumMies :  \
+  recalcSumSec oRow, oRowPodsum, nNumCell, nNumKol, _bRowSec_ :  \
+end function
+
+-->
+<page style='36' border='0'>
+<config>
+<title>RAPORT_TITLE</title>
+<script>
+<![CDATA[
+VB_PRINT_LANDSCAPE_COMMON
+VB_PRINTPREV_LANDSCAPE_COMMON
+
+<%
+'rok księgowy
+dim nRokKsieg
+
+'rodzaj amortyzacji
+dim strTypAmor
+
+'wybrany miesiąc
+dim nNumerMies
+
+'podsumowanie sekcji 1
+dim curUmorzZwSec : curUmorzZwSec = ccur(0)
+dim curUmorzZmSec : curUmorzZmSec = ccur(0)
+dim curUmorzRoczneSec : curUmorzRoczneSec = ccur(0)
+
+'podsumowanie całego raportu
+dim curUmorzZwSum : curUmorzZwSum = ccur(0)
+dim curUmorzZmSum : curUmorzZmSum = ccur(0)
+dim curUmorzRoczneSum : curUmorzRoczneSum = ccur(0)
+
+function query(byref pParamArray)
+
+'1. Tabela do przechowywania danych o środkach trwałych w danym roku
+dim strQuery
+strQuery = "create table #tabela_amort " + vbNewLine +_
+           "( " + vbNewLine +_
+           "idSr         int not null, " + vbNewLine +_
+           "strNazwaGr   varchar(64) collate SQL_Polish_CP1250_CI_AS not null, " + vbNewLine +_
+           "strNazwaSr   varchar(128) collate SQL_Polish_CP1250_CI_AS not null, " + vbNewLine +_
+           "strKRST      varchar(64) collate SQL_Polish_CP1250_CI_AS not null, " + vbNewLine +_
+           "-- amortyzacja bilansowa w danym miesiącu " + vbNewLine +_
+           "curBil1      decimal(12,2) not null, " + vbNewLine +_
+           "curBil2      decimal(12,2) not null, " + vbNewLine +_
+           "curBil3      decimal(12,2) not null, " + vbNewLine +_
+           "curBil4      decimal(12,2) not null, " + vbNewLine +_
+           "curBil5      decimal(12,2) not null, " + vbNewLine +_
+           "curBil6      decimal(12,2) not null, " + vbNewLine +_
+           "curBil7      decimal(12,2) not null, " + vbNewLine +_
+           "curBil8      decimal(12,2) not null, " + vbNewLine +_
+           "curBil9      decimal(12,2) not null, " + vbNewLine +_
+           "curBil10     decimal(12,2) not null, " + vbNewLine +_
+           "curBil11     decimal(12,2) not null, " + vbNewLine +_
+           "curBil12     decimal(12,2) not null, " + vbNewLine +_
+           "-- amortyzacja podatkowa w danym miesiącu " + vbNewLine +_
+           "curPod1      decimal(12,2) not null, " + vbNewLine +_
+           "curPod2      decimal(12,2) not null, " + vbNewLine +_
+           "curPod3      decimal(12,2) not null, " + vbNewLine +_
+           "curPod4      decimal(12,2) not null, " + vbNewLine +_
+           "curPod5      decimal(12,2) not null, " + vbNewLine +_
+           "curPod6      decimal(12,2) not null, " + vbNewLine +_
+           "curPod7      decimal(12,2) not null, " + vbNewLine +_
+           "curPod8      decimal(12,2) not null, " + vbNewLine +_
+           "curPod9      decimal(12,2) not null, " + vbNewLine +_
+           "curPod10     decimal(12,2) not null, " + vbNewLine +_
+           "curPod11     decimal(12,2) not null, " + vbNewLine +_
+           "curPod12     decimal(12,2) not null, " + vbNewLine +_
+           "-- wartość inwentarzowa " + vbNewLine +_
+           "curWartBilBO decimal(12,2) not null, " + vbNewLine +_
+           "curWartPodBO decimal(12,2) not null, " + vbNewLine +_
+           "curWartBilBZ decimal(12,2) not null, " + vbNewLine +_
+           "curWartPodBZ decimal(12,2) not null, " + vbNewLine +_
+           "-- umorzenie " + vbNewLine +_
+           "curUmorzBilBO decimal(12,2) not null, " + vbNewLine +_
+           "curUmorzPodBO decimal(12,2) not null, " + vbNewLine +_
+           "curUmorzBilBZ decimal(12,2) not null, " + vbNewLine +_
+           "curUmorzPodBZ decimal(12,2) not null, " + vbNewLine +_
+           "-- stawki " + vbNewLine +_
+           "curStawkaBil  decimal(12,2) not null, " + vbNewLine +_
+           "curStawkaPod  decimal(12,2) not null " + vbNewLine +_  
+           ") "
+trans_.execsql strQuery
+
+'2. Tabela do przechowywania IdObj środków spełniających dane kryteria
+strQuery = "create table #tabela_amort_pom " + vbNewLine +_
+           "( " + vbNewLine +_
+           "  idSr int not null " + vbNewLine +_
+           ")"
+trans_.execsql strQuery
+
+'wybrany rok księgowy
+nRokKsieg = pParamArray.value(3).names.value(pParamArray.Value(3).first_selected)
+'rodzaj amortyzacji
+if pParamArray.value(2).selected.value(0) then
+  strTypAmor = "Pod"
+else
+  strTypAmor = "Bil"
+end if
+'wybrany miesiąc
+nNumerMies = pParamArray.value(4).first_selected + 1
+
+'3. Wybór środków trwałych dla których istnieje chociaż 1 operacja w danym roku 
+'   lub nie zostały zlikwidowane/sprzedane w latach poprzednich
+strQuery = "insert into #tabela_amort " + vbNewLine +_
+           "select 'idSr'=max(t_sr.idobj),'strNazwaGr'=max(t_gr.strNazwa),'strNazwaSr'=max(t_sr.strNazwa), " + vbNewLine +_
+           "       'strKRST'=max(t_sr.strKRST),0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0, " + vbNewLine +_
+           "       0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0 " + vbNewLine +_
+           "from n5opsrtrw t_op " + vbNewLine +_  
+           "  inner join n5srtrw as t_sr on t_op.pSRTRW = t_sr.IdObj " + vbNewLine +_  
+           "  inner join n5grupasrtrw as t_gr on t_sr.pGrupa = t_gr.IdObj " + vbNewLine +_           
+           "where %1 and %2 " + vbNewLine +_
+           "and t_sr.eStatus in (2,3,4,5,6) and " + vbNewLine +_ 
+           "((t_op.dDataOper between " + trans_.afc.convert.date2SQL(firstDay(nRokKsieg)) + vbNewLine +_
+           "      and " + trans_.afc.convert.date2SQL(lastDay(nRokKsieg)) + ") or " + vbNewLine +_ 
+           "(t_op.dDataOper < " + trans_.afc.convert.date2SQL(firstDay(nRokKsieg)) + " and t_op.nNumOpST = " + vbNewLine +_ 
+           "isnull((select max(nNumOpSt) from n5opsrtrw op " + vbNewLine +_ 
+           " where op.dDataOper < " + trans_.afc.convert.date2SQL(firstDay(nRokKsieg)) + " and op.eRodzaj not in (6,7)),0))) " + vbNewLine +_ 
+           "group by t_sr.idobj"           
+'parametry
+strQuery = rapeng_.query_apply_actual_param(strQuery,pParamArray)
+trans_.execsql strQuery
+
+'4. Zapamiętanie w pom IdObj środków spełniających kryteria
+strQuery = "insert into #tabela_amort_pom " + vbNewLine +_
+           "select idSr from #tabela_amort"
+trans_.execsql strQuery
+
+'5. Dodanie wartości amortyzacji bilansowej/podatkowej dla każdego miesiąca
+strQuery = "insert into #tabela_amort " + vbNewLine +_
+           "select 'idSr'=#tabela_amort_pom.idSr,'','','', " + vbNewLine +_
+           strSQLAmorMies(1,"Bil") + strSQLAmorMies(2,"Bil") + strSQLAmorMies(3,"Bil") + strSQLAmorMies(4,"Bil") + strSQLAmorMies(5,"Bil") +_ 
+           strSQLAmorMies(6,"Bil") + strSQLAmorMies(7,"Bil") + strSQLAmorMies(8,"Bil") + strSQLAmorMies(9,"Bil") + strSQLAmorMies(10,"Bil") +_ 
+           strSQLAmorMies(11,"Bil") + strSQLAmorMies(12,"Bil") +_
+           strSQLAmorMies(1,"Pod") + strSQLAmorMies(2,"Pod") + strSQLAmorMies(3,"Pod") + strSQLAmorMies(4,"Pod") + strSQLAmorMies(5,"Pod") +_ 
+           strSQLAmorMies(6,"Pod") + strSQLAmorMies(7,"Pod") + strSQLAmorMies(8,"Pod") + strSQLAmorMies(9,"Pod") + strSQLAmorMies(10,"Pod") +_ 
+           strSQLAmorMies(11,"Pod") + strSQLAmorMies(12,"Pod") +_
+           "0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0 " + vbNewLine +_
+           "from #tabela_amort_pom"
+trans_.execsql strQuery
+
+'6. Dodanie wartości inwentarzowej/umorzenia dla amortyzacji bilansowej/podatkowej oraz stawek
+strQuery = "insert into #tabela_amort " + vbNewLine +_
+           "select 'idSr'=#tabela_amort_pom.idSr,'','','',0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0, " + vbNewLine +_
+           "0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0, " + vbNewLine +_
+           "-- wartosc inwentarzowa " + vbNewLine +_
+           strSQLAmorBO("curWartoscBilBO") + strSQLAmorBO("curWartoscPodBO") + strSQLAmorBZ("curWartoscBilBZ") + strSQLAmorBZ("curWartoscPodBZ") +_
+           "-- umorzenie " + vbNewLine +_
+           strSQLAmorBO("curUmorzBilBO") + strSQLAmorBO("curUmorzPodBO") + strSQLAmorBZ("curUmorzBilBZ") + strSQLAmorBZ("curUmorzPodBZ") +_
+           "-- stawki " + vbNewLine +_
+           strStawka("curStawkaBil") + "," + vbNewLine + strStawka("curStawkaPod") + vbNewLine +_
+           "from #tabela_amort_pom"
+trans_.execsql strQuery
+
+query = "select " + vbNewLine +_ 
+        "'strNazwaGr'=max(strNazwaGr),'strNazwaSr'=max(strNazwaSr),'idSr'=max(idSr),'strKRST'=max(strKRST), " + vbNewLine +_
+        "'curWartBOBil'=sum(curWartBilBO),'curWartBOPod'=sum(curWartPodBO), " + vbNewLine +_
+        "'curWartZwBil'=case when (sum(curWartBilBZ) - sum(curWartBilBO) > 0) then (sum(curWartBilBZ) - sum(curWartBilBO)) else 0.0 end, " + vbNewLine +_
+        "'curWartZwPod'=case when (sum(curWartPodBZ) - sum(curWartPodBO) > 0) then (sum(curWartPodBZ) - sum(curWartPodBO)) else 0.0 end, " + vbNewLine +_
+        "'curWartZmBil'=case when (sum(curWartBilBZ) - sum(curWartBilBO) > 0) then 0.0 else -(sum(curWartBilBZ) - sum(curWartBilBO)) end, " + vbNewLine +_
+        "'curWartZmPod'=case when (sum(curWartPodBZ) - sum(curWartPodBO) > 0) then 0.0 else -(sum(curWartPodBZ) - sum(curWartPodBO)) end, " + vbNewLine +_
+        "'curWartBZBil'=sum(curWartBilBZ),'curWartBZPod'=sum(curWartPodBZ),'curUmorzBOBil'=sum(curUmorzBilBO), " + vbNewLine +_
+        "'curUmorzBOPod'=sum(curUmorzPodBO),'curUmorzBZBil'=sum(curUmorzBilBZ),'curUmorzBZPod'=sum(curUmorzPodBZ), " + vbNewLine +_
+        "'curStawkaBil'=max(curStawkaBil),'curStawkaPod'=max(curStawkaPod),'curPozostBil'=sum(curWartBilBZ) - sum(curUmorzBilBZ), " + vbNewLine +_
+        "'curPozostPod'=sum(curWartPodBZ) - sum(curUmorzPodBZ), " + vbNewLine +_
+        "'cur1Bil'=sum(curBil1),'cur2Bil'=sum(curBil2),'cur3Bil'=sum(curBil3),'cur4Bil'=sum(curBil4),'cur5Bil'=sum(curBil5), " + vbNewLine +_
+        "'cur6Bil'=sum(curBil6),'cur7Bil'=sum(curBil7),'cur8Bil'=sum(curBil8),'cur9Bil'=sum(curBil9),'cur10Bil'=sum(curBil10), " + vbNewLine +_
+        "'cur11Bil'=sum(curBil11),'cur12Bil'=sum(curBil12),'cur1Pod'=sum(curPod1),'cur2Pod'=sum(curPod2),'cur3Pod'=sum(curPod3), " + vbNewLine +_
+        "'cur4Pod'=sum(curPod4),'cur5Pod'=sum(curPod5),'cur6Pod'=sum(curPod6),'cur7Pod'=sum(curPod7),'cur8Pod'=sum(curPod8), " + vbNewLine +_
+        "'cur9Pod'=sum(curPod9),'cur10Pod'=sum(curPod10),'cur11Pod'=sum(curPod11),'cur12Pod'=sum(curPod12) " + vbNewLine +_
+        "from #tabela_amort " + vbNewLine +_
+        "group by idSr " + vbNewLine +_ 
+        "order by strNazwaGr, strNazwaSr"
+
+end function
+
+'--------------------------
+'zwraca pierwszy dzień roku
+'--------------------------
+function firstDay(byval nYear)
+  firstDay = DateSerial(nYear,1,1)
+end function
+
+'-------------------------
+'zwraca ostatni dzień roku
+'-------------------------
+function lastDay(byval nYear)
+  lastDay = DateSerial(nYear,12,31)
+end function
+
+'-----------------------------------------------------------
+'wartość amortyzacji bilansowej/podatkowej w danym miesiącu
+'----------------------------------------------------------
+function strSQLAmorMies(byval nNumMies, byval strBilPod)
+  dim dData : dData = trans_.afc.convert.date2SQL(DateSerial(nRokKsieg,nNumMies,1))
+  strSQLAmorMies = "'cur" + strBilPod + CStr(nNumMies) + "' =isnull((select sum(t_op.curAmort" + strBilPod + ") from n5opsrtrw t_op where " +_
+                   "t_op.dDataAmort= " + dData + " and t_op.pSRTRW = #tabela_amort_pom.idSr group by t_op.pSRTRW),0)," + vbNewLine
+end function
+
+'-------------------------------------------------------------------------
+'wartość inwentarzowa/umorzenia dla amortyzacji bilansowej/podatkowej (BO)
+'-------------------------------------------------------------------------
+function strSQLAmorBO(byval strFieldBO)
+  'pole z bazy
+  dim strField : strField = Left(strFieldBO,Len(strFieldBO) - 2)
+  strSQLAmorBO = "'" + strFieldBO + "' = isnull((select t_op." + strField + " from n5opsrtrw t_op where t_op.pSRTRW = #tabela_amort_pom.idSr and " + vbNewLine +_
+                 "t_op.nNumOpst = isnull((select max(t_op1.nNumOpst) from n5opsrtrw t_op1 where t_op1.pSRTRW = #tabela_amort_pom.idSr and " + vbNewLine +_ 
+                 "year(t_op1.dDataOper) < " + CStr(nRokKsieg) + "),0)),0)," + vbNewLine
+end function
+
+'-------------------------------------------------------------------------
+'wartość inwentarzowa/umorzenia dla amortyzacji bilansowej/podatkowej (BZ)
+'-------------------------------------------------------------------------
+function strSQLAmorBZ(byval strFieldBZ)
+  'pole z bazy
+  dim strField : strField = Left(strFieldBZ,Len(strFieldBZ) - 2)
+  dim dData : dData = trans_.afc.convert.date2SQL(DateAdd("d",-1,DateSerial(nRokKsieg,nNumerMies+1,1)))
+  strSQLAmorBZ = "'" + strFieldBZ + "' = case (select max(t_op.eRodzaj) from n5opsrtrw t_op where t_op.pSRTRW = #tabela_amort_pom.idSr and " + vbNewLine +_
+                 "t_op.dDataOper <= " + dData + ") when 6 then 0.0 when 7 then 0.0 else " + vbNewLine +_
+                 "isnull((select t_op." + strField + " from n5opsrtrw t_op where t_op.pSRTRW = #tabela_amort_pom.idSr and " + vbNewLine +_ 
+                 "t_op.nNumOpst = isnull((select max(t_op1.nNumOpst) from n5opsrtrw t_op1 where t_op1.pSRTRW = #tabela_amort_pom.idSr and " + vbNewLine +_ 
+                 "t_op1.dDataOper <= " + dData + "),0)),0) end," + vbNewLine  
+end function
+
+'------------------
+'stawki amortyzacji
+'------------------
+function strStawka(byval strField)
+  dim dData : dData = trans_.afc.convert.date2SQL(DateAdd("d",-1,DateSerial(nRokKsieg,nNumerMies+1,1)))
+  strStawka = "'" + strField + "' = case (select t_op." + strField + " from n5opsrtrw t_op where t_op.pSRTRW = #tabela_amort_pom.idSr and " + vbNewLine +_
+              "t_op.nNumOpst = isnull((select max(t_op1.nNumOpst) from n5opsrtrw t_op1 where t_op1.pSRTRW = #tabela_amort_pom.idSr and " + vbNewLine +_
+              "t_op1.dDataOper <= " + dData + "),0)) " + vbNewLine +_
+              "when 0.0 then 100.0 else " + vbNewLine +_
+              "isnull((select t_op." + strField + " from n5opsrtrw t_op where t_op.pSRTRW = #tabela_amort_pom.idSr and " + vbNewLine +_
+              "t_op.nNumOpst = isnull((select max(t_op1.nNumOpst) from n5opsrtrw t_op1 where t_op1.pSRTRW = #tabela_amort_pom.idSr and " + vbNewLine +_
+              "t_op1.dDataOper <= " + dData + "),0)),0) end"
+end function
+%>
+
+<%
+'------------------------------------------------------
+'pobiera wartość z zapytania na podstawie nazwy kolumny
+'------------------------------------------------------
+function getValue(pRec, byval strField) : getValue = ccur(0.0)
+  strField = strField + strTypAmor
+  getValue = ccur(pRec(strField).value)
+end function
+%>
+
+<%
+'----------------------------------------------
+'zwraca sumę amortyzacji dla wybranych miesięcy
+'----------------------------------------------
+function curSumaMies(pRec) : curSumaMies = ccur(0.0)
+  dim iter, strField
+  for iter = 1 to nNumerMies
+    strField = "cur" + cstr(iter)
+    curSumaMies = curSumaMies + getValue(pRec,strField)
+  next  
+end function
+%>
+
+<%
+function default_param()
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+  
+  'nazwa grupy i środka trwałego
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwa grupy środków").bindexpr("t_gr.strNazwa")
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwa środka").bindexpr("t_sr.strNazwa")
+  
+  'rodzaj amortyzacji
+  dim pParamTyp : set pParamTyp = doc_.afc.rap.param.new_choice("Rodzaj amortyzacji")
+  with pParamTyp
+	  .multiple = false
+    .names.add "Podatkowa"
+    .values.add 1
+    .selected.add true
+    .names.add "Bilansowa"
+    .values.add 2
+    .selected.add false   
+  end with  
+  pParamArray.add pParamTyp
+  
+  'rok ksiegowy
+	dim pParamRok: set pParamRok = doc_.afc.rap.param
+  dim pParamRokChoice : set pParamRokChoice = pParamRok.new_choice("Rok księgowy")
+	pParamRokChoice.multiple = false
+	pParamRok.init_on_query pParamRokChoice, trans_,"select year(dDataRozp),idobj from n5rokksieg order by year(dDataRozp) desc"
+	pParamArray.add pParamRokChoice
+  
+  'wybrane miesiące
+  dim pParamMiesiac : set pParamMiesiac = doc_.afc.rap.param.new_choice("Kolumna")
+  with pParamMiesiac
+	  .multiple = false
+    .names.add "Styczeń"
+    .values.add 1
+    .selected.add false
+    .names.add "Luty"
+    .values.add 2
+    .selected.add false 
+    .names.add "Marzec"
+    .values.add 3
+    .selected.add false 
+    .names.add "Kwiecień"
+    .values.add 4
+    .selected.add false 
+    .names.add "Maj"
+    .values.add 5
+    .selected.add false 
+    .names.add "Czerwiec"
+    .values.add 6
+    .selected.add false 
+    .names.add "Lipiec"
+    .values.add 7
+    .selected.add false 
+    .names.add "Sierpień"
+    .values.add 8
+    .selected.add false 
+    .names.add "Wrzesień"
+    .values.add 9
+    .selected.add false 
+    .names.add "Październik"
+    .values.add 10
+    .selected.add false 
+    .names.add "Listopad"
+    .values.add 11
+    .selected.add false 
+    .names.add "Grudzień"
+    .values.add 12
+    .selected.add true     
+  end with  
+  pParamArray.add pParamMiesiac
+  
+	set default_param = pParamArray
+end function
+%>
+
+<%
+function write_actual_param(byref so,byref pActualParam)
+  dim iter
+  dim bAnyWritten : bAnyWritten = false
+  if not pActualParam is nothing then
+    for iter = 0 to pActualParam.upperIndex
+      if iter <> 3 then
+        if pActualParam.value(iter).get_desc() <> "" then 
+          bAnyWritten = true
+          so.write "<t size='5' /><text fontsize='4'><![CD"+"ATA[" + pActualParam.value(iter).get_desc() + "]"+"]></text><br/>"
+        end if
+      else
+        if pActualParam.value(3).names.value(pActualParam.Value(3).first_selected) <> "" then 
+          bAnyWritten = true
+          so.write "<t size='5' /><text fontsize='4'><![CD"+"ATA[Pole 'Rok księgowy' - " + cstr(pActualParam.value(3).names.value(pActualParam.Value(3).first_selected)) +_
+                   "]"+"]></text><br/>"
+        end if        
+      end if
+    next
+  end if
+
+  if not bAnyWritten then 
+    so.write "<t fontsize='4'>brak</t><br/>"
+  end if
+  so.write "<br/>"
+end function
+%>
+
+<%
+function section_header_1(byref pSection,byref pRec)
+%>
+<tr userprop='propc_section_start="1" propc_section_hidden="0" propc_section_req="0" vc1="<% so.write cstr(nSectionPicCounter) %>"' fontsize='3'>
+  <td style='27' colspan='<% so.write cstr(16 + nNumerMies) %>'> 
+    <picture name='<%so.write cstr(nSectionPicCounter)%>' tip='Zwiń' ignoresysdisable='true' image='PICTURE_SMALL_MINUS' width='SIZE_FOR_PLUS' height='SIZE_FOR_PLUS' href='vs1022="section_hideshow_hli" vn100="<%so.write cstr(nSectionPicCounter)%>"'/>    
+    <checkbox border='0' customredirect='CTRLID_SECTION_CHECKBOX'>
+      <t/>
+		  <transfer mode='custom' />
+	  </checkbox>
+    RXE_AUTO_TEXT(strNazwaGr)
+  </td>
+</tr>
+<%
+nSectionPicCounter=nSectionPicCounter+1
+end function
+%>
+
+<%
+function section_footer_1(byref pSection)
+%>
+<tr align='right' border='0' backcolor='#eeddee' fontsize='SMALL_FONT' name='<% so.write cstr(nSectionPicCounter) %>' userprop='propc_section_end="1" vc1="<% so.write cstr(0) %>"'>
+  <td colspan='3'></td>
+  <td><t>Suma :</t></td><td></td><td></td>
+  <td>RXE_MONEY_VAR(pSection.counter(0).result)</td>
+  <td>RXE_MONEY_VAR(pSection.counter(1).result)</td>
+  <td>RXE_MONEY_VAR(pSection.counter(2).result)</td>
+  <td>RXE_MONEY_VAR(pSection.counter(3).result)</td>
+  <td>RXE_MONEY_VAR(pSection.counter(4).result)</td>
+  <td>RXE_MONEY_VAR(curUmorzZwSec)</td>
+  <td>RXE_MONEY_VAR(curUmorzZmSec)</td>
+  <td>RXE_MONEY_VAR(curUmorzRoczneSec)</td>  
+  <td>RXE_MONEY_VAR(pSection.counter(5).result)</td>
+  <td>RXE_MONEY_VAR(pSection.counter(6).result)</td>
+<%
+  'do podsumowania całego raportu
+  curUmorzZwSum = curUmorzZwSum + curUmorzZwSec
+  curUmorzZmSum = curUmorzZmSum + curUmorzZmSec
+  curUmorzRoczneSum = curUmorzRoczneSum + curUmorzRoczneSec
+  
+  'wyzerowanie podsumowania w sekcji 1
+  curUmorzZwSec = ccur(0)
+  curUmorzZmSec = ccur(0)
+  curUmorzRoczneSec = ccur(0)
+  
+  dim iter
+  for iter = 1 to nNumerMies
+%>
+    <td>RXE_MONEY_VAR(pSection.counter(6 + iter).result)</td>
+<%    
+  next
+  nSectionPicCounter = nSectionPicCounter + 1
+%>  
+</tr>
+<tr hide='true'><td colspan='26'><t></t></td></tr>
+<%
+end function
+%>
+
+<%
+function body_row(byref pSection,byref pRec)
+if pRapExec.RecNr mod 2 = 0 then
+%>
+<tr bordercolor='white' fontsize='SMALL_FONT' userprop='vc1="<% so.write cstr(nSectionPicCounter) %>"'>
+<%
+else
+%>
+<tr bordercolor='white' style='37' fontsize='SMALL_FONT' userprop='vc1="<% so.write cstr(nSectionPicCounter) %>"'>
+<%
+end if
+%>
+  <td bordercolor='transparent' width='min'><t>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</t></td>
+  <td>
+    <checkbox border='0' customredirect='CTRLID_ROW_CHECKBOX'>
+      <t/>
+		  <transfer mode='custom' />
+	  </checkbox>
+  </td>  
+  <td align='right'>RXE_LP</td>
+  <td>
+    RXE_AUTO_TEXT_LEN(strNazwaSr,16)
+  </td>
+  <td>
+    RXE_AUTO_TEXT(strKRST)
+  </td>
+	<td align='right'>
+    <% rxeText pRec,"curStawka" %>
+		<text>%</text>
+	</td>
+  <td align='right'>
+    <% rxeQuantityCVV pRec,"curWartBO",2 %>
+  </td>
+  <td align='right'>
+    <% rxeQuantityCVV pRec,"curWartZw",2 %>
+  </td>
+  <td align='right'>
+    <% rxeQuantityCVV pRec,"curWartZm",2 %>    
+  </td>
+  <td align='right'>
+    <% rxeQuantityCVV pRec,"curWartBZ",2 %>
+  </td>
+<%
+  'umorzenie
+  dim curUmorzBO, curUmorzBZ, curUmorzZm, curUmorzZw, curUmorzRoznica, curUmorzRoczne
+  
+  'umorzenie BO z zapytania
+  curUmorzBO = getValue(pRec,"curUmorzBO")
+  'umorzenie BZ
+  curUmorzBZ = getValue(pRec,"curUmorzBZ")
+  'umorzenie roczne wg wybranych miesięcy
+  curUmorzRoczne = curSumaMies(pRec)
+  
+  curUmorzRoznica = curUmorzBZ - curUmorzRoczne - curUmorzBO
+  if curUmorzRoznica > 0 then
+    curUmorzZw = curUmorzRoznica
+  else
+    curUmorzZm = - curUmorzRoznica
+  end if
+%>
+  <td align='right'>
+    <% rxeQuantityCVV pRec,"curUmorzBO",2 %>
+  </td>
+  <td align='right'>
+    <% rxeQuantityVVV curUmorzZw,2 %>
+  </td>
+  <td align='right'>
+    <% rxeQuantityVVV curUmorzZm,2 %>    
+  </td>
+  <td align='right'>
+    <% rxeQuantityVVV curUmorzRoczne,2 %>
+  </td>  
+  <td align='right'>
+    <% rxeQuantityCVV pRec,"curUmorzBZ",2 %>
+  </td>
+  
+<%
+  'podsumowanie sekcji
+  curUmorzZwSec = curUmorzZwSec + curUmorzZw
+  curUmorzZmSec = curUmorzZmSec + curUmorzZm  
+  curUmorzRoczneSec = curUmorzRoczneSec + curUmorzRoczne
+  
+  'pozostało do amortyzacji
+	dim curPozDoAmort : curPozDoAmort = getValue(pRec,"curWartBZ") - curUmorzBZ
+%>
+	<td align='right'>
+    <% rxeQuantityVVV curPozDoAmort,2 %>
+	</td>
+<%
+  'umorzenie miesięczne
+  dim iter, strField, curVal
+  for iter = 1 to nNumerMies
+    strField = "cur" + cstr(iter)
+    curVal = getValue(pRec,strField)
+%>
+    <td align='right'>
+      <% rxeQuantityVVV curVal,2 %>
+    </td>    
+<%    
+  next   
+%>
+</tr>
+<%
+end function
+%>
+
+<%
+'-----------------------------------------------
+'wypisuje tekst na podstawie kolumny z zapytania
+'-----------------------------------------------
+function rxeText(byref pRec, byval strField)
+  dim strRec : strRec = strField + strTypAmor
+%>
+  <text><![CDATA[<% so.write cstr(pRec(strRec).value) %>]]></text>
+<%
+end function
+%>
+
+<%
+'------------------------------------------------------------------------
+'wypisuje kwotę do n miejsc po przecinku na podstawie kolumny z zapytania
+'------------------------------------------------------------------------
+function rxeQuantityCVV(byref pRec, byval strField, byval ileMiejsc)
+  dim strRec : strRec = strField + strTypAmor
+%>
+  <t><![CDATA[<% so.write doc_.afc.display.quantity(pRec(strRec).value,"",ileMiejsc) %>]]></t>  
+<%
+end function
+%>
+
+<%
+'-------------------------------------------------------------
+'wypisuje kwotę do n miejsc po przecinku na podstawie wartości
+'-------------------------------------------------------------
+function rxeQuantityVVV(byval curValue, byval ileMiejsc)
+%>
+  <t><![CDATA[<% so.write doc_.afc.display.quantity(curValue,"",ileMiejsc) %>]]></t>  
+<%
+end function
+%>
+
+<%
+function body_header(byref pSection,byref pRec)
+%>
+<table border='1' width='max' fontsize='3'>
+<thead>
+<tr style='21' name='CTRLID_BODY_HEADER' userprop='vc1="<% so.write cstr(nNumerMies) %>"'>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+  <td rowspan='2'/>
+	<td width='min' rowspan='2'><t>LP</t></td>
+	<td width='min' rowspan='2'>
+		<text><![CDATA[Nazwa środka trwałego]]></text>
+	</td>
+	<td width='min' rowspan='2'>
+		<text><![CDATA[Sym bol wg KRŚT]]></text>
+	</td>
+	<td width='min' rowspan='2'>
+		<text><![CDATA[Stawka amorty zacji]]></text>
+	</td>  
+	<td width='min' colspan='4'>
+		<text><![CDATA[Wartość inwentarzowa]]></text>
+	</td>
+	<td width='min' colspan='5'>
+		<text><![CDATA[Umorzenie]]></text>
+	</td>
+	<td width='min' rowspan='2'>
+		<text><![CDATA[Pozo staje do amorty zacji]]></text>
+	</td>
+	<td width='min' colspan='<% so.write cstr(nNumerMies) %>'>
+		<text><![CDATA[Wartość miesięcznego umorzenia]]></text>
+	</td>
+</tr>
+<tr style='21'>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+	<td width='1100'>
+		<text><![CDATA[BO]]></text>
+	</td>
+	<td width='1100'>
+		<text><![CDATA[Zwię ksze nia]]></text>
+	</td>
+	<td width='1100'>
+		<text><![CDATA[Zmnie jsze nia]]></text>
+	</td>
+	<td width='1100'>
+		<text><![CDATA[BZ]]></text>
+	</td>
+	<td width='1100'>
+		<text><![CDATA[BO]]></text>
+	</td>
+	<td width='1100'>
+		<text><![CDATA[Zwię ksze nia]]></text>
+	</td>
+	<td width='1100'>
+		<text><![CDATA[Zmnie jsze nia]]></text>
+	</td>
+	<td width='1100'>
+		<text><![CDATA[Wart. umorz enia rocz nego]]></text>
+	</td>
+	<td width='1100'>
+		<text><![CDATA[BZ]]></text>
+	</td>
+<%
+  dim iter
+  dim tabMies : tabMies = Split("I;II;III;IV;V;VI;VII;VIII;IX;X;XI;XII",";")
+  for iter = 0 to nNumerMies - 1 
+%>
+	<td width='850'>
+    <text><![CDATA[<% so.write cstr(tabMies(iter)) %>]]></text>
+	</td>	   
+<%    
+  next
+%>
+</tr>
+</thead>
+<tbody>
+<%
+end function
+%>
+<%
+function body_footer(byref pSection)
+%>
+<tr align='right' border='0' backcolor='#eeddee' fontsize='SMALL_FONT' name='CTRLID_BODY_FOOTER'>
+  <td colspan='3'></td>
+  <td><t bold='true'>Razem :</t></td><td></td><td></td>
+	<td>RXE_MONEY_VAR(pSection.counter(0).result)</td>
+  <td>RXE_MONEY_VAR(pSection.counter(1).result)</td>
+  <td>RXE_MONEY_VAR(pSection.counter(2).result)</td>
+  <td>RXE_MONEY_VAR(pSection.counter(3).result)</td>
+  <td>RXE_MONEY_VAR(pSection.counter(4).result)</td>
+  <td>RXE_MONEY_VAR(curUmorzZwSum)</td>
+  <td>RXE_MONEY_VAR(curUmorzZmSum)</td>
+  <td>RXE_MONEY_VAR(curUmorzRoczneSum)</td>  
+  <td>RXE_MONEY_VAR(pSection.counter(5).result)</td>
+  <td>RXE_MONEY_VAR(pSection.counter(6).result)</td>
+<%  
+  dim iter
+  for iter = 1 to nNumerMies
+%>
+    <td>RXE_MONEY_VAR(pSection.counter(6 + iter).result)</td>
+<%    
+  next
+%>   
+</tr>
+</tbody>
+</table>
+<%
+end function
+%>
+<%dim nSectionPicCounter : nSectionPicCounter = 10000000%>
+function section_hideshow_hli(byref pHLI)
+  doc_.afc.formsection.section_hideshow page_, pHLI.prop(100)
+end function
+
+'gdy pierwsze uruchomienie raportu => ustaw checkbox na 1
+dim bCheckBox : bCheckBox = true
+
+VB_ROW_CHECKBOX(CTRLID_SECTION_CHECKBOX,bCheckBox,false)
+VB_ROW_CHECKBOX(CTRLID_ROW_CHECKBOX,bCheckBox,true)
+
+'---------------------------------------------------------------------------------------------------
+'przelicza podsumowanie sekcji w zależności od bSimpRow (true = tylko 1 wiersz, false = cała sekcja)
+'---------------------------------------------------------------------------------------------------
+sub recalcSumSec(byref oRow, byref oRowPodsum, byval nNumCell, byval nNumKol, byval bSimpRow)
+  dim oRowSec : set oRowSec = oRow
+  dim pSecProp : pSecProp = oRowSec.userprop.prop(1)
+  dim oRowSum, oRowParent
+  if bSimpRow then
+    'gdy pojedynczy wiersz 
+    set oRowSum = page_.ctrl(clng(pSecProp))          'wiersz z podsumą sekcji
+    if oRow.cell(2).element(1).value = "0" then
+      'sekcja
+      recalcKol oRowSum, oRow, nNumCell, nNumKol, "-"
+      'cały raport
+      recalcKol oRowPodsum, oRow, nNumCell, nNumKol, "-"
+    else
+      'sekcja
+      recalcKol oRowSum, oRow, nNumCell, nNumKol, "+"
+      'cały raport
+      recalcKol oRowPodsum, oRow, nNumCell, nNumKol, "+"      
+    end if     
+    'gdy wszystkie dzieci odznaczone => odznacz rodzica
+    set oRowParent = page_.ctrl(clng(pSecProp - 1)).parent.parent
+    checkChild oRowParent, pSecProp
+  else
+    'gdy cała sekcja
+    set oRowSum = page_.ctrl(clng(pSecProp + 1))      'wiersz z podsumą sekcji
+    'wiersze w podsekcji (children)
+    set oRow = oRow.nextelement
+    do while (pSecProp + 1 = oRow.userprop.prop(1))
+      if oRowSec.cell(1).element(2).value = "0" then
+        if oRow.cell(2).element(1).value = "1" then
+          'sekcja
+          recalcKol oRowSum, oRow, nNumCell, nNumKol, "-"
+          'cały raport
+          recalcKol oRowPodsum, oRow, nNumCell, nNumKol, "-"
+          oRow.cell(2).element(1).value = "0"
+        end if
+      else
+        if oRow.cell(2).element(1).value = "0" then
+          'sekcja
+          recalcKol oRowSum, oRow, nNumCell, nNumKol, "+"
+          'cały raport
+          recalcKol oRowPodsum, oRow, nNumCell, nNumKol, "+"
+          oRow.cell(2).element(1).value = "1"
+        end if
+      end if  
+      set oRow = oRow.nextelement
+    loop
+  end if  
+end sub
+
+'-------------------------------------
+'przelicza wartość pojedynczej komórki
+'-------------------------------------
+sub recalcKol(byref oRowSum, byref oRow, byval nNumCell, byval nNumKol, byval strZnak)
+  dim iter, curKwotaSum, curKwotaRow
+  for iter = nNumCell to nNumKol
+    curKwotaSum = strToCur(oRowSum.cell(iter).element(1).value)
+    curKwotaRow = strToCur(oRow.cell(iter + 2).element(1).value)
+    if strZnak = "-" then
+      oRowSum.cell(iter).element(1).value = trans_.afc.display.money(curKwotaSum - curKwotaRow,"")
+    else
+      oRowSum.cell(iter).element(1).value = trans_.afc.display.money(curKwotaSum + curKwotaRow,"")
+    end if
+  next
+end sub
+
+'-------------------------------------------------------------------------------------------
+'zamienia kwotę z trans_.afc.display.money na ccur zależności od ustawień separatora windows
+'-------------------------------------------------------------------------------------------
+function strToCur(byval strKwota) : strToCur = ccur(0.0)
+  'separator dziesiętyny windows
+  dim strSep : strSep = mid(cstr(ccur(1/2)),2,1)
+  if strSep = "." then
+    strToCur = ccur(replace(replace(strKwota,",",".")," ",""))
+  else
+    strToCur = ccur(replace(strKwota," ",""))
+  end if 
+end function
+
+'---------------------------------------------------
+'gdy wszystkie dzieci odznaczone => odznacza rodzica
+'---------------------------------------------------
+sub checkChild(byref oRowParent, byval pSecProp)
+  dim bCheckParent : bCheckParent = true
+  dim oRowChild : set oRowChild = oRowParent.nextelement
+  do while (pSecProp = oRowChild.userprop.prop(1))
+    if oRowChild.cell(2).element(1).value = "1" then
+      bCheckParent = false
+      exit do
+    end if  
+    set oRowChild = oRowChild.nextelement
+  loop
+  if bCheckParent then
+    oRowParent.cell(1).element(2).value = "0"
+  else
+    oRowParent.cell(1).element(2).value = "1"
+  end if
+end sub
+
+]]>
+</script>
+</config>
+<header>
+</header>
+<body fontsize='1'>
+<p>
+RAPORT_HEADER(3,1)
+</p>
+<p>
+<t size='2'/>
+</p>
+<p><text fontsize='7'><![CDATA[RAPORT_TITLE]]></text></p><br/><br/>
+<t fontsize='5' bold='true'>Kryteria selekcji:</t><br/>
+<%
+dim pRapExec : set pRapExec = rapeng_.new_engine()
+with pRapExec
+    dim pParamArray : set pParamArray = default_param() 
+		rapeng_.merge_params pParamArray, rapeng_.get_raport_param()
+    pRapExec.title = "RAPORT_TITLE" 
+
+		if rapeng_.show_raport_param_dialog(pParamArray,"RAPORT_TITLE") <> 0 then
+		  'zapytania pomocnicze i do raportu
+      pRapExec.put_final_query query(pParamArray)
+      rapeng_.set_raport_param pParamArray 
+    end if 
+
+	  .add_body_ex (getref("body_header"),getref("body_footer"),getref("body_row")) _
+       .add_sumator("curWartBO" + strTypAmor).add_sumator("curWartZw" + strTypAmor).add_sumator("curWartZm" + strTypAmor) _
+       .add_sumator("curWartBZ" + strTypAmor).add_sumator("curUmorzBO" + strTypAmor).add_sumator("curUmorzBZ" + strTypAmor) _
+       .add_sumator("curPozost" + strTypAmor).add_sumator("cur1" + strTypAmor).add_sumator("cur2" + strTypAmor).add_sumator("cur3" + strTypAmor) _
+       .add_sumator("cur4" + strTypAmor).add_sumator("cur5" + strTypAmor).add_sumator("cur6" + strTypAmor).add_sumator("cur7" + strTypAmor) _
+       .add_sumator("cur8" + strTypAmor).add_sumator("cur9" + strTypAmor).add_sumator("cur10" + strTypAmor).add_sumator("cur11" + strTypAmor) _
+       .add_sumator("cur12" + strTypAmor)    
+	  .add_group_section (0,getref("section_header_1"),getref("section_footer_1")) _ 
+       .add_sumator("curWartBO" + strTypAmor).add_sumator("curWartZw" + strTypAmor).add_sumator("curWartZm" + strTypAmor) _
+       .add_sumator("curWartBZ" + strTypAmor).add_sumator("curUmorzBO" + strTypAmor).add_sumator("curUmorzBZ" + strTypAmor) _
+       .add_sumator("curPozost" + strTypAmor).add_sumator("cur1" + strTypAmor).add_sumator("cur2" + strTypAmor).add_sumator("cur3" + strTypAmor) _
+       .add_sumator("cur4" + strTypAmor).add_sumator("cur5" + strTypAmor).add_sumator("cur6" + strTypAmor).add_sumator("cur7" + strTypAmor) _
+       .add_sumator("cur8" + strTypAmor).add_sumator("cur9" + strTypAmor).add_sumator("cur10" + strTypAmor).add_sumator("cur11" + strTypAmor) _
+       .add_sumator("cur12" + strTypAmor)
+       
+%>
+<%
+	write_actual_param so,rapeng_.get_raport_param()
+	if not .perform then
+	  so.write "<p style='21'><t>Brak danych spełniających podane kryteria</t></p>"
+	end if
+%>
+<%
+end with
+  on error resume next
+  trans_.execsql "drop table #tabela_amort"
+  on error resume next
+  trans_.execsql "drop table #tabela_amort_pom"
+  %>
+
+</body>
+<footer>
+</footer>
+</page>

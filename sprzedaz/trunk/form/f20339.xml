@@ -1,0 +1,287 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1220.h"
+#include "h1222.h"
+
+#define CTRLID_SRC_OBJECT		101
+#define CTRLID_DEST_OBJECT		102
+-->
+<page style='STYLE_PAGE'>
+<config>
+<title>
+Ujednolicanie danych
+#ifdef _DEBUG
+[THIS_FILE]
+#endif
+</title>
+<startpos>center</startpos>
+<script>
+    <![CDATA[
+#include "50200"
+#include "50122"
+#include "50203"
+
+dim g_iTypeId : g_iTypeId = clng(0)
+dim g_idSrcObj: g_idSrcObj = clng(0)
+dim g_idDestObj : g_idDestObj = clng(0)
+dim g_oNXArrayType : set g_oNXArrayType = nx_.new_array()
+dim g_oNXArrayListFld : set g_oNXArrayListFld = nx_.new_array()
+dim g_oNXArrayFld : set g_oNXArrayFld = nx_.new_array()
+
+function get_user_count()
+	dim iter : iter = 0
+	dim iCookie
+	dim strUserName,strCompName
+	iCookie = doc_.getusers(iter, strCompName, strUserName)
+	do while iCookie <> 0		
+		iter = iter + 1
+		iCookie = doc_.getusers(iter, strCompName, strUserName)
+	loop
+  get_user_count = iter
+end function
+
+function fopen()
+	g_iTypeId = doc_.getmodule(60113).select_object()
+	if g_iTypeId = TYPEID_N5UZYTKOWNIK then
+		MessageBox "Nie wolno zamieniać odwołań do tego rodzaju danych!", "Ujednolicanie danych", vbOKOnly, vbInformation
+		g_iTypeId = 0
+	end if
+	if g_iTypeId = TYPEID_N5PRODUKT then
+    if get_user_count() > 1 then
+		  MessageBox "Uwaga! Zamiana produktów dozwolona jest wyłącznie w trybie pracy jednostanowiskowej", "Ujednolicanie danych", vbOKOnly, vbInformation
+ 		  g_iTypeId = 0
+    end if
+	end if
+	fopen = (g_iTypeId <> 0)
+
+	get_all_references_to_type g_iTypeId
+end function
+
+function fclose
+	if g_iTypeId = TYPEID_N5PRODUKT then
+    MessageBox "Uwaga! Konieczne jest teraz opuszczenie programu i ponowne jego uruchomienie", "Ujednolicanie danych", vbOKOnly, vbInformation
+	end if
+end function
+
+function select_src_object()
+	g_idSrcObj = fire_choice_list(g_iTypeId,"Wybór obiektu zbędnego","","","","")
+end function
+
+function select_dest_object()
+	g_idDestObj = fire_choice_list(g_iTypeId,"Wybór obiektu prawidłowego","","","","")
+end function
+
+function c##CTRLID_SRC_OBJECT##_ongetdata(byref oCtrl)
+	if g_idSrcObj = 0 then
+		oCtrl.value = "Wybierz zbędny obiekt ->"
+	else
+		oCtrl.value = trans_.getobj(g_iTypeId,g_idSrcObj).text
+	end if
+end function
+
+function c##CTRLID_DEST_OBJECT##_ongetdata(byref oCtrl)
+	if g_idDestObj = 0 then
+		oCtrl.value = "Wybierz prawidłowy obiekt ->"
+	else
+		oCtrl.value = trans_.getobj(g_iTypeId,g_idDestObj).text
+	end if
+end function
+
+function on_cancel()
+	page_.goback
+end function
+
+function on_change()
+	trans_.var(GVAR_OPERATION_MODE) = clng(OPERATION_MODE_IMPORT)
+
+	dim nCounter : nCounter = 0
+	dim perf: set perf = doc_.performing("Trwa zamiana odwołań i zapis danych...")
+	dim iter
+	dim pDestObj : set pDestObj = trans_.getobj(g_iTypeId,g_idDestObj)
+	for iter = 0 to g_oNXArrayType.count - 1
+		dim pCursor
+		dim pObject
+		if g_oNXArrayListFld(iter) = "" then
+			set pCursor = trans_.createrawcursor(g_oNXArrayType(iter),g_oNXArrayFld(iter) + "=" + cstr(g_idSrcObj),"idobj desc","")
+			for each pObject in pCursor
+				pObject.recalcenabled = false
+				set pObject.field(g_oNXArrayFld(iter)) = pDestObj
+				nCounter = nCounter + 1
+			next
+		else
+      '
+      ' obejscie dla produktow i dokumentow magazynowych - robione to jest z poziomu SQL'a
+      '
+      dim bSkip
+      bSkip = (g_iTypeId = TYPEID_N5PRODUKT and (g_oNXArrayType(iter) = TYPEID_N5DOKMAG or g_oNXArrayType(iter) = TYPEID_N5REALPROD))
+      
+      if not bSkip then
+			  set pCursor = trans_.createrawcursor(g_oNXArrayType(iter), _
+				  "idobj in (select p_idobj from vlist_" + _
+				  doc_.stdobjdef.getobjdef(g_oNXArrayType(iter)).tablename + "_" + g_oNXArrayListFld(iter) +_
+				   " where c_" + g_oNXArrayFld(iter) + "=" + cstr(g_idSrcObj) + ")","idobj desc","")
+
+			  for each pObject in pCursor
+				  dim pChildObject
+				  for each pChildObject in pObject.field(g_oNXArrayListFld(iter))
+					  if not pChildObject.field(g_oNXArrayFld(iter)) is nothing then
+						  if pChildObject.field(g_oNXArrayFld(iter)).idobj = g_idSrcObj then
+							  pObject.recalcenabled = false
+							  pChildObject.recalcenabled = false
+							  set pChildObject.field(g_oNXArrayFld(iter)) = pDestObj
+							  nCounter = nCounter + 1
+						  end if
+					  end if
+				  next
+			  next
+      end if
+      
+		end if
+	next
+	
+  dim bSuccess : bSuccess = trans_.saveobjects()
+  
+  if bSuccess then
+  if g_iTypeId = TYPEID_N5PRODUKT then
+    dim idOpakSrc, idOpakDest
+    
+    dim pCursor1
+    set pCursor1 = trans_.createadors("select 'idobj'=isnull(c_idobj,0) from vlist_n5produkt_listOpakowania where coll_lp=1 and p_idobj=" + cstr(g_idSrcObj))
+    idOpakSrc = clng(pCursor1("idobj"))
+    set pCursor1 = trans_.createadors("select 'idobj'=isnull(c_idobj,0) from vlist_n5produkt_listOpakowania where coll_lp=1 and p_idobj=" + cstr(g_idDestObj))
+    idOpakDest = clng(pCursor1("idobj"))
+    
+    trans_.execsql "update n5pozdokmag set pProdukt=" + cstr(g_idDestObj) + " where pProdukt=" + cstr(g_idSrcObj)
+    trans_.execsql "update n5pozrealprod set pProdukt=" + cstr(g_idDestObj) + " where pProdukt=" + cstr(g_idSrcObj)
+    trans_.execsql "update n5gmop set gmo_pProd=" + cstr(g_idDestObj) + " where gmo_pProd=" + cstr(g_idSrcObj)
+    trans_.execsql "update n5gmstan set gms_pProd=" + cstr(g_idDestObj) + " where gms_pProd=" + cstr(g_idSrcObj) 
+    trans_.execsql "update n5opakowanie_produktu set pOpakowanieJedn=" + cstr(idOpakDest) + " where pOpakowanieJedn=" + cstr(idOpakSrc)
+    trans_.execsql "update n5opakowanie_produktu set pZamiennik=" + cstr(idOpakDest) + " where pZamiennik=" + cstr(idOpakSrc)
+    trans_.execsql "update n5pozsprzedaz set pOpak=" + cstr(idOpakDest) + " where pOpak=" + cstr(idOpakSrc)
+    trans_.execsql "update n5pozsprzedaz set pOpakOrg=" + cstr(idOpakDest) + " where pOpakOrg=" + cstr(idOpakSrc)
+    trans_.execsql "update n5egzemplarz set egze_pOpak=" + cstr(idOpakDest) + " where egze_pOpak=" + cstr(idOpakSrc)    
+    trans_.execsql "update n5klient_opakowanie set klop_pOpakowanie=" + cstr(idOpakDest) + " where klop_pOpakowanie=" + cstr(idOpakSrc)
+    trans_.execsql "update n5pozdokmag set pOpak=" + cstr(idOpakDest) + " where pOpak=" + cstr(idOpakSrc)
+    trans_.execsql "update n5pozdoketyk set pdet_pOpak=" + cstr(idOpakDest) + " where pdet_pOpak=" + cstr(idOpakSrc)
+    trans_.execsql "update n5pozzamowienie set pOpakOrg=" + cstr(idOpakDest) + " where pOpakOrg=" + cstr(idOpakSrc)
+    trans_.execsql "update n5pozzamowienie set pOpak=" + cstr(idOpakDest) + " where pOpak=" + cstr(idOpakSrc)    
+    trans_.execsql "update n5pozzakup set pOpak=" + cstr(idOpakDest) + " where pOpak=" + cstr(idOpakSrc)
+    trans_.execsql "update n5pozrecepta set pOpak=" + cstr(idOpakDest) + " where pOpak=" + cstr(idOpakSrc)  
+    trans_.execsql "update n5pozzlecprod set pOpak=" + cstr(idOpakDest) + " where pOpak=" + cstr(idOpakSrc)
+    trans_.execsql "update n5polrab set pOpak=" + cstr(idOpakDest) + " where pOpak=" + cstr(idOpakSrc)
+    trans_.execsql "update n5pozrealprod set pOpak=" + cstr(idOpakDest) + " where pOpak=" + cstr(idOpakSrc) 
+    trans_.execsql "update n5gmop set gmo_pOpak=" + cstr(idOpakDest) + " where gmo_pOpak=" + cstr(idOpakSrc)
+    trans_.execsql "update n5gmstan set gms_pOpak=" + cstr(idOpakDest) + " where gms_pOpak=" + cstr(idOpakSrc)  
+    trans_.execsql "update n5pozistat set pistt_pOpak=" + cstr(idOpakDest) + " where pistt_pOpak=" + cstr(idOpakSrc)
+    trans_.execsql "update n5klient_obiekt set klob_pOpak=" + cstr(idOpakDest) + " where klob_pOpak=" + cstr(idOpakSrc)
+    trans_.execsql "update n5pltyppracy set tpr_pOpak=" + cstr(idOpakDest) + " where tpr_pOpak=" + cstr(idOpakSrc)
+    trans_.execsql "update n5pozdokprod set pdp_pOpak=" + cstr(idOpakDest) + " where pdp_pOpak=" + cstr(idOpakSrc)
+
+    dim iDummy : iDummy = getglobprofileLong(GLOBPROF_DUMMY_UPDATE)
+  	setglobprofile GLOBPROF_DUMMY_UPDATE,iDummy+1
+  end if	  
+  end if
+
+	if not bSuccess then
+		set perf = nothing
+		MessageBox "Zamiana odwołań nieudana. Obejrzyj komunikaty", "Ujednolicanie danych", vbOKOnly, vbInformation
+	else
+		set perf = nothing
+		MessageBox "Zamiana odwołań wykonana. Dokonano " + cstr(nCounter) + " zamian", "Ujednolicanie danych", vbOKOnly, vbInformation
+	end if
+	trans_.var(GVAR_OPERATION_MODE) = clng(OPERATION_MODE_NORMAL)
+	g_idDestObj = 0
+	g_idSrcObj = 0
+end function
+
+function add_reference(byval idType,byval strListField,byval strField)
+#ifdef _DEBUG
+	trans_.message 0,0,cstr(idType) + ":" + strListField + ":" + strField
+#endif 
+	g_oNXArrayType.add idType
+	g_oNXArrayListFld.add strListField
+	g_oNXArrayFld.add strField
+end function
+
+function get_all_references_to_type(byval idType)
+	dim pObjDef
+	for each pObjDef in doc_.stdobjdef
+	
+		'dzieci nie sa rozpatrywane samodzielnie
+		'dzieci analizujemy przez obiekt ojca
+		if not pObjDef.child then
+			get_references_to_type idType,pObjDef,pObjDef.typeid,""
+		end if
+	next
+end function
+
+function get_references_to_type(byval idType,byref pObjDef,byval idReferencingParent,byval strListField)
+	dim pFieldDef
+	for each pFieldDef in pObjDef
+		'------zwykle zwrotne
+		if pFieldDef.type = RELT_REF  then
+			if pFieldDef.reftypeid = idType then
+				add_reference idReferencingParent,strListField,pFieldDef.Name
+			end if
+		end if
+
+		'------dzikie zwrotne
+		if pFieldDef.type = RELT_WILDREF  then 
+			dim doc_li: doc_li = 0
+
+			while (pFieldDef.wildreftypeid(doc_li) <> 0) 
+				if pFieldDef.wildreftypeid(doc_li) = idType then
+					add_reference idReferencingParent,strListField,pFieldDef.Name
+				end if
+				doc_li = doc_li + 1
+			wend
+		end if
+
+		'------zwrotne przez liste
+		if pFieldDef.type = RELT_LIST  then 
+			if pFieldDef.reftypeid = idType then 
+				add_reference idReferencingParent,strListField,pFieldDef.Name
+			end if
+			dim pChildObjDef : set pChildObjDef= doc_.stdobjdef.getobjdef(pFieldDef.reftypeid)
+			get_references_to_type idType,pChildObjDef,idReferencingParent,pFieldDef.Name
+		end if
+	next
+end function
+
+]]></script>
+</config>
+<body>
+	<table>
+		<tbody>
+			<tr>
+				<td style='STYLE_TABLE_INFO' colspan='2'>
+					<text>Wybierz obiekt, który jest zbędny i wskaż obiekt, który ma go zastąpic</text>
+				</td>
+			</tr>
+			QXR_SEPARATOR(2)
+			<tr>
+				QXC_LABEL(Obiekt zbędny,1)
+				<td>
+					QXE_EDIT_CUSTOM_DELONLY(CTRLID_SRC_OBJECT,40)		
+					QXE_PICTURE_ACTION(-1,PICTURE_CHOICE_ELEMENT,varFunction=select_src_object,Wybierz zbędny obiekt)
+				</td>
+			</tr>
+			<tr>
+				QXC_LABEL(Obiekt prawidłowy,1)
+				<td>
+					QXE_EDIT_CUSTOM_DELONLY(CTRLID_DEST_OBJECT,40)
+					QXE_PICTURE_ACTION(-1,PICTURE_CHOICE_ELEMENT,varFunction=select_dest_object,Wybierz prawidłowy obiekt)
+				</td>
+			</tr>
+			QXR_SEPARATOR(2)
+			<tr style='STYLE_ROW_BTN' >
+				<td align='right' colspan='2' keepline='true'>
+					QXE_BUTTON(-1,0,Zamien,varFunction="on_change",1)
+					QXE_BUTTON(-1,0,Zamknij,varFunction="on_cancel",1)
+				</td>
+			</tr>
+		</tbody>
+	</table>
+</body>
+</page>

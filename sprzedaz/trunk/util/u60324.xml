@@ -1,0 +1,333 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<page>
+<config>
+<script>
+  #include "h1000.h"
+  #include "h1001.h"
+  #include "h1004.h"
+  #include "h1200.h"
+  #include "h1230.h"
+  #include "h1231.h"
+  #include "h1240.h"
+  #include "h1201.h"
+  #include "h1232.h"
+  #include "h1223.h"
+
+
+  #define ALLOWED_OPER_TYPE           "Przelew wychodzący zewnętrzny"
+
+  #define DATE          "DATA_WALUTY"
+  #define DESCRIPTION   "OPIS"
+  #define ACC_NUM       "RACHUNEK"
+  #define VALUE         "KWOTA"
+  #define DC            "STRONA"
+  #define TEXT          "TRESC1"
+  #define OPERID        "POZYCJA"
+
+
+  #define ISO_CP_A   161
+  #define ISO_CP_C   198
+  #define ISO_CP_E   202
+
+  #define ISO_CP_L   163
+  #define ISO_CP_N   209
+  #define ISO_CP_O   211
+
+  #define ISO_CP_S   166
+  #define ISO_CP_Z1  172
+  #define ISO_CP_Z2  175
+
+  #define ISO_CP_a   177
+  #define ISO_CP_c   230
+  #define ISO_CP_e   234
+
+  #define ISO_CP_l   179
+  #define ISO_CP_n   241
+  #define ISO_CP_o   243
+
+  #define ISO_CP_s   182
+  #define ISO_CP_z1  188
+  #define ISO_CP_z2  191
+
+
+  <![CDATA[
+
+#include "50120"
+#include "50126"
+#include "50209"
+#include "50101"
+#include "50123"
+#include "50211"
+
+dim m_filePath : m_filePath = ""          'ścieżka czytanego pliku 
+
+class COperacja
+  
+  public strOperType    'typ operacji
+  public strOperDate    'data operacji YYYY-MM-DD
+  public curValue       'wartosc operacji
+  public strDC          'debet/credit debet = "D" ; credit = "C"
+  public strAccNum      'numer rachunku
+  public strCurr        'skrót waluty
+  public strEntity      'Podmiot
+  public trans          'nazwa pierwszej transakcji na wyciągu
+  public strBankOperID  'Id operacji nadane przez bank
+  public Text           'Treść operacji
+  public strErr            'błąd przyporządkowania
+  
+
+'-------------------------------------------------------------
+'pobiera symbol transakcji (pierwsza pozycja) z 
+'tekstu (wyciąg bankowy) i wstawia do obiektu
+'Pobiera treść z taga <TRESC1>. Zwraca strSymTrans pierwszej transakcji
+'-------------------------------------------------------------
+public function get_data_from_string(byval strText) : get_data_from_string = ""
+  if strOperType <> ALLOWED_OPER_TYPE then
+    exit function
+  end if
+   Text = replace(convertToWIN1250(strText),"'","""")
+   dim index
+   'wstawiamy do tymczasowego bufora tekstu znak specjalny, separator dla funckji mid
+   dim tempText : tempText = replace(strText, "Treść ", chr(ISO_CP_a))
+   dim strTransactions : strTransactions = mid(tempText, instr(tempText, chr(ISO_CP_a))+1, Len(tempText)-4)
+   
+   'usuwamy ciągi znaków utrudniające pobranie symbolu transakcji
+   strTransactions = replace(strTransactions, "CZĘŚCIOWA ZAPŁATA ", "") 
+   strTransactions = replace(strTransactions, "CZĘŚCIOWA ZAPLATA ", "")
+    
+   index = instr(strTransactions,"(")
+   if index then
+    strTransactions = left(strTransactions, index-1)
+   end if
+   index = instr(strTransactions,",")
+   if index then
+    strTransactions = left(strTransactions, index-1)
+   end if
+   
+  'wstawiamy do obiektu string z symbolem transakcji
+   trans = Trim(strTransactions)
+   
+end function
+  
+end class
+
+'-------------------------------------------------------------
+'zamienia string kodowany w stan. ISO Latin-2 na WIN-1250
+'Pobiera string do przekodowania. Zwraca przekodowany string
+'-------------------------------------------------------------
+function convertToWIN1250(byval strNazwa)
+
+  strNazwa = replace(strNazwa,chr(ISO_CP_a),"ą")
+  strNazwa = replace(strNazwa,chr(ISO_CP_c),"ć")
+  strNazwa = replace(strNazwa,chr(ISO_CP_e),"ę")
+  strNazwa = replace(strNazwa,chr(ISO_CP_l),"ł")
+  strNazwa = replace(strNazwa,chr(ISO_CP_n),"ń")
+  strNazwa = replace(strNazwa,chr(ISO_CP_o),"ó")
+  strNazwa = replace(strNazwa,chr(ISO_CP_s),"ś")
+  strNazwa = replace(strNazwa,chr(ISO_CP_z1),"ź")
+  strNazwa = replace(strNazwa,chr(ISO_CP_z2),"ż")
+  strNazwa = replace(strNazwa,chr(ISO_CP_A),"Ą")
+  strNazwa = replace(strNazwa,chr(ISO_CP_C),"Ć")
+  strNazwa = replace(strNazwa,chr(ISO_CP_E),"Ę")
+  strNazwa = replace(strNazwa,chr(ISO_CP_L),"Ł")
+  strNazwa = replace(strNazwa,chr(ISO_CP_N),"Ń")
+  strNazwa = replace(strNazwa,chr(ISO_CP_O),"Ó")
+  strNazwa = replace(strNazwa,chr(ISO_CP_S),"Ś")
+  strNazwa = replace(strNazwa,chr(ISO_CP_Z1),"Ź")
+  strNazwa = replace(strNazwa,chr(ISO_CP_Z2),"Ż")
+  convertToWIN1250 = strNazwa
+  
+end function
+
+
+'-------------------------------------------------------------
+'tworzy i zwraca tablicę obiektów operacji z wyciągu 
+'bankowego. 
+'Zwraca tablicę pobranych obiektów COperacja
+'-------------------------------------------------------------
+function getOper_xml_file() : set getOper_xml_file = nothing
+
+'wczytywanie pliku wyciągu bankowego
+  m_FilePath = SelectFile("c:\", "*.xml", "")
+  if m_FilePath = "" then
+    exit function
+  end if
+
+'tworzymy obiekt xmlDocument i otwieramy plik
+    dim xmlDoc : set xmlDoc = doc_.system.activex("microsoft.xmldom")
+    xmlDoc.Load(m_FilePath)
+    
+'tworzymy listę operacji   
+    dim objNodeList :	set objNodeList = xmlDoc.getElementsByTagName("OPERACJA")
+    if objNodeList.length = 0 then
+      trans_.message 7000, 0, "Nie można odczytać pliku, błędny format"
+      exit function
+    end if
+    
+'przeszukujemy listę i uzupełniamy tablicę obiektów    
+    'tworzymy obiekt operacji i tablicę opercaji (na 0 pozycji jest dateParam)
+    dim pOperArr : set pOperArr = trans_.afc.new_navoarray()  
+    dim pNode
+    for each pNode in objNodeList
+      dim pChildNode
+      dim pOperacja : set pOperacja = new COperacja
+      for each pChildNode in pNode.childNodes
+        select case pChildNode.baseName
+          case OPERID:
+            pOperacja.strBankOperID = pChildNode.NodeTypedValue
+            
+          case DATE:
+            pOperacja.strOperDate = pChildNode.NodeTypedValue
+            
+          case DESCRIPTION:
+            pOperacja.strOperType = convertToWIN1250(pChildNode.NodeTypedValue)
+
+          case ACC_NUM:
+            pOperacja.strAccNum = pChildNode.NodeTypedValue
+            
+          case VALUE:
+            pOperacja.curValue = ccur(replace(pChildNode.NodeTypedValue, ".", ","))
+            
+          case DC:
+            pOperacja.strDC = pChildNode.NodeTypedValue
+            
+          case TEXT:
+            pOperacja.get_data_from_string(convertToWIN1250(pChildNode.NodeTypedValue))
+        end select
+      next
+      pOperArr.add pOperacja
+    next
+    set getOper_xml_file = pOperArr
+end function
+
+'-------------------------------------------------------------
+'dla pojedynczego obiektu operacji wyszukuje w bazie unikalną
+'odpowiadającą jej płatność i aktualizuje pola daty i statusu
+'Przyjmuje obiekt COperacja. Zwraca idObj zaktualizowanej platnosci lub 0
+'-------------------------------------------------------------
+function update_single_Oper(byref pOperPos) : update_single_Oper = 0
+  dim idKlient
+  dim idTrans
+  dim idPlat
+
+'wyszukiwanie w bazie unikalnego klieta o zadanym numerze rachunku bankowego 
+  dim strWhere : strWhere = "REPLACE(REPLACE(strRachunek1, ' ', ''), '-', '')='" + pOperPos.strAccNum + "' or REPLACE(REPLACE(strRachunek2, ' ', ''), '-', '')= '" + pOperPos.strAccNum + "' or REPLACE(REPLACE(strRachunek3, ' ', ''), '-', '')= '" + pOperPos.strAccNum +"'"
+  idKlient = trans_.findobjid(TYPEID_N5KLIENT,strWhere)
+  
+  if idKlient < 0 then
+    pOperPos.strErr = "Identyfikacja podmiotu po numerze rachunku bankowego nie powiodła się. Rachunek nr " + pOperPos.strAccNum + " jest przypisany do więcej niż jedenego podmiotu"
+    exit function
+  end if
+  if idKlient = 0 then
+    pOperPos.strErr = "Identyfikacja podmiotu po numerze rachunku bankowego nie powiodła się. Rachunek nr " + pOperPos.strAccNum + " nie jest przypisany do żadnego podmiotu"
+    exit function
+  end if
+ 
+
+'wyszukiwanie w bazie unikalnej transakcji o zdefiniowanym podmiocie i symbolu transkacji
+  strWhere = "wrefPodmiot = " + cstr(idKlient) + " and strSymTrans = '" + cstr(pOperPos.trans) + "' or strSymTrans = 'FA " + cstr(pOperPos.trans) +"' or strSymTrans = 'FA" + cstr(pOperPos.trans) +"'"
+  idTrans = trans_.findobjid(TYPEID_N5TRANSAKCJA,strWhere)
+  
+  if idTrans < 0 then
+    pOperPos.strErr = "Identyfikacja transakcji po symbolu transakcji nie powiodła się. Symbol " + cstr(pOperPos.trans) + " jest przypisany do więcej niż jednej transakcji dotyczącej podmiotu"
+    exit function
+  end if
+  if idTrans = 0 then
+    pOperPos.strErr = "Identyfikacja transakcji po symbolu transakcji nie powiodła się. Symbol " + cstr(pOperPos.trans) + " nie jest przypisany do żadnej transakcji"
+    exit function
+  end if
+
+'wyszukiwanie unikalnej pałtności zawieającej zdefiniowaną transakcję oraz kwotę
+  idPlat = trans_.findobjid(TYPEID_N5PLATNOSC,"wrefpodmiot = " + cstr(idKlient) + " and curKwotaStan = (select -abs(" + replace(cstr(pOperPos.curValue),",",".") + ")) and idobj in (select idparent from collections join n5pozplatnosc as c on c.idobj = collections.idobj and  pTransakcja = " + cstr(idTrans) + " where idcollection = 10150010) " )
+  
+  if idPlat < 0 then
+    pOperPos.strErr = "Identyfikacja płatności po podmiocie płatności i transakcji płatności nie powiodła się. Symbol " + cstr(pOperPos.trans) + " i podmiot " + trans_.getObj(TYPEID_N5KLIENT, idKlient).strNazwa +" są przypisane do więcej niż jednej płatności"
+    exit function
+  end if
+  if idPlat = 0 then
+    pOperPos.strErr = "Identyfikacja płatności po podmiocie płatności i transakcji płatności nie powiodła się. Symbol " + cstr(pOperPos.trans) + " i podmiot " + trans_.getObj(TYPEID_N5KLIENT, idKlient).strNazwa +" nie są przypisane do żadnej płatności"
+    exit function
+  end if
+
+'pobieranie obiektu płatności
+  dim pPlatnosc : set pPlatnosc = trans_.getobj(TYPEID_N5PLATNOSC,idPlat)
+  if pPlatnosc is nothing then 
+    exit function
+  end if
+  
+'aktualizacja daty i statusu płatności
+  pPlatnosc.eStatus=clng(N5PLATNOSC_ZREALIZOWANA)
+  pPlatnosc.ddataoper = dateserial(year(pOperPos.strOperDate), month(pOperPos.strOperDate), day(pOperPos.strOperDate))
+ 
+  if not trans_.saveobjects then
+			exit function
+  end if
+  
+  update_single_Oper = idPlat 
+end function
+
+
+'-------------------------------------------------------------
+'dla wszystkich wczytanych obiektów operacji uruchamia
+'aktualizację, uruchamia raport niezaktualizowanych operacji
+'Pobiera tablicę obiektów COperacja. Zwraca 1,0 (powodzenie/niepowodzenie)
+'-------------------------------------------------------------
+function update_DB(byref pOper) : update_DB = 1
+
+'tworzenie tabeli na operacje które nie zostały zidentyfikowane, lub nie udało się ich zapisać
+  dim createQuery : createQuery = "create table #unident(pos varchar(32), text varchar(512), err varchar(256))"
+  trans_.execsql createQuery
+  
+'pętla po wczytanych obiektach, uruchamiająca funkcję aktualizującą
+  dim perf : set perf = doc_.performing("Trwa kojarzenie płatności ")
+  dim isUpdated
+  dim iter
+  dim insertQuery
+  dim otherOperCount : otherOperCount = 0
+  for iter=1 to pOper.UpperIndex()
+    isUpdated = 1
+    if pOper.value(iter).strOperType = ALLOWED_OPER_TYPE then
+      isUpdated = update_single_Oper(pOper.value(iter))
+    else
+      otherOperCount = otherOperCount + 1
+    end if
+    'gdy aktualizacja nie powiedzie się to do tabeli dodajemy dane z obiektu (do raportu)
+    if isUpdated = 0 then
+      insertQuery = "insert into #unident values('" + pOper.value(iter).strBankOperID + "','" + pOper.value(iter).Text + "', '" + pOper.value(iter).strErr +"')"
+      trans_.execsql insertQuery
+    end if
+  next
+  set perf = nothing
+  
+  'uruchamiamy raport
+  dim param : set param = trans_.afc.new_navoarray()
+  dim pFD, bOK
+  set pFD = CFileDrive(bOK)
+  param.add otherOperCount
+  param.add pFD.getfileName(m_FilePath)
+  doc_.getmodule(60136).make_raport_aktualizacja_dok_bank param
+  update_DB = 0
+  
+end function
+
+
+function fopen(): fopen = false
+
+'wczytanie obiektów z pliku wyciągu bankowego
+   dim pOper : set pOper = getOper_xml_file()
+   if pOper is nothing then
+      exit function
+   end if
+'dla wczytanych obiektów pOper wykonujemy aktualizajcę Dokumentów Bankowych (DB)
+   if update_DB(pOper) then
+      trans_.message 7000, 0, "Importowanie nie powiodło się"
+   end if
+  
+end function
+
+]]>
+</script>
+</config>
+	<body>
+	</body>
+</page>

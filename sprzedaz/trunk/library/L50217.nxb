@@ -1,0 +1,199 @@
+#ifndef _LIBRARY_50217_
+#define _LIBRARY_50217_
+
+
+#define PUB_TYPES_SEPARATOR			Chr(11)
+
+
+#macro QXX_CHOOSE_PUBLICATION(_ctrl_pub_label_,_ctrl_pic_,_ctrl_pub_preview_,_colspan_)	\
+	<td>															\
+		<t>Publikacja:&nbsp;</t>									\
+	</td>															\
+	<td colspan='_colspan_'>										\
+		<table>	\
+			<tbody>	\
+				<tr>	\
+					<td>	\
+						<text name='_ctrl_pub_label_'><![CDATA[<--- Wybierz z listy]]></text>									\		
+					</td>	\
+					<td>	\
+						QXE_PICTURE_ACTION(_ctrl_pic_,PICTURE_CHOICE_N5DPC,varFunctionHLI="std_choose_dpc_hli",Wybór publikacji)		\
+					</td>	\
+				</tr>	\
+				<tr>	\
+					<td colspan='2'>	\
+						<radio name='_ctrl_pub_preview_' colspan='2'>	\
+							<t>wydruk</t>		\
+							<t>podgl¹d</t>		\
+						</radio>	\
+					</td>	\
+				</tr>	\
+			</tbody>	\
+		</table>		\
+	</td>
+
+
+
+function setup_choose_dpc_pic(byref pPage,idCtrl,idCtrPrev,idPubLabel,idDCP,strPubType)
+	with pPage.ctrl(idCtrl).hli
+		.prop(1) = clng(idDCP)
+		.prop(2) = strPubType
+		.prop(3) = clng(idPubLabel)
+		.prop(4) = clng(idCtrPrev)
+	end with
+end function
+
+
+function setup_choose_dpc_label(byref pPage,idCtrl,idDCP)
+	with pPage.ctrl(idCtrl)
+		if idDCP <> 0 then
+			dim pub:set pub = trans_.getobj(TYPEID_N5DPC,idDCP)
+			.text = pub.text
+			set .hli = doc_.createhlistr( _
+				doc_.afc.convert.formatter(" OPEN_FORM_PROXY_HLI(TYPEID_N5DPC,%1) ").add(CStr(idDCP)).done())
+		else
+			.text = "Wybierz z listy ---> "
+			set .hli = nothing
+		end if
+	end with
+end function
+
+
+
+function setup_choose_dpc_preview(byref pPage,idCtrl,idDCP)
+
+	dim value:value = REJDOK_DPC_PREVIEW
+	if idDCP < 0 then
+		value = REJDOK_DPC_PRINT
+	end if
+
+	pPage.ctrl(idCtrl).value = clng(value)
+	pPage.ctrl(idCtrl).disable = (idDCP = 0)
+
+end function
+
+
+function std_choose_dpc_hli(byref pHLI)
+
+	'zachowanie kompatybilnosci wstecz
+	'rozbijam zakodowany typ na eTypPub oraz pub_nInnyTyp
+	dim ar:ar = split(pHLI.prop(2),PUB_TYPES_SEPARATOR)
+	dim strPubType
+	if ubound(ar) > -1 then
+		strPubType = ar(0)
+	else
+		strPubType = ""
+	end if
+	dim strPubOtherType:strPubOtherType = "-1"
+	if ubound(ar) > 0 then
+		strPubOtherType = ar(1)
+	end if
+
+	dim strWhere : strWhere = ""
+	if strPubType <> "" then
+		'nowy where - albo etypPub pokazuje nam jaka to publikacja albo 
+		'eTypPub to "inny" a pokazuje nam pub_nInnyTyp
+		strWhere = "ePubType in (" + strPubType + ") or (ePubType=N5DPC_PUBTYPE_INNY and pub_nInnyTyp in ( " + strPubOtherType + " ) )"
+		DEBUG_MESSAGE("std_choose_dpc_hli:" + strWhere)	
+	end if
+	dim idDPC : idDPC = fire_choice_list(TYPEID_N5DPC,"Wybierz publikacje","strNazwa",strWhere,"","")	
+
+	setup_choose_dpc_label page_,pHLI.prop(3),idDPC
+	setup_choose_dpc_preview page_,pHLI.prop(4),idDPC
+
+	pHLI.prop(1) = clng(idDPC)
+end function
+
+
+function get_choosen_dpc(byref pPage,idCtrl,idCtrlPreview)
+	get_choosen_dpc = abs(pPage.ctrl(idCtrl).hli.prop(1))
+	if pPage.ctrl(idCtrlPreview).value = REJDOK_DPC_PRINT then
+		get_choosen_dpc = (-1) * get_choosen_dpc
+	end if
+end function
+
+
+'typ publikacji dla typu rejsetru
+'Wynik to zlozenie dwoch ci¹gów - eTypPub oraz pub_nInnyTyp
+function get_where_for_pub_by_rejtyp(byval eRejTyp)
+	
+	DEBUG_MESSAGE("get_where_for_pub_by_rejtyp - input:" + cstr(eRejTyp))	
+	
+	dim strPubType:strPubType = ""
+	dim strPubTypeOther: strPubTypeOther = ""
+	select case eRejTyp
+			case N5REJESTRDOK_FAKTURA_ZALICZKOWA
+				strPubType = "N5DPC_PUBTYPE_FAKTURA_ZALICZKOWA"
+				strPubTypeOther = "N5DPC_PUBTYPE_INNY_WYDRUK_KOREKTY_FAK_ZAL"
+
+			case N5REJESTRDOK_FAKT_SP
+				strPubType = "N5DPC_PUBTYPE_FAKTURAVAT"
+				strPubTypeOther = "N5DPC_PUBTYPE_INNY_FVAT_POLECENIE_PRZELEWU"
+
+			case N5REJESTRDOK_KOR_FAKT_SP
+				strPubType = "N5DPC_PUBTYPE_FAKTURAVAT_KOREKTA"
+
+			case N5REJESTRDOK_DOSTAWA
+				strPubType = "N5DPC_PUBTYPE_FAKTURAVAT"
+
+			case N5REJESTRDOK_KOR_DOSTAWA
+				strPubType = "N5DPC_PUBTYPE_FAKTURAVAT_KOREKTA"
+
+			case N5REJESTRDOK_RACH
+				strPubType = "N5DPC_PUBTYPE_RACHUNEK"
+
+			case N5REJESTRDOK_KOR_RACH	
+				strPubType = "N5DPC_PUBTYPE_RACHUNEK_KOREKTA"
+
+			case N5REJESTRDOK_PARAGON
+				strPubType = "N5DPC_PUBTYPE_PARAGON"
+
+			case N5REJESTRDOK_KOR_PARAGON
+				strPubType = "N5DPC_PUBTYPE_PARAGON_KOREKTA"
+
+			case N5REJESTRDOK_FAKT_EXP
+				strPubType = "N5DPC_PUBTYPE_FAKTURAVAT_ZAGRANICZNA,N5DPC_PUBTYPE_LIST_PRZEWOZOWY"
+				strPubTypeOther = "N5DPC_PUBTYPE_INNY_LISTPRZEWOZOWY_PL"
+
+			case N5REJESTRDOK_KOR_FAKT_EXP
+				strPubType = "N5DPC_PUBTYPE_FAKTURAVAT_ZAGRANICZNA_KOREKTA"
+
+			case N5REJESTRDOK_WDT
+				strPubType = "N5DPC_PUBTYPE_WDT,N5DPC_PUBTYPE_FAKTURAVAT_ZAGRANICZNA,N5DPC_PUBTYPE_LIST_PRZEWOZOWY"
+				strPubTypeOther = "N5DPC_PUBTYPE_INNY_LISTPRZEWOZOWY_PL"
+
+			case N5REJESTRDOK_KOREKTA_WDT
+				strPubType = "N5DPC_PUBTYPE_WDT_KOREKTA,N5DPC_PUBTYPE_FAKTURAVAT_ZAGRANICZNA_KOREKTA"
+
+			case N5REJESTRDOK__ZAM_OBCE
+				strPubType = "N5DPC_PUBTYPE_ZAMOWIENIE_OBCE,N5DPC_PUBTYPE_FAKTURA_PROFORMA,N5DPC_PUBTYPE_STATUS_REAL_ZAM"
+				strPubTypeOther = "N5DPC_PUBTYPE_INNY_ZAM_INXOBCY"
+
+			case N5REJESTRDOK__ZAM_WLASNE
+				strPubType = "N5DPC_PUBTYPE_ZAMOWIENIE_WLASNE"
+				strPubTypeOther = "N5DPC_PUBTYPE_INNY_ZAM_INXOBCY"
+
+			case N5REJESTRDOK__WZ
+				strPubType = "N5DPC_PUBTYPE_WZ"
+				strPubTypeOther = "N5DPC_PUBTYPE_INNY_WZ_INXOBCY"
+
+			case N5REJESTRDOK_ZADANIA
+				strPubType = "N5DPC_PUBTYPE_INNY"
+				strPubTypeOther = "N5DPC_PUBTYPE_INNY_ZADANIE"
+
+			case N5REJESTRDOK_SRODKI_TRWALE
+				strPubType = "N5DPC_PUBTYPE_INNY"
+				strPubTypeOther = "N5DPC_PUBTYPE_INNY_OPER_SRODEK_TRW"
+			
+		end select
+		get_where_for_pub_by_rejtyp = strPubType
+		if strPubTypeOther <> "" then
+			get_where_for_pub_by_rejtyp = get_where_for_pub_by_rejtyp + PUB_TYPES_SEPARATOR + strPubTypeOther
+		end if
+		
+		
+		DEBUG_MESSAGE("get_where_for_pub_by_rejtyp - output:" + cstr(get_where_for_pub_by_rejtyp))	
+			
+end function
+
+#endif

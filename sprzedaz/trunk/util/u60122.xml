@@ -1,0 +1,482 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+	std support dla kontrolek
+
+
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1240.h"
+#include "h1220.h"
+
+
+#define XCALENDARDAYCELL							\
+	<td align='center'>							\
+		<t href='varFunctionHLI="on_click"'>	\
+			<transfer mode='custom'/>			\
+		</t>									\
+	</td>			
+
+#macro XCALENDARHDRCELL(_day_)					\
+	<td align='center'>							\
+		<t>_day_</t>							\	
+	</td>
+
+
+#define XCALENDARWEEKROW			\
+		<tr>						\
+			<td align='center'>		\
+				<t></t>				\	
+			</td>					\
+			XCALENDARDAYCELL		\	
+			XCALENDARDAYCELL		\
+			XCALENDARDAYCELL		\
+			XCALENDARDAYCELL		\
+			XCALENDARDAYCELL		\
+			XCALENDARDAYCELL		\				
+			XCALENDARDAYCELL		\				
+		</tr>
+
+
+#define R_FOCUS		255
+#define G_FOCUS		0	
+#define B_FOCUS		0
+
+
+#define R_TODAY		150
+#define G_TODAY		150
+#define B_TODAY		150
+
+
+#define R_BACK		255
+#define G_BACK		255
+#define B_BACK		255
+
+
+#define R_DAY		220
+#define G_DAY		220
+#define B_DAY		220
+
+
+#define PICTURE_LEFT		80930
+#define PICTURE_RIGHT		80931
+
+
+
+-->
+<page caption='false' width='5000'>
+<startpos>center</startpos>
+<config>
+<script>
+
+<![CDATA[
+
+
+const sccv_put_value = 1
+
+const PROP_FCONTROL_OPERATION = 1
+
+const FCONTROL_OPERATION_DATE_TODAY		= 1
+const FCONTROL_OPERATION_DATE_CALENDAR	= 2
+
+function process_fcontrol(byref pPage,byref pHLI)
+
+	dim nOper : nOper  = pHLI.prop(PROP_FCONTROL_OPERATION)
+	dim pCtrl : set pCtrl = pPage.ctrl(pHLI.prop(PROPC_IDENT))
+
+	select case nOper
+	case FCONTROL_OPERATION_DATE_TODAY		'today
+		doc_.putctrlcmd pCtrl.ident,sccv_put_value,trans_.var(GVAR_TODAY)
+	case FCONTROL_OPERATION_DATE_CALENDAR	'calender
+		dim dtDate : dtDate = pCtrl.value
+		if choose_date(dtDate) then
+			doc_.putctrlcmd pCtrl.ident,sccv_put_value,dtDate
+		end if
+	end select
+
+	doc_.applyctrldata	'posted - will execute after this module finishes
+end function
+
+
+function choose_date(byref dtDate) : choose_date = false
+	dim pCalendarPage : set pCalendarPage = doc_.getmodule(THIS_FILE)
+
+
+	pCalendarPage.set_date(dtDate)
+	pCalendarPage.set_global_date(dtDate)
+
+	if dtDate = doc_.afc.globals.nulldate() then
+		pCalendarPage.fill_calendar trans_.var(GVAR_TODAY)
+	else
+		pCalendarPage.fill_calendar dtDate
+	end if
+
+	redirect_ctrls pCalendarPage
+
+	doc_.pushpage pCalendarPage
+	dim bRes:bRes = pCalendarPage.domodal()
+	doc_.poppage
+	dtDate = pCalendarPage.get_global_date
+	choose_date = true
+end function
+
+
+
+'data zwracana na zewnatrz
+dim g_date
+'data potrzebna do zabawy w wyswietlanie
+dim oper_date
+
+
+function fill_calendar(byref dtDate)	
+
+
+	dim body:set body = page_.ctrl(500).body
+	dim row,cell,ctrl
+
+
+	dim tab:set tab = doc_.afc.new_tb(page_).attach(page_.ctrl(100)).removeall	
+	tab.section_head.removeall.getsection.styleitem = STYLE_TABLE_HEADER
+
+	tab.section_body.removeall.getsection.styleitem = STYLE_TABLE_BODY
+
+	page_.ctrl(10).text = trans_.afc.display.fulldate(dtDate)
+
+	'daty graniczne miesiąca
+	dim min_date:min_date = dateserial(year(dtDate), month(dtDate) , 1)
+	dim max_date:max_date = dateserial(year(dtDate), month(dtDate) + 1 , 0)
+
+
+	'aaaaaaaa
+	'offset - czyli ile od poniedzialku do pierwszego dnia miesiąca
+	' i od ostatniego do niedzieli
+	dim down:down=WeekDay(min_date,vbMonday)-1
+	dim up:up=7 - WeekDay(max_date,vbMonday)
+
+	dim count_weeks:count_weeks= ((max_date+up)-(min_date-down) + 1)/7
+
+	dim iter_weeks
+	dim iter_days
+	dim curr_day:curr_day = 0
+	curr_day = min_date
+
+	'pierwszy tydzien
+
+	dim nWeek
+	nWeek = DatePart("ww", dateserial(year(curr_day) , month(curr_day) , 1 ) , vbMonday)
+	update_week_ctrl body , 1 , nWeek	
+
+	for iter_days = 2 to 8
+		if iter_days<=down+1 then
+			clear_day_ctrl body , 1 , iter_days
+		else
+			update_day_ctrl body, 1 , iter_days , curr_day,dtDate
+			curr_day = curr_day + 1
+		end if
+	next
+
+
+	'tygodnie do przedostatniego
+	for iter_weeks = 2 to count_weeks - 1		
+		for iter_days = 2 to 8
+			update_day_ctrl body, iter_weeks , iter_days , curr_day,dtDate
+			curr_day = curr_day + 1
+		next
+		update_week_ctrl body , iter_weeks , nWeek
+	next
+	
+
+	'ostatni	
+	for iter_days = 2 to 8
+		if iter_days>8-up then
+			clear_day_ctrl body , iter_weeks , iter_days
+		else
+			update_day_ctrl body, iter_weeks , iter_days , curr_day,dtDate
+			curr_day = curr_day + 1
+		end if
+	next	
+	update_week_ctrl body , iter_weeks , nWeek
+
+	'czyscimy wszystko co jest ponizej ostatniego tygodnia
+	for iter_weeks=5 to count_weeks step -1
+		set row = body.row(iter_weeks + 1)
+		for iter_days = 1 to 8
+			clear_empty_week_ctrl body , iter_weeks + 1 , iter_days					
+		next
+	next
+
+	page_.ctrl(11).text = MonthName(month(dtDate))
+	page_.ctrl(12).text = cstr(year(dtDate))
+
+
+end function
+
+function clear_empty_week_ctrl (byref body , nRow  , nCell)
+
+	dim row:set row = body.row(nRow)
+	dim cell:set cell = row.cell(nCell)
+	dim ctrl:set ctrl = cell.element(1)
+
+	ctrl.text = ""
+
+	if nCell > 1 then
+		ctrl.disable = true
+	end if
+
+	cell.styleitem = STYLE_EMPTY_CELL
+	cell.backcolor = rgb(R_BACK,G_BACK,B_BACK)
+	cell.backcolor2 = cell.backcolor
+
+end function
+
+function clear_day_ctrl(byref body , nRow , nCell)
+
+	dim row:set row = body.row(nRow)
+	dim cell:set cell = row.cell(nCell)
+	dim ctrl:set ctrl = cell.element(1)
+	ctrl.text = ""
+	ctrl.disable = true
+
+	cell.styleitem = STYLE_TABLE_BODY
+	cell.border = clng(0)
+
+	cell.backcolor = rgb(R_DAY,G_DAY,B_DAY)
+	cell.backcolor2 = cell.backcolor
+
+end function
+
+
+function update_week_ctrl(byref body , nRow , byref nWeek)
+
+	dim row:set row = body.row(nRow)
+	dim cell:set cell = row.cell(1)
+	dim ctrl:set ctrl = cell.element(1)
+
+	if nWeek < 1 then
+		nWeek = 1
+	end if
+
+	ctrl.text = cstr(nWeek)
+	nWeek = nWeek + 1
+	cell.styleitem = STYLE_TABLE_BODY
+	cell.border = clng(0)
+	cell.backcolor = rgb(239,244,254)
+	cell.backcolor2 = cell.backcolor
+
+end function
+
+'update napisu i hli na kontrolce odpowiadajacej jednamu dniu
+function update_day_ctrl(byref body , nRow , nCell , value , dtDate)
+	'pierwsza kontrolka w kontrenerze
+	dim row:set row = body.row(nRow)
+	dim cell:set cell = row.cell(nCell)
+	dim ctrl:set ctrl = cell.element(1)
+
+	ctrl.disable=false	
+	ctrl.text = cstr(day(value))
+	ctrl.hli.prop(APPVAR_CALENDAR_DATE_DAY) = cstr(day(value))
+	ctrl.hli.prop(APPVAR_CALENDAR_DATE_MONTH) = cstr(month(value))
+	ctrl.hli.prop(APPVAR_CALENDAR_DATE_YEAR) = cstr(year(value))
+
+	cell.styleitem = STYLE_TABLE_BODY
+	cell.border = clng(0)
+	cell.backcolor = rgb(R_DAY,G_DAY,B_DAY)
+	cell.backcolor2 = cell.backcolor
+
+
+
+	if value = dtDate then
+		cell.backcolor= rgb(R_FOCUS,G_FOCUS,B_FOCUS)					
+		cell.backcolor2= cell.backcolor
+		ctrl.focus = true
+	end if
+
+	if value = trans_.var(GVAR_TODAY) then
+		cell.backcolor= rgb(R_TODAY,G_TODAY,B_TODAY)					
+		cell.backcolor2= cell.backcolor
+	end if	
+
+end function
+
+
+function on_click(byref hli)
+	g_date = dateserial(hli.prop(APPVAR_CALENDAR_DATE_YEAR) , hli.prop(APPVAR_CALENDAR_DATE_MONTH) , hli.prop(APPVAR_CALENDAR_DATE_DAY))
+	page_.goback
+end function
+
+function get_global_date
+	get_global_date = g_date
+end function
+
+function set_global_date(dtDate)
+	g_date = dtDate
+end function
+
+function get_date
+	get_date = oper_date
+end function
+
+function set_date(dtDate)
+	oper_date = dtDate
+end function
+
+function minus_date_m
+	dim dt:dt = get_date
+	dim nDay:nDay = Day(dt)
+	dim nMonth:nMonth = Month(dt)-1
+	dim nYear:nYear = Year(dt)
+	'if nMonth<1 then
+	'	nMonth=12
+	'end if		
+	dt = dateserial(nYear,nMonth,nDay)
+	set_date(dt)
+	page_.ctrl(11).text = MonthName(month(dt)) 
+	fill_calendar dt
+end function
+
+
+function plus_date_m
+	dim dt:dt = get_date
+	dim nDay:nDay = Day(dt)
+	dim nMonth:nMonth = Month(dt)+1
+	'if nMonth>12 then
+	'	nMonth=1
+	'end if
+	dim nYear:nYear = Year(dt)		
+	dt = dateserial(nYear,nMonth,nDay)
+	set_date(dt)
+	page_.ctrl(11).text = MonthName(month(dt)) 
+	fill_calendar dt
+end function
+
+
+function minus_date_y
+	dim dt:dt = get_date
+	dim nDay:nDay = Day(dt)
+	dim nMonth:nMonth = Month(dt)
+	dim nYear:nYear = Year(dt)-1		
+	dt = dateserial(nYear,nMonth,nDay)
+	set_date(dt)
+	page_.ctrl(12).text = cstr(year(dt))
+	fill_calendar dt
+end function
+
+
+function plus_date_y
+	dim dt:dt = get_date
+	dim nDay:nDay = Day(dt)
+	dim nMonth:nMonth = Month(dt)
+	dim nYear:nYear = Year(dt)+1		
+	dt = dateserial(nYear,nMonth,nDay)
+	set_date(dt)
+	page_.ctrl(12).text = cstr(year(dt))
+	fill_calendar dt
+end function
+
+
+private function redirect_ctrls(page)
+	dim body:set body = page.ctrl(500).body
+	dim row,cell,ctrl
+	for each row in body
+		for each cell in row
+			for each ctrl in cell
+				ctrl.customredirect CLng(600)
+			next
+		next
+	next
+end function
+
+
+function c600_ongetdata(ctrl)
+end function
+
+function c600_ongotfocus(ctrl,nLostFocusId)
+	dim cell:set cell = ctrl.parent
+	cell.backcolor = rgb(R_FOCUS,G_FOCUS,B_FOCUS)
+	cell.backcolor2 = cell.backcolor
+	dim dt:dt = dateserial (ctrl.hli.prop(APPVAR_CALENDAR_DATE_YEAR),ctrl.hli.prop(APPVAR_CALENDAR_DATE_MONTH),ctrl.hli.prop(APPVAR_CALENDAR_DATE_DAY))
+	set_date(dt)
+	page_.ctrl(10).text = trans_.afc.display.fulldate(dt)
+end function
+
+function c600_onlostfocus(ctrl,nGotFocusId)
+	dim cell:set cell = ctrl.parent
+	dim dt:dt = dateserial (ctrl.hli.prop(APPVAR_CALENDAR_DATE_YEAR),ctrl.hli.prop(APPVAR_CALENDAR_DATE_MONTH),ctrl.hli.prop(APPVAR_CALENDAR_DATE_DAY))
+	if dt = trans_.var(GVAR_TODAY) then
+		cell.backcolor= rgb(R_TODAY,G_TODAY,B_TODAY)					
+		cell.backcolor2= cell.backcolor
+	else
+		cell.backcolor = rgb(R_DAY,G_DAY,B_DAY)
+		cell.backcolor2 = cell.backcolor
+	end if	
+end function
+
+
+]]>
+
+</script>
+</config>
+
+<body>		
+
+<table>
+</table>
+
+<table name='100'>
+</table>
+
+
+<table name='500'>
+	<thead>
+		<tr>
+			<td colspan='7' align='center' >
+				<t bold='true' align='center' name='10'></t>
+			</td>
+		</tr>
+		<tr style='STYLE_TABLE_HEADER' border='0'>
+			XCALENDARHDRCELL()
+			XCALENDARHDRCELL(P)
+			XCALENDARHDRCELL(W)
+			XCALENDARHDRCELL(S)
+			XCALENDARHDRCELL(C)
+			XCALENDARHDRCELL(P)
+			XCALENDARHDRCELL(S)
+			XCALENDARHDRCELL(N)
+		</tr>
+	</thead>
+	<tbody style='STYLE_TABLE_BODY'>		
+		XCALENDARWEEKROW
+		XCALENDARWEEKROW
+		XCALENDARWEEKROW
+		XCALENDARWEEKROW
+		XCALENDARWEEKROW
+		XCALENDARWEEKROW
+	</tbody>
+	<tfoot style='STYLE_TABLE_HEADER' border='0'>
+		<tr>
+			<td align='center'>
+				<picture image='PICTURE_LEFT' href="varFunction='minus_date_m'"/>
+			</td>
+			<td align='center' colspan='6'>
+				<t name='11'></t>
+			</td>
+			<td align='center'>
+				<picture image='PICTURE_RIGHT' href="varFunction='plus_date_m'"/>
+			</td>
+		</tr>
+		<tr>
+			<td align='center'>
+				<picture image='PICTURE_LEFT' href="varFunction='minus_date_y'"/>
+			</td>
+			<td align='center' colspan='6'>
+				<t name='12'></t>
+			</td>
+			<td align='center'>
+				<picture image='PICTURE_RIGHT' href="varFunction='plus_date_y'"/>
+			</td>
+		</tr>
+	</tfoot>
+</table>
+
+</body>
+</page>

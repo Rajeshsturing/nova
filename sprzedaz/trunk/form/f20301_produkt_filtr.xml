@@ -1,0 +1,213 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+
+<!--
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1240.h"
+#include "h1201.h"
+#include "h1223.h"
+#include "h1224.h"
+#include "h1203.h"
+
+
+#define CTRL_LIST_NAME		5
+#define CTRL_RADIO_NAME		6
+#define CTRL_RAPORT_NAME	7
+
+-->
+
+<page style='10'>
+<config>
+<title>Filtr produktów</title>
+<startpos>center</startpos>
+<script>
+<![CDATA[
+
+#include "50209"
+#include "50200"
+
+
+function init(byval nDestFiltr , nIdobjFiltr)
+	m_nDestFiltr = nDestFiltr
+	m_nIdobjFiltr = nIdobjFiltr
+end function
+
+dim dummy
+
+dim m_nDestFiltr:m_nDestFiltr = clng(1)
+dim m_nIdobjFiltr:m_nIdobjFiltr = clng(0)
+dim m_strNameFiltr:m_strNameFiltr = ""
+
+WVB_FILTER_RADIO(CTRL_RADIO_NAME,m_nDestFiltr,m_nDestFiltr,m_nIdobjFiltr)
+WVB_FILTER_CHOICELIST(TYPEID_N5PRODUKT,dummy,m_nIdobjFiltr,m_strNameFiltr)
+WVB_FILTER_CHOICESEARCHTYPE(TYPEID_N5PRODUKT,dummy,m_nIdobjFiltr,m_strNameFiltr)
+WVB_FILTER_GETTEXT(2,CTRL_LIST_NAME,m_nDestFiltr,m_nIdobjFiltr,m_strNameFiltr)
+WVB_FILTER_GETTEXT(3,CTRL_RAPORT_NAME,m_nDestFiltr,m_nIdobjFiltr,m_strNameFiltr)
+
+function is_empty
+	if m_nIdobjFiltr=0 then
+#ifdef _IOW
+		if m_nDestFiltr<>1 and m_nDestFiltr<>4 then
+#else
+		if m_nDestFiltr<>1 then
+#endif    
+			is_empty = true
+		else
+			is_empty = false
+		end if
+	else
+		is_empty = false
+	end if
+end function
+
+
+function fok
+	if is_empty then
+		trans_.message 1002 , 0 , "Należy wybrać zakres produktów, które chcesz eksportować"
+	else
+		page_.result = true
+		page_.goback		
+	end if
+end function
+
+function fcancel
+	page_.result = false
+	page_.goback
+end function
+
+
+
+private function get_where():get_where=""
+	get_where = doc_.getmodule(60300).bquery_where_for_produkt_filtr(m_nDestFiltr , m_nIdobjFiltr)				
+end function
+
+
+function cursor_for_send_to_kasa():set cursor_for_send_to_kasa = nothing
+
+	dim where_for_prod:where_for_prod = get_where
+	if where_for_prod = "" then
+		exit function
+	end if
+
+	dim strQuery:strQuery = _
+	" select " + _
+	" 'plu_code'=p_strindeks, " + _
+	" 'plu_name'=p_strnazwa, " + _
+	" 'plu_price'=c_curcenabrutto1, " + _
+	" 'plu_eVat'=p_eVat " + _
+	" from vlist_n5produkt_listOpakowania " + _
+	" where " + where_for_prod + _
+	" and  coll_lp=1 " + _
+	" order by plu_code "
+
+	set cursor_for_send_to_kasa = trans_.createadors(strQuery)
+		
+end function
+
+
+
+
+
+function cursor_for_send_to_collector(byval mag_id):set cursor_for_send_to_collector = nothing
+
+	dim where_for_prod:where_for_prod = get_where
+	if where_for_prod = "" then
+		exit function
+	end if
+  
+#ifdef _IOW
+  where_for_prod = Replace(where_for_prod,"[ID_MAGAZYN]",CStr(mag_id))
+#endif
+
+	dim strQuery:strQuery = doc_.afc.convert.formatter("select 'ean' = c_strean,'cena' = c_curCenaNetto1, " + _
+	"'ilosc' = (select isnull(sum(gms_curIlosc),0) from n5gmstan where gms_pProd = p_idobj and gms_pOpak = c_idobj and ( isnull(gms_pMag,-1) = %2 or isnull(gms_pMag,-1) < 0)), " + _
+	"'nazwa' = p_strnazwa , 'prod_id' = p_idobj,'lp'=coll_lp " + _
+#ifdef _IOW
+	",'indeks'=p_strindeks,'oznacz_prod'=p_strcecha1,'opis'=p_stropis " + _ 
+	"from vlist_n5produkt_listopakowania " + _  
+	"where rtrim(ltrim(p_strindeks)) <> '' " + _  
+#else
+	"from vlist_n5produkt_listopakowania " + _
+	" where rtrim(ltrim(c_strean)) <> '' " + _				
+#endif  
+	" and %1 ") _
+	(where_for_prod)(mag_id).Done()
+	set cursor_for_send_to_collector = trans_.createadors(strQuery)
+
+end function
+
+
+function cursor_for_send_to_collector_na_dzien(byval mag_id,byval ddata_inwen):set cursor_for_send_to_collector_na_dzien = nothing
+
+	dim where_for_prod:where_for_prod = get_where
+	if where_for_prod = "" then
+		exit function
+	end if
+
+	dim strQuery:strQuery = doc_.afc.convert.formatter("select 'ean' = v1.c_strean,'cena' = v1.c_curCenaNetto1, " + _
+          "'ilosc' = (select isnull(sum(gmo_curilosc),0) from n5gmop where gmo_pprod = v1.p_idobj  and gmo_pmag= %2 and gmo_nnumop in (select v.p_nnumoper from vlist_n5dokmag_listPozycje as v where v.c_pprodukt=v1.p_idobj and v.p_ddatawyst <=%3)),"+_
+          "'nazwa' = v1.p_strnazwa , 'prod_id' = p_idobj,'lp'=v1.coll_lp from vlist_n5produkt_listopakowania as v1 " + _
+	        " where rtrim(ltrim(v1.c_strean)) <> '' " + _				
+	        " and v1.%1 ") _
+	        (where_for_prod)(mag_id)(ddata_inwen).Done()
+  set cursor_for_send_to_collector_na_dzien = trans_.createadors(strQuery)
+
+end function
+
+
+
+' DLA KASY FISKALNEJ!!!!!!
+'send_products_to_kasa(
+'dim strCode :  strCode = cstr(pADOCursor("plu_code"))
+'dim strName : strName = cstr(pADOCursor("plu_name"))
+'dim curPrice : curPrice = ccur(pADOCursor("plu_price"))
+'dim eVAT : eVAT = clng(pADOCursor("plu_eVAT"))
+
+
+'DLA KOLEKTORA!!!!!
+'send_products_to_collector
+'dim strKodEAN : strKodEAN = cstr(pADOCursor("ean"))
+'dim curCena : curCena = ccur(pADOCursor("cena"))
+'dim curStanMag : curStanMag = ccur(pADOCursor("ilosc"))
+'dim strNazwa : strNazwa = cstr(pADOCursor("nazwa"))
+
+
+]]>
+</script>
+</config>
+<body>
+
+XFORMMWIZZARDBEGIN(80842)
+
+<tr>
+	<td style='STYLE_TABLE_INFO' colspan='2'>
+		<text>Wybierz produkty, ktore chcesz eksportować</text>
+	</td>
+</tr>
+
+<tr><td colspan='2'><t size='1' /></td></tr>
+<tr>
+	<td colspan='2'>
+		WX_FILTER_BEGIN(CTRL_RADIO_NAME)
+			WX_FILTER_ITEM_FIXED(Wszystkie aktywne)
+			WX_FILTER_ITEM_CHOICELIST(Lista wyboru,CTRL_LIST_NAME)
+			WX_FILTER_ITEM_SEARCHTYPE(Wynik wyszukiwania,CTRL_RAPORT_NAME)
+#ifdef _IOW
+			WX_FILTER_ITEM_FIXED(Posiadające stan magazynowy)
+#endif
+		WX_FILTER_END
+	</td>
+</tr>
+
+XFORMMWIZZARD_TABLESEND
+
+XFDIALOGBUTTONS
+
+</body>
+</page>

@@ -1,0 +1,251 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<page>
+<config>
+<script>
+<![CDATA[
+#include "h1000.h"
+#include "h1200.h"
+#include "50203"
+
+class wtprocessor
+	private m_oWordApp
+	private m_oWordDoc
+	private m_pRoot
+	private m_strBuffer
+	private m_strLastError
+	
+	private sub class_initialize()
+		set m_oWordApp = nothing
+		set m_oWordDoc = nothing
+		set m_pRoot = nothing
+		m_strBuffer = ""
+		m_strLastError = ""
+	end sub
+
+	private sub class_terminate()   'OK
+		set m_oWordDoc = nothing	
+		set m_oWordApp = nothing
+		set m_pRoot = nothing
+	end sub
+	
+	'------ [from] Application Interface ---------
+	public sub init_w_object(byref oWordApp,byref oWordDoc,byref pRoot)
+		set m_oWordApp = oWordApp
+		set m_oWordDoc = oWordDoc	
+		set m_pRoot = pRoot
+	end sub
+
+	public sub go
+		ExecuteGlobal "dim gen : set gen = nothing"
+		ExecuteGlobal "dim root : set root = nothing"
+		ExecuteGlobal "dim word : set word = nothing"
+		dim oRangeDoc : set oRangeDoc = m_oWordDoc.Range
+		on error resume next
+		process_range oRangeDoc
+		if err.Number then
+			m_strLastError = "Wystąpił błąd skryptu " + cstr(err.Number) + ", opis:" + err.Description
+		end if
+		on error goto 0
+	end sub
+
+	public function lasterror
+		lasterror = m_strLastError
+	end function
+
+	'------ internals ---------
+	public sub process_range(byval oPartRange)
+		dim oRange : set oRange = oPartRange.Duplicate
+		do while find_vbcode(oRange)
+			'retrieve
+			dim strVBCode : strVBCode = mid(oRange.Text,3,len(oRange.Text) - 4)
+			'clean in Word
+			oRange.Text = ""
+			'process
+			process_vbcode strVBCode
+			'replace with results
+			oRange.Text = m_strBuffer
+			'clean
+			m_strBuffer = ""
+			'prepare next find
+			oRange.Start = oRange.End + 1
+			oRange.End = oPartRange.End
+		loop
+	end sub
+
+	private sub process_vbcode(byref strVBCode)
+		strVBCode = ltrim(strVBCode)
+		
+		'detect and convert simple write directive
+		if left(strVBCode,1) = "=" then			
+			strVBCode = "gen.write " + mid(strVBCode,2)
+		end if
+		
+		'trans_.message 7000, 0, "[" + strVBCode + "]"
+
+		'execute phrase
+		set gen = me
+		set root = m_pRoot
+		set word = m_oWordDoc
+		ExecuteGlobal strVBCode
+	end sub
+	
+	private function findrow_with_marker(byval strMarker) : set findrow_with_marker = nothing
+		dim tbliter
+		for tbliter = 1 to m_oWordDoc.Tables.Count
+			with m_oWordDoc.Tables(tbliter)
+				dim rowiter
+				for rowiter = 1 to .Rows.Count
+					dim oRow
+					set oRow = .Rows(rowiter)
+					if instr(1,oRow.Range.Text,strMarker, vbTextCompare) > 0 then
+						set findrow_with_marker = oRow
+						exit function
+					end if
+				next
+			end with
+		next
+	end function
+
+	'------ [from] Word Interface ---------
+	public sub write(byval strValue)
+		m_strBuffer = m_strBuffer + strValue
+	end sub
+
+	public function copyrow(byval strMarker) : set copyrow = nothing
+		dim oRow : set oRow = findrow_with_marker(strMarker)
+		if oRow is nothing then
+			trans_.message 7000, 0, "row with marker " + strMarker + " not found"
+			exit function
+		end if
+		
+		'copy found row to clipboard
+        oRow.Select
+		m_oWordDoc.ActiveWindow.Selection.Copy
+		
+		'set selection to end of table and paste
+		dim oTable : set oTable = oRow.Parent
+		with m_oWordDoc.ActiveWindow.Selection
+			.End = oTable.Range.End
+			.Start = oTable.Range.End
+		    .Paste
+		end with
+		set copyrow = oTable.Rows.Last.Range
+	end function
+
+	public sub deleterow(byval strMarker)
+		dim oRow : set oRow = findrow_with_marker(strMarker)
+		if oRow is nothing then
+			trans_.message 7000, 0, "row with marker " + strMarker + " not found"
+			exit sub
+		end if
+		oRow.Delete
+	end sub
+
+	public sub callsub(byref oRange)
+		if oRange is nothing then
+			exit sub
+		end if
+
+		dim oWPT : set oWPT = new wtprocessor
+		oWPT.init_w_object m_oWordApp,m_oWordDoc,m_pRoot
+		oWPT.process_range oRange
+	end sub
+	'---------- shortcuts -----------
+	public function firma()
+		set firma = getCurrentFirma()
+	end function
+
+	public function uzytkownik()
+		set uzytkownik = getCurrentUser()
+	end function
+	public function dzisiaj()
+		dzisiaj = trans_.var(GVAR_TODAY)
+	end function
+	public function data(byval dDate)
+		data = trans_.afc.display.fulldate(cdate(dDate))
+	end function
+	public function kwota(byval curKwota)
+		kwota = trans_.afc.display.money(ccur(curKwota),"PLN")
+	end function
+	public function ilosc(byval curKwota,byref pJedn)
+		ilosc = trans_.afc.display.quantity(ccur(curKwota),pJedn.strSkrot,pJedn.nDokladnosc)
+	end function
+	public function slownie(byval curKwota)
+		slownie = trans_.afc.display.slownie(ccur(curKwota))
+	end function
+  public property get util_
+		set util_ = doc_.getmodule(60182)
+	end property
+end class
+
+'-- szuka fragmentu <% %> i jeśli znajdzie 
+'-- modyfikuje oRange oraz zwraca true
+function find_vbcode(byref oRange)
+    oRange.Find.ClearFormatting
+    With oRange.Find
+        .Text = "\<%*%\>"
+        .Replacement.Text = ""
+        .Forward = True
+        .Wrap = 0 'wdFindStop = 0
+        .Format = False
+        .MatchCase = False
+        .MatchWholeWord = False
+        .MatchAllWordForms = False
+        .MatchSoundsLike = False
+        .MatchWildcards = True
+    End With
+    find_vbcode = oRange.Find.Execute
+end function
+
+function wtp_object(byref pInStream,byval strOutFileName,byref pRoot)
+	dim pPerforming : set pPerforming = doc_.performing("Trwa tworzenie dokumentu ")
+	dim strNewDokPath
+	if strOutFileName = "" then
+		strNewDokPath = doc_.system.createtempfilename("wpt", "doc" )
+	else
+		strNewDokPath = strOutFileName
+	end if
+	pInStream.copyto strNewDokPath
+
+	dim oWordApp : set oWordApp = nothing
+	
+	'--try create object
+	on error resume next
+		set oWordApp = doc_.system.activex("Word.Application")
+	on error goto 0
+
+	if oWordApp is nothing then
+		'-- exit when failed
+		wtp_object = ""
+		exit function
+	end if
+
+	dim oWordDoc : set oWordDoc = oWordApp.Documents.Open(strNewDokPath)
+	oWordDoc.Activate
+
+	dim oWPT : set oWPT = new wtprocessor
+	oWPT.init_w_object oWordApp,oWordDoc,pRoot
+
+	oWPT.go
+	if oWPT.lasterror() = "" then
+		wtp_object = strNewDokPath
+	else
+		trans_.message 0,0,oWPT.lasterror()
+		wtp_object = ""
+	end if
+	
+	'zapisujemy	
+	oWordDoc.Save
+	'czyścimy
+	set oWPT = nothing
+	oWordDoc.Close
+	oWordApp.Quit
+end function
+
+]]>
+</script>
+</config>
+	<body>
+		<t>Word template processor</t>
+	</body>
+</page>

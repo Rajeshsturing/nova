@@ -1,0 +1,1325 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+moduł komunikacji z różnymi urządzeniami zewnętrznymi
+dostarcza infrastrukturę do wykorzystania na wyższym poziomie
+
+
+#include "h1000.h"
+#include "h1240.h"
+#include "h1203.h"
+-->
+<page>
+<config>
+<script>
+<![CDATA[
+
+'str2cur
+#include "50126"
+
+'MessageBox 
+#include "50122"
+
+'class CFilesDrives
+#include "50211"
+
+'getUserDirectory()
+#include "50212"
+
+#include "50632"
+'----------------------------------------------------------------------------------
+' COMM settings wrapper
+'----------------------------------------------------------------------------------
+
+class cCOMMSettings
+	public m_strPort
+	public m_nSpeed
+	public m_nParity
+	public m_nStopBits
+	public m_nDataBits
+	public m_strModel
+
+	public sub class_initialize()
+		m_strPort = "COM1"
+		m_nSpeed = clng(9600)
+		m_nParity = clng(2)
+		m_nStopBits = clng(0)
+		m_nDataBits = clng(8)
+		m_strModel = "CipherLab"
+	end sub
+
+	public function to_string()
+		to_string = m_strPort + vbTab + cstr(m_nSpeed) + vbTab +_
+			cstr(m_nParity) + vbTab + cstr(m_nStopBits) + vbTab + cstr(m_nDataBits) + vbTab + cstr(m_strModel)
+	end function
+
+	public function from_string(byval strValue)
+		from_string = false
+		dim arrItems : arrItems = split(strValue,vbTab)
+
+		if ubound(arrItems) = 5 then
+			m_strPort = arrItems(0)
+			m_nSpeed = clng(arrItems(1))
+			m_nParity= clng(arrItems(2))
+			m_nStopBits=clng(arrItems(3))
+			m_nDataBits=clng(arrItems(4))
+			if ccur(arrItems(5))= 2 then
+				m_strModel = "Unitech"
+			else
+				m_strModel = "CipherLab"
+			end if
+			from_string = true
+		end if
+	end function
+
+	public function from_registry(byval strRegistryKey)
+		from_registry = from_string(CStr(doc_.system.registry(hKey_LocalMachine , "HKLM_PATH", strRegistryKey)))
+	end function
+
+	public sub to_registry(byval strRegistryKey)
+		doc_.system.registry(hKey_LocalMachine,"HKLM_PATH",strRegistryKey) = to_string()
+	end sub
+end class
+
+function new_comm_settings()
+	set new_comm_settings = new cCOMMSettings
+end function
+
+'----------------------------------------------------------------------------------
+' Kolektora Unitech HT630 - skanuje kody zapisujac je w pamieci pod zdefiniowana przez nas nazwa np.data.txt
+' aby odczytac dane wystarczy podac instrukcje z linii koment (cmd):
+'			c:\JGPlus5\ptcomm /comport:1 /ptaddr:a /destdir:c:\ff /upload:data.txt
+'
+'		/program ptcomm.exe - po insalacji oprogramowania unitech'a
+'		/comport:1 (czyli com 1)port na ktorym pracuje urzadzenie
+'		/ptaddr:a (-> "litera dysku" kolektora) 
+'		/destdir:c:\ff -folder do ktorego pobieramy plik z kolektora
+'		/upload:data.txt (data.txt - plik ktorypobieramy z pamieci kolektora 
+'----------------------------------------------------------------------------------
+class Collector_unitech_HT630
+	private m_iRow				'aktualnie czytany wiersz pliku z kolektora
+	private m_strRow			'aktualny wartosc wiersza z pliku (zczytana z kolektora)
+	private m_pFD
+	private m_strPath			'sciezka do zapisanego pliku z kolektora
+	private m_strNameFile	'nazwa pliku z kolektora standardowo data.txt 
+	private m_strPathApli			' sciezka dla aplikacji PTComm
+	private m_strNameFileApli	'	nazwa aplikacji
+	private m_array_data			'tablica z danymi zczytanymi z kolektora
+	
+	public sub class_initialize()
+		dim strFoldPulpit : strFoldPulpit = doc_.system.specialFolder(NSF_DESKTOP)
+		set m_array_data = doc_.afc.new_navoarray()
+		set m_array_data = nothing
+		m_strPath = strFoldPulpit
+		m_strNameFile = "data.txt"
+		m_strPathApli	= "C:\JGPlus5"
+		m_strNameFileApli = "PtComm.exe"
+	end sub
+	
+	public function getPathDataFromCollector()
+		getPathDataFromCollector = m_strPath + "\" 
+	end function
+
+	private function CFileDrive(byref bOk)
+		set CFileDrive=new CFilesDrives
+		bOk=CFileDrive.CreateFSOObject()
+	end function
+
+private function Create_FileDriveObject()
+	if (not isObject(m_pFD)) then
+		dim bOK
+		set m_pFD=CFileDrive(bOK)
+		Create_FileDriveObject=bOK
+		if (not bOK) then
+			' 1, 0, "Nie udało się stworzyć obiekytu ""FileSystemObject"""
+			view_message 6045, 0
+		end if
+	else
+		Create_FileDriveObject=true
+	end if
+end function
+
+private function message(byval strWiadomosc)
+	 trans_.message 0,0,strWiadomosc
+end function
+
+	private function checkDirectoryPTCOMMAplication(): checkDirectoryPTCOMMAplication=false
+				'nie udalo sie uruchomic sprawdzenia katalogow
+			if (not Create_FileDriveObject()) then
+				exit function
+			end if			
+			if ( m_pFD.IsFolder( m_strPathApli )) then			'jesli jest dany folder
+				'sprawdz czy jest plik - jesli jest to znaczy ze mamy prog do obslugi kolektora i mozemy wywolac instr ptcomm do zczytania danych z kolektora
+						if not m_pFD.isFile(m_strPathApli+"\"+m_strNameFileApli) then
+							message("Brak zainstalowanej aplikacji w katalogu standardowym "+m_strPathApli)
+							checkDirectoryPTCOMMAplication = false
+							exit function
+						end if
+				end if
+			checkDirectoryPTCOMMAplication=true
+	end function 
+	
+	'sprawdz czy jest katalog do przechowywania danych z kolektora - jesli jest stary usun go i zapisz nowy
+	private function checkDirectoryDataFromCollector(): checkDirectoryDataFromCollector=false
+				'nie udalo sie uruchomic sprawdzenia katalogow
+			if (not Create_FileDriveObject()) then
+				exit function
+			end if			
+			if (not m_pFD.IsFolder( m_strPath )) then
+				if (not m_pFD.CreatePath( m_strPath )) then
+					message("Nie można stworzyć katalogu do przechowania danych")
+					checkDirectoryDataFromCollector = false					
+					exit function
+				end if
+			else 'jesli jest dany folder
+				'sprawdz czy jest plik - jesli jest to go usun
+						if  m_pFD.isFile(m_strPath+"\"+m_strNameFile) then
+							if not m_pFD.deleteFile(m_strPath+"\"+m_strNameFile) then
+								message("Nie można usunąć pliku " + m_strPath+"\"+m_strNameFile +" potrzebnego do przechowania danych z kolektora")
+								checkDirectoryDataFromCollector=true
+								exit function
+							end if
+						end if
+			end if
+			checkDirectoryDataFromCollector=true
+	end function 
+	
+	private function check_and_create_Folder()
+		if (not checkDirectoryPTCOMMAplication()) then 
+			check_and_create_Folder = false
+			exit function
+		end if
+		if not checkDirectoryDataFromCollector() then
+			check_and_create_Folder = false
+			exit function
+		end if
+		check_and_create_Folder = true
+	end function 
+	
+	public function moveFileFromCollecToDisc()
+		
+		if not check_and_create_Folder() then
+			moveFileFromCollecToDisc = false
+			exit function
+		end if
+		dim strPathAplic
+		strPathAplic = m_strPathApli+"\"+m_strNameFileApli
+		dim strParam
+		strParam = " /comport:1 /ptaddr:a /exit /destdir:"""+getPathDataFromCollector()+""" /upload:data.txt"
+
+		dim iResult : iResult = doc_.system.execute(strPathAplic,".",strParam,true,true)
+		
+		if (iResult > 0) then
+'			message("Nieudane połączenie z kolektorem. . kod = " + cstr(iResult))
+'			moveFileFromCollecToDisc =  false
+'			end function
+		end if
+		
+		moveFileFromCollecToDisc = true
+	end function
+	
+	public function readDataFromFileToArray()
+	dim pInputStream : set pInputStream = doc_.createstreamobj()
+	
+	dim strSciezka : strSciezka = getUserDirectory()
+	strSciezka = strSciezka +"\data.txt"
+	dim strNazwa : strNazwa = FormatPathWithCompName(strSciezka)
+	strSciezka = replace (strNazwa,"Moje dokumenty\EuroBusiness 5.0","Pulpit")
+	pInputStream.attach  strSciezka
+
+	dim pInputRows : set pInputRows = doc_.afc.new_navoarray()
+	pInputRows.separate pInputStream.getstring(),vbNewLine
+	dim pOutputArray : set pOutputArray = doc_.afc.new_navoarray()
+	
+	dim iter
+		if pInputRows.upperIndex > 0 then
+			for iter = 0 to pInputRows.upperIndex
+					dim strInputRow : strInputRow = pInputRows.value(iter)
+
+						dim oRowItemArray : set oRowItemArray = doc_.afc.new_navoarray()
+						oRowItemArray.separate strInputRow,";"
+						
+						if oRowItemArray.count<2 then
+						else
+							pOutputArray.add strInputRow
+						end if
+					
+			next 
+		end if
+		
+		set m_array_data = pOutputArray
+			if m_array_data is nothing then
+				readDataFromFileToArray = false
+				exit function
+			end if
+			
+		readDataFromFileToArray = true
+	end function
+	
+	public function InsertDataFromArrayToDokHandl_HT630(byref pDestDok)
+		dim pPozDokMag,iter,strKod,curIlosc,curKrotnosc,strRow,curCena,iter1,bflags,strRow1
+		dim pM60277EDI : set pM60277EDI = doc_.getmodule(60277)
+		dim oRowArray : set oRowArray = doc_.afc.new_navoarray()
+		dim oRowArray1 : set oRowArray1 = doc_.afc.new_navoarray()
+		dim answer:answer = -100
+		if m_array_data is nothing then
+			InsertDataFromArrayToDokHandl_HT630 = false
+			exit function
+		end if
+			for iter = 0 to m_array_data.upperIndex
+				set pPozDokMag = pDestDok.listPozycje.AddNew()
+				' do strKod przypisz indeks/ean zczytany z pliku kolektora
+				strRow = m_array_data.value(iter)
+				oRowArray.separate strRow, ";" 
+				strKod = oRowArray.value(0)
+						if not pM60277EDI.get_position_by_indeks(strKod,pPozDokMag) then
+					    'szukanie po EANie
+						  if not pM60277EDI.get_position_by_ean(strKod,pPozDokMag) then
+							  pDestDok.listPozycje.delete(pDestDok.listPozycje.count())
+							  'zapytamy
+							  if answer = -100 or answer = vbYes then
+								  answer=MessageBoxCustom("Nie można znależć pozycji w bazie dla kodu EAN = " + strKod + ". Mozesz pominac te jedna pozycje, pomijac wszystkie podobne lub przerwac wczytywanie", "BRak pozycji", vbYesNoCancel, vbQuestion, "Pomiń;Pomiń wszystkie;Przerwij")
+							  end if
+							  if answer = vbCancel then
+								  exit function
+							  end if
+						  end if
+          end if
+				' do curIlosc wczytaj ilosc zczytana z pliku kolektora	
+				if not pPozDokMag.pProdukt is nothing then
+					curIlosc = oRowArray.value(1)
+					curIlosc = replace(curIlosc,".",",")
+					if ccur(curIlosc) > ccur(10000) then
+						trans_.message 0,0,"Dla produktu o indeksie: " + cstr(strKod) + " podano za dużą wartość, wstawiam 1"
+						curIlosc = ccur(1)
+					end if
+						if IsNumeric(curIlosc) then
+							curKrotnosc = pPozDokMag.pProdukt.listOpakowania.get(pPozDokMag.pProdukt.listOpakowania.count()).currKrotnosc
+							pPozDokMag.curIloscOpak = ccur(curIlosc * curKrotnosc)
+						else
+							curKrotnosc = ccur(1)
+							pPozDokMag.curIloscOpak = ccur(1)
+						end if
+				end if
+				set oRowArray = doc_.afc.new_navoarray() 'wyczysc tablice pomocnicza
+			next
+		InsertDataFromArrayToDokHandl_HT630 = true
+	end function
+	
+	
+end class
+
+function new_Unitech_HT630_Transfer()
+	set new_Unitech_HT630_Transfer = new Collector_unitech_HT630
+end function
+
+'----------------------------------------------------------------------------------
+' klasa do obsługi komunikacji z kolektorem CPT 711/720 (działająca jako źródło lub cel)
+'
+' klasa wymaga aby na kolektorze znajdowała się odpowiednio skonfigurowana aplikacja
+' funkcja build_record_data musi odpowiadać tej aplikacji
+'
+' see: $\Eurobiznes\tools\kolektor_Cipher_CPT_711_720.zip
+'----------------------------------------------------------------------------------
+class CDataCollector_Cipher_CPT_711_720_Transfer
+	private m_comm
+	private m_strErrorDescription
+
+	public sub class_initialize()
+		m_strErrorDescription = ""
+		
+		'setup comm 
+		dim pCommSettings : set pCommSettings = new_comm_settings()
+		pCommSettings.from_registry "HKLM_KOLEKTOR_SETTINGS"
+
+		set m_comm		= doc_.system.activex("navoperif.comobject")
+		m_comm.port		= pCommSettings.m_strPort	
+		m_comm.speed	= pCommSettings.m_nSpeed		'default: 56700
+		m_comm.parity	= pCommSettings.m_nParity		'default: 0
+		m_comm.stopbits	= pCommSettings.m_nStopBits		'default: 0
+		m_comm.bits		= pCommSettings.m_nDataBits		'default: 8
+	end sub
+
+	private sub WriteCommand(byval str)
+		m_comm.writestr str + vbCr
+		m_comm.flush
+	end sub
+
+
+	private sub WriteCommand_by_character(byval str)
+		dim iter
+		for iter = 1 to len(str)
+			m_comm.write asc(mid(str,iter,1))
+		next
+		m_comm.write asc(vbCr)
+		m_comm.flush
+	end sub
+
+	private function ReadCommand(byval bWait)
+		ReadCommand = ""
+		dim cChar : cChar = chr(m_comm.read())
+		if asc(cChar) = 0 then	'timeout
+			if not bWait then
+				exit function
+			end if
+		end if
+
+		while cChar <> vbCr
+			ReadCommand = ReadCommand + cChar
+			cChar = chr(m_comm.read())
+			if asc(cChar) = 0 then
+				if not bWait then
+					exit function
+				end if
+			end if
+		wend 
+	end function
+
+	private function WaitForAck()
+		WaitForAck = false
+		dim str : str = ReadCommand(false)
+		if not str = "ACK" then
+			if str = "NAK" or str = "" then
+				m_strErrorDescription = "Urządzenie nie jest gotowe do transmisji"
+			else
+				m_strErrorDescription = "Urządzenie zwróciło nieprawidłowy kod :" + str
+			end if
+			exit function
+		end if
+		WaitForAck = true
+	end function
+	
+	'obliczenie sum kontrolnych
+	private sub CalcChecksum(byval data,byref HI2,byref LO2)
+		'aaaaaaaa
+		dim checksum : checksum = clng(0)				
+		dim i
+		for i = 1 to len(data) 
+			checksum = checksum + asc(mid(data,i))
+		next
+
+		LO2 = checksum mod 256
+		if LO2 = 13 then ' według protokołu transmisji
+			LO2 = 14
+		end if
+		
+		HI2 = checksum \ 256
+		if HI2 = 13 then ' według protokołu transmisji
+			HI2 = 14
+		end if
+	end sub
+
+	' dopisanie sum kontrolnych
+	private function AppendChecksums(byval record)
+		dim LO2,HI2
+		CalcChecksum record,HI2,LO2	
+		AppendChecksums = record + chr(HI2) + chr(LO2) 
+	end function
+
+	'obcięcie sum kontrolnych
+	private function StripChecksums(record)
+		StripChecksums = mid(record,2,len(record)-3)
+	end function
+
+	private function check_record(byref strRecordData,byval nRecordNr)
+		check_record = false
+		if strRecordData = "" then
+			exit function
+		end if
+		' check if sequence is correct
+		if not asc(strRecordData) = nRecordNr mod 10 then
+			exit function
+		end if
+	
+		dim end_pos : end_pos = len(strRecordData)
+		dim data : data = left(strRecordData,end_pos-2)
+		
+		dim HI2,LO2
+		CalcChecksum data,HI2,LO2
+	
+		dim LO1 : LO1 = asc(mid(strRecordData,end_pos-1,1))
+
+		' check LO checksum byte
+		if not  LO1 = LO2 then
+			exit function
+		end if
+
+		dim HI1 : HI1 = asc(mid(strRecordData,end_pos,1))
+	
+		' check HI checksum byte
+		if not HI1 = HI2 then
+			exit function
+		end if
+
+		check_record = true
+	end function
+
+	'-------------- public --------------
+	public function connect()
+		connect = false
+
+		on error resume next
+		m_comm.start
+
+		if err.number <> 0 then
+			m_strErrorDescription = "Połączenie nieudane"
+			exit function
+		end if
+
+		connect = true
+	end function
+
+	public function begin_send()
+		begin_send = false
+		
+		if not connect() then
+			exit function
+		end if
+
+		WriteCommand "CIPHER"
+
+		if not WaitForACK() then
+			exit function
+		end if
+	
+		begin_send = true
+	end function
+
+	public sub end_send()
+		WriteCommand "OVER"
+	end sub
+
+	' wysłanie rekordu do kolektora
+	public function send(byval strRecordData)
+
+		send = false
+		
+		dim strRecord : strRecord = AppendChecksums(strRecordData)
+
+		
+		WriteCommand_by_character strRecord
+		dim strResponse : strResponse = ReadCommand(true)
+		
+		do while (strResponse = "NAK")
+			WriteCommand_by_character strRecord
+			strResponse = ReadCommand(true)
+		loop
+
+		send = true
+	end function
+
+	'----------------
+	'begin_receive
+	'	loop receive
+	'end_receive
+	'----------------
+	public function begin_receive()
+		begin_receive = false
+
+		if not connect() then
+			exit function
+		end if
+
+		WriteCommand "READ"
+		
+		if not WaitForACK() then
+			exit function
+		end if
+			
+		begin_receive = true
+	end function
+
+	public sub end_receive()
+		'noop
+	end sub
+
+	public function receive(byval nRecordNr,byref strRecordData)
+		receive = false
+
+		dim strRecord : strRecord = ReadCommand(true)
+		if strRecord = "OVER" or strRecord = "" then
+			exit function
+		end if
+
+		do while not check_record(strRecord,nRecordNr)
+			WriteCommand "NAK"
+			strRecord = ReadCommand(true)
+		loop
+
+		WriteCommand "ACK"
+
+		strRecordData = StripChecksums(strRecord)
+
+		receive = true
+	end function
+
+	public function get_last_error
+		get_last_error = m_strErrorDescription
+	end function
+end class
+
+'-----------------------------------------
+' tablica translacji na znaki akceptowane przez kolektor
+' (bez ogonkow i bez przecinka)
+'-----------------------------------------
+
+dim NoPolTable(256)
+
+sub InitNoPolTable
+	dim i
+	for i=0 to 255 
+		NoPolTable(i) = chr(i)
+	next 
+	
+	NoPolTable(asc("Ą")) = "A"
+	NoPolTable(asc("ą")) = "a"
+	NoPolTable(asc("Ć")) = "C"
+	NoPolTable(asc("ć")) = "c"
+	NoPolTable(asc("Ę")) = "E"
+	NoPolTable(asc("ę")) = "e"
+	NoPolTable(asc("Ł")) = "L"
+	NoPolTable(asc("ł")) = "l"
+	NoPolTable(asc("Ń")) = "N"
+	NoPolTable(asc("ń")) = "n"
+	NoPolTable(asc("Ó")) = "O"
+	NoPolTable(asc("ó")) = "o"
+	NoPolTable(asc("Ś")) = "S"
+	NoPolTable(asc("ś")) = "s"
+	NoPolTable(asc("Ż")) = "Z"
+	NoPolTable(asc("ż")) = "z"
+	NoPolTable(asc("Ź")) = "Z"
+	NoPolTable(asc("ź")) = "z"
+		
+	NoPolTable(asc(",")) = "."
+
+end sub
+
+function NoPolishNoComma(byval str)
+
+	dim res
+	dim i
+	for i = 1 to len(str)
+		res = res + NoPolTable(asc( mid(str,i,1) ))
+	next
+		
+	NoPolishNoComma = res
+end function
+
+'------------------------------------------------------
+' Uwaga!
+' Format rekordu zależy od oprogramowania na kolektorze
+'------------------------------------------------------
+function build_cipher_record(byval strKod, byval curCena, byval curStanMag, byval strNazwa)
+	dim strResult
+	strResult = strKod + "," + trans_.afc.convert.cur2sql(curStanMag) + "," + _
+		trans_.afc.convert.cur2sql(clng(curCena)) + "," + _
+		NoPolishNoComma(left(cstr(strNazwa),15))	 + "," + _
+		NoPolishNoComma(mid(cstr(strNazwa),16,20))   + "," + _
+		NoPolishNoComma(mid(cstr(strNazwa),36,20))
+
+#ifdef _DEBUG
+	trans_.message 0,0,strNazwa + "->" + strResult
+#endif
+
+	build_cipher_record = strResult
+end function
+
+function build_cipher_record_ex(byval strIndeks, byval curCena, byval curStanMag, byval strNazwa, byval strOznaczProd, byval strOpis)
+	dim strResult
+	strResult = strIndeks + "," + trans_.afc.convert.cur2sql(curStanMag) + "," + _
+		trans_.afc.convert.cur2sql(clng(curCena)) + "," + _
+		NoPolishNoComma(cstr(strNazwa))	 + "," + _
+		NoPolishNoComma(cstr(strOpis))   + "," + _
+		strOznaczProd
+
+#ifdef _DEBUG
+	trans_.message 0,0,strNazwa + "->" + strResult
+#endif
+
+	build_cipher_record_ex = strResult
+end function
+
+function crack_cipher_record(byval strRecordData,byref strKod, byref curCena, byref curStanMag, byref strNazwa)
+	crack_cipher_record = false
+
+	dim arrItems : arrItems = split(strRecordData,",")
+	
+	if ubound(arrItems) < 1 then
+		exit function
+	end if
+
+	strKod = trim(cstr(arrItems(0)))
+	curStanMag = Str2Cur(trim(arrItems(1)))
+
+	if ubound(arrItems) >= 2 then
+		curCena = Str2Cur(trim(arrItems(2)))
+	else
+		curCena = ccur(0.0)
+	end if
+	if ubound(arrItems) >= 3 then
+		strNazwa = trim(cstr(arrItems(3)))
+	else
+		strNazwa = ""
+	end if
+
+	crack_cipher_record = true
+end function
+
+function crack_cipher_record_iow(byval strRecordData, byref strIndeks, byref curCena, byref curStanMag, byref strNazwa, byref strOznaczProd, byref strOpis)
+	crack_cipher_record_iow = false
+
+	dim arrItems : arrItems = split(strRecordData,",")
+	
+	if ubound(arrItems) < 1 then
+		exit function
+	end if
+
+	strIndeks = trim(cstr(arrItems(0)))
+	curStanMag = Str2Cur(trim(arrItems(1)))
+
+	if ubound(arrItems) >= 2 then
+		curCena = Str2Cur(trim(arrItems(2)))
+	else
+		curCena = ccur(0.0)
+	end if
+	if ubound(arrItems) >= 3 then
+		strNazwa = trim(cstr(arrItems(3)))
+	else
+		strNazwa = ""
+	end if
+	if ubound(arrItems) >= 4 then
+		strOpis = trim(cstr(arrItems(4)))
+	else
+		strOpis = ""
+	end if
+	if ubound(arrItems) >= 5 then
+		strOznaczProd = trim(cstr(arrItems(5)))
+	else
+		strOznaczProd = ""
+	end if  
+
+	crack_cipher_record_iow = true
+end function
+
+function crack_cipher_record_ext(byval strRecordData,byref strKod, byref curStanMag, byref strNrEwidPrac)
+	crack_cipher_record_ext = false
+
+	dim arrItems : arrItems = split(strRecordData,",")
+	
+	if ubound(arrItems) < 1 then
+		exit function
+	end if
+
+	strKod = trim(cstr(arrItems(0)))
+	curStanMag = Str2Cur(trim(arrItems(1)))
+
+	if ubound(arrItems) >= 2 then
+		strNrEwidPrac = Str2Cur(trim(arrItems(2)))
+	else
+		strNrEwidPrac = ccur(0.0)
+	end if
+
+	crack_cipher_record_ext = true
+end function
+
+function new_Cipher_CPT_711_720_Transfer()
+	InitNoPolTable
+	set new_Cipher_CPT_711_720_Transfer = new CDataCollector_Cipher_CPT_711_720_Transfer
+end function
+
+'------------------------------------------------------
+' Kasa fiskalna TANGO
+'------------------------------------------------------
+class cFiskKasSettings
+	public m_nModel
+	public m_cOnline
+	
+	public sub class_initialize()
+		m_nModel = clng(0)
+		m_cOnline = "0"
+	end sub
+			
+	public function to_string()
+		to_string = cstr(m_nModel) + vbTab + cstr(m_cOnline)
+	end function
+
+	public function from_string(byval strValue)
+		from_string = false
+		dim arrItems : arrItems = split(strValue,vbTab)
+	
+		if ubound(arrItems) = 1 then
+			m_nModel = clng(arrItems(0))
+			m_cOnline= cstr(arrItems(1))
+			from_string = true
+		end if
+	end function
+
+	public function from_registry(byval strRegistryKey)
+		from_registry = from_string(CStr(doc_.system.registry(hKey_LocalMachine , "HKLM_PATH", strRegistryKey)))
+	end function
+
+	public sub to_registry(byval strRegistryKey)
+		doc_.system.registry(hKey_LocalMachine,"HKLM_PATH",strRegistryKey) = to_string()
+	end sub
+end class
+
+function new_fiskkas_settings()
+	set new_fiskkas_settings = new cFiskKasSettings
+end function
+
+
+'-----------------------------------------------------------------------------
+' klasa obsługi komunikacji z kasą fiskalną Tango
+'
+' UWAGA! Po stworzeniu obiektu, a w szczegolnosci po odczytaniu stawek VAT
+' a przed zniszczeniem obiektu, trzeba wywolac updateview, bo
+' prawdopodobnie kontrolka wymaga przeslania jakichs windows messages
+'
+'-----------------------------------------------------------------------------
+const ecrpaPriceOpen = &h0001 ' Cena towaru otwarta (możliwe będzie podanie podczas sprzedaży ceny jednostkowej towaru z klawiatury).
+const ecrpaPriceFixed = &H0002 'Cena zaprogramowana (możliwa będzie sprzedaż towaru bez podawania ceny jednostkowej z klawiatury).
+const ecrpaAutoRepeat = &H0004 'Powtarzanie (dwukrotne kolejne wprowadzenie kodu towaru spowoduje wprowadzenie dwóch pozycji tego towaru).
+const ecrpaSingleSale = &H0008 'Sprzedaż pojedyncza (po wprowadzeniu tego towaru paragon zostanie automatycznie zamknięty).
+
+class CashReq_Optimus_Tango_Transfer
+	private m_pNAVOFisk
+	private m_strErrorDescription
+	
+	private m_StawkiVATArray	'tablica słuzy do mapowania stawek VAT pomiędzy kasą a <enum>eVAT
+
+	public sub class_initialize()
+		m_strErrorDescription = ""
+		set m_pNAVOFisk = nothing
+	end sub
+
+	public sub class_terminate()  'OK - discontinued support
+		page_.updateview
+		set m_pNAVOFisk = nothing
+	end sub
+
+	private function check_errors()
+		dim strErrorMsg : strErrorMsg = m_pNAVOFisk.GetLastError()
+		if strErrorMsg <> "" then
+			m_strErrorDescription = m_strErrorDescription + vbCrLf + strErrorMsg
+			check_errors = true
+		else
+			check_errors = false
+		end if
+		m_pNAVOFisk.ClearError
+	end function
+	
+
+	public function connect()
+		connect = false
+
+		set m_pNAVOFisk = doc_.system.activex("navofisk.tango")
+
+		dim oCommOptions : set oCommOptions = m_pNAVOFisk.CreateCommOptions()
+		if check_errors() then
+			exit function
+		end if
+
+		'setup comm 
+
+		dim pCommSettings : set pCommSettings = new_comm_settings()
+		pCommSettings.from_registry "HKLM_KASA_SETTINGS"
+
+		oCommOptions.Port		= pCommSettings.m_strPort
+		oCommOptions.DataBits	= pCommSettings.m_nDataBits
+		oCommOptions.Speed		= pCommSettings.m_nSpeed
+		oCommOptions.StopBits	= pCommSettings.m_nStopBits
+		oCommOptions.Parity		= pCommSettings.m_nParity
+
+		m_pNAVOFisk.LoadSettings oCommOptions
+
+		if check_errors() then
+			exit function
+		end if
+
+		connect = true
+	end function
+
+	public function test_connection()
+		test_connection = false
+
+		dim pPP : set pPP = new CProgressPage
+		pPP.init "Test połączenia z kasą fiskalną"
+
+		pPP.update "Łączenie..."
+		if not connect() then
+			exit function
+		end if
+
+		pPP.update "Odczyt danych..."
+		dim oStawki : set oStawki = m_pNAVOFisk.ReadStawki()
+
+		if check_errors() then
+			exit function
+		end if
+		if oStawki is nothing then	
+			exit function
+		end if
+		pPP.update "Dane przeczytane"
+
+		test_connection = true
+	end function
+
+	public function get_last_error
+		get_last_error = m_strErrorDescription
+		m_strErrorDescription = ""
+	end function
+
+	'------------------------------------
+	public function load_stawki_vat()
+		load_stawki_vat = false
+
+		dim oStawki : set oStawki = m_pNAVOFisk.ReadStawki()
+		if check_errors() then
+			exit function
+		end if
+		
+		if oStawki is nothing then
+			exit function
+		end if
+
+		if check_errors() then
+			exit function
+		end if
+	
+		if oStawki.Count = 0 then
+			m_strErrorDescription = "W kasie nie zdefiniowano żadnej stawki VAT"
+			exit function
+		end if
+
+		'wypełniamy żeby zmieścić wszystkie rodzaje stawek w NAVO
+		set m_StawkiVATArray = trans_.afc.new_navoarray
+
+		dim iter
+		for iter = 0 to 10 
+			m_StawkiVATArray.Add "!"
+		next
+
+		for iter = 0 to oStawki.Count - 1
+			dim nIndex : nIndex = -1
+			select case ccur(oStawki.Values(iter))
+			case 0
+				nIndex = 1
+			case 98.99
+				nIndex = 2
+			case 99.99
+				nIndex = 0
+			case 2
+				nIndex = 4
+			case 3
+				nIndex = 5
+			case 4
+				nIndex = 6
+			case 7
+				nIndex = 7
+			case 12
+				nIndex = 8
+			case 17
+				nIndex = 9
+			case 22
+				nIndex = 10
+			case 5
+				nIndex = 11
+			case 8
+				nIndex = 13
+			case 23
+				nIndex = 14        
+			end select
+			if nIndex = -1 then
+				m_strErrorDescription = "Stawka VAT " + cstr(oStawki.Names(iter)) + " ma niedozwoloną wartość [" + cstr(oStawki.Values(iter)) + "]"
+				exit function
+			end if
+			
+			'puste stawki nie traktujemy jako duplikaty, natomiast inne tak
+			if m_StawkiVATArray.Value(nIndex) <> "!" and nIndex <> 0 then
+				m_strErrorDescription = "Stawka VAT " + cstr(oStawki.Names(iter)) + " powtarza się ze stawką " + m_StawkiVATArray.Value(nIndex)
+				exit function
+			end if
+
+			m_StawkiVATArray.Value(nIndex) = cstr(oStawki.Names(iter))
+		next			
+		load_stawki_vat = true
+	end function
+
+	' ----------------------------------
+	public function StawkaVATKasa2NAVO(byval strStawkaVAT)
+		StawkaVATKasa2NAVO = m_StawkiVATArray.IndexOf(strStawkaVAT)
+	end function
+	' ----------------------------------
+	public function send_plu(byval strCode,byval strName,byval curPrice,byval eVAT)
+		send_plu = false
+
+		Dim oPLU : set oPLU = m_pNAVOFisk.CreatePLU()
+		with oPLU
+			.Code = left(strCode,18)
+			.Price = ccur(curPrice)
+			.Name = left(strName,18)
+			.TaxRateName = cstr(m_StawkiVATArray.Value(eVAT))
+
+			if .TaxRateName = "" then
+				m_strErrorDescription = "Towar " + strName + " posiada stawkę VAT niedostępną w kasie "
+				exit function
+			end if
+			.Precision = 0
+			.DepartmentIndex = 1
+			.HALOIndex = 1
+			.PLUAttributes = ecrpaPriceOpen or ecrpaPriceFixed or ecrpaAutoRepeat
+		end with
+		
+		m_pNAVOFisk.AddOrUpdateTowar oPLU
+		set oPLU = nothing
+
+		if check_errors() then
+			exit function
+		end if
+
+		send_plu = true
+	end function
+
+	' ----------------------------------
+	' odczyt paragonu
+	' ----------------------------------
+	public function read_receipt(byref pReceiptItemArray)
+		set read_receipt = nothing
+		set pReceiptItemArray = trans_.afc.new_navoarray()
+		dim pReceiptSummary : set pReceiptSummary = m_pNAVOFisk.ReadReceipt(pReceiptItemArray)
+		if check_errors() then
+			exit function
+		end if
+		set read_receipt = pReceiptSummary
+	end function
+
+	public function convert_receipt_item(byref pRecItem,byref strCode,byref curQuantity,byref curPrice, _
+		byref curValue,byref eVAT)
+		convert_receipt_item = false
+
+		eVAT = StawkaVATKasa2NAVO(pRecItem.TaxRateName)
+		if  eVAT = -1 then
+			m_strErrorDescription = "Nieznana stawka VAT: " + pRecItem.TaxRateName
+			exit function
+		end if
+
+		strCode = trim(pRecItem.Code)
+		curPrice = ccur(pRecItem.Price)
+		curValue = ccur(pRecItem.Value)
+		curQuantity = ccur(pRecItem.Quantity)
+
+		convert_receipt_item = true
+	end function
+end class
+
+function new_CashReq_Optimus_Tango_Transfer()
+	set new_CashReq_Optimus_Tango_Transfer = new CashReq_Optimus_Tango_Transfer
+end function
+
+'---------------------------------------------------------
+' kursor musi zawierać kolumny:
+' plu_code
+' plu_name
+' plu_price
+' plu_eVAT [stawka VAT (eVAT w n5produkt)]
+
+' uwagi:
+' - musi być zaprogramowany dział o numerze 1
+' - stawki VAT muszą być zaprogramowane
+' - kod jest wyłącznie cyfrowy (jest EAN, a gdy brak, to indeks)
+' - nazwa - pierwsze 18 znaków
+'---------------------------------------------------------
+'-----------------------------------------------------------------------------
+' Pokaż błąd, którego użytkownik nie może przeoczyć
+sub ShowFatalError(byval errorstr)
+	MessageBox errorstr,"Błąd",vbOKOnly,vbExclamation
+end sub
+
+function send_products_to_kasa(byref pADOCursor)
+	send_products_to_kasa = false
+	dim pTransfer : set pTransfer = new_CashReq_Optimus_Tango_Transfer()
+
+	dim pPP : set pPP = new CProgressPage
+	pPP.init "Wysyłanie produktów do kasy"
+	pPP.update "Łączenie z kasą"
+	
+	if not pTransfer.connect() then
+		ShowFatalError pTransfer.get_last_error()
+		exit function
+	end if
+	pPP.update "Odczyt stawek VAT"
+
+	if not pTransfer.load_stawki_vat() then
+		ShowFatalError pTransfer.get_last_error()
+		exit function
+	end if
+
+	do while not pADOCursor.eof
+		dim strCode :  strCode = cstr(pADOCursor("plu_code"))
+		dim strName : strName = cstr(pADOCursor("plu_name"))
+		dim curPrice : curPrice = ccur(pADOCursor("plu_price"))
+		dim eVAT : eVAT = clng(pADOCursor("plu_eVAT"))
+		if not pTransfer.send_plu(strCode,strName,curPrice,eVAT) then
+			trans_.message 0,0,"Nie wysłano " + strName + " o kodzie " + strCode + " z powodu " + pTransfer.get_last_error()
+		end if
+
+		pPP.update "Wysłano " + strName + " (" + strCode + ")"
+
+		if pPP.is_broken() then
+			exit function
+		end if
+
+		pADOCursor.movenext
+	loop
+
+	send_products_to_kasa = true
+end function
+
+#ifdef _OLD_CEZARY_TRASH_
+
+
+'-----------------------------------------------------------------------------
+' Rodzaje komunikatów
+'-----------------------------------------------------------------------------
+' Dodaj błąd do listy błędów
+sub ShowError(byval errorstr)
+	trans_.message 1002 , 0 ,  cstr(errorstr) 
+end sub 
+'-----------------------------------------------------------------------------
+' Pokaż ostrzeżenie - program będzie kontynuował swoje zadanie
+sub ShowWarning(byval warningstr)
+	trans_.message 7000 , 0 ,  cstr(warningstr) 
+end sub
+'-----------------------------------------------------------------------------
+sub ShowImportantInfo(byval info)
+	MessageBox info,"Informacja",vbOKOnly,vbInformation
+end sub
+'-----------------------------------------------------------------------------
+sub DebugOutput(byval str)
+	trans_.message 7000, 0, "BŁĄD: " + cstr(str)		
+end sub
+'-----------------------------------------------------------------------------
+sub ShowParagonError(byval what)
+	ShowError("PARAGON: " + what)
+end sub
+'-----------------------------------------------------------------------------
+
+
+
+'-----------------------------------------------------------------------------
+' Stałe do formatu danych (kolektor lub kasa)
+'-----------------------------------------------------------------------------
+
+#define ARTYKUL_RECORD_CODE_INDEX	0 
+#define ARTYKUL_RECORD_PRICE_INDEX	1
+#define ARTYKUL_RECORD_AMOUNT_INDEX	2
+#define ARTYKUL_RECORD_NAME1_INDEX	3
+
+' te dwa to rozbicie dla kolektora
+' bo nazwy trzeba rozbić na 3 linjki
+' maksymalnie po 15 wierszy
+#define ARTYKUL_RECORD_NAME2_INDEX	4
+#define ARTYKUL_RECORD_NAME3_INDEX	5
+
+#define ARTYKUL_RECORD_TAX_INDEX	6
+'-----------------------------------------------------------------------------
+
+
+
+
+
+
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'''''''''''''' klasy do odbierania / wysyłania z kolektora
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+' klasa do przenoszenia danych między źródłami
+
+' zwracane kody błędu CDataTransfer
+const DT_NO_ERROR = 0 ' ok
+const DT_SRC_INIT = 1 ' błąd inicjalizacji źródła
+const DT_DST_INIT = 2 ' błąd inicjalizacji celu
+const DT_UNKNOWN_ERROR = 3 ' nieznany błąd
+const DT_DST_ADD = 4 ' dodawanie się nie udało
+
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+
+
+
+
+
+''''''' tłumaczenie rekordów :
+' Dla kasy dopasowanie artykułu jest bardzo ważne, dlatego 
+' nazwa artykułu powinna się zgadzać.
+
+' W przypadku kolektora, nazwa jest rozbita na 3 części i polskie
+' nazwy są bez ogonków (stąd trudniej sprawdzić po nazwie - dlatego
+' tego nie robię)
+	
+	'Tłumaczy rekord z inwentaryzatora na kod i ilość
+	'(zależy od oprogramowania na inwentaryzatorze)
+	' Przykład : "50002",2.34, 50, "Coke","",""
+	' WERSJA BEZ POLSKICH OGONGÓW (np. dla kolektora bez polskiej czcionki)
+	public function GetNoPolishIloscCena(byval index, byref kod_EAN, byref ilosc , byref lp,byref cena)
+		set GetNoPolishIloscCena = nothing
+		
+		dim item : item = split(Record(index),",")
+
+		kod_EAN = item(ARTYKUL_RECORD_CODE_INDEX)
+		ilosc = item(ARTYKUL_RECORD_AMOUNT_INDEX)
+
+		cena = CCur(0.0)
+		set GetNoPolishIloscCena = FindOpak(kod_EAN , lp, cena)
+
+		' Ważniejsza jest cena podana, np. przez kasę fiskalną
+		' (Bo taka jest na paragonie)
+		dim cenastr : cenastr = item(ARTYKUL_RECORD_PRICE_INDEX)
+		if cenastr <> "" then ' w przypadku kasy fiskalnej
+			if  CCur(cenastr) > 0.0  then
+				cena = CCur(cenastr)
+			end if
+		end if
+				
+	end function
+
+
+
+
+
+	'Tłumaczy rekord z inwentaryzatora na kod i ilość
+	'(zależy od oprogramowania na inwentaryzatorze)
+	' Przykład : "50002",2.34, 50, "Coke","",""
+	' WERSJA Z POLSKIMI LITERAMI W NAZWIE (np. dla kasy fiskalnej)
+	public function GetPolishOpakIloscCenaNazwaVat(byval index, byref kod_EAN, byref ilosc , byref lp,byref cena,byref nazwa,byref vat)
+		set GetPolishOpakIloscCenaNazwaVat = nothing
+		
+		dim item : item = split(Record(index),",")
+
+		kod_EAN = CStr(item(ARTYKUL_RECORD_CODE_INDEX))
+		ilosc = item(ARTYKUL_RECORD_AMOUNT_INDEX)
+		nazwa = item(ARTYKUL_RECORD_NAME1_INDEX)
+
+		vat = item(ARTYKUL_RECORD_TAX_INDEX)
+
+		cena = CCur(0.0)
+		set GetPolishOpakIloscCenaNazwaVat = FindKasaOpak(CStr(kod_EAN), lp, cena)
+
+		' Ważniejsza jest cena podana, np. przez kasę fiskalną
+		' (Bo taka jest na paragonie)
+		dim cenastr : cenastr = item(ARTYKUL_RECORD_PRICE_INDEX)
+		if cenastr <> "" then ' w przypadku kasy fiskalnej
+			if  CCur(cenastr) > 0.0  then
+				cena = CCur(cenastr)
+			end if
+		end if
+				
+	end function
+
+
+
+
+
+end class
+'-----------------------------------------------------------------------------
+function FindProdukt(byval kod_EAN)
+	
+	set FindProdukt = nothing
+
+	if kod_EAN = "" then
+		exit function
+	end if
+	
+	dim crsr : set crsr = trans_.createadors("select p_idobj from vlist_n5produkt_listOpakowania where c_strean = '" + CStr(kod_EAN) + "'")
+	if crsr.eof then
+		exit function
+	end if
+	
+	dim idprod : idprod = clng(crsr.fields("p_idobj").value)
+	if idprod > 0 then
+		set FindProdukt = trans_.getobj(TYPEID_N5PRODUKT,idprod)
+	end if
+			
+end function
+'-----------------------------------------------------------------------------
+function FindOpak(byval kod_EAN , byref lp,byref cena)
+	
+	set FindOpak = nothing
+
+	if kod_EAN = "" then
+		exit function
+	end if
+	
+	dim crsr : set crsr = trans_.createadors("select p_idobj,coll_lp,c_curcenabrutto1 from vlist_n5produkt_listOpakowania where c_strean = '" + CStr(kod_EAN) + "'")
+	if crsr.eof then
+		exit function
+	end if
+	
+	dim idprod : idprod = clng(crsr.fields("p_idobj").value)
+	if idprod > 0 then
+		set FindOpak = trans_.getobj(TYPEID_N5PRODUKT,idprod)
+		lp = clng(crsr.fields("coll_lp").value)
+		cena = clng(crsr.fields("c_curcenabrutto1").value)
+	end if
+			
+end function
+'---------------------------------------------------------------------------------
+' Wyszukaj dane o kodzie
+'---------------------------------------------------------------------------------
+function FindKasaOpak(byval kod_EAN , byref lp,byref cena)
+	
+	set FindKasaOpak = nothing
+
+	if CStr(kod_EAN) = "" then
+		exit function
+	end if
+	
+	dim crsr : set crsr = trans_.createadors( _
+		"select p_idobj,coll_lp,c_curcenabrutto1 from vlist_n5produkt_listOpakowania " + _
+		"where (CAST ( c_strean AS int )  = '" + Cstr(kod_EAN) + "' or (CAST ( p_strindeks AS int ) = '" + Cstr(kod_EAN) + "' and c_strean = '')) ")
+
+	if crsr.eof then
+		exit function
+	end if
+
+	dim txt
+
+	dim found : found = 0
+	while not crsr.eof
+		dim idprod : idprod = clng(crsr.fields("p_idobj").value)
+		if idprod > 0 then
+	
+			dim tmpobj 
+			set tmpobj = trans_.getobj(TYPEID_N5PRODUKT,idprod)
+
+
+			if found = 0 then
+				set FindKasaOpak = tmpobj
+				lp = clng(crsr.fields("coll_lp").value)
+				cena = clng(crsr.fields("c_curcenabrutto1").value)
+			end if
+
+			txt = txt + "[" + CStr(kod_EAN) + "]" + tmpobj.strNazwa + vbCrLf
+
+			found = found + 1
+		end if
+
+		crsr.movenext
+	wend
+		
+	if found = 0 then
+		exit function
+	end if	
+
+	if found > 1 then
+		ShowFatalError "Następujące towary mają te same kody:" + vbCrLf + txt
+	end if
+				
+end function
+
+
+
+#endif
+]]>
+</script>
+</config>
+	<body>
+	</body>
+</page>

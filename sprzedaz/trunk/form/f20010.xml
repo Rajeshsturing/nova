@@ -1,0 +1,1740 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+
+<!--
+
+#include "h1000.h" 
+#include "h1001.h" 
+#include "h1004.h" 
+#include "h1200.h"
+#include "h1201.h"
+#include "h1220.h"
+#include "h1222.h"
+#include "h1240.h"
+#include "h1002.h"
+#include "h1232.h"
+
+#include "h1231.h"
+#include "h1230.h"
+
+#define CHAT_MAX_ROWS	10
+#define CHAT_WIDTH		10500
+#define CHAT_HEIGHT		4200
+
+#define CHAT_COLOR1		RGB(224, 224, 224)
+#define CHAT_COLOR2		RGB(255, 255, 255)
+
+#defien CHAT_CTRL_TYPE	CTRL_TYPE_STATICEX
+
+#define ID_TABLE_CHAT		100
+#define ID_CTRL_TXT_MSG		102
+#define ID_TABLE_USERS		103
+#define ID_BUTTON_MENU		104
+#define ID_TD_USERS			105
+#define ID_PIC_ALL_SEL		106
+#define ID_PIC_AUTO_SEND	107
+#define ID_TABLE_MSGS		400
+
+#define CLASS_VERSION	1
+
+#define RUNTIME_CLASS_CHAT_TEXT_MESSAGE			1
+#define RUNTIME_CLASS_CHAT_OBJTEXT_MESSAGE		2
+#define RUNTIME_CLASS_CHAT_FILE_MESSAGE			3
+
+-->
+
+<page style='STYLE_PAGE'
+#ifdef _DEBUG
+border='1'
+#endif
+>
+
+
+  <config>
+
+    <startpos>center</startpos>
+    <startfocus>ID_CTRL_TXT_MSG</startfocus>
+
+    <title>
+      Konferencja
+      #ifdef _DEBUG
+      [THIS_FILE]
+      #endif
+    </title>
+
+    <iid>THIS_FILE</iid>
+    <script>
+      <![CDATA[
+
+#include "50101"
+#include "50100"
+#include "50122"
+'select file
+#include "50123"
+#include "50125"
+#include "50203"
+#include "50506"
+
+#include "50629"
+
+dim pUsersInfo			'info o dostępnych userach
+
+dim crChatTextColor		'aktualnie wybrany kolor tekstu
+dim bChatBold			'pogrubienie
+dim bChatItalic			'kursywa
+
+dim strCurrentMessage	'tekst aktywnie wpisanej wiadomości
+dim g_bToAllUsers		'czy wysylac do wszystkich
+dim g_bAutoSend			'czy wysylac na nacisniecie ENTER
+
+dim bChating
+
+dim oChat
+
+
+dim tab
+
+'-----------------------------------------------------------------------
+'Dziala jak mid tyle ze jako zakres przyjmuje dwie pozycje:
+'
+'stream "...... a a a a a a a b b b ..........."
+'	              |             |
+'       iPosStart_|     iPosEnd_|
+'
+'-----------------------------------------------------------------------
+function MidPos(byval strText, byval iPosStart, byval iPosEnd): MidPos = ""
+	if (iPosEnd < iPosStart) then
+		exit function
+	end if
+
+	MidPos = Mid(strText, iPosStart, iPosEnd - iPosStart + 1)
+end function
+
+dim g_pPopupMenu
+
+function fopen()
+
+	set tab = doc_.afc.new_tb(page_).attach(page_.ctrl(ID_TABLE_MSGS)).section_body.removeall
+	
+	set pMessagesInfoCol=doc_.afc.new_navoarray()
+
+	set oChat = doc_.afc.chat
+
+	if not HARUI(UAR_CMDID(CMDID_CHAT)) then
+		fopen=false		
+		exit function
+	end if
+
+	'tylko jeden chat moze byc uruchomiony
+	if (trans_.isvar(GVAR_CHAT_OPEN)) then
+		if (trans_.var(GVAR_CHAT_OPEN)=CLng(1)) then
+			
+			dim pPage: set pPage = find_page_on_iid(THIS_FILE)
+			if not pPage is nothing then
+				pPage.activate
+				pPage.ctrl(ID_CTRL_TXT_MSG).focus = true
+			end if
+			fopen=false
+			exit function
+		end if
+	end if
+		
+	'zaznaczamy, ze chat zostal uruchomiony
+	trans_.var(GVAR_CHAT_OPEN)=CLng(1)
+
+	'ustaw info o wszystkich user'ach
+	set pUsersInfo=new CNavoChat_UsersCol
+
+	'domyślnie wysyłamy do wskazanych
+	chat_ToSelectedUsers
+
+	'nie ukrywaj tableki dla checkbox'ow skoro do wskazanych
+	chat_ShowAvailableUsers
+
+	'kolekcja przeslanych zalacznikow
+	set pFiles=trans_.afc.new_navoarray()
+
+	'ustaw atrybuty koloru itd. itp.
+	crChatTextColor=RGB(0, 0, 0)
+	bChatBold=false
+	bChatItalic=false
+
+	'Usun cala zawartosc chat'a - w tym przypadku dodaj
+	'tylko nowe puste linie
+	chat_ClearDisplayedMessages
+
+	'Dodaj otrzymany komunikat
+	if (trans_.isvar(5003) and trans_.isvar(5002) and trans_.isvar(5001)) then
+		dim nOrigCookie, varData, nEventCode
+
+		nOrigCookie = clng(trans_.var(5001))
+		nEventCode = clng(trans_.var(5002))
+		varData = cstr(trans_.var(5003))
+
+		chat_OnNewMessage nOrigCookie, nEventCode, varData
+
+	end if
+
+	'wyslij do wszystkich komunikat systemowy, ze
+	'przyszedl nowy user
+	chat_SendSystemMessage "Przy��czy� si� " + GetCurrentUserName() + "."
+	bChating=true
+
+	setNetworkProp NETWORK_USERPROP_ISCHATING, "1"
+
+	'Ustaw info o automatycznym wysyłaniu na ENTER
+	g_bAutoSend = getuserprofileBOOL(USERPROF_CHAT_AUTO_SEND)
+	g_bAutoSend = (not g_bAutoSend)
+	chat_OnButtonAutoSend
+
+	'............................................
+	'Robimy glowne PopupMenu
+	'............................................
+	set g_pPopupMenu = mm_new_menu("Menu",ID_BUTTON_MENU)
+
+	'dodajemy menu items
+
+	g_pPopupMenu.add_item "Wy�lij plik","varFunction=""chat_OnButtonSendFile"" "
+	g_pPopupMenu.add_item "Wy�lij obiekt","varFunction=""chat_OnButtonSendObject"" "
+		
+	'pPopupMenu.AppendMenuSeparator
+	
+	'if userprofile m�wi bringtotop then
+	doc_.bringtotop
+	'else
+	'doc_.updateshelltray 1,true,"Masz wiadomo��"
+
+	fopen=true
+end function
+
+function fclose()
+	if (bChating) then
+		'wyslij do wszystkich komunikat systemowy, ze
+		'user zakonczyl pogawedke
+		chat_SendSystemMessage "Od��czy� si� " + GetCurrentUserName() + "."
+		bChating=false
+
+		setNetworkProp NETWORK_USERPROP_ISCHATING, "0"
+	end if
+
+	trans_.var(GVAR_CHAT_OPEN)=CLng(0)
+	fclose=true
+end function
+
+
+'------------------------------------------------------------------------
+' Klasa reprezentuje jeden wiersz komunikatu
+'------------------------------------------------------------------------
+class CMessageInfo
+	public ID
+end class
+
+
+'kolekcja informacji o komunikatach
+dim pMessagesInfoCol
+
+'kolekcja informacji o komunikatach
+'przneisone do fopen : set pMessagesInfoCol=trans_.afc.new_navoarray()
+
+
+
+'------------------------------------------------------------------------
+'
+' Funkcje do obslugi przychodzacych komunikatow i ich wyswietlania
+'
+'------------------------------------------------------------------------
+
+
+'------------------------------------------------------------------------
+' Funkcja jest wołana gdy przyszedł jakiś komunikat z zewnątrz.
+' Reakcją na taki komunikat jest jego odpowiednie wyświetlenie.
+' Przed tym jednak wolane jest chat_TranslateNewMessage
+'------------------------------------------------------------------------
+function chat_OnNewMessage(byval nOrigCookie, byval nEventCode, byref varData):chat_OnNewMessage=false
+
+	'sprawdzanie i update listy userow
+	
+	'pobieramy indeks danego user'a w kolekcji informacji
+	'o user'ach
+	dim iUser
+	iUser=pUsersInfo.pUsers.IndexOf(nOrigCookie)
+
+	'gdy nie znaleziono user'a w kolekcji infoamcji
+	'przeladuj kolekcje i jeszcze jedna proba
+	if (not (iUser>-1)) then
+		pUsersInfo.AllUsers
+		iUser=pUsersInfo.pUsers.IndexOf(nOrigCookie)
+
+		chat_ShowAvailableUsers
+
+		if (not (iUser>-1)) then
+			exit function
+		end if
+
+	end if
+
+	'komunikaty systemowe
+	if (nEventCode=NOTIFY_CODE_SYS_MESSAGE) then
+		chat_OnNewSystemMessage nOrigCookie, nEventCode, varData, iUser
+		exit function
+	end if
+
+	'if userprofile mówi bringtotop then
+	doc_.bringtotop
+	'else
+	'doc_.updateshelltray 1,true,"Masz wiadomość"
+
+	if (nEventCode=NOTIFY_CODE_PERFORMER or nEventCode=NOTIFY_CODE_PERFORMER_USER) then
+		chat_OnNewNotifyMessage nOrigCookie, nEventCode, varData, iUser
+		exit function
+	end if
+
+	'a teraz reszta komunikatow
+	dim pNewMessage
+	set pNewMessage=oChat.onmessage(nEventCode, varData)
+
+	if (pNewMessage is nothing) then
+		' "Dotarł komunikat w nieznanym formacie."
+		view_message 6185, 0
+		exit function
+	end if
+
+	'w zaleznosci od typu obiektu wywolaj odpowiednia
+	'funckje do wyswietlania danego komunikatu
+	select case pNewMessage.nKindOf
+
+		case RUNTIME_CLASS_CHAT_TEXT_MESSAGE, _
+			RUNTIME_CLASS_CHAT_OBJTEXT_MESSAGE, _
+			RUNTIME_CLASS_CHAT_FILE_MESSAGE
+			
+			chat_DisplayWholeMessage pNewMessage, iUser, nOrigCookie
+
+		case else
+			'Nieznany typ komunikatu
+			view_message 6262, 0
+			
+	end select
+
+	chat_OnNewMessage=true
+end function
+
+
+'------------------------------------------------------------------------
+' Funkcja odpowiedzialna jest za wyswietlenie komunikatu systemowego
+'------------------------------------------------------------------------
+function chat_OnNewSystemMessage(byval nOrigCookie, byval nEventCode, byref varData, byval iUser)
+
+	dim bShowSystemMessage
+	bShowSystemMessage=false
+
+	dim bMyOwnMessage
+	bMyOwnMessage = (nOrigCookie = doc_.getmycookie)
+
+	if (g_bToAllUsers) then
+		bShowSystemMessage=true
+	else
+		if (iUser>-1) then
+			pUsersInfo.checkbox2array
+			bShowSystemMessage=pUsersInfo.pUsersInf.Value(iUser).bSendTo
+		end if
+	end if
+
+	if (bShowSystemMessage) then
+
+			
+			chat_CreateNewRow(tab)
+
+			tab.newcell
+
+			if (bMyOwnMessage) then
+				tab.cell.backcolor =  CHAT_COLOR1
+				tab.cell.backcolor2 = CHAT_COLOR1
+			else
+				tab.cell.backcolor =  CHAT_COLOR2
+				tab.cell.backcolor2 = CHAT_COLOR2
+			end if
+
+			tab.addctrl CHAT_CTRL_TYPE, -1
+			
+			tab.element.width=clng( MINIMIZE_SIZE )
+			tab.element.text=""
+
+
+			dim pTextArray
+			set pTextArray=trans_.afc.new_navoarray()
+
+			pTextArray.Separate varData, MESSAGE_DELIMITER
+
+			tab.addctrl CHAT_CTRL_TYPE , -1
+			tab.element.text=CStr(pTextArray.Value(1))
+			tab.element.forecolor=RGB(191, 191, 192)
+
+			SetStaticStyle tab.element, false, true
+
+	end if
+end function
+
+
+'------------------------------------------------------------------------
+' Funkcja odpowiedzialna jest za wyswietlenie specjalnego
+' komunikatu notyfilujacego DOKLADNIE jednego user'a
+'------------------------------------------------------------------------
+function chat_OnNewNotifyMessage(byval nOrigCookie, byval nEventCode, byref varData, byval iUser)
+	'pobierz indeks z inf. o userach
+
+		chat_CreateNewRow(tab)
+
+		tab.newcell.addctrl CHAT_CTRL_TYPE , -1
+
+		dim pTextArray
+		set pTextArray=trans_.afc.new_navoarray()
+
+		pTextArray.Separate varData, MESSAGE_DELIMITER
+
+				
+		tab.element.width=clng( MINIMIZE_SIZE )
+		tab.element.text=pTextArray.Value(0)+">"
+
+		tab.addctrl CHAT_CTRL_TYPE , -1
+
+		'set pStatic=pCell.addnew(CHAT_CTRL_TYPE, -1)
+		tab.element.text=CStr(pTextArray.Value(2))
+		tab.element.forecolor=RGB(191, 191, 192)
+
+		dim nTypeId, nIdObj
+		nTypeId=clng(pTextArray.Value(3))
+		
+		nIdObj=clng(pTextArray.Value(4))
+
+		chat_CreateObjHli nTypeId, nIdObj, tab.element
+
+		SetStaticStyle tab.element, false, false
+
+
+end function
+
+function object_AsText(byval nTypeId, byval nIdObj): object_AsText=""
+	dim pObj
+	set pObj=trans_.getobj(nTypeId, nIdObj)
+
+	if (pObj is nothing) then
+		exit function
+	end if
+
+	on error resume next
+
+	dim strCode
+	strCode="object_AsText=pObj." + pObj.getobjdef.tablename + "_as_text()"
+
+	Execute strCode
+end function
+
+
+function chat_CreateObjHli(byval nTypeId, byval nIdObj, byref pStatic):chat_CreateObjHli=false
+	if (nTypeId>0 and nIdObj>0) then
+		dim nObiekt
+		nObiekt=trans_.findobjid(nTypeId, "IdObj=" + CStr(nIdObj))
+
+		if (nIdObj=nObiekt) then
+
+			dim pNewHli
+			set pNewHli=doc_.createhlistr("varFunctionHLI='chat_open_form' varTypeId=" + CStr(nTypeId) + " varObject=" + CStr(nIdObj))
+			set pStatic.hli=pNewHli
+
+			pStatic.text=pStatic.text + object_AsText(nTypeId, nIdObj) + " (" + doc_.stdobjdef.getobjdef(nTypeId).HumanName + ")"
+
+			chat_CreateObjHli=true
+		end if
+	end if
+end function
+
+'------------------------------------------------------------------------
+' Usuń zawartość aktualnie wyświetlonej konferencji
+'------------------------------------------------------------------------
+function chat_ClearDisplayedMessages()
+
+	dim i
+	for i = 1 to CHAT_MAX_ROWS
+		chat_CreateNewRow(tab)
+
+		tab.newcell
+		tab.cell.width = CLng(CHAT_WIDTH)
+		tab.addctrl CHAT_CTRL_TYPE , -1
+		
+		tab.element.width=clng( MINIMIZE_SIZE )
+		tab.element.text = "_"
+		tab.element.forecolor = CHAT_COLOR2
+	next
+end function
+
+'todo:spiko Umieścic tabelke pokazującą wyświetlane (przychodzące)
+'komunikaty rozmowy (ID_TABLE_CHAT) w scroll'u !!!
+
+'------------------------------------------------------------------------
+' Funkcja wyświetla okresloną wiadomość. Dodaje wiersz i komorki tabeli
+' wstawia odpowiednie statick'i z tekstem
+'------------------------------------------------------------------------
+function chat_DisplayWholeMessage(byref pMessage, byval iUser, byval nOrigCookie)
+	dim bMyOwnMessage
+	bMyOwnMessage = (nOrigCookie = doc_.getmycookie)
+
+	with page_.ctrl(ID_TABLE_CHAT)
+
+		dim strMessageFrom
+		strMessageFrom = chat_GetUserName( iUser )
+
+		dim bUnderline
+		bUnderline = false
+
+		'Ustalamy tekst do wyświetlenia
+		dim strText2Display
+		strText2Display = pMessage.strText
+
+		'Ustaw skrot dla odpowiedniego typu wiadomosci
+		dim pHli
+		set pHli = nothing
+
+		if (pMessage.nKindOf=RUNTIME_CLASS_CHAT_OBJTEXT_MESSAGE) then
+			if (pMessage.nTypeId>0 and pMessage.nIdObj>0) then
+				dim nObiekt
+				nObiekt=trans_.findobjid(pMessage.nTypeId, "IdObj=" + CStr(pMessage.nIdObj))
+
+				if (pMessage.nIdObj=nObiekt) then
+
+					set pHli=doc_.createhlistr("varFunctionHLI='chat_open_form' varTypeId=" + CStr(pMessage.nTypeId) + " varObject=" + CStr(pMessage.nIdObj))
+					strText2Display = strText2Display + object_AsText(pMessage.nTypeId, pMessage.nIdObj) + " (" + doc_.stdobjdef.getobjdef(pMessage.nTypeId).HumanName + ")"
+
+					'Kolor skrotu i podkreslenie
+					pMessage.crTextColor = RGB(0, 0, 255)
+					bUnderline = true
+
+				end if
+			end if 'typeid>0 and idobj>0
+		elseif (pMessage.nKindOf=RUNTIME_CLASS_CHAT_FILE_MESSAGE) then
+			strText2Display = strText2Display + " (plik " + pMessage.strFileName + ")"
+		end if 'OBJ_MESSAGE
+
+		'Dodajemy wiersz
+		chat_CreateNewRow(tab)
+
+		tab.newcell
+
+		if (bMyOwnMessage) then
+			tab.cell.backcolor =  CHAT_COLOR1
+			tab.cell.backcolor2 = CHAT_COLOR1
+		else
+			tab.cell.backcolor =  CHAT_COLOR2
+			tab.cell.backcolor2 = CHAT_COLOR2
+		end if
+
+		'Wstawiamy nazwę użytkownika do komorki
+		tab.addctrl CHAT_CTRL_TYPE, -1
+		'dim pStatic
+		'set pStatic = pCell.addnew(CHAT_CTRL_TYPE, -1)
+		
+		tab.element.width=clng( MINIMIZE_SIZE )
+		tab.element.text = strMessageFrom + "> "
+
+		'Wstawiamy właściwy komunikat
+		chat_DisplayText tab.cell, strText2Display, _
+			pMessage.crTextColor, pMessage.bBold, _
+			pMessage.bItalic, bUnderline, pHli
+
+		if (pMessage.nKindOf=RUNTIME_CLASS_CHAT_FILE_MESSAGE) then
+			if (not bMyOwnMessage) then
+				pFiles.Add pMessage
+				doc_.postcommand "varFunctionHLI=chat_OnNewFile vn100=" + CStr(pFiles.Count()-1) + " vn101=" + CStr(iUser)	
+			end if
+		end if
+
+	end with
+
+end function
+
+dim g_pSpecialSigns		'Tablica znakow specjalnych podmienianych na
+						'obrazki
+set g_pSpecialSigns = nothing
+
+'------------------------------------------------------------------------
+' Klasa reprezentuje znak specjalny podmieniany na obrazek
+'------------------------------------------------------------------------
+class CSpecialSign
+	public m_strPattern
+	public m_nPatternLen
+	public m_nPictureID
+end class
+
+'------------------------------------------------------------------------
+' Dodaje specjalny znak odpowiadajacy obrazkowi o podanym numerze
+'
+' strPattern - ciag znakow podmienany na obrazek
+' nPictureID - id obrazka na jaki podmienic ciag znaków
+'------------------------------------------------------------------------
+function addSpecialSign(byval strPattern, byval nPictureID)
+	dim pSpecialSign
+	set pSpecialSign = new CSpecialSign
+
+	pSpecialSign.m_strPattern = UCase(CStr(strPattern))
+	pSpecialSign.m_nPatternLen = len(strPattern)
+	pSpecialSign.m_nPictureID = CLng(nPictureID)
+
+	g_pSpecialSigns.add pSpecialSign
+end function
+
+'------------------------------------------------------------------------
+' Wypałniaj tablice specjalnymi znakami zamienianymi na obrazki
+'------------------------------------------------------------------------
+function fillSpecialSigns()
+	addSpecialSign ":-o",	80921
+	addSpecialSign ":o",	80921
+	addSpecialSign ":|",	80919
+	addSpecialSign ":-|",	80919
+	addSpecialSign ":)",	80126
+	addSpecialSign ":-)",	80126
+	addSpecialSign ":(",	80125
+	addSpecialSign ":-(",	80125
+	addSpecialSign "<on>",	80123
+	addSpecialSign "<ona>", 80124
+end function
+
+'------------------------------------------------------------------------
+' Pobiera tablice znakow specjalnych podmienianych na obrazki
+'------------------------------------------------------------------------
+function getSpecialSigns()
+	if (g_pSpecialSigns is nothing) then
+		set g_pSpecialSigns = trans_.afc.new_navoarray()
+		fillSpecialSigns
+	end if
+
+	set getSpecialSigns = g_pSpecialSigns
+end function
+
+'------------------------------------------------------------------------
+' Klasa reprezentuje pozycje znaku specjalnego w naszym tekscie
+'------------------------------------------------------------------------
+class CSignPos
+	public m_nPos			'pozycja
+	public m_pSpecialSign	'obiekt CSpecialSign reprezentujacy znak
+end class
+
+'------------------------------------------------------------------------
+' Klasa do przestawiania i porownywania elementow w NavoArray
+' Uzywane do sortowania tablicy obiektow CSignPos
+'------------------------------------------------------------------------
+class CNavoArraySupport
+
+	public mvarAnotherArray
+
+	'-----------------------------------------------------------------------
+	' Zamień dwa elementy ze sobą
+	'-----------------------------------------------------------------------
+	public function swapelements(byref pnavoarray, byref nindexelem1, byref nindexelem2)
+		dim varElem
+		
+		set varElem = pNavoArray.Value(nIndexElem1)
+		set pNavoArray.Value(nIndexElem1) = pNavoArray.Value(nIndexElem2)
+		set pNavoArray.Value(nIndexElem2) = varElem
+	end function
+
+	'-----------------------------------------------------------------------
+	'Czy element elem1 jest < elem2
+	'-----------------------------------------------------------------------
+	public function less(byval elem1, byval elem2)
+		Less = (elem1.m_nPos < elem2.m_nPos)
+	end function
+
+	'-----------------------------------------------------------------------
+	'Czy element elem1 jest > elem2
+	'-----------------------------------------------------------------------
+	public function more(byval elem1, byval elem2)
+		More = (elem1.m_nPos > elem2.m_nPos)
+	end function
+
+	'-----------------------------------------------------------------------
+	'Czy element elem1 jest = elem2
+	'-----------------------------------------------------------------------
+	public function equal(byval elem1, byval elem2)
+		Equal = (elem1.m_nPos = elem2.m_nPos)
+	end function
+
+end class
+
+'------------------------------------------------------------------------
+' Dodaj kontrolke z tekstem
+'------------------------------------------------------------------------
+public function addTextCtrl(byref pCell, bBold, byval bItalic, byref bUnderLine, byref pHli, byval strText4Ctrl, byval crColor)
+	set addTextCtrl = pCell.addnew(CHAT_CTRL_TYPE, -1)
+	addTextCtrl.text = CStr(strText4Ctrl)
+	addTextCtrl.forecolor=crColor
+
+	SetStaticStyleEx addTextCtrl, bBold, bItalic, false, bUnderLine
+
+	if (not pHli is nothing) then
+		set addTextCtrl.hli = pHli
+	end if
+end function
+
+'------------------------------------------------------------------------
+' Wyświetl linie tekstu wraz ze specjalnymi znakami (obrazkami)
+'------------------------------------------------------------------------
+function chat_DisplayText(byref pCell, byval strText, byval crColor, byval bBold, byval bItalic, byref bUnderLine, byref pHli)
+
+	'Pobieramy tablice znakow zpecjalnych podmienianych
+	'na obrazki
+	dim pSpecialSigns
+	set pSpecialSigns = getSpecialSigns()
+
+	'Dlugosc naszego tekstu
+	dim nTextLen
+	nTextLen = len(strText)
+
+	'Tabica z pozycjami specjalnych znakow w naszym
+	'tekscie
+	dim pSignsPos
+	set pSignsPos = trans_.afc.new_navoarray()
+	
+	'Specjalna klasa do porownywania i przestawiania
+	'elementów tablicy
+	set pSignsPos.Operations = new CNavoArraySupport
+
+	'Wyszukujemy w calym tekscie znakow specjalnych
+	'i jezeli wystepuja wypelniamy tablice z
+	'informacjami o ich pozycji w tekscie i typie
+	dim i
+	for i = 0 to pSpecialSigns.UpperIndex()
+
+		dim iStartPosition
+		iStartPosition = 1
+
+		dim pSpecialSign
+		set pSpecialSign = pSpecialSigns.Value(i)
+
+		do
+			dim iFoundPos
+			iFoundPos = instr(iStartPosition, strText, pSpecialSign.m_strPattern, 1)
+
+			if (iFoundPos>0) then
+				
+				'Dodaj do tablicy informacje o pozycji
+				'poszczegolnych specjalnych znakow w naszym
+				'tekscie
+				dim pSignPos
+				set pSignPos = new CSignPos
+
+				pSignPos.m_nPos = iFoundPos
+				set pSignPos.m_pSpecialSign = pSpecialSign
+
+				'Dodaj do tablicy
+				pSignsPos.Add pSignPos
+
+				iStartPosition = iFoundPos + pSpecialSign.m_nPatternLen
+			end if
+
+		loop until (iFoundPos=0) or (iStartPosition>nTextLen)
+		
+	next
+
+	pSignsPos.Sort
+
+	'Rozpoczynamy wyświetlanie elementów
+	dim iStartPos
+	iStartPos = 1
+
+	'Tekst do wyświetlenia
+	dim strText2Display
+
+	for i=0 to pSignsPos.UpperIndex()
+		
+		'Znak do pokazania
+		dim pSign2Draw
+		set pSign2Draw = pSignsPos.Value(i)
+
+		'Kontrolka
+		dim pCtrl
+
+		if (iStartPos < pSign2Draw.m_nPos) then
+			'Wyswietl zwykły tekst
+			strText2Display = MidPos(strText, iStartPos, (pSign2Draw.m_nPos-1))
+			addTextCtrl pCell, bBold, bItalic, bUnderLine, pHli, strText2Display, crColor
+		end if
+
+		set pCtrl = pCell.addnew(CTRL_TYPE_PICTURE, -1)
+		pCtrl.image = pSign2Draw.m_pSpecialSign.m_nPictureID
+
+		iStartPos = pSign2Draw.m_nPos + pSign2Draw.m_pSpecialSign.m_nPatternLen
+
+	next
+
+	'Wyswietl zwykły tekst jaki został
+	if (iStartPos <= nTextLen) then
+		strText2Display = MidPos(strText, iStartPos, nTextLen)
+		addTextCtrl pCell, bBold, bItalic, bUnderLine, pHli, strText2Display, crColor
+	end if
+
+end function
+
+
+'------------------------------------------------------------------------
+' Funkcja dodaje wiersz do tableki komunikacji i dodaje ID tego
+' wiersza do kolekcji informacji o wiadomosciach. Jezeli liczba
+' wierszy przekroczyla n to usuwa pierwszy wiersz
+'------------------------------------------------------------------------
+function chat_CreateNewRow(byref pTab):set chat_CreateNewRow=nothing
+	dim pMsgInfo
+	set pMsgInfo=new CMessageInfo
+
+	pTab.newrow.row
+	pMsgInfo.ID=pTab.row.ident
+	
+	pMessagesInfoCol.Add pMsgInfo
+
+	if (pMessagesInfoCol.Count() > CHAT_MAX_ROWS) then
+		page_.ctrl( ID_TABLE_CHAT ).remove pMessagesInfoCol.Value(0).ID
+		pMessagesInfoCol.Remove 0
+	end if
+end function
+
+
+'------------------------------------------------------------------------
+' Funkcja zwraca nazwe user'a z kolekcji userow na podstawie indexu
+' w tej kolekcji
+'------------------------------------------------------------------------
+function chat_GetUserName(byval iUser): chat_GetUserName=""
+	if (iUser>-1) then
+		chat_GetUserName=pUsersInfo.pUsersInf.Value(iUser).strNavoUserName
+	end if
+end function
+
+
+dim pFiles			'otrzymane pliki
+
+
+#include "50212"
+
+
+'------------------------------------------------------------------------
+' Wolane gdy przyszedl nowy plik
+'------------------------------------------------------------------------
+function chat_OnNewFile(pHli)
+
+	dim pFD, bOK
+	set pFD=CFileDrive(bOK)
+
+	if (not bOK) then
+		'"Otrzymano plik lecz nie udało się utworzyć obiektu ""FileSystemObject"""
+		view_message 6186, 0
+		exit function
+	end if
+
+	dim nIndex
+	nIndex=pHli.prop(100)
+
+	dim pMessage
+	set pMessage=pFiles.Value(nIndex)
+
+	dim bSaved:bSaved=false
+
+	dim strMessageFrom
+	strMessageFrom=chat_GetUserName( pHli.prop(101) )
+
+	dim nQuestionResult
+	nQuestionResult=MessageBoxCustom("Otrzyma�e� plik """ + pMessage.strFileName + """ od " + strMessageFrom + ". Co chcesz zrobić?", "Przyszedł plik", vbYesNoCancel, vbQuestion, "Zapisz;Podgląd;Anuluj")
+
+	if (nQuestionResult=vbYes or nQuestionResult=vbNo) then
+		dim strPath
+
+		if (nQuestionResult=vbYes) then
+			'zapis - pytamy sie o folder gdzie zapisac
+			strPath=SelectFolder("c:\")
+		else
+			'podglad - pobieramy do katalogu temp
+			strPath=doc_.system.createtempfilename("x", pFD.GetFileExtension( pFD.GetFileName(pMessage.strFileName) ) )
+		end if
+
+		'kopiujemy plik do nas
+		if (strPath<>"") then
+			dim pSO
+			set pSO=doc_.createstreamobj()
+
+			dim strDestPath
+
+			if (nQuestionResult=vbYes) then
+				strDestPath=strPath + "\" + pMessage.strFileName
+			else
+				strDestPath=strPath
+			end if
+
+			dim pPrerforming
+			set pPrerforming = doc_.performing("Kopiowanie pliku z sieci . . .")
+			
+			on error resume next
+			pMessage.pSO.copyto pSO
+			
+			if (err.number<>0) then
+				view_message1 6261, 0, err.description
+			end if
+			on error goto 0
+
+			set pPrerforming = nothing
+			set pMessage=nothing
+
+			dim bContinueSave:bContinueSave=true
+
+			if (bContinueSave) then
+				if (pFD.isFile(strDestPath)) then
+							
+					if MessageBox("Istnieje już plik w podanej lokalizacji. Nadpisać istniejący plik?", "Nadpisać plik?", vbYesNo, vbQuestion)<>vbYes then
+						bContinueSave=false
+					end if
+
+					if (not pFD.DeleteFile(strDestPath)) then
+						'"Nie udało usunąć poprzedniego pliku."
+						view_message 6187, 0
+						bContinueSave=false
+					end if
+
+				end if
+			end if
+
+			if (bContinueSave) then
+
+				on error resume next
+				pSO.save strDestPath
+				on error goto 0
+
+				if (pFD.isFile(strDestPath)) then
+					
+					if (nQuestionResult=vbYes) then
+						'tylko zapis
+						'"Plik został zapisany na dysku jako " + strDestPath
+						view_message1 4093, 0, cstr(strDestPath)
+					else
+						'podglad
+						Create_FileDriveObject
+						Run strDestPath
+					end if
+					bSaved=true
+				else
+					'"Wystąpił błąd podczas próby zapisu pliku na dysk. Szczegóły:" + err.description
+					view_message1 6188, 0,  err.description
+				end if
+	
+			end if
+		end if
+
+	end if
+
+	pFiles.Remove nIndex
+end function
+
+
+
+'------------------------------------------------------------------------
+' Pobiera index z kolekcji informacji o userach na podstawie cookie
+' Robi rowniez update user'a w kolekcji userow gdy takiego nie jeszcze
+' nie ma - usuwa tych, ktorzy znikneli z chat'a
+'------------------------------------------------------------------------
+function chat_GetUserIndex(byval nOrigCookie)
+	'pobieramy indeks danego user'a w kolekcji informacji
+	'o user'ach
+	dim iUser
+	iUser=pUsersInfo.pUsers.IndexOf(nOrigCookie)
+
+	'gdy nie znaleziono user'a w kolekcji infoamcji
+	'przeladuj kolekcje i jeszcze jedna proba
+	if (not (iUser>-1)) then
+		pUsersInfo.AllUsers
+		iUser=pUsersInfo.pUsers.IndexOf(nOrigCookie)
+	end if
+
+	chat_GetUserIndex=iUser
+end function
+
+
+
+
+
+'------------------------------------------------------------------------
+' Klasa reprezentuje informacje dodatkowe o user'rze
+' Uzywana przez CNavoChat_UsersCol
+'------------------------------------------------------------------------
+class CNavoChat_UserInfo
+	public strComputerName		'nazwa komputera, na ktorym jest user
+	public strOsUserName		'nazwa zalogowanego tam user'a
+	public strNavoUserName		'nazwa usera w zalogowanego do aplikacji
+								'Navo na tym komputerze
+
+	public bSendTo				'true jezeli Aktywny - uzywane tylko
+								'przy wysylaniu - jezeli false to do
+								'tego user'a nie wysylamy
+	public nID_CHECKBOX			'id checkbox'a gdy wyswietlono jako
+								'checkbox na stronie
+end class
+
+
+'------------------------------------------------------------------------
+' Klasa reprezentuje kolekcje user'ow 
+' Uzywane przy wysylaniu do okreslonych user'ow i cache'owaniu 
+' informacji o userach przy wyswietlaniu checkbox'ow z userami
+'------------------------------------------------------------------------
+
+class CNavoChat_UsersCol
+	public pUsers	 'tablica zawierajaca cookie user'ow
+	public pUsersInf 'tablic obiektow z info. o user'ach
+
+	private sub class_initialize()
+		set pUsers = trans_.afc.new_navoarray()
+
+		set pUsersInf = trans_.afc.new_navoarray()
+	end sub
+
+	'wypelnij tablice wszystkimi user'ami - gdy do wszystkich
+	'i aktualizuj tablice - wyrzucaj nieaktualnych, dodawaj
+	'nowych
+	'AllUsers wolamy GLOWNIE GDY chcemy dodac nowych sieciowych
+	'userow bez utraty poprzednich info o nich
+	public sub AllUsers()
+		dim iter : iter = 0
+		dim cookie, usrname, cmpname
+
+		'obiekt zawiera tablice aktualnych elementow
+		'tzn. user'ow dostepnych w sieci w tym momencie
+		'czyli ich cookie
+		dim pActiveUsers
+		set pActiveUsers=trans_.afc.new_navoarray()
+
+		'w tej petli znajdujemy user'ow i dodajemy do tablicy
+		'nowego jezeli nie bylo lub robimy update gdy byl
+		do
+			cookie = doc_.getusers(iter, cmpname, usrname)
+			iter = iter + 1
+		
+			if cookie <> 0 then
+
+				'informacja o znalezionym user'rze
+				dim pUserInformation
+				set pUserInformation=new CNavoChat_UserInfo
+
+				pUserInformation.strComputerName=cmpname
+				pUserInformation.strOsUserName=usrname
+
+				dim strUserName: strUserName=""
+				if (doc_.getuserprop( cookie, NETWORK_USERPROP_NAME, strUserName )) then
+					pUserInformation.strNavoUserName=strUserName
+				else
+					pUserInformation.strNavoUserName=""
+				end if
+
+				pUserInformation.bSendTo=false
+				pUserInformation.nID_CHECKBOX=0
+
+				dim iIndex
+				iIndex=pUsers.IndexOf(cookie)
+
+				if (iIndex=-1) then
+					'nie znaleziono to dodajemy
+					pUsers.Add cookie
+					pUsersInf.Add pUserInformation
+				else
+					'nalzeciono robimy update
+					pUserInformation.bSendTo=pUsersInfo.pUsersInf.Value(iIndex).bSendTo
+					pUserInformation.nID_CHECKBOX=pUsersInfo.pUsersInf.Value(iIndex).nID_CHECKBOX
+
+					Set pUsersInf.Value(iIndex)=pUserInformation
+				end if
+
+				'dodajemy user'a do tablicy aktywnych
+				pActiveUsers.Add cookie
+
+			end if
+
+		loop while cookie <> 0
+
+		for iter=0 to pUsers.Count()-1
+			'jezeli nie ma user'a w grupie aktywnych to go wywalamy
+			if ( pActiveUsers.IndexOf( pUsers.Value(iter) )=-1 ) then
+				pUsers.Remove iter
+				pUsersInf.Remove iter
+			end if
+		next
+
+	end sub
+
+	public function checkbox2array(): checkbox2array=false
+		dim iter
+
+		dim bSendToGroup
+		bSendToGroup=(not g_bToAllUsers)
+
+		if (not bSendToGroup) then
+			exit function
+		end if
+
+		for iter=0 to pUsers.Count()-1
+			'gdy wysylamy do grupy wybranych userow to aktualizuj
+			'membera mowiacego czy mamy do tego user'a wysylac
+			dim nIDCtrl
+			nIDCtrl=pUsersInfo.pUsersInf.Value(iter).nID_CHECKBOX
+
+			if (nIDCtrl<>0) then
+
+				dim bSendTo
+				bSendTo=( page_.ctrl( pUsersInfo.pUsersInf.Value(iter).nID_CHECKBOX ).value="1" )
+				pUsersInfo.pUsersInf.Value(iter).bSendTo=bSendTo
+
+				if (bSendTo) then
+					checkbox2array=true
+				end if
+					
+			end if
+		next
+
+	end function
+
+end class
+
+
+'------------------------------------------------------------------------
+'
+' Funckje na podstawie tego co wybralismy na formularzu chata
+' wysylaja odpowiednie komunikaty:
+'
+'------------------------------------------------------------------------
+
+
+'------------------------------------------------------------------------
+' Zwraca obiekt wiadomosci tekstowej do wyslania na podstawie tego
+' co wybrano na formularzu
+'------------------------------------------------------------------------
+function chat_GetTextMessage()
+
+	'tworzymy sobie obiekt reprezentujacy wiadomosc tekstowa
+	dim pTextMessage
+	'set pTextMessage=new CNavoChat_TextMessage
+	set pTextMessage=oChat.new_message(RUNTIME_CLASS_CHAT_TEXT_MESSAGE)
+
+	pTextMessage.strText = getText2Send()
+
+	pTextMessage.bItalic = bChatItalic
+	pTextMessage.bBold = bChatBold
+	pTextMessage.crTextColor = crChatTextColor
+
+	set chat_GetTextMessage=pTextMessage
+end function
+
+
+'------------------------------------------------------------------------
+' Zwraca obiekt wiadomosci tekstowej z OBIEKTEM do wyslania na 
+' podstawie tego co wybrano na formularzu
+'------------------------------------------------------------------------
+function chat_GetObjectTextMessage(byval nTypeId, byval nIdObj)
+
+	'tworzymy sobie obiekt reprezentujacy wiadomosc tekstowa
+	dim pObjTextMessage
+	'set pObjTextMessage=new CNavoChat_ObjectTextMessage
+	set pObjTextMessage=oChat.new_message(RUNTIME_CLASS_CHAT_OBJTEXT_MESSAGE)
+
+
+	pObjTextMessage.strText = getText2Send()
+	pObjTextMessage.nTypeId=clng(nTypeId)
+	pObjTextMessage.nIdObj=clng(nIdObj)
+
+	set chat_GetObjectTextMessage=pObjTextMessage
+end function
+
+
+'------------------------------------------------------------------------
+' Zwraca obiekt wiadomosci z PLIKIEM do wyslania na 
+' podstawie tego co wybrano na formularzu
+'------------------------------------------------------------------------
+function chat_GetObjectFileMessage(byval strFileName, byref pFD)
+
+	'tworzymy sobie obiekt reprezentujacy wiadomosc tekstowa
+	dim pFileMessage
+	'set pFileMessage=new CNavoChat_FileMessage
+	set pFileMessage=oChat.new_message(RUNTIME_CLASS_CHAT_FILE_MESSAGE)
+
+
+	pFileMessage.strText = getText2Send()
+
+	dim pSO
+	set pSO=doc_.createstreamobj()
+	pSO.attach strFileName
+
+	set pFileMessage.pSO=pSO
+	pFileMessage.strFileName=pFD.GetFileName(strFileName)
+
+	set chat_GetObjectFileMessage=pFileMessage
+end function
+
+
+'------------------------------------------------------------------------
+' Wysyla wiadomosc do wszystkich user'ow
+'------------------------------------------------------------------------
+function chat_SendMessageToAll(byref pMessage)
+	chat_SendMessageTo_internal  nothing, pMessage
+end function
+
+
+'------------------------------------------------------------------------
+' Wysyla wiadomosc do grupy user'ow lub do wszystkich gdy
+' pUsersCol is nothing
+'------------------------------------------------------------------------
+function chat_SendMessageTo_internal(byref pUsersCol, byref pMessage)
+
+	if (not pUsersCol is nothing) then
+
+		'wysylamy do user'o na podstawie tablic w
+		'pUsersCol
+
+		dim i
+		for i=0 to pUsersCol.pUsers.Count()-1
+			'do siebie nie przesylamy info. po sieci
+			if (pUsersCol.pUsers.Value(i)<>doc_.getmycookie) then
+
+				'wysyłamy tylko do tych, do ktorych mamy wysylac
+				if (pUsersCol.pUsersInf.Value(i).bSendTo) then
+						pMessage.addrecipient pUsersCol.pUsers.Value(i)
+				end if
+			end if
+		next
+
+		oChat.send pMessage, doc_
+
+		'sami do siebie nie wysyalamy - przekazujemy sobie message'a
+		chat_OnNewMessage doc_.getmycookie, NOTIFY_CODE_OBJECT, pMessage
+
+	else
+
+		oChat.send_2_all pMessage, Doc_
+
+	end if
+
+	'po wyslaniu czyscimy u siebie kontrolke z tekstem msg'a
+	strCurrentMessage = ""
+	page_.ctrl(ID_CTRL_TXT_MSG).value = ""
+	page_.ctrl(ID_CTRL_TXT_MSG).focus=true
+end function
+
+'------------------------------------------------------------------------
+' Wysyła komunikat systemowy (najprostszy tekst z notyfikacją)
+' w formacie "Current_User_Name<delimiter>Message"
+'------------------------------------------------------------------------
+function chat_SendSystemMessage(byval strMessageText)
+	dim iter : iter = 0
+	dim cookie, usrname, cmpname
+
+	do
+		cookie = doc_.getusers(iter, cmpname, usrname)
+		iter = iter + 1
+		
+		if (cookie <> 0 and cookie <> doc_.getmycookie) then
+			dim strChating: strChating="0"
+			if (doc_.getuserprop( cookie, NETWORK_USERPROP_ISCHATING, strChating )) then
+
+				if (strChating="1") then
+					chat_SendNow cookie, NOTIFY_CODE_SYS_MESSAGE, GetCurrentUserName() + MESSAGE_DELIMITER + strMessageText
+				end if
+
+			end if
+		end if
+
+	loop while cookie <> 0
+end function
+
+'------------------------------------------------------------------------
+' Wysyla podana wiadomosc do grupy userow lub szystkich wybierajac to
+' automatycznie na podstawie danych na formularzu
+'------------------------------------------------------------------------
+function chat_SendAuto(byref pMessage)
+
+	'nie wysylamy pustych komunikatów przy wiadomości
+	'tekstowej
+	if (pMessage.nKindOf=RUNTIME_CLASS_CHAT_TEXT_MESSAGE) then
+		if (pMessage.strText="") then
+			exit function
+		end if
+	end if
+
+	if (g_bToAllUsers) then
+		'wysylamy do wszystkich
+		chat_SendMessageToAll pMessage
+	else
+		'wysylamy do wybranych
+		dim bSelectedUsers
+		bSelectedUsers=pUsersInfo.checkbox2array()
+
+		pUsersInfo.AllUsers
+
+		chat_SendMessageTo_internal pUsersInfo, pMessage
+	end if
+end function
+
+
+'------------------------------------------------------------------------
+' Funkcja nic nie robi tylko wysyla natychmiast komunikat o podanyc 
+' parametrach
+'------------------------------------------------------------------------
+function chat_SendNow(byval nCookie, byval nIdMessage, byval pMessage)
+	on error resume next
+	doc_.notifyuser nCookie, nIdMessage, pMessage
+	on error goto 0
+end function
+'
+
+
+
+'------------------------------------------------------------------------
+' Wypelnia checkbox'y zawierajace dostępnych userów, z którymi mozemy
+' sobie pogadać
+'------------------------------------------------------------------------
+function chat_ShowAvailableUsers()
+
+	dim tab
+	set tab = doc_.afc.new_tb(page_).attach(page_.ctrl(ID_TABLE_USERS)).removeall
+
+	dim pUsersTd
+	set pUsersTd = page_.ctrl(ID_TD_USERS)
+
+	if (g_bToAllUsers) then
+		pUsersTd.backcolor = CHAT_COLOR1
+		pUsersTd.backcolor2 = CHAT_COLOR1
+	else
+		pUsersTd.backcolor = CHAT_COLOR2
+		pUsersTd.backcolor2 = CHAT_COLOR2
+	end if
+
+	'Zrob update informacji o userach dostepnych w sieci
+	'ale nie czysc tablicy by nie usunac info o zaznaczeniach
+	pUsersInfo.AllUsers
+
+	dim i, nRow:nRow=1
+	for i=0 to pUsersInfo.pUsers.Count()-1
+
+		if (pUsersInfo.pUsers.Value(i)<>doc_.getmycookie) then
+	
+			'wstaw wiersz do tabelki
+			tab.newrow
+
+			dim nCell
+			nCell=1
+
+			dim nIndex
+			nIndex=nRow + 200
+
+			'informacja o userze
+			dim pUserInformation
+			set pUserInformation=pUsersInfo.pUsersInf.Value(i)
+
+			'ustaw id checkbox'a w kolekcji informacji o user'ach
+			pUserInformation.nID_CHECKBOX = nIndex
+
+			'to co wyswietlane przy checkbox'ie
+			dim strUserInfo
+
+
+			if (pUserInformation.strNavoUserName<>"") then
+				strUserInfo=pUserInformation.strNavoUserName
+			else
+				strUserInfo="(" + pUserInformation.strOsUserName + " na " + _
+					pUserInformation.strComputerName + ")"
+			end if
+
+			tab.newcell.addctrl CTRL_TYPE_CHECKBOX , clng(nIndex)
+
+			if (g_bToAllUsers) then
+				tab.element.disable = true
+
+				tab.cell.backcolor = CHAT_COLOR1
+				tab.cell.backcolor2 = CHAT_COLOR1
+
+				tab.element.backcolor = CHAT_COLOR1
+				tab.element.backcolor2 = CHAT_COLOR1
+			else
+				tab.cell.backcolor = CHAT_COLOR2
+				tab.cell.backcolor2 = CHAT_COLOR2
+
+				tab.element.backcolor = CHAT_COLOR2
+				tab.element.backcolor2 = CHAT_COLOR2
+			end if
+
+			dim pText:set pText=tab.element.addnew(CTRL_TYPE_STATIC, nIndex + 1000)
+			tab.element.width = CLng( MAXIMIZE_SIZE )
+			
+			if (g_bToAllUsers) then
+				tab.element.disable = true
+			end if
+
+			pText.text = strUserInfo
+
+			dim strValue:strValue="0"
+			if (pUserInformation.bSendTo) then
+				strValue="1"
+			end if
+
+			page_.ctrl(nIndex).value=strValue
+
+			nRow=nRow+1
+
+		end if
+
+	next
+
+end function
+
+'-----------------------------------------------------------------------------
+'
+' Obsługa zdarzeń pochodzących z obiektów znajdujących się na stronie
+'
+'-----------------------------------------------------------------------------
+
+function chat_OnButtonSend()
+	chat_SendAuto chat_GetTextMessage()
+end function
+
+function chat_OnButtonSendObject()
+	dim pNewHli
+	set pNewHli=doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=72009 varNewThread=0")
+
+	dim pPage
+	set pPage=doc_.getpagehli(pNewHli)
+
+	if pPage is nothing then
+		exit function
+	end if
+
+	pPage.domodalauto
+
+	if (pPage.getTypeId()>0) then
+		
+		dim nTypeId:nTypeId=pPage.getTypeId()
+		dim nIdObj:nIdObj=pPage.getIdObj()
+
+		chat_SendAuto chat_GetObjectTextMessage(nTypeId, nIdObj)
+	end if
+
+	'Ustaw focus by dało się pisać
+	page_.ctrl(ID_CTRL_TXT_MSG).focus=true
+
+end function
+
+#include "50211"
+
+function chat_OnButtonSendFile()
+
+	dim strPath: strPath= SelectFile("c:\", "*.*", "")
+
+	if (len(strPath)=0) then
+
+		'Ustaw focus by dało się pisać
+		page_.ctrl(ID_CTRL_TXT_MSG).focus=true
+
+		exit function
+	end if
+
+	dim pFD, bOK
+	set pFD=CFileDrive(bOK)
+
+	if (not bOK) then
+		'"Nie udało się utworzyć obiektu ""FileSystemObject"""
+		view_message 6189, 0 
+		exit function
+	end if
+
+	if pFD.isFile(strPath) then
+		chat_SendAuto chat_GetObjectFileMessage(strPath, pFD)
+	end if
+
+	'Ustaw focus by dało się pisać
+	page_.ctrl(ID_CTRL_TXT_MSG).focus=true
+
+end function
+
+function chat_OnButtonClear()
+	'Wyczysc cala zawartosc (historie) pogawedki
+	chat_ClearDisplayedMessages
+
+	'Ustaw focus by dało się pisać
+	page_.ctrl(ID_CTRL_TXT_MSG).focus=true
+end function
+
+function chat_OnButtonMenu()
+	mm_show_hide page_,g_pPopupMenu
+end function
+
+'------------------------------------------------------------------------
+' Otwiera odpowiedni formularz na podstawie typeid i idobj
+'------------------------------------------------------------------------
+function chat_open_form(pHli)
+	
+	doc_.postcommand doc_.afc.convert.formatter(" OPEN_FORM_PROXY_HLI_USAGE(%1,%2,USAGE_VIEW) ") _
+			.add(cstr(pHli.prop(GVAR_TYPEID))).add(cstr(pHli.prop(GVAR_OBJECT))).done()
+
+end function
+
+'------------------------------------------------------------------------
+' Ustawienia kolorow dla chat'a
+'------------------------------------------------------------------------
+function chat_SetColorBlack()
+	crChatTextColor=RGB(0, 0, 0)
+	chat_SetStyleForInput
+
+	'Ustaw focus by dało się pisać
+	page_.ctrl(ID_CTRL_TXT_MSG).focus=true
+end function
+
+function chat_SetColorBlue()
+	crChatTextColor=RGB(0, 128, 255)
+	chat_SetStyleForInput
+
+	'Ustaw focus by dało się pisać
+	page_.ctrl(ID_CTRL_TXT_MSG).focus=true
+end function
+
+function chat_SetColorRed()
+	crChatTextColor=RGB(255, 0, 0)
+	chat_SetStyleForInput
+
+	'Ustaw focus by dało się pisać
+	page_.ctrl(ID_CTRL_TXT_MSG).focus=true
+end function
+
+function chat_SetColorGreen()
+	crChatTextColor=RGB(0, 159, 0)
+	chat_SetStyleForInput
+
+	'Ustaw focus by dało się pisać
+	page_.ctrl(ID_CTRL_TXT_MSG).focus=true
+end function
+
+function chat_SetBold()
+	bChatBold=(not bChatBold)
+	chat_SetStyleForInput
+
+	'Ustaw focus by dało się pisać
+	page_.ctrl(ID_CTRL_TXT_MSG).focus=true
+end function
+
+function chat_SetItalic()
+	bChatItalic=(not bChatItalic)
+	chat_SetStyleForInput
+
+	'Ustaw focus by dało się pisać
+	page_.ctrl(ID_CTRL_TXT_MSG).focus=true
+end function
+
+function chat_SetStyleForInput()
+	page_.ctrl(ID_CTRL_TXT_MSG).forecolor=crChatTextColor
+	SetStaticStyle page_.ctrl(ID_CTRL_TXT_MSG), bChatBold, bChatItalic
+end function
+
+'------------------------------------------------------------------------
+' Do kogo ma isc wiadomosc - wszystkich/wskazanych
+'------------------------------------------------------------------------
+function chat_ToAllUsers()
+	'Zaznaczamy ze do wszystkich
+	g_bToAllUsers = true
+
+	page_.ctrl(ID_PIC_ALL_SEL).image = CLng(80916)
+	page_.ctrl(ID_PIC_ALL_SEL).tip = "Wysyłaj do WYBRANYCH"
+
+	'Robimy checkbox'y z uzytkownikami
+	chat_ShowAvailableUsers
+end function
+
+function chat_ToSelectedUsers()
+	'Zaznaczamy ze do wskazanych
+	g_bToAllUsers = false
+
+	page_.ctrl(ID_PIC_ALL_SEL).image = CLng(80915)
+	page_.ctrl(ID_PIC_ALL_SEL).tip = "Wysyłaj do WSZYSTKICH"
+
+	'Robimy checkbox'y z uzytkownikami
+	chat_ShowAvailableUsers
+end function
+
+'------------------------------------------------------------------------
+' Wysyłaj do wszystkich lub wybranych
+'------------------------------------------------------------------------
+function chat_Send2AllOrSelected()
+	if (g_bToAllUsers) then
+		chat_ToSelectedUsers
+	else
+		chat_ToAllUsers
+	end if
+end function
+
+
+'------------------------------------------------------------------------
+'
+' Obsluga kontrolki z tekstem do wysłania + funkcje pomocnicze do niej
+'
+'------------------------------------------------------------------------
+
+'------------------------------------------------------------------------
+' Odpowiednie tranfery dla ctrl. z tekstem do wyslania
+'------------------------------------------------------------------------
+function c##ID_CTRL_TXT_MSG##_ondataentered(byref oCtrl, byval value)
+	strCurrentMessage = value
+
+	'Jeżeli auto wysyłanie na ENTER
+	if (g_bAutoSend) then
+		if (InStr(1, strCurrentMessage, Chr(13))>0 or InStr(1, strCurrentMessage, Chr(10))>0) then
+			strCurrentMessage = replace(strCurrentMessage, Chr(10), "")
+			strCurrentMessage = replace(strCurrentMessage, Chr(13), "")
+			
+			chat_OnButtonSend
+		end if
+	end if
+
+	c##ID_CTRL_TXT_MSG##_ondataentered = true
+end function
+
+function c##ID_CTRL_TXT_MSG##_ongetdata(byref oCtrl)
+	oCtrl.value = CStr(strCurrentMessage)
+	c##ID_CTRL_TXT_MSG##_ongetdata=true
+end function
+
+'------------------------------------------------------------------------
+' Wlacz/wylacz automatyczne wysylanie na nacisniecie Enter
+'------------------------------------------------------------------------
+function chat_OnButtonAutoSend()
+	if (g_bAutoSend) then
+		page_.ctrl(ID_PIC_AUTO_SEND).image = CLng(80918)
+		page_.ctrl(ID_PIC_AUTO_SEND).tip = "Włącz AUTOMATYCZNE wysyłanie"
+		g_bAutoSend = false
+	else
+		page_.ctrl(ID_PIC_AUTO_SEND).image = CLng(80917)
+		page_.ctrl(ID_PIC_AUTO_SEND).tip = "Wyłącz automatyczne wysyłanie"
+		g_bAutoSend = true
+	end if
+
+	dim pTrans
+	set pTrans = trans_.createsubtran()
+	
+	setuserprofileBOOL USERPROF_CHAT_AUTO_SEND, g_bAutoSend
+	
+	trans_.saveobjects
+	set pTrans = nothing
+
+	'Ustaw focus by dało się pisać
+	page_.ctrl(ID_CTRL_TXT_MSG).focus=true
+end function
+
+'------------------------------------------------------------------------
+' Pobiera tekst do wysłania
+'------------------------------------------------------------------------
+function getText2Send()
+	getText2Send = replace(strCurrentMessage, MESSAGE_DELIMITER, "")
+end function
+
+
+]]>
+    </script>
+  </config>
+  <header>
+  </header>
+  <body>
+
+    <t/>
+    <br/>
+
+    <table>
+      <tbody>
+        <tr>
+          <td width='min'>
+
+            <!-- tabelka wyświetlająca przychodzące komunikaty -->
+            <table border='1' bordercolor='black' borderwidth='2'>
+              <tbody height='CHAT_HEIGHT'>
+                <tr>
+                  <td width='CHAT_WIDTH'>
+
+                    <table border='0' name='t##ID_TABLE_MSGS'>
+                      <tbody name='t##ID_TABLE_CHAT' backcolor='white' forecolor='black' border='0'>
+                      </tbody>
+                    </table>
+
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            <t/><br/>
+
+            <table>
+              <tbody>
+
+                <tr>
+                  <td width='min'>
+                    <picture image='80121' href='varFunction="chat_SetBold"' tip='Ustaw lub usu� pogrubienie tekstu'/>
+                  </td>
+                  <td width='min'>
+                    <picture image='80122' href='varFunction="chat_SetItalic"' tip='Ustaw lub usu� kursywe dla tekstu'/>
+                  </td>
+                  <td width='min'>
+                    <t/>
+                  </td>
+                  <td width='min'>
+                    <picture image='80117' href='varFunction="chat_SetColorBlack"' tip='Ustaw kolor czarny'/>
+                  </td>
+                  <td width='min'>
+                    <picture image='80118' href='varFunction="chat_SetColorBlue"' tip='Ustaw kolor niebieski'/>
+                  </td>
+                  <td width='min'>
+                    <picture image='80119' href='varFunction="chat_SetColorRed"' tip='Ustaw kolor czerwony'/>
+                  </td>
+                  <td width='min'>
+                    <picture image='80120' href='varFunction="chat_SetColorGreen"' tip='Ustaw kolor zielony'/>
+                  </td>
+                  <td width='min'>
+                    <t/>
+                  </td>
+                  <td width='min'>
+                    <picture name='p##ID_PIC_ALL_SEL' image='80916' href='varFunction="chat_Send2AllOrSelected"' />
+                  </td>
+                </tr>
+
+                <tr>
+
+                  <td colspan='9' keepline='true'>
+
+                    <multiline width='CHAT_WIDTH' height='3000' name='e##ID_CTRL_TXT_MSG' useenter='true' size='65' style='STYLE_CTRL'>
+                      <transfer mode='custom'/>
+                    </multiline>
+
+                  </td>
+
+                </tr>
+
+              </tbody>
+            </table>
+
+            <br/>
+
+            XF_BUTTON(varFunction="chat_OnButtonSend",Wy�lij)
+            <picture image='80918' name='p##ID_PIC_AUTO_SEND' href='varFunction="chat_OnButtonAutoSend"' />
+            <t/>
+
+            XF_BUTTON(varFunction="chat_OnButtonClear",Wyczy��)
+
+          </td>
+
+          <td name='t##ID_TD_USERS' width='3000' border='1' bordercolor='black' borderwidth='2' backcolor='white' backcolor2='white'>
+
+            <table name='t##ID_TABLE_USERS' border='0'>
+              <tbody height='8700'>
+              </tbody>
+            </table>
+
+          </td>
+
+        </tr>
+      </tbody>
+    </table>
+
+    <br/>
+
+  </body>
+  <footer>
+  </footer>
+</page>

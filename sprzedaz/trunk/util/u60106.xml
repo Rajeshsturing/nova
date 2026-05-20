@@ -1,0 +1,1675 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1200.h"
+#include "h1201.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1240.h"
+#include "h1203.h"
+-->
+<page>
+<config>
+<script>
+
+<![CDATA[
+
+#include "50101"
+#include "50122"
+#include "50203"
+#include "50126"
+
+'CFileDrive
+#include "50211"
+
+'przelicz_walute
+#include "50523"
+
+function HARimpl(nAction)
+	HARimpl = FindRight(nAction, false)
+end function
+
+function HARUIimpl(nAction)
+	HARUIimpl = FindRight(nAction, true)
+end function
+
+function GetSODWhere()
+	GetSODWhere=""
+end function
+
+function FindRight(byval nAction, byval bView )
+	'jeśli admin to ma wszystkie prawa
+	if GetCurrentUserID() = trans_.findobjid(TYPEID_N5UZYTKOWNIK,"strNazwa=ADMIN_LOGIN_SQL") then
+		FindRight=true
+		exit function
+	end if
+  #ifdef _IOW
+  'jesli dokument wymaga rejestracji 
+  if trans_.isvar(11111) then
+    if trans_.var(11111)=1 then
+        FindRight=true
+		    exit function
+    end if
+  end if
+  #endif
+	dim strAppWhere
+	strAppWhere=GetSODWhere()
+
+	if (strAppWhere<>"") then
+		strAppWhere=" and (" + strAppWhere + ")"
+	end if
+
+	dim strWhere:strWhere = "pUser= " + cstr(trans_.var(GVAR_USER)) +_
+	" and pSOD=(select idobj from n5sod where nSecId = " + cstr(nAction) +_
+	" AND nIdent = 0 " + strAppWhere + ")"
+
+	dim id : id = trans_.findobjid(TYPEID_N5SECURITYOBJ,strWhere)
+	
+	if id <> clng(0) then
+		FindRight = true
+	else
+		FindRight = false
+		dim idSOD
+		idSOD = trans_.findobjid(TYPEID_N5SOD,"nSecId = " + cstr(nAction) +	" AND nIdent = 0 " + strAppWhere)
+		dim pSOD
+		if bView then					 
+			if idSOD > clng(0) then 
+				set pSOD = trans_.getobj(TYPEID_N5SOD, idSOD)
+				MessageBox "Nie posiadasz uprawnień do wykonania czynności: "+ cstr(pSOD.strNazwa) + " grupa: " + cstr(pSOD.pSODGroup.strNazwa) , "Kontrola uprawnień", vbOKOnly, vbInformation
+			else
+				trans_.message 1002 , 0 , "Nieprawidłowy identyfikator uprawnień: "+ cstr(nAction)
+        'KB: message box denerwowal klientow
+				'MessageBox "Nieprawidłowy identyfikator uprawnień: "+ cstr(nAction) , "Kontrola uprawnień", vbOKOnly, vbInformation
+			end if
+		else			
+			if idSOD > clng(0) then 
+				set pSOD = trans_.getobj(TYPEID_N5SOD, idSOD)
+				trans_.message 1002 , 0 , "Nie posiadasz uprawnień do wykonania czynności: "+ cstr(pSOD.strNazwa) + " grupa: " + cstr(pSOD.pSODGroup.strNazwa)
+			else
+				trans_.message 1002 , 0 , "Nieprawidłowy identyfikator uprawnień: "+ cstr(nAction)
+			end if
+		end if
+	end if
+end function
+
+'--------------------------------------------
+'Uprawnienie jako blokada wykonania czynności
+'--------------------------------------------
+function FindBlockade(byval nAction, byval bView)
+	'jeśli admin to ma wszystkie prawa
+	if GetCurrentUserID() = trans_.findobjid(TYPEID_N5UZYTKOWNIK,"strNazwa=ADMIN_LOGIN_SQL") then
+		FindBlockade = false
+		exit function
+	end if
+
+	dim strAppWhere
+	strAppWhere=GetSODWhere()
+
+	if (strAppWhere<>"") then
+		strAppWhere=" and (" + strAppWhere + ")"
+	end if
+
+	dim strWhere:strWhere = "pUser= " + cstr(trans_.var(GVAR_USER)) +_
+	" and pSOD=(select idobj from n5sod where nSecId = " + cstr(nAction) +_
+	" AND nIdent = 0 " + strAppWhere + ")"
+
+	dim id: id = trans_.findobjid(TYPEID_N5SECURITYOBJ,strWhere)
+	
+	if id = clng(0) then
+		FindBlockade = false
+	else
+		FindBlockade = true
+		
+		if bView then
+			dim idSOD:idSOD = trans_.findobjid(TYPEID_N5SOD,"nSecId = " + cstr(nAction))
+			if idSOD > clng(0) then 
+				dim pSOD:set pSOD = trans_.getobj(TYPEID_N5SOD, idSOD)
+				MessageBox "Blokada wykonania czynności o nazwie: " + cstr(pSOD.strNazwa), "Blokada uprawnień", vbOKOnly, vbInformation
+			else
+				MessageBox "Nieprawidłowy identyfikator uprawnień: " + cstr(nAction), "Kontrola uprawnień", vbOKOnly, vbInformation
+			end if
+		end if
+	end if
+end function
+
+'------------------------------------------------------
+'sprawdzenie dowolnego uprawnienia użytkownika wg trybu
+'------------------------------------------------------
+function FindRightFree(byval nMode)
+  select case nMode
+    case UAR_OGRANICZONY_DOSTEP_DANE_KLIENTA
+      FindRightFree = FindRightClientData()
+    case UAR_DOSTAWCA_OGRANICZONY_DOSTEP
+      FindRightFree = FindRightSelectDostawca()
+  end select
+end function
+
+function HORimpl(eAction,TypeId,IdObj)
+	HORimpl = FindObjectRight(eAction,TypeId,IdObj, false)
+end function
+
+function HORUIimpl(eAction,TypeId,IdObj)
+	HORUIimpl = FindObjectRight(eAction,TypeId,IdObj, true)
+end function
+
+function FindObjectRight(byval eAction, byval typeid, byval idobj, byval bView )
+	'jeśli import to kazdy ma wszystkie prawa
+	if trans_.var(GVAR_OPERATION_MODE) = clng(OPERATION_MODE_IMPORT) then
+		FindObjectRight=true
+		exit function
+	end if
+	'jeśli admin to ma wszystkie prawa
+	if GetCurrentUserID() = trans_.findobjid(TYPEID_N5UZYTKOWNIK,"strNazwa=ADMIN_LOGIN_SQL") then
+		FindObjectRight=true
+		exit function
+	end if
+
+	dim strAppWhere
+	strAppWhere=GetSODWhere()
+
+	if (strAppWhere<>"") then
+		strAppWhere=" and (" + strAppWhere + ")"
+	end if
+
+	dim strSecId:strSecId = cstr(clng(TypeId)) + Cstr(clng(eAction))
+	dim strWhere:strWhere ="pUser=" + cstr(trans_.var(GVAR_USER)) +_
+	" and pSOD=(select idobj from n5sod where nSecId=" + cstr(strSecId) +_
+	" and nIdent=" + cstr(IdObj) + strAppWhere + ")"
+
+	dim id : id = trans_.findobjid(TYPEID_N5SECURITYOBJ,strWhere)
+
+	
+	if id <> clng(0) then
+		FindObjectRight = true
+	else
+		FindObjectRight = false
+		if bView then
+			dim idSOD:idSOD = trans_.findobjid(TYPEID_N5SOD,"nSecId = " + cstr(strSecId) + " AND nIdent = " + cstr(idobj))
+			if idSOD > clng(0) then 
+				dim pSOD:set pSOD = trans_.getobj(TYPEID_N5SOD, idSOD)
+				MessageBox "Nie posiadasz uprawnień do wykonania czynności: "+ cstr(pSOD.strNazwa)  , "Kontrola uprawnień", vbOKOnly, vbInformation
+			else
+				MessageBox "Nieprawidłowy identyfikator SO:" + cstr(clng(TypeId)) + Cstr(clng(eAction)) + " Id = " + cstr(idobj)  , "Kontrola uprawnień", vbOKOnly, vbInformation
+			end if
+		end if
+	end if
+end function
+
+Function GetWHERE_ForCheckRights(byVal eAction,byVal TypeId,byVal table,byVal pUser)
+	dim strSecId:strSecId = cstr(clng(TypeId)) + Cstr(clng(eAction))
+	GetWHERE_ForCheckRights="("+CStr(table)+".nIsSecurity=0 OR ("+CStr(table)+".nIsSecurity>0 AND ((" + CStr(pUser) + " = (select idobj from n5uzytkownik where strLogin = ADMIN_LOGIN_SQL)  ) OR ( "+CStr(table)+".IdObj IN (SELECT "+CStr(table)+".IdObj from "+CStr(table)+" JOIN n5sod ON n5sod.nIdent="+CStr(table)+".IdObj JOIN n5securityobj ON n5sod.idObj=n5securityobj.pSOD WHERE "+CStr(strSecId)+"=nSecId  AND "+CStr(pUser)+"=n5securityobj.pUser))) ))"
+End Function
+
+#comment 'Licence - Use Module - UI ------------------------------------------------
+
+function LicModuleNameEx(byval nManyModMask,byval strSep)
+	dim strText : strText = ""
+	if (nManyModMask and EB_MOD_MASK_HANDEL) <> 0 then
+		if strText <> "" then
+			strText = strText + strSep
+		end if
+		strText = strText + "EuroHandel"
+	end if
+	if (nManyModMask and EB_MOD_MASK_MAGAZYN) <> 0 then
+		if strText <> "" then
+			strText = strText + strSep
+		end if
+		strText = strText + "EuroMagazyn"
+	end if
+	if (nManyModMask and EB_MOD_MASK_KONTAKT) <> 0 then
+		if strText <> "" then
+			strText = strText + strSep
+		end if
+		strText = strText + "EuroKontakt"
+	end if
+	if (nManyModMask and EB_MOD_MASK_PRODUKCJA) <> 0 then
+		if strText <> "" then
+			strText = strText + strSep
+		end if
+		strText = strText + "EuroProdukcja"
+	end if
+	if (nManyModMask and EB_MOD_MASK_FINANSE) <> 0 then
+		if strText <> "" then
+			strText = strText + strSep
+		end if
+		strText = strText + "EuroFinanse"
+	end if
+	if (nManyModMask and EB_MOD_MASK_PRACOWNIK) <> 0 then
+		if strText <> "" then
+			strText = strText + strSep
+		end if
+		strText = strText + "EuroPracownik"
+	end if
+	LicModuleNameEx = strText
+end function
+
+function LicModuleName(byval nManyModMask)
+	LicModuleName = LicModuleNameEx(nManyModMask," lub ")
+end function
+
+function LicUMUIImpl(byval nManyModMask) : LicUMUIImpl = false
+
+#ifdef _PAKART
+  if LicIMU(nManyModMask) then
+    LicUMUIImpl = true
+    exit function
+  end if
+#endif
+
+  dim bAllowUse : bAllowUse = false
+
+  if (nManyModMask and EB_MOD_MASK_KONTAKT) <> 0 then
+		bAllowUse = bAllowUse or HarUI(UAR_BLOKADA_MODULU_EURO_KONTAKT)
+		if bAllowUse then
+    	if LicUM(EB_MOD_MASK_KONTAKT) then
+			  LicUMUIImpl = true
+			  exit function
+			end if
+		end if
+	end if
+
+	if (nManyModMask and EB_MOD_MASK_HANDEL) <> 0 then
+    bAllowUse = bAllowUse or HarUI(UAR_BLOKADA_MODULU_EURO_HANDEL)
+    if bAllowUse then
+      if LicUM(EB_MOD_MASK_HANDEL) then
+        LicUMUIImpl = true
+        exit function
+      end if
+    end if
+	end if
+  
+	if (nManyModMask and EB_MOD_MASK_MAGAZYN) <> 0 then
+		bAllowUse = bAllowUse or HarUI(UAR_BLOKADA_MODULU_EURO_MAGAZYN)
+		if bAllowUse then
+    	if LicUM(EB_MOD_MASK_MAGAZYN) then
+					LicUMUIImpl = true
+					exit function
+			end if
+		end if
+	end if
+
+  if (nManyModMask and EB_MOD_MASK_PRODUKCJA) <> 0 then
+		bAllowUse = bAllowUse or HarUI(UAR_BLOKADA_MODULU_EURO_PRODUKCJA)
+		if bAllowUse then
+    	if LicUM(EB_MOD_MASK_PRODUKCJA) then
+					LicUMUIImpl = true
+					exit function
+			end if	
+		end if
+	end if
+	
+  if (nManyModMask and EB_MOD_MASK_FINANSE) <> 0 then
+		bAllowUse = bAllowUse or HarUI(UAR_BLOKADA_MODULU_EURO_FINANSE)
+		if bAllowUse then
+			if LicUM(EB_MOD_MASK_FINANSE) then
+					LicUMUIImpl = true
+					exit function
+			end if
+		end if
+	end if
+  
+	if (nManyModMask and EB_MOD_MASK_PRACOWNIK) <> 0 then
+		bAllowUse = bAllowUse or HarUI(UAR_BLOKADA_MODULU_EURO_PRACOWNIK)
+		if bAllowUse then
+			if LicUM(EB_MOD_MASK_PRACOWNIK) then
+				LicUMUIImpl = true
+				exit function
+		  end if
+		end if
+	end if
+
+  MessageBox "Wszystkie licencje na " + LicModuleName(nManyModMask) + " zostały już wykorzystane"  , "Kontrola uprawnień", vbOKOnly, vbInformation
+end function
+
+function LicCR(byval nOneModMask,byval nCount)
+	LicCR = doc_.createres(LicGetModuleCode(nOneModMask),nCount)
+#ifdef _DEBUG
+	if LicCR then
+		trans_.message 0,1, "utworzono zasób dla " + LicModuleName(nOneModMask) + " dla max. " + cstr(nCount) + " użytkowników"
+	else
+		trans_.message 0,1, "zasób dla " + LicModuleName(nOneModMask) + " już istnieje"
+	end if
+#endif
+end function
+
+sub LicDR(byval nOneModMask)
+	do while not doc_.deleteres(LicGetModuleCode(nOneModMask))
+		doc_.releaseres LicGetModuleCode(nOneModMask)
+	loop
+#ifdef _DEBUG
+	trans_.message 0,1, "skasowano zasób dla " + LicModuleName(nOneModMask)
+#endif
+end sub
+
+function LicUMInfo(byval nOneModMask)
+	LicUMInfo = LicUM(nOneModMask)
+	if not LicUMInfo then
+		trans_.message 0,1, "Wszystkie licencje na " + LicModuleName(nOneModMask) + " zostały już wykorzystane"
+	end if
+end function
+
+function LicGetModuleCode(byval nOneModMask)
+	LicGetModuleCode = lic_res_name(nOneModMask)
+end function
+
+sub LicAutoLogon
+	dim pAutoLogonMask : set pAutoLogonMask=getuserprofileObj(USERPROF_AUTOLOGON_MODULE)
+	
+	if mid(pAutoLogonMask.Wartosc,1,1) <> "0" then
+		LicUMInfo EB_MOD_MASK_HANDEL
+	end if
+	if mid(pAutoLogonMask.Wartosc,2,1) <> "0" then
+		LicUMInfo EB_MOD_MASK_MAGAZYN
+	end if
+	if mid(pAutoLogonMask.Wartosc,3,1) <> "0" then
+		LicUMInfo EB_MOD_MASK_KONTAKT
+	end if
+	if mid(pAutoLogonMask.Wartosc,4,1) <> "0" then
+		LicUMInfo EB_MOD_MASK_PRODUKCJA
+	end if
+	if mid(pAutoLogonMask.Wartosc,5,1) <> "0" then
+		LicUMInfo EB_MOD_MASK_FINANSE
+	end if
+	if mid(pAutoLogonMask.Wartosc,6,1) <> "0" then
+		LicUMInfo EB_MOD_MASK_PRACOWNIK
+	end if
+end sub
+
+function try_logon_user(byval strUser,byval strPassword,byref strErrorDesc)
+	try_logon_user  = 0
+
+	dim idUser : idUser = trans_.findobjid(TYPEID_N5UZYTKOWNIK, _
+		"strLogin='" + doc_.afc.convert.DoubleApostrophe(strUser) + "' and " + _
+		"strHaslo='" + doc_.afc.convert.DoubleApostrophe(strPassword) + "'")
+
+	if (idUser > 0) then
+		dim pUser : set pUser = trans_.getobj(TYPEID_N5UZYTKOWNIK, idUser)
+
+		if pUser is nothing then
+			strErrorDesc = "Dane tego uzytkownika właśnie sa zmieniane - w tej chwili nie można się zalogować."
+			exit function
+		else
+			'sprawdzamy czy ma prawo sie zalogowac
+			if pUser.eAktywny <> N5UZYTKOWNIK_AKTYWNY then
+				strErrorDesc = "Ten użytkownik nie ma prawa logowania się do systemu."
+				exit function
+			end if
+		end if
+
+	else
+		strErrorDesc = "Podane hasło lub nazwa użytkownika nie jest poprawne."
+		exit function
+	end if
+	
+	try_logon_user = idUser
+end function
+
+'sprawdzanie uprawnień dla cennika
+'(zwraca true jeśli nadano uprawnienie dla ukrycia cen)  
+function FindRightPrice(byval nAction)
+	'jeśli admin => wszystkie prawa
+	if GetCurrentUserID() = trans_.findobjid(TYPEID_N5UZYTKOWNIK,"strNazwa = ADMIN_LOGIN_SQL") then
+		FindRightPrice = false
+		exit function
+	end if
+  
+  'jeśli brak wpisu w n5sod => nie kontynuuj sprawdzania uprawnień
+  dim idSod, strWhere
+  dim bCont : bCont = false
+  strWhere = "nSecId = " + CStr(nAction) + " and nIdent = 0"
+  idSod = trans_.findobjid(TYPEID_N5SOD,strWhere)
+  if idSod <> 0 then
+    bCont = true
+  end if
+    
+  if bCont then
+	  strWhere = "pUser= " + cstr(trans_.var(GVAR_USER)) +_
+	  " and pSOD = (select idobj from n5sod where nSecId = " + cstr(nAction) +_
+	  " AND nIdent = 0 " + ")"
+
+	  dim idSecObj : idSecObj = trans_.findobjid(TYPEID_N5SECURITYOBJ,strWhere)
+  	
+	  if idSecObj <> clng(0) then
+		  FindRightPrice = true
+	  else
+		  FindRightPrice = false
+	  end if
+  else
+    FindRightPrice = false
+  end if
+end function
+
+function checkRights(byval pRejestrDok) : checkRights = false
+  'jeśli admin to ma wszystkie prawa
+  if GetCurrentUserID() = trans_.findobjid(TYPEID_N5UZYTKOWNIK,"strNazwa = ADMIN_LOGIN_SQL") then
+    checkRights = true
+    exit function
+  end if
+  
+  dim strWhere : strWhere = "pUser= " + cstr(trans_.var(GVAR_USER)) +_
+  " and pSOD = (select idobj from n5sod where pSODGroup in (select idobj from n5sodgroup where strNazwa like 'Rejestry dokumentów - księgowanie') " +_
+  " and strNazwa like '" + cstr(pRejestrDok.strNazwa) + "')"
+  
+  dim idSOD : idSOD = trans_.findobjid(TYPEID_N5SECURITYOBJ,strWhere)
+  if idSOD > 0 then
+    checkRights = true
+  end if
+  
+end function
+
+'--------------------------------------
+'sprawdzenie uprawnienia bez komunikatu
+'--------------------------------------
+function FindOnlyRight(byval nAction) : FindOnlyRight = false
+  'jeśli admin to ma wszystkie prawa
+	if GetCurrentUserID() = trans_.findobjid(TYPEID_N5UZYTKOWNIK,"strNazwa = ADMIN_LOGIN_SQL") then
+		FindOnlyRight = true
+		exit function
+	end if
+	dim strWhere : strWhere = "pUser= " + cstr(trans_.var(GVAR_USER)) + " and pSOD=(select idobj from n5sod where nSecId = " +_
+                            cstr(nAction) + " and nIdent = 0)"
+	dim id : id = trans_.findobjid(TYPEID_N5SECURITYOBJ,strWhere)
+	if id <> clng(0) then
+		FindOnlyRight = true
+	end if
+end function
+
+'------------------------------------------
+'sprawdzenie uprawnienia o dowolnym warunku
+'------------------------------------------
+function FindFreeRight(byval strFreeWhere) : FindFreeRight = false
+  'jeśli admin to ma wszystkie prawa
+	if GetCurrentUserID() = trans_.findobjid(TYPEID_N5UZYTKOWNIK,"strNazwa = ADMIN_LOGIN_SQL") then
+		FindFreeRight = true
+		exit function
+	end if
+	dim strWhere : strWhere = "pUser= " + cstr(trans_.var(GVAR_USER)) + " and pSOD=(" + strFreeWhere + ")"
+	dim id : id = trans_.findobjid(TYPEID_N5SECURITYOBJ,strWhere)
+	if id <> clng(0) then
+		FindFreeRight = true
+	end if
+end function
+
+'-------------------------------------------------
+'sprawdzanie uprawnienia do pełnego menu => ABAKUS
+'-------------------------------------------------
+function FindRightFullMenu() : FindRightFullMenu = false
+	dim strWhere : strWhere = "select idobj from n5sod where strNazwa like 'Dostęp do pełnego menu'"
+	FindRightFullMenu = FindFreeRight(strWhere)
+end function
+
+'-------------------------------
+'sprawdzenie uprawnienia blokady
+'-------------------------------
+function FindBlockRight(byval strFreeWhere) : FindBlockRight = false
+  'jeśli admin => pomijamy sprawdzanie blokady
+  if GetCurrentUserID() = trans_.findobjid(TYPEID_N5UZYTKOWNIK,"strNazwa = ADMIN_LOGIN_SQL") then
+    exit function
+  end if
+  dim strWhere : strWhere = "pUser= " + cstr(trans_.var(GVAR_USER)) + " and pSOD=(" + strFreeWhere + ")"
+  dim id : id = trans_.findobjid(TYPEID_N5SECURITYOBJ,strWhere)
+  if id <> clng(0) then
+    FindBlockRight = true
+  end if
+end function
+
+'-------------------------------------------------------------------------------
+'blokada wystawienia faktury gdy kontrahent ma niezapłaconą fakturę (Alma Trend)
+'-------------------------------------------------------------------------------
+function isBlokadaFvat(oSprz,strSodName,strMode): isBlokadaFvat = true
+  isBlokadaFvat = isBlokadaFvatExt(oSprz,strSodName,strMode,0)
+end function
+
+function isBlokadaFvatExt(oSprz,strSodName,strMode,nDni): isBlokadaFvatExt = true
+  dim idGroup, strWhere
+  if not oSprz.pKlient is nothing then
+    idGroup = trans_.findobjid(TYPEID_N5SODGROUP,"strNazwa='Operacje specjalne'")
+    if idGroup > clng(0) then
+      strWhere = "select idobj from n5sod where pSODGroup = " + cstr(idGroup) + " and strNazwa like '" + strSodName + "'"
+      if FindBlockRight(strWhere) then
+        if nDni > clng(0) then
+          strWhere = " and datediff(day,t.dDataWym," + trans_.afc.convert.date2SQL(oSprz.dDataWyst) + ") > " + CStr(nDni) +_ 
+                     " and t.eStatus = N5TRANSAKCJA_OTWARTA and sp.eTyp " + strMode + " N5SPOSPLAT_ZA_POBRANIEM " +_
+                     " and s.IdObj not in (select pPopSprzed from n5sprzedaz)"
+        else
+          strWhere = " and t.dDataWym < " + trans_.afc.convert.date2SQL(oSprz.dDataWyst) +_ 
+                     " and t.eStatus = N5TRANSAKCJA_OTWARTA and sp.eTyp " + strMode + " N5SPOSPLAT_ZA_POBRANIEM"
+        end if
+        if getKlientQuery(oSprz,strWhere) then
+          'pozwól zapisać gdy sposób płatności za pobraniem lub karta płatnicza
+          'if oSprz.pSposobPlatnosci.eTyp <> N5SPOSPLAT_KARTA and oSprz.pSposobPlatnosci.eTyp <> N5SPOSPLAT_ZA_POBRANIEM then  
+            exit function
+          'end if
+        end if
+      end if
+    end if
+  end if
+  isBlokadaFvatExt = false
+end function
+
+'-------------------------------------------------------------------------------
+'blokada wystawienia faktury gdy kontrahent ma niezapłaconą fakturę (Alma Trend)
+'-------------------------------------------------------------------------------
+function isBlokadaTermin(oSprz): isBlokadaTermin = true
+  dim idGroup, strWhere
+  if not oSprz.pKlient is nothing then
+    idGroup = trans_.findobjid(TYPEID_N5SODGROUP,"strNazwa='Operacje specjalne'")
+    if idGroup > clng(0) then
+      strWhere = "select idobj from n5sod where pSODGroup = " + cstr(idGroup) + " and strNazwa like 'Blokada sprzedaży - z terminem dłuższym niż w kartotece'"
+      if FindBlockRight(strWhere) then
+        if not oSprz.pSposobPlatnosci is nothing and not oSprz.pKlient.pSposobPlatnosci is nothing then
+          if oSprz.pSposobPlatnosci.nDni > oSprz.pKlient.pSposobPlatnosci.nDni then
+            exit function
+          end if
+        end if
+      end if
+    end if
+  end if
+  isBlokadaTermin = false
+end function
+
+'------------------------------------------------------------------------------------------
+'blokada wystawienia faktury na przelew gdy suma brutto nie przekracza 300 PLN (Alma Trend)
+'------------------------------------------------------------------------------------------
+function isBlokadaPrzelew300(oSprz): isBlokadaPrzelew300 = true
+  dim idGroup, strWhere
+  if not oSprz.pKlient is nothing then
+    idGroup = trans_.findobjid(TYPEID_N5SODGROUP,"strNazwa='Operacje specjalne'")
+    if idGroup > clng(0) then
+      strWhere = "select idobj from n5sod where pSODGroup = " + cstr(idGroup) + " and strNazwa like 'Blokada sprzedaży - na przelew i kwota mniejsza od 300'"
+      if FindBlockRight(strWhere) then
+        if not oSprz.pSposobPlatnosci is nothing then
+          dim iPos: iPos = InStr(UCase(oSprz.pSposobPlatnosci.strNazwa),"PRZELEW")
+          if iPos > clng(0) and oSprz.curSumaBrutto <= ccur(300) and oSprz.pWaluta.strSkrot = "PLN" then
+            exit function
+          end if
+        end if
+      end if
+    end if
+  end if
+  isBlokadaPrzelew300 = false
+end function
+
+'------------------------------------------------------------------
+'blokada wystawienia faktury gdy nie jest wypełniony sposób dostawy
+'------------------------------------------------------------------
+function isBlokadaSposDost(oSprz): isBlokadaSposDost = true
+  dim idGroup, strWhere
+  if not oSprz.pKlient is nothing then
+    idGroup = trans_.findobjid(TYPEID_N5SODGROUP,"strNazwa='Operacje specjalne'")
+    if idGroup > clng(0) then
+      strWhere = "select idobj from n5sod where pSODGroup = " + cstr(idGroup) + " and strNazwa like 'Blokada sprzedaży - nie wypełniony sposób dostawy'"
+      if FindBlockRight(strWhere) then
+        if oSprz.sprzed_pSposobDostawy is nothing then
+          exit function
+        end if
+      end if
+    end if
+  end if
+  isBlokadaSposDost = false
+end function
+
+'-----------------------------------------------------------------------------------
+'blokada wystawienia dokumentu zakupu gdy nie jest wypełnione pole Obcy nr dokumentu
+'-----------------------------------------------------------------------------------
+function isBlokadaObcyNrDok(oZakup): isBlokadaObcyNrDok = true
+  dim idGroup, strWhere
+  idGroup = trans_.findobjid(TYPEID_N5SODGROUP,"strNazwa='Operacje specjalne'")
+  if idGroup > clng(0) then
+    strWhere = "select idobj from n5sod where pSODGroup = " + cstr(idGroup) + " and strNazwa like 'Blokada zakupu - pole Obcy numer dokumentu'"
+    if FindBlockRight(strWhere) then
+      if oZakup.strNrDokObcy = "" then
+        exit function
+      end if
+    end if
+  end if
+  isBlokadaObcyNrDok = false  
+end function
+
+'----------------------------------------------
+'blokada wejścia na kartę dostawcy (Alma Trend)
+'----------------------------------------------
+function isBlokadaKartaDost(idDost): isBlokadaKartaDost = true
+  dim strWhere: strWhere = ""
+  dim idGroup: idGroup = clng(0)
+  idGroup = trans_.findobjid(TYPEID_N5SODGROUP,"strNazwa='Operacje specjalne'")
+  strWhere = "select idobj from n5sod where pSODGroup = " + cstr(idGroup) + " and strNazwa like 'Blokada wejścia na kartę dostawcy'"
+  if idDost > clng(0) then
+    'otwieranie karty
+    dim oDost: set oDost = trans_.getobj(TYPEID_N5KLIENT,idDost)
+    if Left(oDost.strIndeks,1) = "D" then
+      if FindBlockRight(strWhere) then
+        exit function
+      end if
+    end if 
+  else
+    'otwieranie formularza dostawcy
+    if FindBlockRight(strWhere) then
+      exit function
+    end if    
+  end if
+  isBlokadaKartaDost = false
+end function
+
+'-----------------------------------------------
+'zwraca true gdy firma posiada dokumenty klienta
+'-----------------------------------------------
+function isInfoDok(oSprz): isInfoDok = true
+  if not oSprz.pKlient is nothing and not oSprz.pSposobPlatnosci is nothing then
+    if oSprz.pKlient.kli_cDokumentyInfo = "0" and oSprz.pSposobPlatnosci.eTyp = N5SPOSPLAT_PRZELEW then
+      isInfoDok = false
+    end if
+  end if  
+end function
+
+function getKlientQuery(oSprz,strWhere): getKlientQuery = false
+  dim strSQL, oRS
+  strSQL = "select top 1 s.idobj from n5sprzedaz s " + vbNewLine +_
+	         "inner join n5transakcja t on s.pTransakcja = t.idobj " + vbNewLine +_
+	         "inner join n5sposplat sp on s.pSposobPlatnosci = sp.idobj " + vbNewLine +_
+           "where s.pKlient = " + cstr(oSprz.pKlient.idobj) + " " + strWhere
+  set oRS = trans_.createadors(strSQL)         
+  if oRS.recordcount > clng(0) then
+    getKlientQuery = true
+  end if         
+end function
+
+'-----------------------------------------------------------------------
+'Uprawnienie do pełnego dostępu użytkownika do informacji o transakcjach
+'-----------------------------------------------------------------------
+function FullRightTrans(): FullRightTrans = true
+  dim idGroup, strWhere
+  idGroup = trans_.findobjid(TYPEID_N5SODGROUP,"strNazwa='Operacje specjalne'")
+  if idGroup > clng(0) then
+    strWhere = "select idobj from n5sod where pSODGroup = " + cstr(idGroup) + " and strNazwa like 'Pełny dostęp użytkownika do informacji o transakcjach'"
+    if FindFreeRight(strWhere) then
+      exit function
+    end if
+  end if
+  FullRightTrans = false  
+end function
+
+'-----------------------------------------------------------------------------------
+'blokada wystawienia dokumentu zakupu gdy nie jest wypełnione pole Obcy nr dokumentu
+'-----------------------------------------------------------------------------------
+function isBlokadaDokZarejstr(): isBlokadaDokZarejstr = true
+
+  if trans_.isvar(3212) then
+    if trans_.var(3212) = clng(1) then
+      isBlokadaDokZarejstr = false
+      exit function
+    end if
+  end if
+  
+  dim idGroup, strWhere
+  idGroup = trans_.findobjid(TYPEID_N5SODGROUP,"strNazwa='Operacje specjalne'")
+  if idGroup > clng(0) then
+    strWhere = "select idobj from n5sod where pSODGroup = " + cstr(idGroup) + " and strNazwa like 'Blokada wejścia do dokumentów zarejestrowanych'"
+    if FindBlockRight(strWhere) then
+      exit function
+    end if
+  end if
+  isBlokadaDokZarejstr = false  
+end function
+
+'----------------------------------------------------------------------------------------------
+'Zwraca true gdy użytkownik ma nadane uprawnienie do rejestracji RW i PW na numery docelowe IOW
+'----------------------------------------------------------------------------------------------
+function FindRightRegDok(): FindRightRegDok = true  
+  dim idGroup, strWhere
+  idGroup = trans_.findobjid(TYPEID_N5SODGROUP,"strNazwa='Operacje specjalne'")
+  if idGroup > clng(0) then
+    strWhere = "select idobj from n5sod where pSODGroup = " + cstr(idGroup) + " and strNazwa like 'Rejestracja dokumentów RW i PW z tymczasowych na docelowe'"
+    if FindFreeRight(strWhere) then
+      exit function
+    end if
+  end if
+  FindRightRegDok = false    
+end function
+
+'------------------------------------------------------------------------------------------------
+'Zwraca true gdy użytkownik ma nadane uprawnienie ograniczonego dostępu do danych klientów Abakus
+'------------------------------------------------------------------------------------------------
+function FindRightClientData(): FindRightClientData = true
+  dim idGroup, strWhere
+  idGroup = trans_.findobjid(TYPEID_N5SODGROUP,"strNazwa='Operacje specjalne'")
+  if idGroup > clng(0) then
+    strWhere = "select idobj from n5sod where pSODGroup = " + cstr(idGroup) + " and strNazwa like 'Ograniczony dostęp użytkownika do danych klientów'"
+    if FindBlockRight(strWhere) then
+      exit function
+    end if
+  end if
+  FindRightClientData = false    
+end function
+
+'---------------------------------------------
+'Blokady zpisu dokumentu sprzedaży - AlmaTrend
+'---------------------------------------------
+function CheckRightsForSave(byref oSprz): CheckRightsForSave = false
+  'blokada wystawienia faktury gdy kontrahent ma niezapłaconą fakturę
+  dim strSodName: strSodName = "Blokada sprzedaży - niezapłacona faktura w terminie"
+  dim nDni: nDni = clng(0)
+  dim idStawka: idStawka = trans_.findobjid(TYPEID_N5PLSTAWKA,"strKod = 'MLDS'")
+  if idStawka > clng(0) then
+    nDni = clng(trans_.getobj(TYPEID_N5PLSTAWKA,idStawka).curWartosc)
+  end if
+  
+  if oSprz.strExtra1 = "" and isBlokadaFvatExt(oSprz,strSodName,"<>",nDni) then
+    trans_.message 7000, 0, "Blokada zapisu dokumentu. Kontrahent posiada niezapłaconą fakturę z przekroczonym terminem płatności powyżej " + CStr(nDni) + " dni"
+    exit function
+  end if
+ 
+  'blokada wystawienia faktury z terminem płatności dłuższym niż zapisany w kartotece
+  if isBlokadaTermin(oSprz) then
+    trans_.message 7000, 0, "Blokada zapisu dokumentu. Termin płatności nie może być dłuższy niż zapisany w kartotece kontrahenta."
+    exit function
+  end if 
+
+  'blokada wystawienia faktury na przelew gdy suma brutto nie przekracza 300 PLN
+  if oSprz.strExtra1 = "" and isBlokadaPrzelew300(oSprz) then
+    trans_.message 7000, 0, "Blokada zapisu dokumentu. Wartość brutto na przelew nie może być mniejsza od 300 PLN."
+    exit function
+  end if
+
+  'blokada wystawienia faktury na przelew w przypadku gdy firma nie posiada dokumentów klienta
+  if not isInfoDok(oSprz) then
+    trans_.message 7000, 0, "Blokada zapisu dokumentu na przelew. Firma nie posiada dokumentów klienta."
+    exit function
+  end if 
+
+  'blokada zapisu faktury za pobraniem gdy nie zostanie podana kwota pobrania
+  if not oSprz.pSposobPlatnosci is nothing then
+    if oSprz.pSposobPlatnosci.eTyp = N5SPOSPLAT_ZA_POBRANIEM then
+      if oSprz.curExtra5 = ccur(0.0) then
+        trans_.message 7000, 0, "Dla wybranego sposobu płatności trzeba wpisać kwotę pobrania."
+        exit function        
+      end if
+    end if
+  end if  
+
+  'blokada wystawienia faktury gdy nie jest wypełniony sposób dostawy
+  if isBlokadaSposDost(oSprz) then
+    trans_.message 7000, 0, "Blokada zapisu dokumentu. Pole sposób dostawy musi być wypełnione."
+    exit function
+  end if  
+  
+  CheckRightsForSave = true
+end function
+
+'------------------------------------------------------------------------------------------------------
+'Zwraca true gdy użytkownik ma nadane uprawnienie do odksięgowania faktury mającej przypisaną korektę
+'------------------------------------------------------------------------------------------------------
+function FindRightOdksieg(): FindRightOdksieg = true  
+  dim idGroup, strWhere
+  idGroup = trans_.findobjid(TYPEID_N5SODGROUP,"strNazwa='Operacje specjalne'")
+  if idGroup > clng(0) then
+    strWhere = "select idobj from n5sod where pSODGroup = " + cstr(idGroup) + " and strNazwa like 'Pozwól na odksięgowanie faktury mającej przypisaną korektę'"
+    if FindFreeRight(strWhere) then
+      exit function
+    end if
+  end if
+  FindRightOdksieg = false    
+end function
+
+'-----------------------------------------------------------------------------------------------------------------
+'Zwraca true gdy użytkownik ma nadane uprawnienie do zapisu dokumentu sprzedaży bez rozliczenia VAT (Alma Trend)
+'-----------------------------------------------------------------------------------------------------------------
+function FindRightForSaveBezVAT(): FindRightForSaveBezVAT = true  
+  dim idGroup, strWhere
+  idGroup = trans_.findobjid(TYPEID_N5SODGROUP,"strNazwa='Operacje specjalne'")
+  if idGroup > clng(0) then
+    strWhere = "select idobj from n5sod where pSODGroup = " + cstr(idGroup) + " and strNazwa like 'Pozwól na zapis dokumentu sprzedaży bez rozliczenia VAT'"
+    if FindFreeRight(strWhere) then
+      exit function
+    end if
+  end if
+  FindRightForSaveBezVAT = false    
+end function
+
+'----------------------------------------------------------------------------------------------------------------------------
+'Zwraca true gdy użytkownik ma nadane uprawnienie ograniczonego dostępu do dostawców na wybranych formularzach (Alma Trend)
+'----------------------------------------------------------------------------------------------------------------------------
+function FindRightSelectDostawca(): FindRightSelectDostawca = true
+  dim idGroup, strWhere
+  idGroup = trans_.findobjid(TYPEID_N5SODGROUP,"strNazwa='Operacje specjalne'")
+  if idGroup > clng(0) then
+    strWhere = "select idobj from n5sod where pSODGroup = " + cstr(idGroup) + " and strNazwa like 'Ograniczony dostęp do wyboru dostawcy na formularzach'"
+    if FindBlockRight(strWhere) then
+      exit function
+    end if
+  end if
+  FindRightSelectDostawca = false    
+end function
+
+'------------------------------------------------------------------------------------------------------
+'Zwraca true gdy użytkownik ma nadane uprawnienie do zapisu faktury sprzedaży z kwotami zerowymi (STD)
+'------------------------------------------------------------------------------------------------------
+function FindRightFakturaZero(): FindRightFakturaZero = true  
+  dim idGroup, strWhere
+  idGroup = trans_.findobjid(TYPEID_N5SODGROUP,"strNazwa='Operacje specjalne'")
+  if idGroup > clng(0) then
+    strWhere = "select idobj from n5sod where pSODGroup = " + cstr(idGroup) + " and strNazwa like 'Pozwól na zapis faktury sprzedaży z kwotami zerowymi'"
+    if FindFreeRight(strWhere) then
+      exit function
+    end if
+  end if
+  FindRightFakturaZero = false    
+end function
+
+'------------------------------------------------------------------------------------------------------------
+'Zwraca true gdy użytkownik ma nadane uprawnienie do odblokowania zatwierdzonego arkusza inwentaryzacyjnego
+'------------------------------------------------------------------------------------------------------------
+function FindRightForUnblockArkInw(): FindRightForUnblockArkInw = true  
+  dim idGroup, strWhere
+  idGroup = trans_.findobjid(TYPEID_N5SODGROUP,"strNazwa='Operacje specjalne'")
+  if idGroup > clng(0) then
+    strWhere = "select idobj from n5sod where pSODGroup = " + cstr(idGroup) + " and strNazwa like 'Pozwól na odblokowanie zatwierdzonego arkusza inwentaryzacyjnego'"
+    if FindFreeRight(strWhere) then
+      exit function
+    end if
+  end if
+  FindRightForUnblockArkInw = false    
+end function
+
+'---------------------------------------------------------------
+'Sprawdzanie uprawnienia do oddziałów raportu Rentowności maszyn
+'---------------------------------------------------------------
+function FindRightOddzial(byval strNazwa) : FindRightOddzial = false
+	dim strWhere : strWhere = "select idobj from n5sod where strNazwa like 'Dostęp do " + strNazwa + "%'"
+	FindRightOddzial = FindFreeRight(strWhere)
+end function
+
+'------------------------------------------------------------------------------------------
+'Zwraca where z IdObj wybranego roku księgowego (ograniczenia dla rejestrów w raportach AT)
+'------------------------------------------------------------------------------------------
+function GetIdRokKsieg() : GetIdRokKsieg = ""
+	dim pM43009 : set pM43009 = doc_.getmodule(43009)
+	pM43009.prepare_multi_selection TYPEID_N5ROKKSIEG, "Wybór roku księgowego","", "dDataRozp"
+	dim oArrayIdRejestr : set oArrayIdRejestr = pM43009.run_multi_browser()
+  
+  dim strIdRokKsieg
+  if not oArrayIdRejestr is nothing then
+    dim nIdRejDok
+    for each nIdRejDok in oArrayIdRejestr
+      strIdRokKsieg = strIdRokKsieg + CStr(nIdRejDok) + ","
+    next
+    if Len(strIdRokKsieg) = 0 then
+      strIdRokKsieg = "0"
+    else
+      strIdRokKsieg = strIdRokKsieg + "0"
+    end if
+    
+    GetIdRokKsieg = "and pRokKsieg in (" + strIdRokKsieg + ")"
+  end if
+end function
+
+'-------------------------------------------------------------------------------------
+'zwraca false gdy cena sprzedaży dla danego produktu jest niższa od ostatniej dostawy
+'-------------------------------------------------------------------------------------
+function checkCenyBazowe(byref pZam): checkCenyBazowe = true
+  'tylko dla użytkowników z ograniczonym dostępem do danych klienta
+  if HARUI_BLOCKADE(UAR_BLOKADA_WYSTAWIANIA_ZO_PONIZEJ_CENY_DOSTAWY,false) then
+    dim pPoz
+    dim nLP: nLP = 1
+    for each pPoz in pZam.listPozycje
+      'pobierz cenę ostatniej dostawy z PZ (true => spoza grupy AZJA)
+      dim curCenaDost: curCenaDost = getCenaDost(pPoz,true)
+      if curCenaDost = ccur(-1.0) then
+        'pobierz cenę ostatniej dostawy z PZ (z grupy AZJA)
+        curCenaDost = getCenaDost(pPoz,false)
+      end if
+      
+      'jeżeli znajdzie dostawę to porównuje ceny
+      if curCenaDost <> ccur(-1.0) then
+        dim curCenaNettoWal: curCenaNettoWal = pPoz.curCenaNettoWal
+        
+        'gdy waluta zamówienia różna od PLN
+        dim pFirma: set pFirma = getcurrentFirma()
+        if not pZam.pWaluta is pFirma.pWaluta then
+          curCenaNettoWal = przelicz_walute(curCenaNettoWal, pZam.curKurs) 
+        end if
+        
+        if curCenaNettoWal < curCenaDost then
+          trans_.message 7000, 0, "Zapis niemożliwy. Cena sprzedaży netto dla produktu na pozycji " + CStr(nLP) + " jest niższa od ceny ostatniej dostawy." 
+          checkCenyBazowe = false
+          exit function
+        end if
+      end if
+      nLP = nLP + 1
+    next
+  end if
+end function
+
+'--------------------------------------
+'zwraca cenę ostatniej dostawy produktu
+'--------------------------------------
+function getCenaDost(byref pPoz, byref bBezAzja): getCenaDost = ccur(-1.0)
+  if not pPoz.pProdukt is nothing then
+    'domyślnie spoza grupy AZJA
+    dim strDostawca: strDostawca = "and (grup.strNazwa <> 'AZJA' or grup.strNazwa is null)" + vbNewLine
+    if not bBezAzja then
+      strDostawca = "and grup.strNazwa = 'AZJA'" + vbNewLine
+    end if
+    dim strSQL: strSQL = "select top 1 'cena'=om.gmo_curCena from view_operacje_magazynowe om " + vbNewLine +_
+                         "inner join n5produkt as prod on om.gmo_pProd = prod.idobj " + vbNewLine +_ 
+                         "inner join n5opakowanie_produktu opz on om.gmo_pOpak = opz.idobj " + vbNewLine +_ 
+                         "inner join  n5magazyn as mag on om.gmo_pMag = mag.idobj " + vbNewLine +_ 
+                         "inner join n5jednostka as jedn on opz.pJednOpak = jedn.idobj " + vbNewLine +_
+                         "left join n5klient dost on prod.prod_pDostawca = dost.IdObj " + vbNewLine +_
+                         "left join n5grupaklient grup on dost.pGrupaKlient = grup.IdObj " + vbNewLine +_
+                         "where om.gmo_curIlosc > 0 and prod.IdObj = " + CStr(pPoz.pProdukt.IdObj) + " and nTypDok = N5REJESTRDOK__PZ " + vbNewLine +_
+                         strDostawca +_
+                         "order by om.gmo_nNumOp desc,om.gmo_nLP desc"
+    dim oRS: set oRS = trans_.createadors(strSQL)
+    if not oRS.EOF then
+      getCenaDost = ccur(oRS("cena").value)
+    end if
+  end if
+end function
+
+
+'----------------------------------------------------	
+'Wyszukuje dane w GUS i pokaż formularz potwierdzenia		
+'----------------------------------------------------	
+function FindInGUS(byref hli)
+  dim nIdKlient: nIdKlient = clng(hli.prop(2))
+  dim strNIP: strNIP = cstr(hli.prop(3))
+  dim nIsNew: nIsNew = cstr(hli.prop(4))
+  dim nFirmaOsoba: nFirmaOsoba = clng(hli.prop(5))
+  dim strNazwa: strNazwa = ""
+  dim strMiejscowosc: strMiejscowosc = ""
+  dim strKraj: strKraj = "Polska"
+  dim strWojewodztwo: strWojewodztwo = ""
+  dim strPowiat: strPowiat = ""
+  dim strGmina: strGmina = ""
+  dim strUlica: strUlica = ""
+  dim strNrDomu: strNrDomu = ""
+  dim strNrLokalu: strNrLokalu = ""
+  dim strEmail: strEmail = ""
+  dim strKod: strKod = ""
+  
+  'wyszukaj klienta w GUS o danym NIP
+  dim bFind: bFind = GetDataGUS(strNIP, strNazwa, strMiejscowosc, strKraj, strWojewodztwo, strPowiat, strGmina, strUlica, strNrDomu, strNrLokalu, strEmail, strKod)
+  if bFind then
+    'znalazł klienta
+    dim pHli
+    set pHli = doc_.createhlistr("varCmd = CMD_OPEN_STATIC_PAGE varDestPage = PAGE_FORM_KLIENT_GUS")
+    pHli.prop(100) = cstr(nIdKlient)
+    pHli.prop(101) = cstr(strNIP)
+    pHli.prop(102) = cstr(replace(strNazwa, """", ""))
+    pHli.prop(103) = cstr(strMiejscowosc)
+    pHli.prop(104) = cstr(strKraj)
+    pHli.prop(105) = cstr(strWojewodztwo)
+    pHli.prop(106) = cstr(strPowiat)
+    pHli.prop(107) = cstr(strGmina)
+    pHli.prop(108) = cstr(nIsNew)
+    pHli.prop(109) = cstr(nFirmaOsoba)
+    pHli.prop(110) = cstr(strUlica)
+    pHli.prop(111) = cstr(strNrDomu)
+    pHli.prop(112) = cstr(strNrLokalu)
+    pHli.prop(113) = cstr(strEmail)
+    pHli.prop(114) = cstr(strKod)
+    dim pPage: set pPage = doc_.getpagehli(pHli)
+    if not pPage is nothing then
+      pPage.domodalauto()
+    end if
+  else
+    'nie znalazł klienta
+    MessageBox "Nie mogę wyszukać klienta o danym NIP w bazie GUS." , "Wyszukiwanie klienta", vbOKOnly, vbInformation
+  end if
+end function
+
+'--------------------
+'wyszukuje dane w GUS
+'--------------------
+function GetDataGUS(byref strNIP, byref strNazwa, byref strMiejscowosc, byref strKraj, byref strWojewodztwo, byref strPowiat, byref strGmina, byref strUlica, byref strNrDomu, byref strNrLokalu, byref strEmail, byref strKod)   
+  GetDataGUS = false
+ 
+  if has_nxm_feature("get_pl_regon_company_data") then
+    dim perf: set perf = doc_.performing("Trwa wyszukiwanie kontrahenta w bazie GUS...")
+    dim oCompanyData: set oCompanyData = nx_.nxm_features.get_pl_regon_company_data(strNIP)
+    set perf = nothing
+    dim strMsg: strMsg = ""
+    
+    if IsServiceError(nx_.nxm_features, strMsg) then
+      trans_.message 7000, 0, "Nie udało się pobrać danych z serwisu GUS. Opis błędu: " + strMsg
+    else
+      if oCompanyData.FullName <> Empty then
+        strNazwa = oCompanyData.FullName
+      end if
+      if oCompanyData.LocationName <> Empty then
+        strMiejscowosc = oCompanyData.LocationName 
+      end if
+      if oCompanyData.CountryName <> Empty then
+        strKraj = oCompanyData.CountryName
+      end if
+      if oCompanyData.TopAdminUnitName <> Empty then
+        strWojewodztwo = oCompanyData.TopAdminUnitName
+      end if
+      if oCompanyData.SubAdminUnitName <> Empty then
+        strPowiat = oCompanyData.SubAdminUnitName
+      end if
+      if oCompanyData.BaseAdminUnitName <> Empty then
+        strGmina = oCompanyData.BaseAdminUnitName
+      end if
+      if oCompanyData.Street <> Empty then
+        strUlica = oCompanyData.Street
+      end if
+      if oCompanyData.Building <> Empty then
+        strNrDomu = oCompanyData.Building
+      end if
+      if oCompanyData.Apartment <> Empty then
+        strNrLokalu = oCompanyData.Apartment
+      end if
+      if oCompanyData.Email <> Empty then
+        strEmail = oCompanyData.Email
+      end if    
+      if oCompanyData.ZIPCode <> Empty then
+        strKod = GetZipCode(oCompanyData.ZIPCode)
+      end if
+  
+      GetDataGUS = true
+    end if
+  else
+    'klient nie posiada odpowiedniej biblioteki z funkcjonalnością
+    trans_.message 7000, 0, "Żądana funkcjonalność jest nieosiągalna lub wymaga odblokowania"
+  end if
+end function
+
+'----------------------------------------
+'konwertuje kod pocztowy na postać xx-xxx
+'----------------------------------------
+function GetZipCode(byval strZipCode): GetZipCode = strZipCode
+	dim iPos: iPos = InStr(strZipCode,"PL")
+	if iPos > 0 then
+		strZipCode = Mid(strZipCode,iPos + 2)
+		if Len(strZipCode) = 5 then
+			GetZipCode = Mid(strZipCode,1,2) + "-" + Mid(strZipCode,3)
+		end if
+	end if
+end function
+
+'-------------------------------------------------------
+'zwraca true gdy wystąpi błąd podaczas wykonania serwisu
+'-------------------------------------------------------
+function IsServiceError(byref nxm_features, byref error_desc)
+  select case nxm_features.last_error_code
+    case "000"
+      error_desc = ""
+      IsServiceError = false
+      exit function
+    case "CORE.E300"
+      error_desc = "Nie posiadasz odpowiedniej licencji do wykonania żądanej operacji"      
+    case else
+      error_desc = nxm_features.last_error_description
+  end select
+  IsServiceError = true
+end function
+
+'-------------------------
+'wyszukuje klienta w bazie
+'-------------------------
+function FindInDB(byref strNIP, byref nIdKlient)
+  FindInDB = clng(0)
+  dim strSQL: strSQL = "select IdObj from n5klient where Replace(strNIP,'-','') = Replace('" + strNIP + "','-','') order by IdObj"
+  dim oRS: set oRS = trans_.createadors(strSQL)
+  do while not oRS.EOF
+    FindInDB = clng(oRS(0).value)
+    if FindInDB = nIdKlient then
+      exit do
+    end if
+    oRS.MoveNext
+  loop 
+end function
+
+'--------------------------------	
+'Sprawdza status podatnika VAT PL	
+'--------------------------------	
+function CheckTaxId(byref hli)
+  dim strNIP: strNIP = cstr(hli.prop(1))
+  dim strCountry: strCountry = cstr(hli.prop(2))
+  dim bActiveUE: bActiveUE = false
+  dim bActivePL: bActivePL = false
+
+  CheckTaxId = VerifyTaxId(strNIP, bActivePL) or VerifyViesTaxId(strNIP, strCountry, bActiveUE)
+  hli.prop(3) = bActiveUE
+  hli.prop(4) = bActivePL
+end function
+
+'--------------------------------	
+'Sprawdza status podatnika VAT UE	
+'--------------------------------	
+function CheckViesTaxId(byref hli)
+  dim strNIP: strNIP = cstr(hli.prop(1))
+  dim strCountry: strCountry = cstr(hli.prop(2))
+  dim bActiveUE: bActiveUE = false
+  
+  CheckViesTaxId = VerifyViesTaxId(strNIP, strCountry, bActiveUE)
+  hli.prop(3) = bActiveUE
+end function
+
+'----------------------------------
+'sprawdza status podatnika VAT w PL
+'----------------------------------
+function VerifyTaxId(byref strNIP, byref bActive)
+  VerifyTaxId = false
+
+  if has_nxm_feature("verify_pl_tax_id") then
+    dim perf: set perf = doc_.performing("Trwa sprawdzanie statusu podatnika VAT PL...")
+    bActive = nx_.nxm_features.verify_pl_tax_id(strNIP)
+    set perf = nothing
+    dim strMsg: strMsg = ""
+    
+    if IsServiceError(nx_.nxm_features, strMsg) then
+      trans_.message 7000, 0, "Nie udało się pobrać danych z serwisu Ministerstwa. Opis błędu: " + strMsg
+    else  
+        VerifyTaxId = true
+    end if
+  else
+    'klient nie posiada odpowiedniej biblioteki z funkcjonalnością
+    trans_.message 7000, 0, "Żądana funkcjonalność jest nieosiągalna lub wymaga odblokowania"
+  end if  
+end function
+
+'---------------------------------
+'sprawdz status podatnika VAT w EU
+'---------------------------------
+function VerifyViesTaxId(byref strNIP, byref strCountry, byref bActive)
+  VerifyViesTaxId = false
+
+  if has_nxm_feature("verify_vies_tax_id") then
+    dim perf: set perf = doc_.performing("Trwa sprawdzanie statusu podatnika VAT UE...")
+    bActive = nx_.nxm_features.verify_vies_tax_id(strNIP, strCountry)
+    set perf = nothing
+    dim strMsg: strMsg = ""
+    
+    if IsServiceError(nx_.nxm_features, strMsg) then
+      trans_.message 7000, 0, "Nie udało się pobrać danych z serwisu VIES. Opis błędu: " + strMsg
+    else  
+        VerifyViesTaxId = true
+    end if
+  else
+    'klient nie posiada odpowiedniej biblioteki z funkcjonalnością
+    trans_.message 7000, 0, "Żądana funkcjonalność jest nieosiągalna lub wymaga odblokowania"
+  end if
+end function
+
+'------------------------------------------------------------------------
+'sprawdza czy klient posiada należności przeterminowane na n dni lub m zł
+'------------------------------------------------------------------------
+function checkNaleznosciPrzeterm(byref pKlient): checkNaleznosciPrzeterm = false
+  if not pKlient is nothing then
+    'gdy wpisano ilość dni spóźnienia lub kwote zaległości
+    if pKlient.kli_iTerminSkonta > clng(0) and pKlient.kli_curWartSkonta > ccur(0) then
+      dim strSQL
+      strSQL = "select 'id_klient'=t_klient.IdObj " +_
+               "from n5transakcja_operacja as t_trop " +_
+               "inner join n5transakcja as t_trans on t_trop.trop_pTransakcja = t_trans.idobj " +_ 
+               "left outer join n5klient as t_klient on t_trans.wrefPodmiot = t_klient.IdObj AND t_trans.wrefPodmiot_wrt = TYPEID_N5KLIENT " +_
+               "where ((%3 - t_trans.dDataWym) > %1) and (t_trans.eTyp = 2) and " +_ 
+               "(t_trans.dDataWym < %3) and (t_trop.trop_dDataOp <= %3) and " +_ 
+               "t_trans.IdObj not in (select pTransakcja from n5sprzedaz where pRejestrDok in (select IdObj from n5rejestrdok where eTyp in (N5REJESTRDOK_DOSTAWA,N5REJESTRDOK_KOR_DOSTAWA))) " +_ 
+               "and t_trans.wrefPodmiot_wrt = TYPEID_N5KLIENT and t_klient.IdObj = " + CStr(pKlient.IdObj) + " " +_
+               "group by t_klient.IdObj " +_ 
+               "having sum(t_trop.trop_curWn - t_trop.trop_curMa) > %2"
+      strSQL = trans_.afc.convert.Formatter(strSQL)(pKlient.kli_iTerminSkonta)(pKlient.kli_curWartSkonta)_
+               (trans_.afc.convert.date2SQL(trans_.var(GVAR_TODAY))).Done()
+      dim oRS: set oRS = trans_.createadors(strSQL)
+      if not oRS.EOF then
+        checkNaleznosciPrzeterm = true       
+      end if
+    end if
+  end if
+end function
+
+'-------------------------------------------------
+'ustawia blokadę na kliencie ręczną i automatyczną
+'-------------------------------------------------
+function setBlokadaKlienta(byval IdKlient)
+  dim pSubTrans: set pSubTrans = trans_.createsubtran()
+  dim pKlient: set pKlient = trans_.getobj(TYPEID_N5KLIENT,IdKlient)  
+  'gdy wyłączona jest blokada automatyczna włącz obie
+  if pKlient.kli_cCennik = "0" then
+    'ustaw blokadę na kliencie
+    pKlient.kli_cCennik = "1"
+    pKlient.kli_cBlokadaSprz = "1"
+    if not trans_.saveobjects() then 
+    end if
+  end if   
+  set pSubTrans = nothing
+end function
+
+'-----------------------------------------------
+'usuwa blokadę na kliencie ręczną i automatyczną
+'-----------------------------------------------
+function remBlokadaKlienta(byval IdKlient)
+  dim pSubTrans: set pSubTrans = trans_.createsubtran()
+  dim pKlient: set pKlient = trans_.getobj(TYPEID_N5KLIENT,IdKlient)  
+  'usuń blokadę na kliencie
+  if pKlient.kli_cCennik = "1" then
+    pKlient.kli_cCennik = "0"
+    pKlient.kli_cBlokadaSprz = "0"
+    if not trans_.saveobjects() then 
+    end if  
+  end if
+  set pSubTrans = nothing
+end function
+
+'------------------------------------------------------------------------------------------------------------------------------
+'Zwraca true gdy użytkownik ma nadane uprawnienie do zapisu faktury i zamówienia pomimo włączonej blokady sprzedaży (Abakus)
+'------------------------------------------------------------------------------------------------------------------------------
+function FindRightForSaveDokHandl(): FindRightForSaveDokHandl = true  
+  dim idGroup, strWhere
+  idGroup = trans_.findobjid(TYPEID_N5SODGROUP,"strNazwa='Operacje specjalne'")
+  if idGroup > clng(0) then
+    strWhere = "select idobj from n5sod where pSODGroup = " + cstr(idGroup) + " and strNazwa like 'Pozwól na zapis dokumentów pomimo włączonej blokady sprzedaży'"
+    if FindFreeRight(strWhere) then
+      exit function
+    end if
+  end if
+  FindRightForSaveDokHandl = false    
+end function
+
+'------------------------------------------------------------------------
+'sprawdza czy klient posiada należności przeterminowane na n dni lub m zł
+'------------------------------------------------------------------------
+function checkNaleznosciPrzetermParam(byref pKlient, byval nDni, byval curKwota): checkNaleznosciPrzetermParam = false
+  if not pKlient is nothing then
+    dim strSQL
+    strSQL = "select 'id_klient'=t_klient.IdObj " +_
+              "from n5transakcja_operacja as t_trop " +_
+              "inner join n5transakcja as t_trans on t_trop.trop_pTransakcja = t_trans.idobj " +_ 
+              "left outer join n5klient as t_klient on t_trans.wrefPodmiot = t_klient.IdObj AND t_trans.wrefPodmiot_wrt = TYPEID_N5KLIENT " +_
+              "where ((%3 - t_trans.dDataWym) > %1) and (t_trans.eTyp = 2) and " +_ 
+              "(t_trans.dDataWym < %3) and (t_trop.trop_dDataOp <= %3) and " +_ 
+              "t_trans.IdObj not in (select pTransakcja from n5sprzedaz where pRejestrDok in (select IdObj from n5rejestrdok where eTyp in (N5REJESTRDOK_DOSTAWA,N5REJESTRDOK_KOR_DOSTAWA))) " +_ 
+              "and t_trans.wrefPodmiot_wrt = TYPEID_N5KLIENT and t_klient.IdObj = " + CStr(pKlient.IdObj) + " " +_
+              "group by t_klient.IdObj " +_ 
+              "having sum(t_trop.trop_curWnEwid - t_trop.trop_curMaEwid) > %2"
+    strSQL = trans_.afc.convert.Formatter(strSQL)(nDni)(curKwota)_
+              (trans_.afc.convert.date2SQL(trans_.var(GVAR_TODAY))).Done()
+    dim oRS: set oRS = trans_.createadors(strSQL)
+    if not oRS.EOF then
+      checkNaleznosciPrzetermParam = true       
+    end if
+  end if
+end function
+
+'-----------------------------------------------
+'klasa reprezentująca indeks oraz ilość produktu
+'-----------------------------------------------
+class cPozProdukt
+  public m_nIdProd             'IdObj produktu
+  public m_curIlosc            'ilość produktu
+  
+  public sub class_initialize()
+    m_nIdProd = clng(0)
+    m_curIlosc = ccur(0.0)
+  end sub  
+end class
+
+'------------------------------------------------------------------------------------------------
+'sprawdza czy do faktury sprzedaży jest podpięta WZ i czy zgadzają się ilości wg indeksu produktu
+'------------------------------------------------------------------------------------------------
+function CheckDokMag(byref oSprzedaz, byval bInsert): CheckDokMag = false
+  dim oArrayProdSprz: set oArrayProdSprz = nx_.new_array()
+  dim oArrayProdWZ: set oArrayProdWZ = nx_.new_array()
+  
+  'sprawdź czy na pozycji sprzedaży są towary
+  if not IsTowarInSprz(oSprzedaz) then
+    exit function
+  end if
+  
+  'przy update sprzedaży pobież idobj WZ z bazy
+  if not bInsert then
+    trans_.var(GVAR_LIST_IDWZ) = "select IdObj from n5dokmag where wrefDokHandl = " + CStr(oSprzedaz.IdObj) + " and wrefDokHandl_wrt = TYPEID_N5SPRZEDAZ and nTypDok = N5REJESTRDOK__WZ"
+  end if
+  
+  if not trans_.isvar(GVAR_LIST_IDWZ) then
+    trans_.var(GVAR_LIST_IDWZ) = "0"
+  end if
+  
+  'sprawdź czy do faktury jest podpięta WZ
+  if trans_.isvar(GVAR_LIST_IDWZ) then
+    if trans_.var(GVAR_LIST_IDWZ) <> "" then
+      dim oCursor: set oCursor = trans_.createrawcursor(TYPEID_N5DOKMAG , "IdObj in (" + trans_.var(GVAR_LIST_IDWZ) + ")", "" , "")
+    
+      dim oDokMag, oPozWZ, nIndex
+      for each oDokMag in oCursor
+        for each oPozWZ in oDokMag.listPozycje
+          
+          nIndex = FindIndexArray(oArrayProdWZ,oPozWZ.pProdukt.IdObj)
+          if nIndex < 0 then
+            dim oProduktWZ: set oProduktWZ = new cPozProdukt
+            oProduktWZ.m_nIdProd = oPozWZ.pProdukt.IdObj
+            oProduktWZ.m_curIlosc = oPozWZ.curIloscOpak
+            oArrayProdWZ.Add oProduktWZ
+          else  
+            'sumuj ilość
+            oArrayProdWZ(nIndex).m_curIlosc = oArrayProdWZ(nIndex).m_curIlosc + oPozWZ.curIloscOpak
+          end if
+        
+        next
+      next
+      
+      'pobierz produkty z faktury
+      dim oPozSprz
+      for each oPozSprz in oSprzedaz.listPozycje
+        if oPozSprz.pProdukt.eRodzaj = N5PRODUKT_TOWAR then
+        
+          nIndex = FindIndexArray(oArrayProdSprz,oPozSprz.pProdukt.IdObj)
+          if nIndex < 0 then
+            dim oProduktSprz: set oProduktSprz = new cPozProdukt
+            oProduktSprz.m_nIdProd = oPozSprz.pProdukt.IdObj
+            oProduktSprz.m_curIlosc = oPozSprz.curIloscOpak
+            oArrayProdSprz.Add oProduktSprz
+          else  
+            'sumuj ilość
+            oArrayProdSprz(nIndex).m_curIlosc = oArrayProdSprz(nIndex).m_curIlosc + oPozSprz.curIloscOpak
+          end if
+        
+        end if
+      next    
+      
+      'porównaj listy z produktami
+      if not CompareProd(oArrayProdSprz,oArrayProdWZ) then
+        'nie zgadzają się ilości faktury i WZ
+        CheckDokMag = true
+      end if      
+    else
+      CheckDokMag = true
+    end if
+  else
+    CheckDokMag = true
+  end if
+  trans_.var(GVAR_LIST_IDWZ) = "0"
+end function
+
+'--------------------------------------------------------------
+'zwraca true gdy na pozycji sprzedaży jest przynajmniej 1 towar
+'--------------------------------------------------------------
+function IsTowarInSprz(byref oSprzedaz): IsTowarInSprz = false
+  dim pPoz
+  for each pPoz in oSprzedaz.listPozycje
+    if pPoz.pProdukt.eRodzaj = N5PRODUKT_TOWAR then
+      IsTowarInSprz = true
+      exit function
+    end if
+  next
+end function
+
+'--------------------------------------------
+'zwraca indeks produktu z listy o danym IdObj
+'--------------------------------------------
+function FindIndexArray(byref oArray, byref IdProd): FindIndexArray = clng(-1)
+  dim iter
+  for iter = 0 to oArray.upper_index
+    if oArray(iter).m_nIdProd = IdProd then
+      FindIndexArray = clng(iter)
+      exit function
+    end if
+  next
+end function
+
+'------------------------------------------------------------
+'porównuje 2 listy z produktami - zwraca false gdy się różnią
+'------------------------------------------------------------
+function CompareProd(byref oArrayProdSprz, byref oArrayProdWZ): CompareProd = true
+  if oArrayProdSprz.upper_index <> oArrayProdWZ.upper_index then
+    CompareProd = false
+    exit function
+  end if
+  
+  'sprawdzaj produkty
+  dim oProdukt
+  for each oProdukt in oArrayProdSprz
+    dim nIndex: nIndex = FindIndexArray(oArrayProdWZ,oProdukt.m_nIdProd)
+    if nIndex < 0 then
+      CompareProd = false
+      exit function
+    else
+      if oProdukt.m_curIlosc <> oArrayProdWZ(nIndex).m_curIlosc then
+        CompareProd = false
+        exit function        
+      end if
+    end if
+  next
+end function
+
+'--------------------------------------------------------------------------------------------------
+'Zwraca true gdy użytkownik ma nadane uprawnienie do odkrywania zakładek na karcie pracownika (IOW)
+'--------------------------------------------------------------------------------------------------
+function FindRightForShowAllBar(): FindRightForShowAllBar = true  
+  dim idGroup, strWhere
+  idGroup = trans_.findobjid(TYPEID_N5SODGROUP,"strNazwa='Operacje specjalne'")
+  if idGroup > clng(0) then
+    strWhere = "select idobj from n5sod where pSODGroup = " + cstr(idGroup) + " and strNazwa like 'Pokaz zakladki na karcie pracownika'"
+    if FindFreeRight(strWhere) then
+      exit function
+    end if
+  end if
+  FindRightForShowAllBar = false    
+end function
+
+'---------------------------------------------------------------------------------------------
+'Zwraca true gdy użytkownik ma ustawioną blokadę edycji wybranych pól na karcie produktu (IOW)
+'---------------------------------------------------------------------------------------------
+function FindRightBlokadaKartyProd(): FindRightBlokadaKartyProd = true  
+  dim idGroup, strWhere
+  idGroup = trans_.findobjid(TYPEID_N5SODGROUP,"strNazwa='Operacje specjalne'")
+  if idGroup > clng(0) then
+    strWhere = "select idobj from n5sod where pSODGroup = " + cstr(idGroup) + " and strNazwa like 'Blokada edycji wybranych pol na karcie produktu'"
+    if FindBlockRight(strWhere) then
+      exit function
+    end if
+  end if
+  FindRightBlokadaKartyProd = false
+end function
+
+'----------------------------------------
+'sprawdza status rachunku bankowego w KAS
+'----------------------------------------
+function CheckBankAccount(byref strNIP, byref strRachunek, byref strAnswer)
+  CheckBankAccount = false
+
+  if has_nxm_feature("verify_pl_bank_account") then
+    dim perf: set perf = doc_.performing("Trwa sprawdzanie statusu rachunku bankowego w KAS...")
+    strAnswer = nx_.nxm_features.verify_pl_bank_account(strNIP, strRachunek, trans_.var(GVAR_TODAY))
+    
+#ifdef _DEBUG
+  trans_.message 7000, 0, "KAS=" + strAnswer
+#endif
+    
+    set perf = nothing
+    dim strMsg: strMsg = ""
+    
+    if IsServiceError(nx_.nxm_features, strMsg) then
+      trans_.message 7000, 0, "Nie udało się pobrać danych z serwisu. Opis błędu: " + strMsg
+    else  
+        CheckBankAccount = true
+    end if
+  else
+    'klient nie posiada odpowiedniej biblioteki z funkcjonalnością
+    trans_.message 7000, 0, "Żądana funkcjonalność jest nieosiągalna lub wymaga odblokowania"
+  end if  
+end function
+
+'---------------------------------------------------------
+'sprawdza status dla pojedynczego rachunku bankowego w KAS
+'---------------------------------------------------------
+function RachStatusKas(byref strNIP, byref strRachunek, byref strKraj): RachStatusKas = ""
+	strNIP = replace(trim(strNIP),"-","")
+	strRachunek = replace(trim(strRachunek)," ","")
+	if (strNIP = "") or (not IsNumeric(strNIP)) or (strRachunek = "") or (not IsNumeric(strNIP)) or (Len(strRachunek) <> 26) or (strKraj <> "PL") then
+		exit function
+	end if
+
+	dim strAnswer
+	if CheckBankAccount(strNIP, strRachunek, strAnswer) then
+		RachStatusKas = strAnswer
+		if Len(RachStatusKas) > 1 then
+			RachStatusKas = left(RachStatusKas,1) + ";" + mid(RachStatusKas,2)
+		end if
+	end if
+end function
+
+'-------------------------------------------------------------------
+'ustawia komunikat w kontrolce oraz koloruje tło na ziolono/czerwono
+'-------------------------------------------------------------------
+function StatusKasDesc(byref strStatusKAS, byval nNrRach, byref oCtrl): StatusKasDesc = ""
+	dim strText: strText = GetKasStatus(strStatusKAS, nNrRach)
+	oCtrl.parent.backcolor = GetColorForKas(strText)
+	StatusKasDesc = strText
+end function
+
+'--------------------------------------------------------------------
+'skleja rezultat sprawdzenia rachunku bankowego w KAS do jednego pola
+'--------------------------------------------------------------------
+function SetKasStatus(byref strAnswer, byref dDateToday): SetKasStatus = ""
+	if strAnswer <> "" then
+		SetKasStatus = strAnswer + "|" + nx_.display.fulldate(dDateToday)
+	end if
+end function
+
+'-------------------------------------------------
+'zwraca komunikat tekstowy TAK/NIE dla statusu KAS
+'-------------------------------------------------
+function GetKasStatus(byval strStatusKAS, byval nNrRach): GetKasStatus = ""
+	if strStatusKAS <> "" then
+		dim arrRach: arrRach = Split(strStatusKAS,"|")
+		if ubound(arrRach) >= nNrRach - 1 then
+			dim arr: arr = Split(arrRach(nNrRach - 1),";")
+			if ubound(arr) > 0 then
+				GetKasStatus = replace(replace(arr(0),"0","NIE"),"1","TAK")
+			end if			
+		end if
+	end if
+end function
+
+'-------------------------------------
+'zwraca kod odpowiedzi dla statusu KAS
+'-------------------------------------
+function GetKod(byval strAnswer1): GetKod = ""
+	if len(strAnswer1) > 2 then
+		GetKod = mid(strAnswer1,3)
+	end if
+end function
+
+'----------------------------------------------------
+'koloruje tło kontrolki tekstowej na zielono/czerwono
+'----------------------------------------------------
+function GetColorForKas(byref strText): GetColorForKas = RGB(222,231,254) 'STYLE_PAGE
+  if strText = "TAK" then
+    GetColorForKas = RGB(80,255,80) 'green
+    exit function
+  end if
+  if strText = "NIE" then
+    GetColorForKas = RGB(255,100,100) 'red
+  end if
+end function
+
+'----------------------------------------------------------------------------------------
+'Zwraca sumę ilości z niezrealizowanych zamówień obcych z terminem do 14 dni (Abakosteel)
+'----------------------------------------------------------------------------------------
+function getIloscZamObceByProdukt(byref prodId, byref zamObceId, byref isNewZam)
+    if isNewZam then
+	    getIloscZamObceByProdukt = getIloscZamObceForNewDok(prodId)
+	else
+	    getIloscZamObceByProdukt = getIloscZamObceForViewDok(prodId, zamObceId)
+	end if
+end function
+
+'------------------------------------------------------------------------------------------------------------
+'pobiera sumę ilości wszystkich niezrealizowanych zamówień obcych z terminem do 14 dni (dla nowego dokumentu)
+'------------------------------------------------------------------------------------------------------------
+function getIloscZamObceForNewDok(byref prodId): getIloscZamObceForNewDok = ccur(0)
+    dim idStatusBufor: idStatusBufor = findIdStatusBufor()
+	dim strWhereStatus: strWhereStatus = ""
+	if idStatusBufor > 0 then
+	    strWhereStatus = " and zam.p_pdokstatus <> " + CStr(idStatusBufor)
+	end if
+	
+    dim strSQL
+    strSQL = "select sum(c_curIloscOpakPoz) from vlist_n5zamowienie_listPozycje zam " +_
+                "join n5opakowanie_produktu prod on zam.c_pOpak = prod.idobj " +_ 
+                "where zam.c_pProdukt = %1 and zam.p_pRejestrDok in (select idobj from n5rejestrdok where eTyp = N5REJESTRDOK__ZAM_OBCE) and " +_ 
+                "zam.c_curIloscOpakPoz > 0 and zam.c_pzam_dDataReal <= dateadd(day,14,%2) " + strWhereStatus + vbNewLine +_
+                "group by zam.c_pProdukt"
+		
+    strSQL = trans_.afc.convert.Formatter(strSQL)(prodId)(trans_.afc.convert.date2SQL(trans_.var(GVAR_TODAY))).Done()
+    dim oRS: set oRS = trans_.createadors(strSQL)
+    if not oRS.EOF then
+        getIloscZamObceForNewDok = ccur(oRS(0).value)
+    end if
+end function
+
+'-----------------------------------------------------------------------------------------------------
+'pobiera sumę ilości niezrealizowanych zamówień obcych z terminem do 14 dni do przeglądanego dokumentu
+'-----------------------------------------------------------------------------------------------------
+function getIloscZamObceForViewDok(byref prodId, byref zamObceId): getIloscZamObceForViewDok = ccur(0)
+    dim idStatusBufor: idStatusBufor = findIdStatusBufor()
+	dim strWhereStatus: strWhereStatus = ""
+	if idStatusBufor > 0 then
+	    strWhereStatus = " and zam.p_pdokstatus <> " + CStr(idStatusBufor)
+	end if
+
+    dim strSQL
+    strSQL = "select zam.c_curIloscOpakPoz,zam.p_idobj " + vbNewLine +_
+             "from vlist_n5zamowienie_listPozycje zam " + vbNewLine +_ 
+             "join n5opakowanie_produktu prod on zam.c_pOpak = prod.idobj " + vbNewLine +_ 
+             "where zam.c_pProdukt = %1 and zam.p_pRejestrDok in (select idobj from n5rejestrdok where eTyp = N5REJESTRDOK__ZAM_OBCE) " + vbNewLine +_ 
+             "and zam.c_curIloscOpakPoz > 0 " + vbNewLine +_ 
+             "and zam.c_pzam_dDataReal <= dateadd(day,14,%2) " + vbNewLine +_
+			 strWhereStatus + vbNewLine +_
+             "order by p_dDataWyst,p_strNrDok"
+		
+    strSQL = trans_.afc.convert.Formatter(strSQL)(prodId)(trans_.afc.convert.date2SQL(trans_.var(GVAR_TODAY))).Done()
+    dim oRS: set oRS = trans_.createadors(strSQL)
+	dim curIlosc: curIlosc = ccur(0)
+    do while not oRS.EOF
+	    if clng(oRS(1).value) <> zamObceId then
+            curIlosc = curIlosc + ccur(oRS(0).value)
+		else
+		    exit do
+		end if
+		oRS.movenext
+    loop
+	
+	getIloscZamObceForViewDok = curIlosc
+end function
+
+'------------------------------------------------------------------------------------------------------------------------
+'Zwraca true gdy użytkownik ma nadane uprawnienie wyłączające wyliczanie stanu sprzedaży na zamówieniu obcym (Abakosteel)
+'------------------------------------------------------------------------------------------------------------------------
+function DisableStanSprzed(): DisableStanSprzed = true
+  dim idGroup, strWhere
+  idGroup = trans_.findobjid(TYPEID_N5SODGROUP,"strNazwa='Operacje specjalne'")
+  if idGroup > clng(0) then
+    strWhere = "select idobj from n5sod where pSODGroup = " + cstr(idGroup) + " and strNazwa like 'Wyłączenie wyliczania stanu sprzedaży na zamówieniu obcym'"
+    if FindBlockRight(strWhere) then
+      exit function
+    end if
+  end if
+  DisableStanSprzed = false
+end function
+
+'------------------------------------------------------------------------------
+'Wyszukuje Id statusu dokumentu o nazwie Bufor dla zamówień obcych (Abakosteel)
+'------------------------------------------------------------------------------
+function findIdStatusBufor(): findIdStatusBufor = clng(0)
+	dim idDokStatus: idDokStatus = trans_.findobjid(TYPEID_N5DOKSTATUS,"dcs_strNazwa='Bufor'")
+	if idDokStatus > 0 then
+		dim oStatus: set oStatus = trans_.getobj(TYPEID_N5DOKSTATUS,idDokStatus)
+		if Mid(oStatus.dcs_strTypDok,9,1) = "1" then
+			findIdStatusBufor = clng(idDokStatus)
+		end if
+	end if
+end function
+
+]]>
+</script>
+</config>
+	<body>
+	</body>
+</page>

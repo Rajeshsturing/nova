@@ -1,0 +1,361 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1222.h"
+#include "h1200.h"
+#include "h1220.h"
+
+
+#define FORM_SPAN	2
+
+#define CTRLID_WARTOSC_BRUTTO_ZAMOWIENIA	1
+#define CTRLID_WARTOSC_WALUTA_ZAMOWIENIA	2
+#define CTRLID_TABLE_RESULT					      3
+#define CTRLID_PAGE_INFO					        4
+#define CTRLID_WARTOSC_ZALICZKI			    	5
+#define CTRLID_BTN_ZAL						        6
+#define CTRLID_BTN_KON						        7
+#define CTRLID_POKAZ_W_WALUCIE				    10
+#define CTRLID_ZAL_W_WAL                  11
+#define	CTRLID_KURS_ZALICZKI				      12
+#define CTRLID_CHECK_BOX_W_WAL				13
+-->
+
+<page style='STYLE_PAGE'>
+<config>
+<title>Tworzenie faktur zaliczkowych</title>
+<startfocus>CTRLID_WARTOSC_ZALICZKI</startfocus>
+<script>
+<![CDATA[
+
+
+'std_openform_object_hli
+#include "50200"
+
+
+'getcurrentfirma
+#include "50203"
+
+dim g_curSumaZaliczek:g_curSumaZaliczek = ccur(0)
+dim g_curSumaZaliczek_Netto:g_curSumaZaliczek_Netto = ccur(0)
+dim g_curKwotaZaliczki
+dim faktury
+dim g_bKoncowa:g_bKoncowa = false
+dim g_curKursZaliczki:g_curKursZaliczki=ccur(0)
+dim g_pZam :set g_pZam = nothing
+dim g_saWWalucie: g_saWWalucie = 0
+
+sub init_id(byval pZam)
+
+	set g_pZam = pZam
+	dim oZamow :set oZamow = trans_.getobj(TYPEID_N5ZAMOWIENIE,pZam.idobj)
+	if CzyBylyZaliczki(oZamow) then
+		if CzySaWWalucie(oZamow) then
+			page_.ctrl(CTRLID_KURS_ZALICZKI).disable = false
+			init_by_orderWal oZamow
+		else
+			page_.ctrl(CTRLID_KURS_ZALICZKI).disable = true
+			init_by_order oZamow
+		end if		
+	else
+		page_.ctrl(CTRLID_KURS_ZALICZKI).disable = true
+		init_by_order oZamow
+	end if
+end sub
+
+public function CzySaWWalucie(byval pOrder):CzySaWWalucie=true
+	dim strWhere,faktura
+	strWhere = "pZamowienie=" + cstr(pOrder.idobj) + ""' and pRejestrDok in (select idobj from n5rejestrdok where eTyp = " + cstr(54) + ")"
+	set faktury = trans_.createrawcursor(10129,strWhere, "" , "")
+	dim pFirma:set pFirma = getcurrentFirma()
+		for each faktura in faktury
+		if faktura.pWaluta is pFirma.pWaluta then
+			CzySaWWalucie = false
+			page_.ctrl(CTRLID_ZAL_W_WAL).value="0"
+		else
+			page_.ctrl(CTRLID_ZAL_W_WAL).value="1"
+		end if
+	next
+end function
+
+public function CzyBylyZaliczki(byval pOrder):CzyBylyZaliczki=false
+	dim strWhere,faktura
+	strWhere = "pZamowienie=" + cstr(pOrder.idobj) + ""' and pRejestrDok in (select idobj from n5rejestrdok where eTyp = " + cstr(N5REJESTRDOK_FAKTURA_ZALICZKOWA) + ")"
+	set faktury = trans_.createrawcursor(TYPEID_N5SPRZEDAZ,strWhere, "" , "")
+		for each faktura in faktury
+			'page_.ctrl(CTRLID_ZAL_W_WAL).disable = true
+			page_.ctrl(CTRLID_CHECK_BOX_W_WAL).disable = true
+			CzyBylyZaliczki=true
+		next
+		
+end function
+
+
+function init_by_order(byval pOrder):init_by_order = true
+				g_saWWalucie = 0
+	dim pFirma:set pFirma = getcurrentFirma()
+page_.ctrl(CTRLID_WARTOSC_ZALICZKI).unit = pFirma.pWaluta.strSkrot
+
+	page_.ctrl(CTRLID_WARTOSC_BRUTTO_ZAMOWIENIA).text = trans_.afc.display.money(pOrder.curSumaBrutto , pFirma.pWaluta.strSkrot )
+	if pOrder.pWaluta.idobj <> pFirma.pWaluta.idobj then
+		page_.ctrl(CTRLID_WARTOSC_WALUTA_ZAMOWIENIA).text = trans_.afc.display.money(pOrder.curSumaWal , pOrder.pWaluta.strSkrot )
+	else
+		page_.ctrl(CTRLID_WARTOSC_WALUTA_ZAMOWIENIA).text = trans_.afc.display.money(pOrder.curSumaBrutto , pOrder.pWaluta.strSkrot )
+	end if
+
+	dim faktura,strWhere,pTB
+	strWhere = "pZamowienie=" + cstr(pOrder.idobj) + ""' and pRejestrDok in (select idobj from n5rejestrdok where eTyp = " + cstr(N5REJESTRDOK_FAKTURA_ZALICZKOWA) + ")"
+	g_curSumaZaliczek = ccur(0)
+	set faktury = trans_.createrawcursor(TYPEID_N5SPRZEDAZ,strWhere, "" , "")
+	if faktury.exists(1) then
+		set pTB = doc_.afc.new_tb(page_).attach(page_.ctrl(CTRLID_TABLE_RESULT)).removeall
+	else
+		page_.ctrl(CTRLID_TABLE_RESULT).hide = true
+	end if
+		for each faktura in faktury
+		pTB.newrow.newcell.addtext(trans_.afc.display.fulldate(faktura.dDataWyst))
+		pTB.newcell.addtexthli faktura.text , doc_.createhlistr("varFunctionHLI='std_openform_object_hli' vn1='"+cstr(faktura.type)+"' vn2='"+cstr(faktura.idobj)+"'")
+		pTB.newcell.addtext(trans_.afc.display.money(faktura.curSumaBrutto,pFirma.pWaluta.strSkrot)).cell.align=ALIGN_RIGHT		
+		g_curSumaZaliczek = g_curSumaZaliczek + faktura.curSumaBrutto
+		g_curSumaZaliczek_Netto = g_curSumaZaliczek_Netto + faktura.curSumaNetto
+		if faktura.listPozycje.count() > 0 then
+			g_bKoncowa = true	
+		end if
+	next
+
+
+
+		set_kwota_zaliczki pOrder.curSumaBrutto - g_curSumaZaliczek
+end function
+
+function init_by_orderWal(byval pOrder):init_by_orderWal = true
+			g_saWWalucie = 1
+page_.ctrl(CTRLID_KURS_ZALICZKI).value = pOrder.curkurs
+page_.ctrl(CTRLID_WARTOSC_ZALICZKI).unit = pOrder.pWaluta.strSkrot
+g_curKursZaliczki = pOrder.curKurs
+	dim pFirma:set pFirma = getcurrentFirma()
+
+	page_.ctrl(CTRLID_WARTOSC_BRUTTO_ZAMOWIENIA).text = trans_.afc.display.money(pOrder.curSumaBrutto , pFirma.pWaluta.strSkrot )
+	page_.ctrl(CTRLID_WARTOSC_WALUTA_ZAMOWIENIA).text = trans_.afc.display.money(pOrder.curSumaWalBrutto , pOrder.pWaluta.strSkrot )
+
+	dim faktura,strWhere,pTB
+	strWhere = "pZamowienie=" + cstr(pOrder.idobj) + ""' and pRejestrDok in (select idobj from n5rejestrdok where eTyp = " + cstr(N5REJESTRDOK_FAKTURA_ZALICZKOWA) + ")"
+	g_curSumaZaliczek = ccur(0)
+	set faktury = trans_.createrawcursor(TYPEID_N5SPRZEDAZ,strWhere, "" , "")
+	if faktury.exists(1) then
+		set pTB = doc_.afc.new_tb(page_).attach(page_.ctrl(CTRLID_TABLE_RESULT)).removeall
+	else
+		page_.ctrl(CTRLID_TABLE_RESULT).hide = true
+	end if
+	for each faktura in faktury
+		pTB.newrow.newcell.addtext(trans_.afc.display.fulldate(faktura.dDataWyst))
+		pTB.newcell.addtexthli faktura.text , doc_.createhlistr("varFunctionHLI='std_openform_object_hli' vn1='"+cstr(faktura.type)+"' vn2='"+cstr(faktura.idobj)+"'")
+		pTB.newcell.addtext(trans_.afc.display.money(faktura.curSumaWalBrutto,faktura.pWaluta.strSkrot)).cell.align=ALIGN_RIGHT		
+		g_curSumaZaliczek = g_curSumaZaliczek + faktura.curSumaWalBrutto
+		if faktura.listPozycje.count() > 0 then
+			g_bKoncowa = true	
+		end if
+	next
+
+		set_kwota_zaliczki pOrder.curSumaWalBrutto - g_curSumaZaliczek
+end function
+
+
+private function set_kwota_zaliczki(byval curKwota)
+	g_curKwotaZaliczki = curKwota
+	page_.ctrl(CTRLID_WARTOSC_ZALICZKI).value = g_curKwotaZaliczki
+	if 	g_curKwotaZaliczki >= ccur(0) then
+		page_.ctrl(CTRLID_BTN_ZAL).disable = false
+		if g_bKoncowa then
+			'page_.ctrl(CTRLID_BTN_KON).disable = true
+		else
+			'page_.ctrl(CTRLID_BTN_KON).disable = false
+		end if
+	else
+		page_.ctrl(CTRLID_BTN_ZAL).disable = true
+		'page_.ctrl(CTRLID_BTN_KON).disable = true
+	end if
+end function
+
+
+public function get_kwota_zaliczki()
+	g_curKwotaZaliczki = page_.ctrl(CTRLID_WARTOSC_ZALICZKI).value
+end function
+
+
+function cancel
+	page_.goback
+end function
+
+function f_zal
+	page_.result = vbYes
+	page_.goback
+end function
+
+
+function f_kon
+	'faktura końcowa
+	page_.result = vbNo
+	page_.goback
+end function
+
+function get_data(byref curSumaZaliczek , byref curKwotaZaliczki , byref cursor_zaliczki, byref curKursZaliczki,byref boolCzySaWWalucie,byref Firma)
+	curSumaZaliczek = g_curSumaZaliczek
+	curKwotaZaliczki = g_curKwotaZaliczki
+	curKursZaliczki = g_curKursZaliczki
+	boolCzySaWWalucie = g_saWWalucie 
+	set cursor_zaliczki = faktury
+	dim pFirma:set pFirma = getcurrentFirma()
+	set Firma = pFirma
+end function
+
+
+
+function c##CTRLID_WARTOSC_ZALICZKI##_ongetdata(byref pCtrl): c##CTRLID_WARTOSC_ZALICZKI##_ongetdata=true
+	pCtrl.value = g_curKwotaZaliczki					
+end function	
+function c##CTRLID_WARTOSC_ZALICZKI##_ondataentered(byref pCtrl, varValue) :	c##CTRLID_WARTOSC_ZALICZKI##_ondataentered=true	
+	g_curKwotaZaliczki = varValue
+	if 	g_curKwotaZaliczki >= ccur(0) then
+		page_.ctrl(CTRLID_BTN_ZAL).disable = false
+		if g_bKoncowa then
+			'page_.ctrl(CTRLID_BTN_KON).disable = true
+		else
+			'page_.ctrl(CTRLID_BTN_KON).disable = false
+		end if
+	else
+		page_.ctrl(CTRLID_BTN_ZAL).disable = true
+		'page_.ctrl(CTRLID_BTN_KON).disable = true
+	end if
+end function
+
+function c##CTRLID_KURS_ZALICZKI##_ongetdata(byref pCtrl):c##CTRLID_KURS_ZALICZKI##_ongetdata=true
+	'pCtrl.value = g_curKursZaliczki					
+end function	
+function c##CTRLID_KURS_ZALICZKI##_ondataentered(byref pCtrl, varValue):c##CTRLID_KURS_ZALICZKI##_ondataentered=true	
+	g_curKursZaliczki = varValue
+end function
+
+function c##CTRLID_ZAL_W_WAL##_ongetdata(byref pCtrl)
+  'pCtrl.value = g_curKursZaliczki					
+end function	
+
+function c##CTRLID_ZAL_W_WAL##_ondataentered(byref pCtrl,byval varValue) :	c##CTRLID_ZAL_W_WAL##_ondataentered=true	
+	if varValue = 0 then
+		g_curSumaZaliczek = ccur(0)
+		init_by_order(g_pZam)
+		page_.ctrl(CTRLID_KURS_ZALICZKI).value = ccur(0)
+		page_.ctrl(CTRLID_KURS_ZALICZKI).disable = true
+	else
+		g_curSumaZaliczek = ccur(0)
+		init_by_orderWal(g_pZam)
+		page_.ctrl(CTRLID_KURS_ZALICZKI).disable = false
+	end if	
+  'g_curKursZaliczki = varValue
+end function
+]]>
+</script>
+</config>
+<body>
+
+QXF_BEGIN
+
+	<tr>
+		<td colspan='FORM_SPAN' style='STYLE_TABLE_INFO' >
+			<text name='CTRLID_PAGE_INFO'>
+				Okno pozwala na wprowadzenie wszystkich danych potrzebnych do stworzenia faktury zaliczkowej - wraz z bilansem dokumentów juz stworzonych. 
+			</text>
+		</td>
+	</tr>
+
+	QXR_SEPARATOR(FORM_SPAN)
+
+	<tr>
+		QXC_LABEL_REQ(Wartość zamówienia:&nbsp;,1)
+		<td>
+			<text name='CTRLID_WARTOSC_BRUTTO_ZAMOWIENIA'/>
+		</td>
+	</tr>
+
+	<tr>
+		QXC_LABEL_REQ(Wartość w walucie:&nbsp;,1)
+		<td>
+			<text name='CTRLID_WARTOSC_WALUTA_ZAMOWIENIA'/>
+		</td>
+	</tr>
+
+
+	QXR_SEPARATOR(FORM_SPAN)
+
+	<tr>
+		<td colspan='2'>
+			<table name='CTRLID_TABLE_RESULT' style='STYLE_TABLE_BODY'>
+				<thead>
+					<tr>
+						QXC_LABEL_REQ(Utworzone wcześniej faktury zaliczkowe,3)
+					</tr>
+					<tr style='STYLE_TABLE_HEADER'>
+						<td width='min'><t>Data wystawienia</t></td>
+						<td width='min'><t>Numer dokumentu</t></td>
+						<td width='min' align='right'><t>Kwota brutto</t></td>
+					</tr>
+				</thead>
+			</table>
+		</td>
+	</tr>
+
+	QXR_SEPARATOR(FORM_SPAN)
+
+	<tr>
+		<td colspan='FORM_SPAN' style='STYLE_TABLE_INFO' >
+			<text>
+				Wprowadź kwotę wpłacanej zaliczki na poczet zamówienia. Proponowana kwota to różnica między wartoscią zamównienia a sumą wpłaconych juz zaliczek.
+			</text>
+		</td>
+	</tr>
+
+  QXR_SEPARATOR(FORM_SPAN)
+  <tr>
+    <td colspan='FORM_SPAN'>
+      <checkbox name='CTRLID_ZAL_W_WAL' border='0'>
+        <t name='CTRLID_CHECK_BOX_W_WAL'>Utwórz fakturę zaliczkową w walucie zamówienia</t>
+        <transfer mode='custom' />
+      </checkbox>
+    </td>
+  </tr>
+	<tr>
+		QXC_LABEL_REQ(Kurs:&nbsp;,1)
+		<td>
+			<currency precision='4' name='CTRLID_KURS_ZALICZKI' unit=''>
+				<transfer mode='custom'/>
+			</currency>
+		</td>	
+	</tr>  
+	<tr>
+		QXC_LABEL_REQ(Wpłacana zaliczka:&nbsp;,1)
+		<td>
+			<currency prec='2' name='CTRLID_WARTOSC_ZALICZKI' unit=''>
+				<transfer mode='custom'/>
+			</currency>
+		</td>	
+	</tr>
+
+	
+	QXR_SEPARATOR(FORM_SPAN)
+
+
+	<tr style='STYLE_ROW_BTN'>
+		<td colspan='FORM_SPAN' keepline='true'>
+			QXE_BUTTON(CTRLID_BTN_ZAL,10,Faktura zaliczkowa,varFunction="f_zal")
+			QXE_BUTTON(CTRLID_BTN_KON,10,Faktura końcowa,varFunction="f_kon")
+			QXE_BUTTON(-1,10,Anuluj,varFunction="cancel")
+		</td>
+	</tr>
+
+
+QXF_END
+
+</body>
+</page>

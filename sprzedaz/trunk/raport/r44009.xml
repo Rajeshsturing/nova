@@ -1,0 +1,701 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1201.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1222.h"
+#include "h1200.h"
+#include "h1232.h"
+
+#define CTRLID_PRODUKT          101
+#define CTRLID_OPAKOWANIE       102
+#define CTRLID_RESULT_TABLE     103
+#define CTRLID_ACTION_TABLE     104
+#define CTRLID_STAN_MIN         105
+#define CTRLID_STAN_MAX         106
+#define CTRLID_CENA_1           107
+#define CTRLID_CENA_2           108
+#define CTRLID_CENA_3           109
+#define CTRLID_CENA_4           110
+#define CTRLID_CENA_5           111
+#define CTRLID_CENA_6           112
+#define CTRLID_CHOOSE_BUTTON    113
+#define CTRLID_REALIZE_BUTTON   114
+#define CTRLID_DEL_BUTTON       115
+
+#define PROP_REC_NUM            201
+
+#define MODE_ADD         1
+#define MODE_EDIT        2
+#define MODE_DELETE      3
+
+#define KOL_FIRST        0
+#define CELL_CHECKBOX    1
+#define ELEM_CHECKBOX    1
+#define PINK_COLOR       RGB(255,196,196)
+
+#macro QXR_CURRENCY_CUSTOM_GETDATA_DATAENTER(_ctrl_,_obj_field_)          \
+function c##_ctrl_##_ongetdata(byref oCtrl): c##_ctrl_##_ongetdata = true \
+  dim iRowNr    \
+  dim oRow : set oRow = oCtrl.parent.parent     \
+  if not oRow.userprop is nothing then          \
+    iRowNr = oRow.userprop.prop(PROP_REC_NUM)   \
+    oCtrl.value = ccur(g_pProdMagCopy.value(iRowNr)._obj_field_)  \
+  end if  \
+end function  \
+function c##_ctrl_##_ondataentered(byref oCtrl, newValue): c##_ctrl_##_ondataentered = true \
+  dim iRowNr  \
+  dim oRow : set oRow = oCtrl.parent.parent   \
+  if not oRow.userprop is nothing then        \
+    iRowNr = oRow.userprop.prop(PROP_REC_NUM) \
+    g_pProdMagCopy.value(iRowNr)._obj_field_ = ccur(newValue)   \
+    changeRowColor oRow, compareObj(iRowNr)  \
+  end if    \
+end function
+
+#macro CHOOSE_WALUTA(_nr_)  \
+  function chooseWaluta##_nr_(pHLI)    \
+    if g_nMode = MODE_DELETE then   \
+      exit function     \
+    end if    \
+    dim iRowNr  \
+    dim oRow: set oRow = page_.ctrl(pHLI.prop(100))   \
+    if not oRow.userprop is nothing then        \
+      iRowNr = oRow.userprop.prop(PROP_REC_NUM) \
+      dim idWaluta: idWaluta = fire_choice_list(TYPEID_N5JEDNOSTKA,"Wybór waluty","","eTyp = N5JEDNOSTKA_WALUTA","","")  \
+      if idWaluta > 0 then  \
+        dim oWaluta: set oWaluta = trans_.getobj(TYPEID_N5JEDNOSTKA,clng(idWaluta)) \
+        set g_pProdMagCopy.value(iRowNr).m_pWaluta##_nr_ = oWaluta   \
+        dim nCell: nCell = _nr_ * 2 + 2 \
+        oRow.cell(nCell).element(1).unit = oWaluta.strSkrot  \
+        changeRowColor oRow, compareObj(iRowNr)   \
+      end if    \
+    end if  \
+  end function
+
+-->
+<page style='STYLE_PAGE'>
+  <config>
+    <title>
+Stan minimalny/maksymalny wg magazynów
+#ifdef _DEBUG
+[THIS_FILE]
+#endif
+    </title>
+    <script>
+      <![CDATA[
+
+#include "50200"
+#include "50222"
+
+'cObjectReport,cBuildQuery,cDrawReport,cButton,cRepDict
+#include "50526"
+
+'opcja raportu
+dim g_nMode
+'produkt i opakowanie
+dim oProd: set oProd = nothing
+dim oOpak: set oOpak = nothing
+dim g_pProdMag: set g_pProdMag = trans_.afc.new_navoarray()
+dim g_pProdMagCopy: set g_pProdMagCopy = trans_.afc.new_navoarray()
+
+'obiekt produkt-magazyn
+class cProdMag 
+  public m_idProdMag
+  public m_pMagazyn
+  public m_curStanMin
+  public m_curStanMax
+  public m_curCenaNetto1
+  public m_curCenaNetto2
+  public m_curCenaNetto3
+  public m_curCenaNetto4
+  public m_curCenaNetto5
+  public m_curCenaNetto6
+  public m_pWaluta1
+  public m_pWaluta2
+  public m_pWaluta3
+  public m_pWaluta4
+  public m_pWaluta5
+  public m_pWaluta6
+  public m_bDelete  'info czy usuwać rekord
+  
+  public sub class_initialize()
+    m_idProdMag = clng(0)
+    set m_pMagazyn = nothing
+    m_curStanMin = ccur(0)
+    m_curStanMax = ccur(0)
+    m_curCenaNetto1 = ccur(0) 
+    m_curCenaNetto2 = ccur(0)
+    m_curCenaNetto3 = ccur(0)
+    m_curCenaNetto4 = ccur(0)
+    m_curCenaNetto5 = ccur(0)
+    m_curCenaNetto6 = ccur(0)
+    set m_pWaluta1 = oOpak.pWaluta
+    set m_pWaluta2 = oOpak.opak_pWaluta2
+    set m_pWaluta3 = oOpak.opak_pWaluta3
+    set m_pWaluta4 = oOpak.opak_pWaluta4
+    set m_pWaluta5 = oOpak.opak_pWaluta5
+    set m_pWaluta6 = oOpak.opak_pWaluta6
+    m_bDelete = false
+  end sub
+  
+  public sub class_terminate()   'OK
+    set m_pMagazyn = nothing
+    set m_pWaluta1 = nothing
+    set m_pWaluta2 = nothing
+    set m_pWaluta3 = nothing
+    set m_pWaluta4 = nothing
+    set m_pWaluta5 = nothing
+    set m_pWaluta6 = nothing
+  end sub  
+end class  
+
+function fopen()
+  g_nMode = clng(trans_.var(APPVAR_MODE))
+
+  'inicjacja produktu i opakowania
+  if not init then
+    exit function
+  end if
+
+  'inicjalizacja obiektów (generowanie wyników)
+  initialObjects
+  
+  'pobierz magazyny
+  addProdMag
+  
+  'tabela z wynikami
+  drawRaport g_oDrawRep
+
+	fopen = true
+end function
+
+'--------------------------------
+'ustawienie produktu i opakowania
+'--------------------------------
+function init(): init = false
+  if trans_.isvar(APPVAR_PRODUKT) then
+    if trans_.var(APPVAR_PRODUKT) > clng(0) then
+      set oProd = trans_.getobj(TYPEID_N5PRODUKT,clng(trans_.var(APPVAR_PRODUKT)))
+      page_.ctrl(CTRLID_PRODUKT).value = oProd.strNazwa
+    end if  
+  end if
+  if trans_.isvar(APPVAR_OPAKOWANIE) then
+    if trans_.var(APPVAR_OPAKOWANIE) > clng(0) then
+      if not oProd is nothing then
+        dim nLP: nLP = oProd.listOpakowania.findonid(clng(trans_.var(APPVAR_OPAKOWANIE)))
+        set oOpak = oProd.listOpakowania.get(nLP)
+        page_.ctrl(CTRLID_OPAKOWANIE).value = oOpak.strNazwa     
+      end if
+    end if
+  end if
+  if oProd is nothing or oOpak is nothing then
+    trans_.message 7000, 0, "Brak produktu lub opakowania"
+    exit function
+  end if
+  init = true
+end function
+
+'---------------------------------------------------
+'dodaje obiekty produkt-magazyn do tabeli g_pProdMag
+'---------------------------------------------------
+sub addProdMag()
+  dim strSQL
+  strSQL = "select idobj from n5magazyn where eTyp = N5TYPMAG_PODSTAWOWY order by strNazwa"
+  dim oRS: set oRS = trans_.createadors(strSQL)
+  dim oProdMag, oProdMagCopy, idProdMag, strWhere
+
+  'tworzy nowy obiekt prod_mag i ustawia magazyn
+  do while not oRS.EOF
+    set oProdMag = new cProdMag
+    set oProdMagCopy = new cProdMag
+    set oProdMag.m_pMagazyn = trans_.getobj(TYPEID_N5MAGAZYN,clng(oRS(0).value))
+    set oProdMagCopy.m_pMagazyn = oProdMag.m_pMagazyn
+    strWhere = "prmg_pProdukt = " + CStr(oProd.idobj) + " and prmg_pOpakowanie = " + CStr(oOpak.idobj) + " and prmg_pMagazyn = " +_
+                CStr(oProdMag.m_pMagazyn.idobj)
+    idProdMag = trans_.findobjid(TYPEID_N5PRODUKT_MAGAZYN,strWhere)
+    
+    'dodaj do tabeli obiekt w zależności od trybu: MODE_ADD,MODE_EDIT,MODE_DELETE
+    if g_nMode = MODE_ADD then
+      if idProdMag = clng(0) then
+        g_pProdMag.add oProdMag
+        g_pProdMagCopy.add oProdMagCopy
+      end if
+    elseif g_nMode = MODE_EDIT or g_nMode = MODE_DELETE then
+      if idProdMag > clng(0) then
+        dim oPM: set oPM = trans_.getobj(TYPEID_N5PRODUKT_MAGAZYN,idProdMag)
+        set oProdMag = copyObjToTable(oPM)
+        set oProdMagCopy = copyObjToTable(oPM)
+        g_pProdMag.add oProdMag
+        g_pProdMagCopy.add oProdMagCopy
+      end if  
+    end if
+    oRS.movenext
+  loop
+end sub
+
+'-------------------------------------
+'kopiuje dane obiektu z bazy do tabeli
+'-------------------------------------
+function copyObjToTable(oPM)
+  dim oProdMag: set oProdMag = new cProdMag 
+  with oProdMag
+    .m_idProdMag = oPM.idobj
+    set .m_pMagazyn = oPM.prmg_pMagazyn
+    .m_curStanMin = ccur(oPM.prmg_curStanMin)
+    .m_curStanMax = ccur(oPM.prmg_curStanMax)
+    .m_curCenaNetto1 = ccur(oPM.prmg_curCenaNetto1) 
+    .m_curCenaNetto2 = ccur(oPM.prmg_curCenaNetto2)
+    .m_curCenaNetto3 = ccur(oPM.prmg_curCenaNetto3)
+    .m_curCenaNetto4 = ccur(oPM.prmg_curCenaNetto4)
+    .m_curCenaNetto5 = ccur(oPM.prmg_curCenaNetto5)
+    .m_curCenaNetto6 = ccur(oPM.prmg_curCenaNetto6)
+    set .m_pWaluta1 = oPM.prmg_pWaluta1
+    set .m_pWaluta2 = oPM.prmg_pWaluta2
+    set .m_pWaluta3 = oPM.prmg_pWaluta3
+    set .m_pWaluta4 = oPM.prmg_pWaluta4
+    set .m_pWaluta5 = oPM.prmg_pWaluta5
+    set .m_pWaluta6 = oPM.prmg_pWaluta6
+  end with
+  set copyObjToTable = oProdMag
+end function
+
+'--------------------------------------------
+'porównuje 2 obiekty na pozycji iter w tabeli 
+'zwraca true gdy się różnią
+'--------------------------------------------
+function compareObj(byval iter): compareObj = true
+  dim oPMag: set oPMag = g_pProdMagCopy.value(iter)
+  with g_pProdMag.value(iter)
+    if .m_curStanMin <> oPMag.m_curStanMin then
+      exit function
+    end if
+    if .m_curStanMax <> oPMag.m_curStanMax then
+      exit function
+    end if
+    if .m_curCenaNetto1 <> oPMag.m_curCenaNetto1 then
+      exit function
+    end if
+    if .m_curCenaNetto2 <> oPMag.m_curCenaNetto2 then
+      exit function
+    end if
+    if .m_curCenaNetto3 <> oPMag.m_curCenaNetto3 then
+      exit function
+    end if
+    if .m_curCenaNetto4 <> oPMag.m_curCenaNetto4 then
+      exit function
+    end if
+    if .m_curCenaNetto5 <> oPMag.m_curCenaNetto5 then
+      exit function
+    end if    
+    if .m_curCenaNetto6 <> oPMag.m_curCenaNetto6 then
+      exit function
+    end if
+    if not .m_pWaluta1 is oPMag.m_pWaluta1 then
+      exit function
+    end if
+    if not .m_pWaluta2 is oPMag.m_pWaluta2 then
+      exit function
+    end if
+    if not .m_pWaluta3 is oPMag.m_pWaluta3 then
+      exit function
+    end if
+    if not .m_pWaluta4 is oPMag.m_pWaluta4 then
+      exit function
+    end if
+    if not .m_pWaluta5 is oPMag.m_pWaluta5 then
+      exit function
+    end if
+    if not .m_pWaluta6 is oPMag.m_pWaluta6 then
+      exit function
+    end if  
+  end with  
+  compareObj = false
+end function
+
+'------------
+'rysuj raport
+'------------
+sub drawRaport(byref g_oDrawRep)
+  if g_pProdMag.UpperIndex >= clng(0) then
+    drawResultTable g_oDrawRep
+    drawActionTable
+  else
+    drawBrakDanych
+  end if
+end sub
+
+'-----------------
+'tabela z wynikami
+'-----------------
+sub drawResultTable(byref g_oDrawRep)
+  dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(page_.ctrl(CTRLID_RESULT_TABLE))
+  pTB.section_body.removeall
+  drawHeader pTB, g_oDrawRep
+  drawBody pTB, g_oDrawRep
+end sub
+
+'---------------------
+'rysuj nagłowek tabeli
+'---------------------
+sub drawHeader(byref pTB, byref g_oDrawRep)
+  dim oObjRep, iter, bOption
+  pTB.newrow
+  pTB.row.styleitem = STYLE_TABLE_HEADER
+  pTB.row.fontsize = 4
+  'kolejne komórki
+  g_oDrawRep.drawCellHead pTB, 2, "Magazyn", 3000, "", 2, 1, false
+  g_oDrawRep.drawCellHead pTB, 3, "Stan min", 2000, "", 2, 1, false
+  g_oDrawRep.drawCellHead pTB, 4, "Stan max", 2000, "", 2, 1, false
+  g_oDrawRep.drawCellHead pTB, 5, "Ceny netto", MINIMIZE_SIZE, "", 1, 12, false
+  if g_nMode = MODE_DELETE then
+    g_oDrawRep.drawCellHead pTB, 6, "", 2000, "", 2, 1, false
+  end if  
+  pTB.cell.align = ALIGN_CENTER
+  pTB.newrow
+  pTB.row.styleitem = STYLE_TABLE_HEADER
+  pTB.row.fontsize = 4  
+  g_oDrawRep.drawCellHead pTB, 7, "Cena 1", 2000, "", 1, 2, false 
+  g_oDrawRep.drawCellHead pTB, 8, "Cena 2", 2000, "", 1, 2, false 
+  g_oDrawRep.drawCellHead pTB, 9, "Cena 3", 2000, "", 1, 2, false 
+  g_oDrawRep.drawCellHead pTB, 10, "Cena 4", 2000, "", 1, 2, false 
+  g_oDrawRep.drawCellHead pTB, 11, "Cena 5", 2000, "", 1, 2, false 
+  g_oDrawRep.drawCellHead pTB, 12, "Cena 6", 2000, "", 1, 2, false
+end sub
+
+'---------------
+'kolejne wiersze
+'---------------
+sub drawBody(byref pTB, byref g_oDrawRep)
+  dim iter
+  for iter = 0 to g_pProdMag.upperIndex
+    drawRow pTB, g_oDrawRep, iter
+  next
+end sub
+
+'-----------------------
+'rysuj pojedynczy wiersz
+'-----------------------
+sub drawRow(byref pTB, byref g_oDrawRep, byval iter)
+  pTB.newrow
+  'ustawienie właściwości dla wiersza
+  set pTB.row.userprop = doc_.createhli()
+  pTB.row.userprop.prop(PROP_REC_NUM) = iter
+  
+  dim oProdMag: set oProdMag = g_pProdMag.value(iter)
+  
+  'właściwości całego wiersza
+  pTB.row.fontsize = 3
+  dim crColor
+  if (iter+1) mod 2 = 0 then
+    pTB.row.backcolor = ROW_COLOR
+    crColor = ROW_COLOR
+  else
+    crColor = WHITE_COLOR
+  end if  
+  
+  g_oDrawRep.drawCell     pTB, oProdMag.m_pMagazyn.strNazwa, "Verdana", ALIGN_RIGHT, 0, 0, ""
+  g_oDrawRep.drawCellCur  pTB, CTRLID_STAN_MIN, ccur(oProdMag.m_curStanMin), "Verdana", 2, 10, "", crColor
+  g_oDrawRep.drawCellCur  pTB, CTRLID_STAN_MAX, ccur(oProdMag.m_curStanMax), "Verdana", 2, 10, "", crColor
+  
+  g_oDrawRep.drawCellCur  pTB, CTRLID_CENA_1, ccur(oProdMag.m_curCenaNetto1), "Verdana", 2, 10, oProdMag.m_pWaluta1.strSkrot, crColor
+  pTB.newcell
+  g_oDrawRep.drawPicture  pTB, PICTURE_CHOICE_N5WALUTA, "Wybór z listy", "chooseWaluta1", pTB.row.ident
+  pTB.element.ignoresysdisable false
+  g_oDrawRep.drawCellCur  pTB, CTRLID_CENA_2, ccur(oProdMag.m_curCenaNetto2), "Verdana", 2, 10, oProdMag.m_pWaluta1.strSkrot, crColor
+  pTB.newcell
+  g_oDrawRep.drawPicture  pTB, PICTURE_CHOICE_N5WALUTA, "Wybór z listy", "chooseWaluta2", pTB.row.ident  
+  g_oDrawRep.drawCellCur  pTB, CTRLID_CENA_3, ccur(oProdMag.m_curCenaNetto3), "Verdana", 2, 10, oProdMag.m_pWaluta1.strSkrot, crColor
+  pTB.newcell
+  g_oDrawRep.drawPicture  pTB, PICTURE_CHOICE_N5WALUTA, "Wybór z listy", "chooseWaluta3", pTB.row.ident  
+  g_oDrawRep.drawCellCur  pTB, CTRLID_CENA_4, ccur(oProdMag.m_curCenaNetto4), "Verdana", 2, 10, oProdMag.m_pWaluta1.strSkrot, crColor
+  pTB.newcell
+  g_oDrawRep.drawPicture  pTB, PICTURE_CHOICE_N5WALUTA, "Wybór z listy", "chooseWaluta4", pTB.row.ident  
+  g_oDrawRep.drawCellCur  pTB, CTRLID_CENA_5, ccur(oProdMag.m_curCenaNetto5), "Verdana", 2, 10, oProdMag.m_pWaluta1.strSkrot, crColor
+  pTB.newcell
+  g_oDrawRep.drawPicture  pTB, PICTURE_CHOICE_N5WALUTA, "Wybór z listy", "chooseWaluta5", pTB.row.ident 
+  g_oDrawRep.drawCellCur  pTB, CTRLID_CENA_6, ccur(oProdMag.m_curCenaNetto6), "Verdana", 2, 10, oProdMag.m_pWaluta1.strSkrot, crColor
+  pTB.newcell
+  g_oDrawRep.drawPicture  pTB, PICTURE_CHOICE_N5WALUTA, "Wybór z listy", "chooseWaluta6", pTB.row.ident
+
+  'dodatkowy przycisk usuń
+  if g_nMode = MODE_DELETE then
+    page_.ctrl(CTRLID_RESULT_TABLE).disable = true
+    pTB.newcell
+    g_oDrawRep.drawButtonExt pTB, "Usuń", 4, "Zaznaczenie do usunięcia obiektu", "delProdMag", pTB.row.ident, CTRLID_DEL_BUTTON
+    pTB.element.ignoresysdisable true
+  end if
+  
+end sub
+
+'---------------------------------------------------------
+'komunikat w przypadku braku magazynów o typie podstawowym
+'---------------------------------------------------------
+sub drawBrakDanych()
+  dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(page_.ctrl(CTRLID_RESULT_TABLE))
+  pTB.section_body.removeall
+  pTB.newrow
+  pTB.row.styleitem = STYLE_TABLE_HEADER
+  pTB.row.fontsize=4
+  dim strText: strText = ""
+  if g_nMode = MODE_ADD then
+    strText = "Brak magazynów o typie Podstawowy"
+  elseif g_nMode = MODE_EDIT then
+    strText = "Brak danych do edycji"
+  else
+    strText = "Brak danych do usunięcia"
+  end if
+  pTB.newcell.addtext strText
+  pTB.cell.width = 10000
+end sub
+
+'------------
+'tabela akcji
+'------------
+sub drawActionTable
+  dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(page_.ctrl(CTRLID_ACTION_TABLE))
+  'przyciski
+  pTB.newrow.newcell
+  dim oButton : set oButton = new cButton
+  oButton.newButton pTB, CTRLID_REALIZE_BUTTON, "saveChanges", "Zapisz zmiany", 8, ALIGN_RIGHT, true
+  oButton.newButton pTB, CTRLID_REALIZE_BUTTON, "cancel", "Anuluj", 8, ALIGN_RIGHT, true
+end sub 
+
+'------------------
+'anulowanie raportu
+'------------------
+function cancel(pHLI)
+  page_.goback
+end function
+
+'-------------
+'zapis do bazy
+'-------------
+function saveChanges(pHLI)
+  dim iter
+  dim bMsg: bMsg = false
+  if g_nMode = MODE_DELETE then
+    for iter = 0 to g_pProdMag.upperIndex
+      if g_pProdMagCopy.value(iter).m_bDelete then
+        deleteProdMag g_pProdMagCopy.value(iter)
+        bMsg = true
+      end if
+    next
+    if bMsg then
+      MessageBox "Usunięto wybrane rekordy.", "Usuwanie danych", vbOKOnly, vbInformation
+    else
+      trans_.message 7000, 0, "Nie wybrano rekordów."
+      exit function      
+    end if
+  else
+    for iter = 0 to g_pProdMag.upperIndex
+      if compareObj(iter) then
+        updateProdMag g_pProdMagCopy.value(iter)
+        bMsg = true
+      end if
+    next  
+    if bMsg then
+      if g_nMode = MODE_ADD then
+        MessageBox "Zapisano." , "Dodawanie danych", vbOKOnly, vbInformation
+      elseif g_nMode = MODE_EDIT then   
+        MessageBox "Zapisano." , "Edycja danych", vbOKOnly, vbInformation    
+      end if
+    else
+      trans_.message 7000, 0, "Nie wprowadzono zmian."
+      exit function
+    end if
+  end if
+  page_.goback
+end function
+
+'---------------------------------------------
+'dodaj nowy obiekt do tabeli n5produkt_magazyn
+'---------------------------------------------
+function updateProdMag(byref oProdMag)
+  dim oPMObject
+  if g_nMode = MODE_ADD then
+    set oPMObject = trans_.newobj(TYPEID_N5PRODUKT_MAGAZYN)
+  elseif g_nMode = MODE_EDIT then
+    set oPMObject = trans_.getobj(TYPEID_N5PRODUKT_MAGAZYN,oProdMag.m_idProdMag)
+  end if
+  with oPMObject
+    set .prmg_pProdukt = oProd
+    set .prmg_pOpakowanie = oOpak
+    set .prmg_pMagazyn = oProdMag.m_pMagazyn
+    .prmg_curStanMin = oProdMag.m_curStanMin
+    .prmg_curStanMax = oProdMag.m_curStanMax
+    .prmg_curCenaNetto1 = oProdMag.m_curCenaNetto1
+    .prmg_curCenaNetto2 = oProdMag.m_curCenaNetto2
+    .prmg_curCenaNetto3 = oProdMag.m_curCenaNetto3
+    .prmg_curCenaNetto4 = oProdMag.m_curCenaNetto4
+    .prmg_curCenaNetto5 = oProdMag.m_curCenaNetto5
+    .prmg_curCenaNetto6 = oProdMag.m_curCenaNetto6
+    set .prmg_pWaluta1 = oProdMag.m_pWaluta1
+    set .prmg_pWaluta2 = oProdMag.m_pWaluta2
+    set .prmg_pWaluta3 = oProdMag.m_pWaluta3
+    set .prmg_pWaluta4 = oProdMag.m_pWaluta4
+    set .prmg_pWaluta5 = oProdMag.m_pWaluta5
+    set .prmg_pWaluta6 = oProdMag.m_pWaluta6
+  end with
+  if not trans_.saveobjects() then
+    trans_.message 7000, 0, "Zapis do bazy nieudany dla magazynu: " + oProdMag.m_pMagazyn.strNazwa
+    exit function
+  end if
+end function
+
+'------------------------
+'zaznaczenie do usunięcia
+'------------------------
+function delProdMag(pHLI)
+  dim iRowNr
+  dim oRow: set oRow = page_.ctrl(pHLI.prop(100))
+  if not oRow.userprop is nothing then
+    iRowNr = oRow.userprop.prop(PROP_REC_NUM)
+    'zaznacz do usunięcia
+    if g_pProdMagCopy.value(iRowNr).m_bDelete then
+      g_pProdMagCopy.value(iRowNr).m_bDelete = false
+      changeRowColor oRow, false
+    else
+      g_pProdMagCopy.value(iRowNr).m_bDelete = true
+      changeRowColor oRow, true
+    end if
+  end if
+end function
+
+'------------------------
+'usunięcie obiektu z bazy
+'------------------------
+function deleteProdMag(byref oProdMag)
+  dim oDelObj: set oDelObj = trans_.getobj(TYPEID_N5PRODUKT_MAGAZYN,oProdMag.m_idProdMag)
+  oDelObj.markdel = true
+  set oDelObj = nothing
+  if not trans_.saveobjects() then
+  end if 
+end function
+
+'--------------------------------------------
+'ustawia kolor dla wiersza w zależności od LP
+'--------------------------------------------
+function setRowColor(iLP)
+  if iLP mod 2 = 0 then
+    setRowColor = ROW_COLOR
+  else
+    setRowColor = WHITE_COLOR
+  end if   
+end function
+
+'---------------------------
+'zmienia kolor dla kontrolek
+'---------------------------
+function setColorForCtrl(oRow,color)
+  dim iter
+  for iter = 2 to 14
+    oRow.cell(iter).element(1).backcolor = color
+  next
+end function
+
+'-------------------
+'kolorowanie wiersza
+'-------------------
+sub changeRowColor(byref oRow, byval bValue)
+  if bValue then
+    if g_nMode = MODE_DELETE then
+      'wiersz na różowo
+      oRow.backcolor = PINK_COLOR     
+      setColorForCtrl oRow, PINK_COLOR
+    else
+      'wiersz na żółto
+      oRow.backcolor = YELLOW_COLOR    
+      setColorForCtrl oRow, YELLOW_COLOR
+    end if
+  else
+    'usuń żółty kolor
+    if oRow.userprop.exists(PROP_REC_NUM) then
+      dim iLP : iLP = oRow.userprop.prop(PROP_REC_NUM)
+      oRow.backcolor = setRowColor(iLP+1)
+      setColorForCtrl oRow, setRowColor(iLP+1)
+    end if
+  end if
+end sub
+
+function c##CTRLID_REALIZE_BUTTON##_ongetdata(byref oCtrl) : c##CTRLID_REALIZE_BUTTON##_ongetdata = true
+  if g_pProdMag.upperIndex >= 0 then
+    oCtrl.disable = false
+  else
+    oCtrl.disable = true
+  end if
+end function  
+
+function c##CTRLID_DEL_BUTTON##_ongetdata(byref oCtrl): c##CTRLID_DEL_BUTTON##_ongetdata = true
+  dim iRowNr
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+    iRowNr = oRow.userprop.prop(PROP_REC_NUM)
+    if g_pProdMagCopy.value(iRowNr).m_bDelete then
+      oCtrl.value = "Cofnij"
+    else
+      oCtrl.value = "Usuń"
+    end if
+  end if  
+end function
+
+CHOOSE_WALUTA(1)
+CHOOSE_WALUTA(2)
+CHOOSE_WALUTA(3)
+CHOOSE_WALUTA(4)
+CHOOSE_WALUTA(5)
+CHOOSE_WALUTA(6)
+
+QXR_CURRENCY_CUSTOM_GETDATA_DATAENTER(CTRLID_STAN_MIN,m_curStanMin)
+QXR_CURRENCY_CUSTOM_GETDATA_DATAENTER(CTRLID_STAN_MAX,m_curStanMax)
+
+QXR_CURRENCY_CUSTOM_GETDATA_DATAENTER(CTRLID_CENA_1,m_curCenaNetto1)
+QXR_CURRENCY_CUSTOM_GETDATA_DATAENTER(CTRLID_CENA_2,m_curCenaNetto2)
+QXR_CURRENCY_CUSTOM_GETDATA_DATAENTER(CTRLID_CENA_3,m_curCenaNetto3)
+QXR_CURRENCY_CUSTOM_GETDATA_DATAENTER(CTRLID_CENA_4,m_curCenaNetto4)
+QXR_CURRENCY_CUSTOM_GETDATA_DATAENTER(CTRLID_CENA_5,m_curCenaNetto5)
+QXR_CURRENCY_CUSTOM_GETDATA_DATAENTER(CTRLID_CENA_6,m_curCenaNetto6)
+
+
+]]>
+    </script>
+  </config>
+  <body>
+    QXF_BEGIN
+    <tr>
+      QXC_LABEL_REQ(Produkt,1)
+      <td width='min'>
+        <t name='CTRLID_PRODUKT'></t>
+      </td>
+    </tr>
+    <tr>
+      <td width='2200'>
+        QXE_LABEL_REQ(Opakowanie)
+      </td>
+      <td width='min'>
+        <t name='CTRLID_OPAKOWANIE'></t>
+      </td>
+    </tr>
+    QXR_SEPARATOR(2)   
+    <tr>
+      <td colspan='2'>
+        <table border='1' name='CTRLID_RESULT_TABLE'>
+          <tbody backcolor='white' bordercolor='#006697' />
+        </table>
+      </td>
+    </tr>
+    <tr>
+      <td colspan='2'>
+        <table name='CTRLID_ACTION_TABLE'>
+          <tbody />
+        </table>
+      </td>
+    </tr>    
+
+    QXF_END
+
+  </body>
+</page>

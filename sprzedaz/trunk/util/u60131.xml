@@ -1,0 +1,396 @@
+#include "h1000.h"
+#include "h1001.h"
+#include "h1004.h"
+#include "h1200.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1240.h"
+#include "h1201.h"
+
+
+#define PAGE_WIZZARD_EXPORT_BUSSINESSCARD_STEP1			20410
+#define PAGE_WIZZARD_EXPORT_BUSSINESSCARD_STEP2			20411
+#define PAGE_WIZZARD_EXPORT_BUSSINESSCARD_STEP3			20412
+#define PAGE_WIZZARD_EXPORT_BUSSINESSCARD_RESUM			20413
+
+
+<?xml version="1.0" encoding="windows-1250" ?>
+<page>
+<config>
+<title>Wizzard</title>
+<script>
+
+<!--
+	ALWAYS MANUAL
+	Kreator eksportu wizytówki
+-->
+
+<![CDATA[
+
+#include "50203"
+#include "50516"
+#include "50209"
+#include "50303"
+#include "50304"
+#include "50211"
+#include "50101"
+#include "50122"
+#include "50126"
+#include "50200"
+
+'------------------------------------------------------------------------
+'	Kalsa trzymająca info o parametrach eksportu wuzytówki firmy
+'	m_strFileName - nazwa pliku
+'	m_bToFile - czy do pliku
+'	m_bRunWizard - czy kreator wysylki
+'------------------------------------------------------------------------
+class CBussinessCardExportParams
+	public m_strFileName	
+	public m_bToFile
+	public m_bRunWizzard
+	public m_bExportFirm
+	public m_bExportWorkers
+	public m_pItems
+	public m_pStream
+	public m_strTempFileName
+	
+	Private Sub Class_Initialize()		
+		set m_pItems=trans_.afc.new_navoarray()
+		set m_pStream = nothing
+		m_strTempFileName = doc_.system.createtempfilename("x","htm")
+	End Sub
+end class
+
+
+dim pParams
+dim countWorkers
+
+function fopen()
+	fopen=false		
+	if not HARUI(UAR_CMDID(CMDID_WIZZARD_WIZYTOWKA)) then
+		exit function
+	end if
+	run_this
+end function
+
+
+function run_this()
+	if (getCurrentWykonawca() is nothing) then
+		if MessageBoxCustom ("Aktualnie zalogowany użytkownik nie ma podanego domyślnego wykonawcy. Naciśnij ""OK"" jeśli chcesz zakończyć działanie kreatora.", "Kreator wizytówki", vbYesNo, vbQuestion ,"OK;Popraw") = vbYes then
+			exit function
+		else
+			dim pNewHli
+			set pNewHli=doc_.createhlistr("varCmd=CMD_OPEN_RECORD_PAGE varDestPage=PAGE_FORM_UZYTKOWNIK varObject=" + CStr(getCurrentUserID()))
+			dim pPage:set pPage=doc_.getpagehli(pNewHli)
+			if pPage is nothing then
+				exit function
+			end if
+			pPage.domodalauto()
+			set pPage = nothing
+			if (getCurrentUser().pWykonawca is nothing) then
+				exit function
+			end if
+		end if		
+	end if
+
+	set pParams = new CBussinessCardExportParams
+
+	pParams.m_bExportFirm = true
+	pParams.m_bExportWorkers = false
+	pParams.m_strFileName = "Wizytówka firmy"
+	pParams.m_bToFile = true
+	pParams.m_bRunWizzard = false
+
+	dim oRecordset:set oRecordset=trans_.createadors("select count(idobj) from n5pracownik where eAktywny=1")
+	countWorkers=clng(oRecordset.fields(0).value)
+
+
+	dim pWizzard
+	set pWizzard=CWizzard(false)		
+	pWizzard.add_step PAGE_WIZZARD_EXPORT_BUSSINESSCARD_STEP1
+	pWizzard.add_step PAGE_WIZZARD_EXPORT_BUSSINESSCARD_STEP2
+	pWizzard.add_step PAGE_WIZZARD_EXPORT_BUSSINESSCARD_STEP3
+	pWizzard.add_step PAGE_WIZZARD_EXPORT_BUSSINESSCARD_RESUM
+	pWizzard.add_container pParams
+	pWizzard.run
+end function
+
+
+function onPageEnter(pWizzardPage)
+	select case ( pWizzardPage.m_nPage )
+		case PAGE_WIZZARD_EXPORT_BUSSINESSCARD_STEP1:
+			pWizzardPage.m_pPage.setControls(countWorkers<>0)
+		case PAGE_WIZZARD_EXPORT_BUSSINESSCARD_STEP2:
+			pWizzardPage.m_pPage.fillTableFromContainer()
+		case PAGE_WIZZARD_EXPORT_BUSSINESSCARD_RESUM:
+			pWizzardPage.m_pPage.printWorkersList()
+			set pParams.m_pStream =  prepareStream()			
+	end select
+end function
+
+
+function onPageExit(pWizzardPage)
+	onPageExit=PAGE_DEFAULT
+	select case ( pWizzardPage.m_nPage )
+		case PAGE_WIZZARD_EXPORT_BUSSINESSCARD_STEP1:
+			if not pParams.m_bExportWorkers then
+				onPageExit = PAGE_WIZZARD_EXPORT_BUSSINESSCARD_STEP3
+			end if
+		case PAGE_WIZZARD_EXPORT_BUSSINESSCARD_STEP2:
+			pWizzardPage.m_pPage.getworkers()
+		case PAGE_WIZZARD_EXPORT_BUSSINESSCARD_STEP3:
+			if not pParams.m_bToFile and not pParams.m_bRunWizzard then
+				MessageBox "Musisz wybrać chociaż jedną z opcji.", "Kreator wizytówki", vbOKOnly, vbInformation	
+				onPageExit=PAGE_DONOTEXIT
+			end if
+
+	end select
+end function
+
+#include "50212"
+
+function ExistFileContinue(byval strFileName):ExistFileContinue=false
+	if (pFD.isFile(strFileName)) then
+		if MessageBox("Na dysku istnieje plik """ + strFileName + _
+		 """. Mógł on ulec zmianie. Czy chcesz kontynuować i nadpisać istniejący plik?", "Nadpisać?", vbYesNo, vbQuestion )<>vbYes then
+			exit function
+		end if
+	end if
+
+	ExistFileContinue=true
+end function
+
+function onWizzardComplete(pWizzardPage): onWizzardComplete=false
+
+	dim pDokument,bResult
+	bResult = true	
+	if pParams.m_pStream is nothing then
+		bResult = false
+	else
+		dim strTempString:strTempString=pParams.m_pStream.getstring
+		set pParams.m_pStream = nothing
+		set pParams.m_pStream = doc_.createstreamobj()
+		
+		pParams.m_pStream.write replace(strTempString,"id=BTN2" , "id=button1 name=button1") 
+		set pDokument = makeDokument(pParams.m_pStream,true)
+		if pDokument is nothing then
+			bResult = false
+		else
+			if pParams.m_bRunWizzard then
+				bResult = runWizzard(pDokument)		
+			end if
+
+			if not pParams.m_bToFile then
+				bResult = removeDokument(pDokument.idobj)
+			end if
+			
+		end if
+	end if
+	if not bResult then
+		pWizzardPage.m_pPage.activate
+		MessageBox "Działanie kreatora wizytówki zakonczyło się niepowodzeniem.", "Kreator wizytówki", vbOKOnly, vbInformation
+	else
+'-------------------------------------------------------
+		dim strTempFileName
+		'Przygotowanie do podgladu lub edycji pliku
+
+		'create pFD object
+		if (not Create_FileDriveObject()) then
+			exit function
+		end if
+
+		dim bView:bView = false
+		if (not bView) then
+			'tworzymy katalog user'a jezeli go nie ma
+			if (not checkUserDirectory()) then
+				' 1, 0, "Utworzenie katalogu lub jego sprawdzenie nie jest możliwe (" + getUserDirectory() + ")"
+				view_message1 6078, 0, getUserDirectory()
+				exit function
+			end if
+
+			dim strWizytFolder
+			strWizytFolder=getUserDirectory() + "\" + "Wizytówka"
+
+			if (not pFD.IsFolder( strWizytFolder )) then
+				if (not pFD.CreatePath( strWizytFolder )) then
+					' 1, 0, "Utworzenie katalogu lub jego sprawdzenie nie jest możliwe - " + strWizytFolder
+					view_message1 6079, 0, strWizytFolder
+					exit function
+				end if
+			end if
+
+			strTempFileName=strWizytFolder+"\"+pParams.m_strFileName + "."
+		end if
+
+		if (bView) then
+			strTempFileName = doc_.system.createtempfilename("x", "htm")
+		else
+			strTempFileName = strTempFileName + "htm"
+					
+			if (not ExistFileContinue(strTempFileName)) then
+				exit function
+			end if
+		end if
+				
+		'zapis
+		pParams.m_pStream.save strTempFileName
+
+		if (bView) then
+			doc_.getmodule(PAGE_FORM_WEB).navigate "file://" + strTempFileName
+		end if
+
+
+		if (not bView) then
+			view_message1 4103, 0, strTempFileName
+			if MessageBox("Wizytówka została zapisana jako """ + strTempFileName + """ Uruchomić podgląd wizytówki?", "Chcesz obejrzeć teraz?", vbYesNo, vbQuestion )=vbYes then
+				Run strTempFileName
+			end if
+		end if
+
+		'MessageBox "Działanie kreatora wizytówki zakonczyło się sukcesem.", "Kreator wizytówki", vbOKOnly, vbInformation
+		onWizzardComplete=true
+	end if
+end function
+
+
+function prepareStream()
+	dim pPM,pSOHtml,pSOXml,pSOOut
+
+	dim sysobj: set sysobj = doc_.system
+	'znajdź root instalacji
+	dim strInstRoot: strInstRoot = sysobj.registry(hKey_LocalMachine,"SOFTWARE\NAVO\NAVO2002\Setup","InstallationRoot")
+	dim strExtrasRoot : strExtrasRoot = strInstRoot + "Applications\#*varApplication\Extras"
+
+	'=doc_.getappfile(50501) - z katalogu extras
+	set pSOHtml = doc_.createstreamobj()	
+	set pSOXml = doc_.createstreamobj()	
+	set pSOOut = doc_.createstreamobj()	
+
+	pSOHtml.attach strExtrasRoot + "\szablon wizytowki.htm"'pPM
+
+	if pSOHtml.getstring="" then
+		set pPM=doc_.getappfile(95005)
+		pSOHtml.attach pPM
+		
+	end if
+
+	doc_.getmodule(60269).ExportBusinessCard pParams.m_pItems, pSOXml
+	
+	dim InStringHtml, InStringXml, OutString
+	
+	InStringHtml = pSOHtml.getstring
+	InStringXml = pSOXml.getstring
+
+	'ponizsza instrukca na razie potrzebna - IE ponizej 5.5 nie radzi 
+	'sobie z nagłówkiem XML'a
+
+	InStringXml = replace(InStringXml,"<?xml version=""1.0"" encoding=""windows-1250""?>","")
+	InStringHtml = replace(InStringHtml,"var bCanGenerate=false" , "var bCanGenerate=true")
+	InStringHtml = replace(InStringHtml,"dim appName" , "dim appName:appName=""" + trans_.var(GVAR_APPLICATION) + """")
+	
+	OutString = replace (InStringHtml,"%%XMLFROMNE%%" , InStringXml)
+	pSOOut.write OutString	
+
+
+	set prepareStream = pSOOut
+
+end function
+
+
+function makeDokument(byval pStream, byval bSave)
+	set makeDokument = nothing
+	set pDokument = nothing
+	dim pTran
+	set pTran=trans_.createsubtran()
+		dim pDokument,pTypDokumentu
+		dim id:id = trans_.findobjid(TYPEID_N5TYPDOKUMENTU, "strNazwa='Wizytówka'")
+		if id=0 then
+			set pTypDokumentu = insertTypWizytowka()
+		else			
+			set pTypDokumentu = trans_.getObj(TYPEID_N5TYPDOKUMENTU,id)
+		end if
+		if pTypDokumentu is nothing then
+			exit function
+		end if
+				
+		set pDokument = trans_.newobj(TYPEID_N5DOKUMENT)		
+		pDokument.strTematDokum = pParams.m_strFileName
+		pDokument.strStreszczenie = Left (pStream.getstring,250)
+		set pDokument.pTypDokumentu = pTypDokumentu
+		'set pDokument.wpNadawca = getCurrentUser().pWykonawca.wrefObiekt
+		'set pDokument.wpAdresat = getCurrentUser().pWykonawca.wrefObiekt'to do ... nie wiem... cokolwiek
+		pDokument.dDataWeWy = srvDate()
+		pDokument.dDataRejestracji = srvDate()
+		pDokument.nForma = cLng(1)
+
+		pDokument.strFileName = AddComputerName(pParams.m_strFileName + ".htm")
+
+		pDokument.fPlik.attach pStream
+	set makeDokument = pDokument
+	if bSave then
+		if not trans_.saveobjects then
+			' 1 ,1 ,"fail save savedokument"
+			view_message 6162, 0
+			set makeDokument = nothing
+			exit function
+		end if
+	else 
+		trans_.discard
+	end if		
+end function
+
+
+function runWizzard(byref pDokum)
+	runWizzard = true
+	dim pWysylka,pZal	
+	set pWysylka = trans_.newobj(TYPEID_N5WIZZARDEMAIL)
+	set pZal = pWysylka.listDokumenty.addnew()
+	if (pZal is nothing) or (pWysylka is nothing) or (pDokum is nothing) then
+		runWizzard = false
+		exit function
+	end if
+	set pZal.pDokument =  pDokum	
+	pWysylka.strTytul = left("Wizytówka firmy """ + GetCurrentFirma().strNazwa + """",512) 
+	trans_.var(GVAR_OBJECT) = pWysylka.idobj	
+	doc_.getmodule(60125)
+end function
+
+function removeDokument(byval idDokum)
+	dim pTrans,pDokum
+	set pTrans = trans_.createsubtran()
+		set pDokum = trans_.getobj(TYPEID_N5DOKUMENT, idDokum)
+		pDokum.markdel = true
+		if not trans_.saveobjects then
+			removeDokument = false
+		else 
+			removeDokument = true
+		end if
+	set pTrans = nothing
+end function
+
+function insertTypWizytowka()	
+	set insertTypWizytowka = nothing
+	dim pTrans,pTypDokum
+	set pTrans = trans_.createsubtran()
+		set pTypDokum = trans_.newobj(TYPEID_N5TYPDOKUMENTU)
+		pTypDokum.strNazwa = "Wizytówka"
+		pTypDokum.eRodzaj = CLng(2)
+		if trans_.saveobjects() then
+			set insertTypWizytowka = pTypDokum
+		else
+			' "Problem z zachowaniem typu dokumentu 'Wizytówka'"
+			view_message 6215, 0
+		end if
+	set pTrans = nothing
+end function
+
+]]>
+
+</script>
+</config>
+
+<body>
+</body>
+
+</page>

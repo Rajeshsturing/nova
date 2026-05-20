@@ -1,0 +1,981 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!-- 
+#include "h1000.h"
+#include "h1001.h"
+#include "h1220.h"
+#include "h1203.h"
+#include "h1230.h"
+#include "h1231.h"
+
+Tree services - moduł usługowy
+-->
+<page>
+<config>
+	<title>Tree services</title>
+<script>
+<![CDATA[
+'-----------------------
+'todo:
+'2.obsługa "more" - wczytywanie kawałkami
+'4.%child_table% jest chore
+'-----------------------
+
+#define PSEUDO_TYPEID_FIXED_LAST	0
+
+#define CPRDINX_PARENT_TYPEID		0
+#define CPRDINX_CHILD_TYPEID		1
+#define CPRDINX_CHILD_SORT			2
+#define CPRDINX_FIXED_FUNCTION		2
+#define CPRDINX_LIST_FIELDNAME		3
+#define CPRDINX_CHILD_2_PARENT		3
+#define CPRDINX_FIXED_SIMPLE_TEXT	3
+#define CPRDINX_CHILD_FILTER		4
+#define CPRDINX_FIXED_SIMPLE_HLI	4
+#define CPRDINX_CHILD_MERGE			5
+
+dim global
+dim intpoziom:intpoziom=0
+dim flaga
+dim intIlosc
+	
+
+
+const MAX_EXPLORER_LEVELS = 8
+'=======================================================================
+' DATA RETRIEVIAL
+' funkcje mają prefix tsd_	(tree services data)
+'=======================================================================
+
+'-----------------------------------------------------------------------
+' zwraca zapytanie SQL z listą 'dzieci' danego węzła
+' postaci:
+' c_typeid, c_idobj, c_subnodes 
+'(typeid+idobj dziecka) oraz info czy dziecko ma dzieci
+'bFolders - zwraca zapytanie pokazujące możliwe 'dzieci-kontenery' albo 'dzieci-liście'
+'-----------------------------------------------------------------------
+function tsd_get_children_query(byref pTreeDef,byref nResultSetNr,byval nParentTypeId,byval nParentIdObj,byref pfFixedItem,byref pFixedCPRD) 'as String
+
+	dim strSQL : strSQL = ""
+	set pfFixedItem = nothing
+	set pFixedCPRD = nothing
+
+#ifdef _SECURITY
+  dim strSortZadanie : strSortZAdanie = ""
+#endif
+
+'pętla dla wszystkich możliwych typów dzieci (najczęściej 1)
+	do while true
+
+		'pobierz informacje strukturalną
+		'pCPRD - child parent relation description (navo_array)
+
+		dim pCPRDChilds
+		set pCPRDChilds = pTreeDef.get_relation(nParentTypeId,nParentIdObj,nResultSetNr)
+
+		if pCPRDChilds is nothing then 
+			exit do
+		end if
+		
+		dim nChildTypeId : nChildTypeId = pCPRDChilds.Value(CPRDINX_CHILD_TYPEID)
+		if nChildTypeId <= PSEUDO_TYPEID_FIXED_LAST then
+			set pfFixedItem = pCPRDChilds.Value(CPRDINX_FIXED_FUNCTION)
+			set pFixedCPRD = pCPRDChilds
+			exit do
+		else
+			dim strSQLSubNodes : strSQLSubNodes = tsd_get_grandchild_query(pTreeDef,nChildTypeId)
+			dim strChild2Parent : strChild2Parent = pCPRDChilds.Value(CPRDINX_CHILD_2_PARENT)
+			
+			'empty child2parent means all!
+			if strChild2Parent = "" then
+				strChild2Parent = "(1=1)"
+			else
+				strChild2Parent = "c." + strChild2Parent + "=" + cstr(nParentIdObj)
+			end if
+
+#ifdef _SECURITY
+      'zmiana sortowania dla tabeli dzialania na karcie klienta
+      if pCPRDChilds.Value(1)=10119 then
+          
+          pCPRDChilds.Value(CPRDINX_CHILD_SORT) = "dDataRozp "
+          strSortZAdanie = "dDataRozp"
+      end if
+#endif
+
+    dim strSQLPart
+			strSQLPart = doc_.afc.convert.formatter("select 'c_typeid'=%1,'c_idobj'=c.idobj,'c_subnodes'=%2,'c_sort'=%3 " +_
+				"from %4 as c where %5 and %6 ") _
+				(nChildTypeId) _
+				(strSQLSubNodes) _
+				(pCPRDChilds.Value(CPRDINX_CHILD_SORT)) _
+				(doc_.stdobjdef.getobjdef( nChildTypeId ).tablename) _
+				(strChild2Parent) _
+				(replace(pCPRDChilds.Value(CPRDINX_CHILD_FILTER),"%child_table%","c")) _
+				.Done()
+			
+			if strSQL <> "" then
+				strSQL = strSQL + "union all "
+			end if
+
+
+			strSQL = strSQL + strSQLPart
+
+			if not pCPRDChilds.Value(CPRDINX_CHILD_MERGE) then
+				exit do
+			end if
+		end if
+	loop
+	
+	if strSQL <> "" then
+		strSQL = strSQL + " order by c_sort"
+	end if
+      
+#ifdef _SECURITY
+  if strSortZAdanie = "dDataRozp" then
+    strSQL = strSQL + " desc "
+  end if
+#endif
+
+	'-- puste oznacza nie otwieraj query - błąd definicji
+	tsd_get_children_query = strSQL
+end function
+
+'---- zbierz wszystkie możliwe grand children ---
+private function tsd_get_grandchild_query(byref pTreeDef,byval nChildTypeId)
+
+	dim strSQLExistsGC : strSQLExistsGC = ""
+	dim nSubPart : nSubPart = 0
+	dim pCPRDGrandChilds : set pCPRDGrandChilds = nothing
+	
+	'---- czy dzieci mają dzieci 
+	do while true
+
+		set pCPRDGrandChilds = pTreeDef.get_relation(nChildTypeId,0,nSubPart)
+		if pCPRDGrandChilds is nothing then	'nie ma więcej
+			exit do
+		end if
+		if pCPRDGrandChilds.Value(CPRDINX_CHILD_TYPEID) > PSEUDO_TYPEID_FIXED_LAST then
+			if strSQLExistsGC <> "" then
+				strSQLExistsGC = strSQLExistsGC + " or "
+			end if
+
+			strSQLExistsGC = strSQLExistsGC + doc_.afc.convert.formatter( _
+			"exists(select * from %1 as gc where gc.%2=c.idobj and %3)") _
+			(doc_.stdobjdef.getobjdef(pCPRDGrandChilds.Value(CPRDINX_CHILD_TYPEID) ).tablename) _
+			(pCPRDGrandChilds.Value(CPRDINX_CHILD_2_PARENT)) _
+			(replace(pCPRDGrandChilds.Value(CPRDINX_CHILD_FILTER),"%child_table%","gc")) _
+			.Done()
+		else
+			'jeśli ma pseudo typ to powoduje to że obiekt jest folderem
+			tsd_get_grandchild_query = "1"
+			exit function
+		end if
+	loop
+	
+	'dostosuj do postaci strawnej dla zapytania
+	if strSQLExistsGC <> "" then
+		strSQLExistsGC = "case when " + strSQLExistsGC +  " then 1 else 0 end "
+	else
+		strSQLExistsGC = "0"
+	end if
+	
+	tsd_get_grandchild_query = strSQLExistsGC
+end function
+
+'-----------------------------------------------------------------------
+'funkcja czyta dzieci podanego ojca (nParentTypeId,nParentIdObj)
+'poczynając od nStartRecordNr rekordu
+'i informuje o tym Presentation Builder
+'-----------------------------------------------------------------------
+sub tsd_read_children(byref pTreeDef,byref pTSPB, byval nParentTypeId,byval nParentIdObj,byval nStartRecordNr,byval pprzycisk)
+dim opcja1
+
+
+#ifdef _FRAM
+if pPrzycisk=0 then
+	if nStartRecordNr=1 then
+    nStartRecordNr=0
+    pPrzycisk=1
+    opcja1=1
+    intpoziom=1
+    flaga=true
+  else
+    pPrzycisk=0
+    opcja1=0
+  end if
+ else
+ pPrzycisk=1
+ opcja1=1
+ end if
+#endif
+
+
+  
+	'-------- iteruj się po wszystkich resultsetach
+	dim nResultSetNr : nResultSetNr = 0
+	dim pfFixedItem
+	dim pFixedCPRD
+
+	dim pPerforming : set pPerforming = nothing
+	dim nReadCounter : nReadCounter = 0
+
+	do while true
+		set pfFixedItem = nothing
+		set pFixedCPRD = nothing	
+
+		dim strSQLQuery : strSQLQuery = tsd_get_children_query(pTreeDef,nResultSetNr,nParentTypeId,nParentIdObj,pfFixedItem,pFixedCPRD)
+		
+#ifdef _ABAKOSTEEL
+		'tylko dla działań
+		if InStr(strSQLQuery,"'c_typeid'=10119") > 0 then		
+			dim strTop: strTop = "select top 10 'c_typeid'"
+			if trans_.isvar(GVAR_SELECTED_TAB_ITEM) then
+				if trans_.var(GVAR_SELECTED_TAB_ITEM) = 8 then
+					strTop = "select top 9999 'c_typeid'"
+				end if
+			end if
+			strSQLQuery = Replace(strSQLQuery,"select 'c_typeid'",strTop)
+			strSQLQuery = Replace(strSQLQuery,"order by c_sort","order by c_sort desc")		
+		end if
+#endif			
+
+		if strSQLQuery = "" and pfFixedItem is nothing then	'error or no more resultsets
+			exit do
+		end if
+		if strSQLQuery <> "" then
+			'-- read from resultset
+			dim pCursor : set pCursor = trans_.createadors(strSQLQuery)
+			
+			'- próbujemy (oczekiwane exception)
+			if nStartRecordNr > 0 then
+				on error resume next
+				pCursor.Move nStartRecordNr
+				on error goto 0
+			end if
+
+			do while not pCursor.EOF
+				'------ get data from recordset ------
+				dim nChildTypeId
+				dim nChildIdObj
+				dim bGrandChildren
+    
+				nChildTypeId = clng(pCursor(0))
+				nChildIdObj = clng(pCursor(1))
+				bGrandChildren = (clng(pCursor(2)) = 1)
+        if bGrandChildren then
+          if not flaga then
+             intpoziom=intpoziom+1
+          end if
+             flaga=true
+       else
+          if flaga then
+            intilosc=pcursor.recordcount-1
+            flaga=false
+            intpoziom=intpoziom-1
+          else
+            intilosc=intilosc-1
+          end if
+          
+          if intilosc<0 then
+            if intpoziom<>1 then
+               intpoziom=1
+            end if 
+            'flaga=true
+          end if  
+        end if
+        if (nStartRecordNr=0 and intpoziom <> 0 and opcja1=1) then
+          pPrzycisk=1
+         ' intpoziom=intpoziom+1
+        end if
+        
+				'------ process data ----
+				if not pTSPB.on_next_rs_child(nChildTypeId,nChildIdObj,bGrandChildren,pPrzycisk) then
+					exit do
+				end if
+
+				pCursor.MoveNext
+				nReadCounter = nReadCounter + 1
+				if nReadCounter > 150  and pPerforming is nothing then
+					set pPerforming=doc_.performing("Trwa wczytywanie")
+				end if
+       
+        if pprzycisk=1 and nChildTypeId=10146 then
+           tsd_read_children pTreeDef,pTSPB,nChildTypeId,nChildIdObj,nStartRecordNr,1
+           'intpoziom=intpoziom+1
+        end if
+			loop 
+		end if
+		if not pfFixedItem is nothing then
+			if not pTSPB.on_next_fixed_child(nParentTypeId,nParentIdObj,pfFixedItem,pFixedCPRD) then
+				exit do
+			end if
+		end if
+	loop
+end sub
+
+'=======================================================================
+' PRESENTATION BUILDER
+' presentation builder można zastąpić całkowicie innym !!
+'=======================================================================
+class cstock_tspb
+	private m_nIndent		'as long
+	private m_pDestTable	'as Object
+	private m_idAfter		'as long
+	private	m_pPicIdModule	'as object	
+	private m_idTreeDef		'as long
+	private m_nBodyExtraCols'as long
+
+	private sub class_initialize()
+		set m_pPicIdModule = doc_.getmodule(60301)	'- cached for performance
+		m_nBodyExtraCols = 0
+	end sub
+	
+	private sub class_terminate()   'OK
+		set m_pPicIdModule = nothing
+	end sub
+
+	
+	'-----------------------------------------------------------
+	public property get extracols()
+		extracols = m_nBodyExtraCols
+	end property
+	public property let extracols(nExtraCols)
+		m_nBodyExtraCols = nExtraCols
+	end property
+	'-----------------------------------------------------------
+	public sub init(byval nIndent,byref pDestTable,byval idAfter,byval idTreeDef)
+		m_nIndent = nIndent
+		set m_pDestTable = pDestTable
+		m_idAfter = idAfter
+		m_idTreeDef = idTreeDef
+	end sub
+
+	public function create_row()
+		dim pRow : set pRow = m_pDestTable.body.insertnew(CTRL_TYPE_TABLEROW,m_idAfter,-1)
+		set pRow.userprop=doc_.createhli()
+		pRow.userprop.prop(1) = CLng(m_nIndent)
+
+		m_idAfter = pRow.ident
+		set create_row = pRow
+	end function
+
+
+
+public sub build_indent(byref pRow,byval bChildren,byval nTypeId,byval nIdObj,byval opcja)					'OVERWRITABLE
+		'-- utwórz 1-szą kolumną na wcięcie
+		dim nFirstInd : nFirstInd = m_nIndent
+		if not bChildren then
+			nFirstInd = nFirstInd + 1
+		end if
+    
+		do while nFirstInd > 0 
+			dim pCell : set pCell = pRow.addnew(CTRL_TYPE_TABLECELL,-1)
+			with pCell
+				.width = MINIMIZE_SIZE
+				.addnew(CTRL_TYPE_STATIC,-1).text = " "
+			end with
+			nFirstInd = nFirstInd - 1
+		loop
+		if bChildren then
+    
+    #ifdef _FRAM
+    if nTypeId = 10146  then
+   if opcja=0 and  m_nIndent=0 then
+     set pCell = pRow.addnew(CTRL_TYPE_TABLECELL,-1)
+		  	pCell.width = MINIMIZE_SIZE
+        
+			  dim pPicturePlus1 : set pPicturePlus1 = pCell.addnew(CTRL_TYPE_PICTURE, -1)
+			  with pPicturePlus1
+				  .image = clng(80202)
+          .width = 150
+          .height = 150
+				  .tip = "Rozwiń wszystko"
+				  set .hli = doc_.createhlistr(doc_.afc.convert.formatter( _
+				  "varFunctionHLI='tsrs_expcol_hli' varTypeId=%1 varObject=%2 vn1=%3") _
+				  (nTypeId)(nIdObj)(m_idTreeDef).Done())
+			  end with
+   end if
+   if opcja=1 then
+        
+         doc_.createhlistr(doc_.afc.convert.formatter( _
+				  "varFunctionHLI='tsrs_expcol_hli' varTypeId=%1 varObject=%2 vn1=%3") _
+				  (nTypeId)(nIdObj)(m_idTreeDef).Done())
+          'tsd_read_children m_idTreeDef,pPB,nTypeId,nIdObj,0
+   end if
+   end if
+    #endif
+   
+    if opcja=0 then
+    
+			set pCell = pRow.addnew(CTRL_TYPE_TABLECELL,-1)
+			pCell.width = MINIMIZE_SIZE
+			dim pPicturePlus : set pPicturePlus = pCell.addnew(CTRL_TYPE_PICTURE, -1)
+			with pPicturePlus
+				.image = clng(PICTURE_SMALL_PLUS)
+				.tip = "Rozwiń"
+				set .hli = doc_.createhlistr(doc_.afc.convert.formatter( _
+				 "varFunctionHLI='tsrs_expcol_hli' varTypeId=%1 varObject=%2 vn1=%3") _
+				 (nTypeId)(nIdObj)(m_idTreeDef).Done())
+			end with
+    end if
+		end if
+	end sub
+	
+	public function create_arena(byref pRow,byref dzieci,byref opcja,byref nTypeId)
+
+		dim pCell : set pCell = pRow.addnew(CTRL_TYPE_TABLECELL,-1)
+    #ifdef _FRAM
+    if nTypeId = 10146  then
+      if m_nIndent<>0 then
+        if opcja then
+           if dzieci then
+       	    	pCell.colspan = MAX_EXPLORER_LEVELS - m_nIndent+3
+           else
+              pCell.colspan = MAX_EXPLORER_LEVELS - m_nIndent+2
+           end if      
+        else
+          if dzieci then
+            pCell.colspan = MAX_EXPLORER_LEVELS - m_nIndent+2
+          else
+            pCell.colspan = MAX_EXPLORER_LEVELS - m_nIndent+2
+          end if
+       end if
+       else
+          pCell.colspan = MAX_EXPLORER_LEVELS - m_nIndent+1
+     end if
+    else
+       pCell.colspan = MAX_EXPLORER_LEVELS - m_nIndent
+    end if
+    #else
+          pCell.colspan = MAX_EXPLORER_LEVELS - m_nIndent
+    #endif
+  		set create_arena = pCell
+		dim nExtra : nExtra = m_nBodyExtraCols
+		do while nExtra > 0
+			pRow.addnew CTRL_TYPE_TABLECELL,-1
+			nExtra = nExtra -1
+		loop
+	end function
+
+	public function prepare_arena(byval bCointainer,byval nTypeId,byval nIdObj,byval opcja)
+  
+		dim pRow : set pRow = create_row()
+		build_indent pRow, bCointainer, nTypeId,nIdObj,opcja
+		set prepare_arena = create_arena(pRow,bCointainer,opcja,nTypeId)
+	end function
+
+	public sub internal_build_body_ex(byref pCell,byref pDataObject, _
+		byval bPicture, byval bText, _
+		byref strCustomFunction,byref pCustomHLI)
+
+		dim nTypeId : nTypeId = pDataObject.type
+		dim nIdObj : nIdObj = pDataObject.idobj
+	
+		'---- obrazek dla danego obiektu
+		if bPicture then
+			dim pPicture : set pPicture = pCell.addnew(CTRL_TYPE_PICTURE, -1)
+			with pPicture
+				.width=Clng( SIZE_FOR_LIST )
+				.height=CLng( SIZE_FOR_LIST )
+				.image = m_pPicIdModule.get_obj_pic_id(nTypeId,nIdObj, PICUSE_LISTELEM)
+			end with
+		end if
+		
+		'------ text-------
+		if bText then
+			dim pHyperLink
+			if not pCustomHLI is nothing then
+				set pHyperLink = pCustomHLI
+			else
+				if strCustomFunction <> "" then
+					set pHyperLink = doc_.createhlistr(doc_.afc.convert.formatter(strCustomFunction) _
+						 (nTypeId)(nIdObj).Done())
+				else
+					set pHyperLink = doc_.createhlistr(doc_.afc.convert.formatter("OPEN_FORM_PROXY_HLI_USAGE(%1,%2,USAGE_VIEW)") _
+						 (nTypeId)(nIdObj).Done())
+				end if
+			end if
+
+			dim pStaticEx : set pStaticEx = pCell.addnew(CTRL_TYPE_STATICEX, -1)
+			with pStaticEx
+				.text = pDataObject.text
+				if (not pDataObject.getobjdef.child) then
+					.tip = "Pokaż szczegóły"
+					set .hli = pHyperLink
+					.ignoresysdisable true
+				end if
+			end with
+		end if
+	end sub
+
+	public sub build_body(byref pCell,byref pDataObject)		'OVERWRITABLE
+		internal_build_body_ex pCell,pDataObject,true,true,"",nothing
+	end sub
+
+	public sub build_extra_cols(byref pFirstExtraCell,byref pDataObject)		'OVERWRITABLE
+	end sub
+
+	public sub remove_children(byref pRow)
+		'do not use members m_ !! object not initialized !
+		dim nIndent : nIndent = pRow.userprop.prop(1)
+		dim pNextRow : set pNextRow = pRow.nextelement
+		dim pLastRow : set pLastRow = nothing
+		do while not pNextRow is nothing
+			if pNextRow.userprop.prop(1) <= nIndent then
+				exit do
+			end if
+			set pLastRow = pNextRow
+			set pNextRow = pNextRow.nextelement
+		loop
+		if not pLastRow is nothing then
+			dim pSection : set pSection = pRow.parent
+			set pNextRow = pRow.nextelement
+			do while true 
+				'for debug: pNextRow.cell(1).backcolor = rgb(255,0,0)
+				pSection.remove pNextRow
+				if pNextRow is pLastRow then
+					exit do
+				end if
+				set pNextRow = pNextRow.nextelement
+			loop 
+		end if
+	end sub
+	
+	'przetwarza kolejne dziecko z bazy. zwraca false gdy nie chce więcej dzieci !
+	public function on_next_rs_child(byval nTypeId,byval nIdObj,byval bGranChildren,byval opcja)	'OVERWRITABLE
+		'build item
+    
+		dim pBodyCell : set pBodyCell = prepare_arena(bGranChildren, nTypeId,nIdObj,opcja)
+		dim pDataObject : set pDataObject = trans_.getobj(nTypeId,nIdObj)
+		build_body pBodyCell,pDataObject
+		if m_nBodyExtraCols <> 0 then
+			build_extra_cols pBodyCell.nextelement,pDataObject
+		end if
+		on_next_rs_child = true
+	end function
+	'przetwarza kolejne dziecko fixed
+	public function on_next_fixed_child(byval nParentTypeId,byval nParentIdObj,byref pfFixedItem,byref pFixedCPRD)
+		on_next_fixed_child = pfFixedItem(Me, nParentTypeId, nParentIdObj,pFixedCPRD)
+	end function
+end class
+
+'=======================================================================
+class ccustombody_tspb
+	private m_pStockTSPB
+	
+	'-- customizers in order of use
+	private m_pCustomBodyBuilder
+	private m_pCustomHLIBuilder
+	private m_strCustomFunction	'custom function to insert instead of standard one (OPEN_FORM_PROXY_HLI_USAGE)
+	private m_pCustomExtraBuilder
+	
+	private sub class_initialize()
+		set m_pStockTSPB = new_stock_pb()
+		m_strCustomFunction = ""
+		set m_pCustomHLIBuilder = nothing
+		set m_pCustomBodyBuilder= nothing
+		set m_pCustomExtraBuilder=nothing
+	end sub
+	
+	private sub class_terminate()   'OK
+		set m_pStockTSPB = nothing
+	end sub
+	'-----------------------------------
+	' special initialization
+	'-----------------------------------
+	public sub set_body_builder(byref pCustomBodyBuilder)
+		set m_pCustomBodyBuilder = pCustomBodyBuilder
+	end sub
+	public sub set_extra_builder(byref pCustomExtraBuilder)
+		set m_pCustomExtraBuilder = pCustomExtraBuilder
+	end sub
+	public sub set_hli_builder(byref pCustomHLIBuilder)
+		set m_pCustomHLIBuilder = pCustomHLIBuilder
+	end sub
+	public sub set_hli_function(byval strCustomFunction)
+		m_strCustomFunction = strCustomFunction
+	end sub
+	'-----------------------------------------------------------
+	public property get extracols()
+		'delegate to base class
+		extracols = m_pStockTSPB.extracols
+	end property
+	public property let extracols(nExtraCols)
+		'delegate to base class
+		m_pStockTSPB.extracols = nExtraCols
+	end property
+	'-----------------------------------
+
+	public sub init(byval nIndent,byref pDestTable,byval idAfter,byval idTreeDef)
+		'delegate to base class
+		m_pStockTSPB.init nIndent,pDestTable,idAfter,idTreeDef
+	end sub
+
+	public function create_row()
+		'delegate to base class
+		set create_row = m_pStockTSPB.create_row()
+	end function
+
+	public sub build_indent(byref pRow,byval bChildren,byval nTypeId,byval nIdObj,byval opcja)
+		'delegate to base class
+		m_pStockTSPB.build_indent pRow,bChildren,nTypeId,nIdObj,opcja
+	end sub
+	
+	public function create_arena(byref pRow,byref dzieci)
+		'delegate to base class
+		set create_arena = m_pStockTSPB.create_arena(pRow,dzieci)
+	end function
+
+	public function prepare_arena(byval bCointainer,byval nTypeId,byval nIdObj,byval opcja)
+		'delegate to base class
+		set prepare_arena = m_pStockTSPB.prepare_arena(bCointainer,nTypeId,nIdObj,opcja)
+	end function
+
+	public sub build_body(byref pCell,byref pDataObject)
+		if not m_pCustomBodyBuilder is nothing then
+			if m_pCustomBodyBuilder(pCell,pDataObject) then
+				exit sub
+			else
+				m_pStockTSPB.build_body pCell,pDataObject
+			end if
+		end if
+
+		if not m_pCustomHLIBuilder is nothing then
+			m_pStockTSPB.internal_build_body_ex pCell,pDataObject,true,true,"",m_pCustomHLIBuilder(nTypeId,nIdObj)
+			exit sub
+		end if
+
+		if m_strCustomFunction <> "" then
+			m_pStockTSPB.internal_build_body_ex pCell,pDataObject,true,true,m_strCustomFunction,nothing
+			exit sub
+		end if
+		'delegate to base class
+		m_pStockTSPB.build_body pCell,pDataObject
+	end sub
+
+	public sub build_extra_cols(byref pFirstExtraCell,byref pDataObject)		'OVERWRITABLE
+		if not m_pCustomExtraBuilder is nothing then
+			if m_pCustomExtraBuilder(pFirstExtraCell,pDataObject) then
+				exit sub
+			end if
+		end if
+		'delegate to base class
+		m_pStockTSPB.build_extra_cols pFirstExtraCell,pDataObject
+	end sub
+
+	public sub remove_children(byref pRow)
+		'delegate to base class
+		m_pStockTSPB.remove_children pRow
+	end sub
+	
+	public function on_next_rs_child(byval nTypeId,byval nIdObj,byval bGranChildren,byval opcja)
+		'build item
+		dim pBodyCell : set pBodyCell = prepare_arena(bGranChildren, nTypeId,nIdObj,opcja)
+		dim pDataObject : set pDataObject = trans_.getobj(nTypeId,nIdObj)
+		
+		build_body pBodyCell,pDataObject
+		
+		if extracols <> 0 then
+			build_extra_cols pBodyCell.nextelement,pDataObject
+		end if
+		
+		on_next_rs_child = true
+	end function
+	
+	public function on_next_fixed_child(byval nParentTypeId,byval nParentIdObj,byref pfFixedItem,byref pFixedCPRD)
+		on_next_fixed_child = pfFixedItem(Me, nParentTypeId, nParentIdObj,pFixedCPRD)
+	end function
+end class
+'=======================================================================
+' Tree definition
+' stock implementation
+
+' opis child-parent relationship oparty jest na statycznej tablicy budowanej
+' przez "wołacza" raportu, ale mógłby być np. dynamicznie określany na podstawie
+' jakiś innych kryteriów
+'=======================================================================
+class cstock_treedef
+	private m_oCPRDArray			'as navoarray
+	private m_id
+
+	private sub class_initialize()
+		set m_oCPRDArray = doc_.afc.new_navoarray()
+		m_id = 0
+	end sub
+	
+	private sub class_terminate()   'OK
+		set m_oCPRDArray = nothing
+	end sub
+
+	'-- internally used by tree services
+	public function get_relation(byval nParentTypeId,byval nParentIdObj,byref nSubPart)
+		set get_relation = nothing
+
+		dim iter 
+		for iter = nSubPart to m_oCPRDArray.UpperIndex
+			if m_oCPRDArray.Value(iter).Value(CPRDINX_PARENT_TYPEID) = nParentTypeId then
+				set get_relation = m_oCPRDArray.Value(iter)
+				nSubPart = iter + 1
+				exit function
+			end if
+		next
+	end function
+	
+	'------ public interface for raport caller -----------
+	
+	'------ dodaj foldery dla całego typu parentów ------
+	public sub add_relation(byval nParentTypeId,byval nChildTypeId,byval strChild2ParentRefField, _
+		byval strChildSortField,byval strChildFilter,byval bMerge)
+		if strChildFilter = "" then
+			strChildFilter = "(1=1)"
+		end if
+
+		dim pCPRD : set pCPRD = doc_.afc.new_navoarray()
+			pCPRD.Add nParentTypeId												'CPRDINX_PARENT_TYPEID
+			pCPRD.Add nChildTypeId												'CPRDINX_CHILD_TYPEID = %1
+			pCPRD.Add strChildSortField											'CPRDINX_CHILD_SORT = %2
+			pCPRD.Add strChild2ParentRefField									'CPRDINX_CHILD_2_PARENT = %5
+			pCPRD.Add strChildFilter											'CPRDINX_CHILD_FILTER = %7
+			pCPRD.Add bMerge													'CPRDINX_CHILD_MERGE
+		m_oCPRDArray.Add pCPRD
+	end sub
+
+	public sub add_list_relation(byval nParentTypeId,byval strListField)
+		dim pCPRD : set pCPRD = doc_.afc.new_navoarray()
+			pCPRD.Add nParentTypeId												'CPRDINX_PARENT_TYPEID
+			pCPRD.Add PSEUDO_TYPEID_FIXED_LAST									'CPRDINX_CHILD_TYPEID = %1
+			pCPRD.Add getref("list_simple_text_handler")						'CPRDINX_FIXED_FUNCTION=CPRDINX_CHILD_SORT
+			pCPRD.Add strListField												'CPRDINX_CHILD_2_PARENT = %5
+		m_oCPRDArray.Add pCPRD
+	end sub
+
+	public sub add_fixed(byval nParentTypeId,byval nChildPseudoTypeId,byref pfFixedItem)
+		dim pCPRD : set pCPRD = doc_.afc.new_navoarray()
+			pCPRD.Add nParentTypeId												'CPRDINX_PARENT_TYPEID
+			pCPRD.Add nChildPseudoTypeId										'CPRDINX_CHILD_TYPEID
+			pCPRD.Add pfFixedItem												'CPRDINX_FIXED_FUNCTION=CPRDINX_CHILD_SORT
+		m_oCPRDArray.Add pCPRD
+	end sub
+
+	public sub add_fixed_simple_text(byval nParentTypeId,byval nChildPseudoTypeId,byval strText,byref pHLI)
+		dim pCPRD : set pCPRD = doc_.afc.new_navoarray()
+			pCPRD.Add nParentTypeId												'CPRDINX_PARENT_TYPEID
+			pCPRD.Add nChildPseudoTypeId										'CPRDINX_CHILD_TYPEID
+			pCPRD.Add getref("fixed_simple_text_handler")						'CPRDINX_FIXED_FUNCTION=CPRDINX_CHILD_SORT
+			pCPRD.Add strText													'CPRDINX_FIXED_SIMPLE_TEXT
+			pCPRD.Add pHLI														'CPRDINX_FIXED_SIMPLE_HLI
+		m_oCPRDArray.Add pCPRD
+	end sub
+
+	public property get ident()
+		ident = m_id
+	end property
+
+	public property let ident(byval id)
+		m_id = id
+	end property
+end class
+
+function new_treedef(byval idUniqueId)
+	dim pTreeDef : set pTreeDef = new cstock_treedef
+	pTreeDef.ident = idUniqueId
+	set new_treedef = pTreeDef
+end function
+
+function new_stock_pb()
+	set new_stock_pb = new cstock_tspb
+end function
+
+function new_custombodybuilder_pb()
+	set new_custombodybuilder_pb = new ccustombody_tspb
+end function
+
+function fixed_simple_text_handler(byref pTSPD,nParentTypeId, nParentIdObj,byref pFixedCPRD)
+	dim pStatic : set pStatic = pTSPD.prepare_arena(true, pFixedCPRD.Value(CPRDINX_CHILD_TYPEID),0,0). _
+		addnew(CTRL_TYPE_STATIC,-1)
+	pStatic.text = cstr(pFixedCPRD.Value(CPRDINX_FIXED_SIMPLE_TEXT))
+	set pStatic.hli = pFixedCPRD.Value(CPRDINX_FIXED_SIMPLE_HLI)
+	fixed_simple_text_handler=true
+end function
+
+function list_simple_text_handler(byref pTSPD,nParentTypeId, nParentIdObj,byref pFixedCPRD)
+	dim pDataObject : set pDataObject = trans_.getobj(nParentTypeId,nParentIdObj)
+	dim pList : set pList = pDataObject.field(pFixedCPRD.Value(CPRDINX_LIST_FIELDNAME))
+
+	dim pElementObject
+
+	for each pElementObject in pList
+		'build item
+		dim nElementTypeId : nElementTypeId = pElementObject.type
+		dim nElementIdObj : nElementIdObj = pElementObject.idobj
+
+		dim pBodyCell : set pBodyCell = pTSPD.prepare_arena(false, nElementTypeId,nElementIdObj,0)
+
+		pTSPD.build_body pBodyCell,pElementObject
+		if pTSPD.extracols <> 0 then
+			pTSPD.build_extra_cols pBodyCell.nextelement,pElementObject
+		end if
+	next
+	list_simple_text_handler = true
+end function
+
+'======================================================================
+' runtime support
+'======================================================================
+function tsrs_im_expand_colapse(byref pPicture,byref pPB,byref pTreeDef,byval nTypeId,byval IdObj,byref pPicture1)
+	
+  dim pRow :set pRow = pPicture.parent.parent
+  		pPB.remove_children pRow
+
+
+	'--- use stock presentation builder
+	if pPicture.image = PICTURE_SMALL_PLUS then
+		dim pTable : set pTable = pRow.parent.parent
+
+		pPicture.image = clng(PICTURE_SMALL_MINUS)
+		pPicture.tip = "Zwiń"
+
+		pPB.init 1+pRow.userprop.prop(1),pTable,pRow.ident,pTreeDef.ident
+     if pPicture1.tip="Zwiń wszystko" then
+      pPicture1.image = clng(80202)
+		  pPicture1.tip = "Rozwiń wszystko"
+    end if
+    'tsrs_im_expand_colapse_wszystko pPicture, pPB, pTreeDef, nTypeId, IdObj
+		tsd_read_children pTreeDef,pPB, nTypeId,IdObj,0,0
+	else
+		pPicture.image = clng(PICTURE_SMALL_PLUS)
+		pPicture.tip = "Rozwiń"
+		pPB.remove_children pRow
+	end if
+end function
+
+function tsrs_im_expand_colapse_wszystko(byref pPicture,byref pPB,byref pTreeDef,byval nTypeId,byval IdObj,byref pPicture1)
+
+	dim pRow : set pRow = pPicture.parent.parent
+  		pPB.remove_children pRow
+
+	'--- use stock presentation builder
+	if pPicture.tip = "Rozwiń wszystko" then
+		dim pTable : set pTable = pRow.parent.parent
+
+		pPicture.image = clng(80202)
+		pPicture.tip = "Zwiń wszystko"
+
+		pPB.init 1+pRow.userprop.prop(1),pTable,pRow.ident,pTreeDef.ident
+    if pPicture1.tip="Zwiń" then
+      pPicture1.image = clng(PICTURE_SMALL_PLUS)
+		  pPicture1.tip = "Rozwiń"
+    end if
+    
+		tsd_read_children pTreeDef,pPB, nTypeId,IdObj,1,0
+	else
+		pPicture.image = clng(80202)
+		pPicture.tip = "Rozwiń wszystko"
+		pPB.remove_children pRow
+	end if
+end function
+
+
+function tsrs_im_start(byref pPB,byref pDestTable,byref pTreeDef,byval nTypeId,byval IdObj)
+	pPB.init 0,pDestTable,-2,pTreeDef.ident
+	tsd_read_children pTreeDef,pPB, nTypeId,IdObj,0,0
+end function
+
+#ifdef _DEBUG
+'======================================================================
+' TESTS
+'======================================================================
+
+
+#define TYPEID_N5GRUPAKLIENT 10118
+#define TYPEID_N5KLIENT 10108
+#define TYPEID_N5SPRZEDAZ 10129
+#define TYPEID_N5KLIENT_PRACOWNIK 10112
+#define TYPEID_N5_KLIENT_JEDN_ORG 10114
+#define TYPEID_N5ZADANIE 10119
+#define TYPEID_N5POZSPRZEDAZ 10132
+
+#include "50617"
+
+function test
+	tsrs_fopen()
+	dim pPB : set pPB = new_custombodybuilder_pb()
+  set global=pPB
+	pPB.extracols  = 4
+
+	dim pTD : set pTD = tsrs_new_explorer(pPB)
+
+	'---- twórz foldery grup, zawierające grupy
+	pTD.add_relation TYPEID_N5GRUPAKLIENT,TYPEID_N5GRUPAKLIENT,"pGrupaNadrzedna","c.strNazwa","",false
+	'---- oraz listę klientów pod tymi grupami
+	pTD.add_relation TYPEID_N5GRUPAKLIENT,TYPEID_N5KLIENT,"pGrupaKlient","c.strNazwa","",false
+'	pTD.add_relation TYPEID_N5GRUPAKLIENT,TYPEID_N5KLIENT,"pGrupaKlient","c.strNazwa","%child_table%.idobj in (select pklient from n5zadanie)",false
+	pTD.add_relation TYPEID_N5KLIENT,TYPEID_N5ZADANIE,"pKlient","c.strTemat","(pPopZadanie =0 and pNadZadanie=0)",false
+'	pTD.add_relation TYPEID_N5ZADANIE,TYPEID_N5ZADANIE,"pNadZadanie","c.strTemat","",false
+	pTD.add_relation TYPEID_N5ZADANIE,TYPEID_N5ZADANIE,"pPopZadanie","c.strTemat","",false
+
+	'----- twórz foldery klientów
+	pTD.add_relation TYPEID_N5KLIENT,TYPEID_N5KLIENT_PRACOWNIK,"pKlient","c.strnazwisko","",false
+	pTD.add_relation TYPEID_N5KLIENT,TYPEID_N5_KLIENT_JEDN_ORG,"pKlient","c.strNazwa","",false
+	pTD.add_relation TYPEID_N5KLIENT,TYPEID_N5SPRZEDAZ,"pKlient","c.strNrdok","",false
+	pTD.add_list_relation TYPEID_N5SPRZEDAZ,"listPozycje"
+
+	'---- oraz listę faktur dla tych klientów
+'	pTD.add_fixed TYPEID_N5GRUPAKLIENT,-1,getref("fixed1")
+'	pTD.add_fixed TYPEID_N5KLIENT,-2,getref("fixed2")
+	pTD.add_relation -2,TYPEID_N5SPRZEDAZ,"pKlient","c.strNrdok","",false
+	pTD.add_relation -3,TYPEID_N5_KLIENT_JEDN_ORG,"pKlient","c.strNazwa","",false
+	pTD.add_relation -4,TYPEID_N5KLIENT_PRACOWNIK,"pKlient","c.strnazwisko","",false
+	pTD.add_fixed TYPEID_N5KLIENT,-5,getref("fixed3")
+	pTD.add_relation -5,TYPEID_N5SPRZEDAZ,"pKLient","c.strNrdok","",false
+
+	tsrs_start page_.ctrl(1),pTD,TYPEID_N5GRUPAKLIENT,0
+
+'	tsrs_fclose()
+end function
+
+function fixed1(byref pTSPD,nParentTypeId, nParentIdObj,pFixedCPRD)
+	if nParentTypeId = TYPEID_N5GRUPAKLIENT and nParentIdObj = 8 then
+		'build item
+		with pTSPD
+			.build_body .prepare_arena(true, TYPEID_N5KLIENT,55,0)
+		end with
+	end if
+	fixed1=true
+end function
+
+function fixed2(byref pTSPD,nParentTypeId, nParentIdObj,pFixedCPRD)
+	if nParentTypeId = TYPEID_N5KLIENT then 'and nParentIdObj = 55 then
+		'build item
+		with pTSPD
+			dim pCell
+			set pCell = .prepare_arena(false, -2,nParentIdObj,0)
+			pCell.backcolor=rgb(255,0,0)
+	
+			set pCell = .prepare_arena(true, -3,nParentIdObj,0)
+			pCell.backcolor=rgb(0,255,0)
+
+			set pCell = .prepare_arena(true, -4,nParentIdObj,0)
+			pCell.backcolor=rgb(0,0,255)
+		end with
+	end if
+	fixed2=true
+end function
+
+function fixed3(byref pTSPD,nParentTypeId, nParentIdObj,pFixedCPRD)
+	pTSPD.prepare_arena(true, pFixedCPRD.Value(CPRDINX_CHILD_TYPEID),nParentIdObj,0). _
+		addnew(CTRL_TYPE_STATIC,-1).text = "f-ry"
+	fixed3=true
+end function
+
+#endif
+
+]]>
+</script>
+</config>
+	<body>
+	<button href='varFunction=test'>test</button><br/>
+		<table name='1' border='1'>
+			<tbody />
+		</table>
+	</body>
+</page>

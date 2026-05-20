@@ -1,0 +1,185 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!-- 
+REV:KB:WORKING
+
+#include "h1000.h"
+#include "h1001.h"
+
+#define ID_ITEMS_TABLE		5000
+
+	służy do wyboru dziecka z listy dzieci
+	użycie:
+	pChoiceList.prepare_choicelist
+	pChoiceList.choose_elem/choose_elem_where/choose_elem_shortlist
+-->
+
+<page style='STYLE_PAGE' width='7000'>
+<config>
+	<title>
+
+	Wybór obiektu z listy
+
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+
+	</title>
+
+<startpos>center</startpos>
+
+<script>
+
+<![CDATA[
+
+dim pParent		'Obiekt ojca
+dim pList		'Pole listy
+dim strLstName	'Nazwa pola listy
+
+'------------------------------------------------------------------------------
+' prepare_choicelist
+' Wołane by przygotować listę do wyboru
+'
+' strListName - nazwa listy w obiekcie pParentObj
+' pParentObj  - obiekt ojca zawierający liste strListName
+' strOpis     - nagłówek z odpowiednią informacją
+'------------------------------------------------------------------------------
+function prepare_choicelist(byval strListName, byval pParentObj, byval strOpis)
+	set pParent = pParentObj
+
+	strLstName = strListName
+
+	set pList = pParentObj.field(strListName)
+
+	page_.topelement.title = strOpis
+	page_.ctrl(444).text = strOpis
+end function
+
+'------------------------------------------------------------------------------
+' choose_elem_where
+' Wybieranie lp elementu z listy z mozliwoscią podania whera.
+' !UWAGA! Aby wszystkie pozycje były widoczne wcześniej parent
+' musi zostać zapisany do bazy
+'
+' strField - nazwa pola z child'a na podstawie którego wyświetlić info
+' strWhere - where skracajacy liczbę dzieci
+'------------------------------------------------------------------------------
+function choose_elem_where(byval strField, byval strWhere)
+
+	if strWhere = "" then
+		choose_elem_where = choose_elem()
+		exit function
+	end if
+
+	'nazwa tablicy dzieci
+	dim strTableName:strTableName = doc_.stdobjdef.getobjdef( pParent.getobjdef.field(pParent.getobjdef.getfieldindex(strLstName)).reftypeid ).tablename		
+
+	dim query:query = doc_.afc.convert.formatter( _
+	" select %1 , lp  from %2 " + _
+	" join collections on %2.idobj = collections.idobj " + _
+	" and idcollection = %3 and idparent = %4" + _
+	" where %5 ") _
+	.add(strField) _
+	.add(strTableName) _
+	.add(cstr(pList.collectionid)) _
+	.add(cstr(pParent.idobj)) _
+	.add(strWhere) _
+	.done()
+
+	dim rs:set rs = trans_.createadors(query)
+	while not rs.eof
+		page_add_item cstr(rs.fields(strField).value), clng(rs.fields("lp").value)
+		rs.movenext
+	wend
+
+	choose_elem_where = page_.domodalauto()
+
+end function
+
+'------------------------------------------------------------------------------
+' choose_elem
+' Zwraca pozycję wybranego dziecka na liście lub 0 gdy nie dokonano wyboru
+' Są uwzględniane pozycje nawet takie, które nie zostały jeszcze zapisane
+' w bazie danych
+'------------------------------------------------------------------------------
+function choose_elem()
+	choose_elem = choose_elem_shortlist(nothing)
+end function
+
+'------------------------------------------------------------------------------
+' choose_elem_shortlist
+' Zwraca lp wybranego elementu lub 0 gdy nie wybrano. Na liscie pojawiaja
+' sie elementy, ktore nie zostaly jeszcze zapisane do bazy
+'
+' pfnShortList - wskaźnik na funkcję umożliwiającą podjęcie decyzji
+'				 czy dany obiekt child ma być na liście pokazany czy nie
+'				 (zastepuje where)
+'				 FUNCKJA: BOOL pfnShortList(byref pChild, byval nLP)
+'------------------------------------------------------------------------------
+function choose_elem_shortlist(byref pfnShortList)
+	dim pChild
+	dim iter : iter = 1
+	for each pChild in pList
+		
+		dim bResult: bResult = true
+		if (not pfnShortList is nothing) then
+			bResult = pfnShortList(pChild, iter)
+		end if
+
+		if (bResult) then
+			page_add_item pChild.text, iter
+		end if
+
+		iter = iter + 1
+	next
+	choose_elem_shortlist = page_.domodalauto()
+end function
+
+'------------------------------------------------------------------------------
+' Dodaj jedna pozycje, ktora odpowiada dzikiej referencji (wyswietlanie)
+'------------------------------------------------------------------------------
+private sub page_add_item(byval strText, nLP)
+
+	'dobieramy sie do tabelki
+	dim pBodyTable
+	set pBodyTable=page_.ctrl(ID_ITEMS_TABLE).body
+
+	'wstaw wiersz do tabelki
+	dim pRow
+	set pRow=pBodyTable.addnew(CTRL_TYPE_TABLEROW,-1)
+
+	dim pText
+	set pText=pRow.addnew(CTRL_TYPE_TABLECELL,-1).addnew(CTRL_TYPE_STATIC,-1)
+	pText.text=strText
+	pText.width = clng(MAXIMIZE_SIZE)
+
+	'wywołanie funkcji gdy ktoś naciśnie na nazwe obiektu
+	dim pNewHli : set pNewHli=doc_.createhli()
+	pNewHli.prop(GVAR_FUNCTIONHLI)="page_choice"
+	pNewHli.prop(GVAR_MODALRES)=CLng(nLP)
+	set pText.hli=pNewHli
+end sub
+
+sub page_choice(byref pHli)
+	page_.result=pHli.prop(GVAR_MODALRES)
+	page_.goback
+end sub
+
+]]>
+
+</script>
+</config>
+	<body>
+		<table name='t##ID_ITEMS_TABLE'>
+			<thead>
+				<tr>
+					<td style='STYLE_TABLE_HEADER'>
+						<t name='t444'></t>
+					</td>
+				</tr>
+			</thead>
+
+			<tbody style='STYLE_TABLE_BODY'>
+			</tbody>
+		</table>
+	</body>
+</page>

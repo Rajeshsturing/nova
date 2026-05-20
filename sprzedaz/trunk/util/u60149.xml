@@ -1,0 +1,1307 @@
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+
+<?xml version="1.0" encoding="windows-1250" ?>
+<page style='STYLE_PAGE'>
+<config>
+	<title>
+	NAVO Office Expander
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+<script>
+<![CDATA[
+
+'*************************************************************************
+'* (c) NAVO 2002
+'* Office Expander
+'*
+'* Spikowski Piotr
+'*************************************************************************
+
+
+'****************************************************************************
+' Globalne stale
+'****************************************************************************
+
+#define APP_TYPE_ERROR			0
+#define APP_TYPE_EXCEL			1
+#define APP_TYPE_WORD			2
+#define APP_TYPE_OUTLOOK		3
+#define APP_TYPE_ACCESS			4
+#define APP_TYPE_FRONTPAGE		5
+#define APP_TYPE_POWERPOINT		6
+
+'****************************************************************************
+'* Globalne zmienne
+'****************************************************************************
+
+#include "50122"
+#include "50126"
+#include "50203"
+#include "50211"
+#include "50212"
+
+function fopen()
+	'Jezeli zainicjowano aplikacje to mozna kontynuowac
+	
+	on error resume next
+	doc_.bringtotop
+	on error goto 0
+
+	fopen = doc_.getpagehli("varCmd=CMD_OPEN_RECORD_PAGE varDestPage=60121 varNewThread='1'").system_init()
+end function
+
+
+'****************************************************************************
+'*
+'*	onExternalApplicationCommand (ByRef oApp, ByRef strCommand)
+'*
+'*	Główna procedura obsługi zdarzeń z aplikacji office'a
+'*
+'*	oApp		- aplikacja office'a z ktorej jest wolana
+'*	strCommand  - komenda zapisana w pliku z XMLem
+'*  varParam	- parametr dodatkowy
+'*	nAppType	- okresla rodzaj aplikacji
+'*
+'****************************************************************************
+function onExternalApplicationCommand (byref pApp, byval strCommand, byref varParam, byval nAppType)
+
+	dim pOfficeExecution
+	set pOfficeExecution = CNavoCommandExecution( pApp )
+
+	pOfficeExecution.m_varParam = varParam
+
+	if (pOfficeExecution is nothing) then
+		'nie udalo sie zainicjowac klasy
+		exit function
+	end if
+
+	'Ustaw dla danej aplikacji odpowiednia funkcje
+	'bedaca eventem na dane zdarzenie
+	select case nAppType
+		case APP_TYPE_ERROR
+			pOfficeExecution.setEventFunNames _
+						"EXTENSIONS_OpenFile", _
+						"EXTENSIONS_isFileOpen", _
+						"EXTENSIONS_getOpenedFilePath", _
+						"EXTENSIONS_saveOpenedFile", _
+						"EXTENSIONS_closeOpenedFile", _
+						"EXTENSIONS_getOpenedDocObj"
+
+		case APP_TYPE_EXCEL
+			pOfficeExecution.setEventFunNames _
+						"EXCEL_OpenFile", _
+						"EXCEL_isFileOpen", _
+						"EXCEL_getOpenedFilePath", _
+						"EXCEL_saveOpenedFile", _
+						"EXCEL_closeOpenedFile", _
+						"EXCEL_getOpenedDocObj"
+
+		case APP_TYPE_WORD
+			pOfficeExecution.setEventFunNames _
+						"WORD_OpenFile", _
+						"WORD_isFileOpen", _
+						"WORD_getOpenedFilePath", _
+						"WORD_saveOpenedFile", _
+						"WORD_closeOpenedFile", _
+						"WORD_getOpenedDocObj"
+
+		case APP_TYPE_OUTLOOK
+			OUTLOOKCommand pApp, strCommand
+			set pOfficeExecution = nothing
+			exit function
+
+		case APP_TYPE_ACCESS
+			'nie obslugujemy tej aplikacji
+			set pOfficeExecution = nothing
+			exit function
+
+		case APP_TYPE_FRONTPAGE
+			pOfficeExecution.setEventFunNames _
+						"FRONTPAGE_OpenFile", _
+						"FRONTPAGE_isFileOpen", _
+						"FRONTPAGE_getOpenedFilePath", _
+						"FRONTPAGE_saveOpenedFile", _
+						"FRONTPAGE_closeOpenedFile", _
+						"FRONTPAGE_getOpenedDocObj"
+
+		case APP_TYPE_POWERPOINT
+			pOfficeExecution.setEventFunNames _
+						"POWERPOINT_OpenFile", _
+						"POWERPOINT_isFileOpen", _
+						"POWERPOINT_getOpenedFilePath", _
+						"POWERPOINT_saveOpenedFile", _
+						"POWERPOINT_closeOpenedFile", _
+						"POWERPOINT_getOpenedDocObj"
+
+	end select
+
+	'Wykonaj komende
+	pOfficeExecution.ExecuteCommand strCommand
+
+	varParam = pOfficeExecution.m_varParam
+	
+	set pOfficeExecution = nothing
+end function
+
+
+'****************************************************************************
+' Bring to top the main window
+'****************************************************************************
+function Enterprise_Bring2Top()
+	on error resume next
+	doc_.bringtotop
+	on error goto 0
+end function
+
+
+'****************************************************************************
+' CNavoCommandExecution
+'
+' Klasa odpowiedzialna za wykonywanie komend dostarczonych z aplikacji
+' offica i wolanie odpowiednich eventow.
+'****************************************************************************
+class CNavoCommandExecution_A
+
+	private m_pApplicationHost	'Obiekt aplikacji offica
+	private m_pFD				'File System Object
+
+	private m_pfnOpenFile			'Event open file
+	private m_pfnisFileOpen			'Event is file open
+	private m_pfngetOpenedFilePath  'Event getOpenedFile
+	private m_pfnsaveOpenedFile		'Event saveOpenedFile
+	private m_pfncloseOpenedFile	'Event closeOpenedFile
+	private m_pfgetOpenedDocObj		'Event getOpenedDocObj
+
+	public  m_strFile2Open		'Plik do otwarcia - ustawiane przez Open
+	public  m_pActiveDoc		'Obiekt aktywnego dokumentu
+	public  m_pActiveWindow		'Dodatkowo aktywne okno - gdy potrzeba
+
+	public  m_varParam			'Parametr dodatkowy
+	
+	'************************************************************************
+	'* Domyslny konstruktor
+	'************************************************************************
+	private sub class_initialize()
+		set m_pApplicationHost = nothing
+		set m_pFD = nothing
+		set m_pfnOpenFile = nothing
+		set m_pfnisFileOpen = nothing
+		set m_pfngetOpenedFilePath = nothing
+		set m_pfnsaveOpenedFile = nothing
+		set m_pfncloseOpenedFile = nothing
+		set m_pfgetOpenedDocObj = nothing
+		m_strFile2Open = ""
+	end sub
+
+	
+	'************************************************************************
+	'* Domyslny destruktor
+	'************************************************************************
+	private sub class_terminate()   'OK
+		set m_pApplicationHost = nothing
+		set m_pFD = nothing
+		set m_pfnOpenFile = nothing
+		set m_pfnisFileOpen = nothing
+		set m_pfngetOpenedFilePath = nothing
+		set m_pfnsaveOpenedFile = nothing
+		set m_pfncloseOpenedFile = nothing
+		set m_pfgetOpenedDocObj = nothing
+		set m_pActiveDoc = nothing
+		set m_pActiveWindow = nothing
+	end sub
+
+
+	'************************************************************************
+	'* Konstruktor z parametrami
+	'************************************************************************
+	public function class_init(byref pApplication): class_init = false
+		set m_pApplicationHost = pApplication
+
+		dim bOK
+		set m_pFD = CFileDrive( bOK )
+
+		if (not bOK) then
+			Enterprise_Bring2Top
+			MessageBox "Nie udało się stworzyc obiektu FileSystemObject.", "Uruchamianie", vbOkOnly, vbInformation
+			exit function
+		end if 
+
+		class_init = true
+	end function
+
+	'************************************************************************
+	'* Ustaw funkcje odpowiadajace na event'y
+	'************************************************************************
+	public function setEventFunNames(byval strOpenFile, byval strIsFileOpen, byval strOpenedFilePath, byval strSaveOpenedFile, byval strCloseOpenedFile, byval strGetOpenedDocObj)
+		set m_pfnOpenFile = GetRef( strOpenFile )
+		set m_pfnisFileOpen = GetRef( strIsFileOpen )
+		set m_pfngetOpenedFilePath = GetRef( strOpenedFilePath )
+		set m_pfnsaveOpenedFile = GetRef( strSaveOpenedFile )
+		set m_pfncloseOpenedFile = GetRef( strCloseOpenedFile )
+		set m_pfgetOpenedDocObj = GetRef( strGetOpenedDocObj )
+	end function
+
+
+	'************************************************************************
+	'* Wykonaj komende
+	'************************************************************************
+	public sub ExecuteCommand(byval strCommand)
+		
+		select case UCase(strCommand)
+			case "SAVE_INTO"
+				'zapisz w
+				SaveIntoNavoEnterprise
+
+			case "OPEN_FROM"
+				'otworz z
+				OpenFromNavoEnterprise
+			
+			case "CHECK_IN"
+				'oddaj do NE
+				CheckInNavoEnterprise
+
+		end select
+
+	end sub
+
+	'************************************************************************
+	'* Wykonanie komendy "zapisz w ..."
+	'************************************************************************
+	private sub SaveIntoNavoEnterprise()
+		'Pobierz obiekt aktywnego dokumentu
+		set m_pActiveDoc = nothing
+		set m_pActiveWindow = nothing
+		
+		on error resume next
+		set m_pActiveDoc = EVENT_getOpenedDocObj(me)
+		on error goto 0
+
+		if (not isObject(m_pActiveDoc)) then
+			Enterprise_Bring2Top
+			MessageBox "Nie udało się pobrać aktywnego dokumentu.", "Zapisywanie do", vbOkOnly, vbInformation
+			set m_pActiveDoc = nothing
+			exit sub
+		end if
+
+		if (m_pActiveDoc is nothing) then
+			Enterprise_Bring2Top
+			MessageBox "Nie udało się pobrać aktywnego dokumentu.", "Zapisywanie do", vbOkOnly, vbInformation
+			set m_pActiveDoc = nothing
+			exit sub
+		end if
+
+		'Zapisujemy sobie wlasnie otwarty dokument
+		dim bSavedDoc: bSavedDoc = false
+		
+		on error resume next
+		bSavedDoc = EVENT_saveOpenedFile(me)
+		on error goto 0
+
+		if (not bSavedDoc) then
+			Enterprise_Bring2Top
+			MessageBox "Nie udało się zapisać wybranego dokumentu. Zapisz go ręcznie i spróbuj jeszcze raz.", "Oddawanie dokumentu", vbOkOnly, vbInformation
+			set m_pActiveDoc = nothing
+			set m_pActiveWindow = nothing
+			exit sub
+		end if
+
+		on error resume next
+		dim strDocumentPath: strDocumentPath = ""
+		strDocumentPath = EVENT_getOpenedFilePath(me)
+		on error goto 0
+
+		if (strDocumentPath="") then
+			Enterprise_Bring2Top
+			MessageBox "Plik wybranego dokumentu nie istnieje na dysku.", "Zapisywanie do", vbOkOnly, vbInformation
+			set m_pActiveDoc = nothing
+			set m_pActiveWindow = nothing
+			exit sub
+		end if
+
+		if (not m_pFD.isFile(strDocumentPath)) then
+			Enterprise_Bring2Top
+			MessageBox "Plik wybranego dokumentu nie istnieje na dysku.", "Zapisywanie do", vbOkOnly, vbInformation
+			set m_pActiveDoc = nothing
+			set m_pActiveWindow = nothing
+			exit sub
+		end if
+
+		dim strCheckOutPath
+		strCheckOutPath = UCase(trans_.var(GVAR_MACHINE)) + ";" + strDocumentPath
+
+		'Sprawdzamy czy ten dokument zostal wupozyczony
+		dim pCursorDocs
+		set pCursorDocs = trans_.createrawcursor(TYPEID_N5DOKUMENT, "strCheckoutFileName='" + trans_.afc.convert.DoubleApostrophe( strCheckOutPath ) + "'", "", "")
+
+		if (pCursorDocs.exists(1)) then
+			Enterprise_Bring2Top
+			MessageBox "Ten dokument został już dodany do aplikacji i jest przez Ciebie wypożyczony.", "Zapisywanie do", vbOkOnly, vbInformation
+			set m_pActiveDoc = nothing
+			set m_pActiveWindow = nothing
+			exit sub
+		end if
+
+		set pCursorDocs = nothing
+
+		'Sprawdzamy czy nie zostal on juz dodany
+		set pCursorDocs = trans_.createrawcursor(TYPEID_N5DOKUMENT, "strFileName='" + trans_.afc.convert.DoubleApostrophe( strCheckOutPath ) + "'", "", "")
+		if (pCursorDocs.exists(1)) then
+			Enterprise_Bring2Top
+			if (MessageBox("Ten dokument został już dodany do aplikacji. Chcesz kontynuować?", "Zapisywanie do", vbYesNo, vbQuestion)<>vbYes) then
+				set m_pActiveDoc = nothing
+				set m_pActiveWindow = nothing
+				exit sub
+			end if
+		end if
+
+		set pCursorDocs = nothing
+
+		'Robimy nowy dokument
+		dim pNewHli
+		set pNewHli= doc_.createhlistr("varCmd=CMD_OPEN_RECORD_PAGE varDestPage=PAGE_FORM_DOKUMENT varObject=0")
+
+		dim oPage
+		set oPage = doc_.getpagehli(pNewHli)
+
+		if (not oPage is nothing) then
+
+			'Zamknij aktywny dokument Plik moze byc uzywany
+			'wiec lepiej jest go zamknac
+			dim bOpendFileClosed: bOpendFileClosed = false
+			
+			on error resume next
+			bOpendFileClosed = EVENT_closeOpenedFile(me)
+			on error goto 0
+
+			if (not bOpendFileClosed) then
+				Enterprise_Bring2Top
+				MessageBox "Nie udało się zamknąć dokumentu w pakiecie Office by go dodać,", "Zapisywanie do", vbOkOnly, vbInformation
+				set m_pActiveDoc = nothing
+				set m_pActiveWindow = nothing
+				exit sub
+			end if
+
+			oPage.root.fPlik.Attach strDocumentPath
+			oPage.root.strFileName = AddComputerName( strDocumentPath )
+			oPage.root.strTematDokum = mid(m_pFD.RemoveExtension( m_pFD.GetFileName( strDocumentPath ) ), 1, 128)
+
+			dim nIdObjDok
+			nIdObjDok=oPage.root.IdObj
+
+			'blokujemy odpowiednie klawisze
+			oPage.cmdenabled CMD_NEWFORM, false
+			oPage.cmdenabled CMD_DELETEFORM, false
+			oPage.cmdenabled CMD_FIRSTINCURSOR, false
+			oPage.cmdenabled CMD_PREVINCURSOR, false
+			oPage.cmdenabled CMD_NEXTINCURSOR, false
+			oPage.cmdenabled CMD_LASTINCURSOR, false
+			oPage.cmdenabled CMD_SEARCH, false
+			
+			'Uruchamiamy strone
+			oPage.doModalAuto
+
+			dim bSuccess
+			bSuccess = false
+
+			dim pSavedObject
+			set pSavedObject = trans_.getobj(TYPEID_N5DOKUMENT, nIdObjDok)
+
+			if (not pSavedObject is nothing) then
+				
+				if (not pSavedObject.isnew) then
+
+					dim strPath
+					if checkOut(pSavedObject, strPath) then
+
+						if (trans_.saveobjects()) then
+
+						m_strFile2Open = RemoveComputerName(pSavedObject.strCheckoutFileName)
+
+						on error resume next
+						if (EVENT_OpenFile(me)) then
+							bSuccess = true
+						end if
+						on error goto 0
+
+						end if
+
+					end if
+				end if
+
+			end if
+
+			if (not bSuccess) then
+				'Otwieramy poprzedni dokument bo nie udalo
+				'sie dodac go do Navo Enterprise
+				m_strFile2Open = strDocumentPath
+
+				on error resume next
+				if (EVENT_isFileOpen(me)) then
+					exit sub
+				end if
+				on error goto 0
+
+				on error resume next
+				EVENT_OpenFile me
+				on error goto 0
+
+			end if
+
+		end if
+
+	end sub
+
+
+	'************************************************************************
+	'* Wykonanie komendy otworz z
+	'************************************************************************
+	private sub OpenFromNavoEnterprise()
+
+		'Strona wyszukiwania dokumentu
+		dim pPageSuggest
+		set pPageSuggest=doc_.getpagehli("varCmd=CMD_OPEN_RECORD_PAGE varDestPage=20133 varNewThread='1'")
+
+		if (not pPageSuggest is nothing) then
+			
+			'Pobieramy id wybranego dokumentu
+			dim nChoice
+			nChoice = pPageSuggest.getResult( TYPEID_N5DOKUMENT )
+
+			if (nChoice > 0) then
+				'Wybrano jakis dokument
+
+				dim pDokument
+				set pDokument = trans_.getobj(TYPEID_N5DOKUMENT, nChoice)
+
+				if (pDokument is nothing) then
+					Enterprise_Bring2Top
+					MessageBox "Nie udało się pobrać dokumentu.", "Otwieranie dokumentu", vbOkOnly, vbInformation
+					exit sub
+				end if
+
+				if (pDokument.fPlik.isEmpty()) then
+					Enterprise_Bring2Top
+					MessageBox "Wybrany dokument nie posiada pliku.", "Otwieranie dokumentu", vbOkOnly, vbInformation
+					exit sub
+				end if
+
+				dim strDocumentPath
+				strDocumentPath = doc_.system.createtempfilename(m_pFD.RemoveExtension(m_pFD.GetFileName(pDokument.strFileName)), m_pFD.GetFileExtension(pDokument.strFileName))
+
+				if (strDocumentPath <> "") then
+
+					'Pobieramy sciezke pod jaka bedziemy
+					'wypozyczac nasz dokument
+					dim strFutureCheckOutPath
+					strFutureCheckOutPath = getCheckOutPath( pDokument )
+
+					m_strFile2Open = strFutureCheckOutPath
+
+					'Zadzrenie czy kontynuowac - sprawdzamy czy w
+					'danej aplikacji nie jest juz otwarty dokument
+					'z naszej sciezki
+					err.clear
+					
+					on error resume next
+					if (EVENT_isFileOpen(me)) then
+						Enterprise_Bring2Top
+						MessageBox "Ten plik jest już otwarty.", "Otwieranie dokumentu", vbOkOnly, vbInformation
+						exit sub
+					end if
+					on error goto 0
+
+					if (checkOut(pDokument, strDocumentPath)) then
+							
+						if (not m_pFD.isFile( strDocumentPath )) then
+							Enterprise_Bring2Top
+							MessageBox "Plik """ + strDocumentPath + """ nie istnieje. Nie można go otworzyć.", "Uwaga", vbOkOnly, vbInformation
+							exit sub
+						end if
+
+						if (trans_.saveobjects()) then
+							m_strFile2Open = strDocumentPath
+							
+							on error resume next
+
+							EVENT_OpenFile me
+							
+							if (err.number<>0) then
+								Enterprise_Bring2Top
+								MessageBox "Nie udało się otworzyć wybranego pliku. Szczegóły:" + err.description, "Otwieranie dokumentu", vbOkOnly, vbInformation
+								exit sub
+							end if
+							on error goto 0
+						else
+							Enterprise_Bring2Top
+							MessageBox "Nie udał się zapis danych.", "Otwieranie dokumentu", vbOkOnly, vbInformation
+						end if
+
+					else
+						exit sub
+					end if
+
+				end if 'strPath<>""
+
+			end if 'nChoice>0
+
+		end if 'pPageSuggest is nothing
+
+	end sub
+
+	'************************************************************************
+	'* Pobierz obiekt aplikacji
+	'************************************************************************
+	public function getApplication()
+		set getApplication = m_pApplicationHost
+	end function
+
+
+	'************************************************************************
+	'* Wykonanie komendy oddaj do
+	'************************************************************************
+	private sub CheckInNavoEnterprise()
+		
+		'Pobierz obiekt aktywnego dokumentu
+		set m_pActiveDoc = nothing
+		set m_pActiveWindow = nothing
+		
+		on error resume next
+		set m_pActiveDoc = EVENT_getOpenedDocObj(me)
+		on error goto 0
+
+		if (not isObject(m_pActiveDoc)) then
+			Enterprise_Bring2Top
+			MessageBox "Nie udało się pobrać aktywnego dokumentu.", "Oddawanie dokumentu", vbOkOnly, vbInformation
+			set m_pActiveDoc = nothing
+			set m_pActiveWindow = nothing
+			exit sub
+		end if
+
+		if (m_pActiveDoc is nothing) then
+			Enterprise_Bring2Top
+			MessageBox "Nie udało się pobrać aktywnego dokumentu.", "Oddawanie dokumentu", vbOkOnly, vbInformation
+			set m_pActiveDoc = nothing
+			set m_pActiveWindow = nothing
+			exit sub
+		end if
+
+		'Zapisujemy sobie wlasnie otwarty dokument
+		dim bSavedDoc: bSavedDoc = false
+		
+		on error resume next
+		bSavedDoc = EVENT_saveOpenedFile(me)
+		on error goto 0
+
+		if (not bSavedDoc) then
+			Enterprise_Bring2Top
+			MessageBox "Nie udało się zapisać wybranego dokumentu. Zapisz go ręcznie i spróbuj jeszcze raz.", "Oddawanie dokumentu", vbOkOnly, vbInformation
+			set m_pActiveDoc = nothing
+			set m_pActiveWindow = nothing
+			exit sub
+		end if
+
+		on error resume next
+		dim strDocumentPath: strDocumentPath = ""
+		strDocumentPath = EVENT_getOpenedFilePath(me)
+		on error goto 0
+
+		if (strDocumentPath="") then
+			Enterprise_Bring2Top
+			MessageBox "Plik wybranego dokumentu nie istnieje na dysku.", "Oddawanie dokumentu", vbOkOnly, vbInformation
+			set m_pActiveDoc = nothing
+			set m_pActiveWindow = nothing
+			exit sub
+		end if
+
+		if (not m_pFD.isFile(strDocumentPath)) then
+			Enterprise_Bring2Top
+			MessageBox "Plik wybranego dokumentu nie istnieje na dysku.", "Oddawanie dokumentu", vbOkOnly, vbInformation
+			set m_pActiveDoc = nothing
+			set m_pActiveWindow = nothing
+			exit sub
+		end if
+
+		dim strSourcePath
+		strSourcePath = strDocumentPath
+
+		strDocumentPath = UCase(trans_.var(GVAR_MACHINE)) + ";" + strDocumentPath
+
+		'Sprawdzamy czy ten dokument zostal wupozyczony
+		dim pCursorDocs
+		set pCursorDocs = trans_.createrawcursor(TYPEID_N5DOKUMENT, "strCheckoutFileName='" + trans_.afc.convert.DoubleApostrophe( strDocumentPath ) + "'", "", "")
+
+		if (not pCursorDocs.exists(1)) then
+			Enterprise_Bring2Top
+			MessageBox "Ten dokument nie został przez Ciebie wypożyczony.", "Oddawanie dokumentu", vbOkOnly, vbInformation
+			set m_pActiveDoc = nothing
+			set m_pActiveWindow = nothing
+			exit sub
+		end if
+
+		dim pDocument2CheckIn
+		set pDocument2CheckIn = pCursorDocs.get(1)
+
+		if (pDocument2CheckIn is nothing) then
+			set m_pActiveDoc = nothing
+			set m_pActiveWindow = nothing
+			exit sub
+		end if
+
+		'Zamknij aktywny dokument
+		dim bOpendFileClosed: bOpendFileClosed = false
+		
+		on error resume next
+		bOpendFileClosed = EVENT_closeOpenedFile(me)
+		on error goto 0
+
+		if (not bOpendFileClosed) then
+			Enterprise_Bring2Top
+			MessageBox "Nie udało się zamknąć dokumentu w otwartej aplikacji pakietu Office.", "Oddawanie dokumentu", vbOkOnly, vbInformation
+			set m_pActiveDoc = nothing
+			set m_pActiveWindow = nothing
+			exit sub
+		end if
+
+		'Oddajemy
+		if (not checkIn(pDocument2CheckIn)) then
+
+			m_strFile2Open = strSourcePath
+
+			on error resume next
+			if (EVENT_OpenFile(me)) then
+				bSuccess = true
+			end if
+			on error goto 0		
+
+			set m_pActiveDoc = nothing
+			set m_pActiveWindow = nothing
+			exit sub
+		end if
+
+		if (not trans_.saveobjects()) then
+			Enterprise_Bring2Top
+			MessageBox "Nie udało się zapisać danych. Dokument nie został oddany.", "Oddawanie dokumentu", vbOkOnly, vbInformation
+			set m_pActiveDoc = nothing
+			set m_pActiveWindow = nothing
+			exit sub
+		end if
+
+		set pDocument2CheckIn = nothing
+
+		set m_pActiveDoc = nothing
+		set m_pActiveWindow = nothing
+	end sub
+
+	'************************************************************************
+	'* EVENT Pobierz sciezke do wlasnie otwartego pliku
+	'************************************************************************
+	public function EVENT_getOpenedFilePath(byref pNavoCommandExecution)
+		EVENT_getOpenedFilePath = m_pfngetOpenedFilePath(pNavoCommandExecution)
+	end function
+
+
+	'************************************************************************
+	'* EVENT Pobierz obiekt aktywnego dokumentu
+	'************************************************************************
+	public function EVENT_getOpenedDocObj(byref pNavoCommandExecution)
+		set EVENT_getOpenedDocObj = m_pfgetOpenedDocObj(pNavoCommandExecution)
+	end function
+
+
+	'************************************************************************
+	'* EVENT Zapisz aktywny dokument jezeli nie byl jeszcze zapisany
+	'************************************************************************
+	public function EVENT_saveOpenedFile(byref pNavoCommandExecution)
+		EVENT_saveOpenedFile = m_pfnsaveOpenedFile(pNavoCommandExecution)
+	end function
+
+	'************************************************************************
+	'* EVENT Zapisz aktywny dokument jezeli nie byl jeszcze zapisany
+	'************************************************************************
+	public function EVENT_closeOpenedFile(byref pNavoCommandExecution)
+		EVENT_closeOpenedFile = m_pfncloseOpenedFile(pNavoCommandExecution)
+	end function
+
+	
+	'************************************************************************
+	'* EVENT Otworz plik
+	'************************************************************************
+	public function EVENT_OpenFile(byref pNavoCommandExecution)
+		EVENT_OpenFile = m_pfnOpenFile(pNavoCommandExecution)
+	end function
+
+
+	'************************************************************************
+	'* EVENT Sprawdzaj czy plik zostal juz otwarty
+	'************************************************************************
+	public function EVENT_isFileOpen(byref pNavoCommandExecution)
+		EVENT_isFileOpen = m_pfnisFileOpen(pNavoCommandExecution)
+	end function
+	
+	
+end class
+
+function CNavoCommandExecution(byref pApplication)
+	set CNavoCommandExecution = new CNavoCommandExecution_A
+	
+	'wykonujemy konstruktor z parametrami
+	if (not CNavoCommandExecution.class_init(pApplication)) then
+		'jezeli cos sie nie dualo zainicjowac
+		set CNavoCommandExecution = nothing
+	end if
+end function
+
+
+'**********************************************************************************
+'* Funkcje obslugujace EVENT'y dla poszczegolnych aplikacji
+'**********************************************************************************
+
+
+'****************************************
+'*										*
+'* 			 MICROSOFT WORD				*
+'*										*
+'****************************************
+
+#define wdOpenFormatAuto	0
+
+'----------------------------------------------------------------------------------
+'* WORD: Otwarcie nowego pliku
+'----------------------------------------------------------------------------------
+function WORD_OpenFile(byref pNavoCommandExecution): WORD_OpenFile = false
+	dim pWordApp
+	set pWordApp = pNavoCommandExecution.getApplication()
+
+	pWordApp.Documents.Open pNavoCommandExecution.m_strFile2Open, _
+			False, False, False, "", "", False, _
+			"", "", wdOpenFormatAuto
+
+	set pWordApp = nothing
+	WORD_OpenFile = true
+end function
+
+
+'----------------------------------------------------------------------------------
+'* WORD: Sprawdzenie czy dany plik jest juz otwarty
+'----------------------------------------------------------------------------------
+function WORD_isFileOpen(byref pNavoCommandExecution)
+	'Word sam nie otworzy 2'gi raz tego samego dokumentu
+	WORD_isFileOpen = false
+end function
+
+
+'----------------------------------------------------------------------------------
+'* WORD: Pobierz obiekt aktywnego dokumentu
+'----------------------------------------------------------------------------------
+function WORD_getOpenedDocObj(byref pNavoCommandExecution): set WORD_getOpenedDocObj = nothing
+	dim pWordApp
+	set pWordApp = pNavoCommandExecution.getApplication()
+
+	dim pActiveDocument
+	
+	on error resume next
+	set pActiveDocument = pWordApp.ActiveDocument
+	
+	if (err.number=0) then
+		set WORD_getOpenedDocObj = pActiveDocument
+	end if
+
+	on error goto 0
+
+	set pActiveDocument = nothing
+	set pWordApp = nothing
+end function
+
+
+'----------------------------------------------------------------------------------
+'* WORD: Pobierz sciezke do aktywnego dokumentu
+'----------------------------------------------------------------------------------
+function WORD_getOpenedFilePath(byref pNavoCommandExecution): WORD_getOpenedFilePath = ""
+	WORD_getOpenedFilePath = pNavoCommandExecution.m_pActiveDoc.Path + "\" + pNavoCommandExecution.m_pActiveDoc.Name
+end function
+
+
+'----------------------------------------------------------------------------------
+'* WORD: Zapisz aktywny dokument
+'----------------------------------------------------------------------------------
+function WORD_saveOpenedFile(byref pNavoCommandExecution): WORD_saveOpenedFile = false
+	pNavoCommandExecution.m_pActiveDoc.SaveAs
+	
+	if (pNavoCommandExecution.m_pActiveDoc.Saved) then
+		WORD_saveOpenedFile = true
+	end if
+end function
+
+
+'----------------------------------------------------------------------------------
+'* WORD: Zamknij aktywny dokument
+'----------------------------------------------------------------------------------
+function WORD_closeOpenedFile(byref pNavoCommandExecution): WORD_closeOpenedFile = false
+	on error resume next
+
+	pNavoCommandExecution.m_pActiveDoc.Close
+
+	WORD_closeOpenedFile = (err.number=0)
+	on error goto 0
+end function
+
+
+
+'****************************************
+'*										*
+'*   		 MICROSOFT EXCEL			*
+'*										*
+'****************************************
+
+
+'----------------------------------------------------------------------------------
+'* EXCEL: Otwarcie nowego pliku
+'----------------------------------------------------------------------------------
+function EXCEL_OpenFile(byref pNavoCommandExecution): EXCEL_OpenFile = false
+	dim pExcelApp
+	set pExcelApp = pNavoCommandExecution.getApplication()
+
+	pExcelApp.Workbooks.Open pNavoCommandExecution.m_strFile2Open
+
+	set pExcelApp = nothing
+	EXCEL_OpenFile = true
+end function
+
+
+'----------------------------------------------------------------------------------
+'* EXCEL: Sprawdzenie czy dany plik jest juz otwarty
+'----------------------------------------------------------------------------------
+function EXCEL_isFileOpen(byref pNavoCommandExecution)
+	'Excel sam nie otworzy 2'gi raz tego samego dokumentu
+	EXCEL_isFileOpen = false
+end function
+
+
+'----------------------------------------------------------------------------------
+'* EXCEL: Pobierz obiekt aktywnego dokumentu
+'----------------------------------------------------------------------------------
+function EXCEL_getOpenedDocObj(byref pNavoCommandExecution): set EXCEL_getOpenedDocObj = nothing
+	dim pExcelApp
+	set pExcelApp = pNavoCommandExecution.getApplication()
+
+	dim pActiveDocument
+	
+	on error resume next
+	set pActiveDocument = pExcelApp.ActiveWorkbook
+	
+	if (err.number=0) then
+		set EXCEL_getOpenedDocObj = pActiveDocument
+	end if
+
+	on error goto 0
+
+	set pActiveDocument = nothing
+	set pExcelApp = nothing
+end function
+
+
+'----------------------------------------------------------------------------------
+'* EXCEL: Pobierz sciezke do aktywnego dokumentu
+'----------------------------------------------------------------------------------
+function EXCEL_getOpenedFilePath(byref pNavoCommandExecution): EXCEL_getOpenedFilePath = ""
+	EXCEL_getOpenedFilePath = pNavoCommandExecution.m_pActiveDoc.Path + "\" + pNavoCommandExecution.m_pActiveDoc.Name
+end function
+
+
+'----------------------------------------------------------------------------------
+'* EXCEL: Zapisz aktywny dokument
+'----------------------------------------------------------------------------------
+function EXCEL_saveOpenedFile(byref pNavoCommandExecution): EXCEL_saveOpenedFile = false
+	pNavoCommandExecution.m_pActiveDoc.Save
+	
+	if (pNavoCommandExecution.m_pActiveDoc.Saved) then
+		EXCEL_saveOpenedFile = true
+	end if
+end function
+
+
+'----------------------------------------------------------------------------------
+'* EXCEL: Zamknij aktywny dokument
+'----------------------------------------------------------------------------------
+function EXCEL_closeOpenedFile(byref pNavoCommandExecution): EXCEL_closeOpenedFile = false
+	on error resume next
+
+	pNavoCommandExecution.m_pActiveDoc.Close
+
+	EXCEL_closeOpenedFile = (err.number=0)
+	on error goto 0
+end function
+
+
+'****************************************
+'*										*
+'*        MICROSOFT POWERPOINT			*
+'*										*
+'****************************************
+
+'----------------------------------------------------------------------------------
+'* POWERPOINT: Otwarcie nowego pliku
+'----------------------------------------------------------------------------------
+function POWERPOINT_OpenFile(byref pNavoCommandExecution): POWERPOINT_OpenFile = false
+	dim pPwrPointApp
+	set pPwrPointApp = pNavoCommandExecution.getApplication()
+
+	pPwrPointApp.Presentations.Open pNavoCommandExecution.m_strFile2Open
+
+	set pPwrPointApp = nothing
+	POWERPOINT_OpenFile = true
+end function
+
+
+'----------------------------------------------------------------------------------
+'* POWERPOINT: Sprawdzenie czy dany plik jest juz otwarty
+'----------------------------------------------------------------------------------
+function POWERPOINT_isFileOpen(byref pNavoCommandExecution)
+	'PowerPoint sam nie otworzy 2'gi raz tego samego dokumentu
+	POWERPOINT_isFileOpen = false
+end function
+
+
+'----------------------------------------------------------------------------------
+'* POWERPOINT: Pobierz obiekt aktywnego dokumentu
+'----------------------------------------------------------------------------------
+function POWERPOINT_getOpenedDocObj(byref pNavoCommandExecution): set POWERPOINT_getOpenedDocObj = nothing
+	dim pPwrPointApp
+	set pPwrPointApp = pNavoCommandExecution.getApplication()
+
+	dim pActiveDocument
+	
+	on error resume next
+	set pActiveDocument = pPwrPointApp.ActivePresentation
+	
+	if (err.number=0) then
+		set POWERPOINT_getOpenedDocObj = pActiveDocument
+	end if
+
+	on error goto 0
+
+	set pActiveDocument = nothing
+	set pPwrPointApp = nothing
+end function
+
+
+'----------------------------------------------------------------------------------
+'* POWERPOINT: Pobierz sciezke do aktywnego dokumentu
+'----------------------------------------------------------------------------------
+function POWERPOINT_getOpenedFilePath(byref pNavoCommandExecution): POWERPOINT_getOpenedFilePath = ""
+	POWERPOINT_getOpenedFilePath = pNavoCommandExecution.m_pActiveDoc.Path + "\" + pNavoCommandExecution.m_pActiveDoc.Name
+end function
+
+
+'----------------------------------------------------------------------------------
+'* POWERPOINT: Zapisz aktywny dokument
+'----------------------------------------------------------------------------------
+function POWERPOINT_saveOpenedFile(byref pNavoCommandExecution): POWERPOINT_saveOpenedFile = false
+	pNavoCommandExecution.m_pActiveDoc.Save
+	
+	if (pNavoCommandExecution.m_pActiveDoc.Saved) then
+		POWERPOINT_saveOpenedFile = true
+	end if
+end function
+
+
+'----------------------------------------------------------------------------------
+'* POWERPOINT: Zamknij aktywny dokument
+'----------------------------------------------------------------------------------
+function POWERPOINT_closeOpenedFile(byref pNavoCommandExecution): POWERPOINT_closeOpenedFile = false
+	on error resume next
+
+	pNavoCommandExecution.m_pActiveDoc.Close
+
+	POWERPOINT_closeOpenedFile = (err.number=0)
+	on error goto 0
+end function
+
+
+'****************************************
+'*										*
+'*        MICROSOFT FRONTPAGE			*
+'*										*
+'****************************************
+
+
+'----------------------------------------------------------------------------------
+'* FRONTPAGE: Otwarcie nowego pliku
+'----------------------------------------------------------------------------------
+function FRONTPAGE_OpenFile(byref pNavoCommandExecution): FRONTPAGE_OpenFile = false
+	dim pFrontPageApp
+	set pFrontPageApp = pNavoCommandExecution.getApplication()
+
+	pFrontPageApp.LocatePage pNavoCommandExecution.m_strFile2Open
+
+	set pFrontPageApp = nothing
+	FRONTPAGE_OpenFile = true
+end function
+
+
+'----------------------------------------------------------------------------------
+'* FRONTPAGE: Sprawdzenie czy dany plik jest juz otwarty
+'----------------------------------------------------------------------------------
+function FRONTPAGE_isFileOpen(byref pNavoCommandExecution)
+	'FrontPage sam nie otworzy 2'gi raz tego samego dokumentu
+	FRONTPAGE_isFileOpen = false
+end function
+
+
+'----------------------------------------------------------------------------------
+'* FRONTPAGE: Pobierz obiekt aktywnego dokumentu
+'----------------------------------------------------------------------------------
+function FRONTPAGE_getOpenedDocObj(byref pNavoCommandExecution): set FRONTPAGE_getOpenedDocObj = nothing
+	dim pFrontPageApp
+	set pFrontPageApp = pNavoCommandExecution.getApplication()
+
+	dim pActiveDocument
+	
+	on error resume next
+	set pActiveDocument = pFrontPageApp.ActiveDocument
+	
+	if (err.number=0) then
+		set FRONTPAGE_getOpenedDocObj = pActiveDocument
+	end if
+
+	on error goto 0
+
+	dim pActiveWindow
+	
+	on error resume next
+	set pActiveWindow = pFrontPageApp.ActivePageWindow
+	
+	if (err.number=0) then
+		set pNavoCommandExecution.m_pActiveWindow = pActiveWindow
+	else
+		set FRONTPAGE_getOpenedDocObj = nothing
+	end if
+
+	on error goto 0
+
+	set pActiveDocument = nothing
+	set pActiveWindow = nothing
+	set pFrontPageApp = nothing
+end function
+
+
+'----------------------------------------------------------------------------------
+'* FRONTPAGE: Pobierz sciezke do aktywnego dokumentu
+'----------------------------------------------------------------------------------
+function FRONTPAGE_getOpenedFilePath(byref pNavoCommandExecution): FRONTPAGE_getOpenedFilePath = ""
+	dim strPath
+	strPath = replace(pNavoCommandExecution.m_pActiveDoc.Url, "file:///", "")
+	strPath = replace(strPath, "file://", "")
+	strPath = replace(strPath, "/", "\")
+
+	FRONTPAGE_getOpenedFilePath = strPath
+end function
+
+
+'----------------------------------------------------------------------------------
+'* FRONTPAGE: Zapisz aktywny dokument
+'----------------------------------------------------------------------------------
+function FRONTPAGE_saveOpenedFile(byref pNavoCommandExecution): FRONTPAGE_saveOpenedFile = false
+	pNavoCommandExecution.m_pActiveWindow.Save
+		
+	if (not pNavoCommandExecution.m_pActiveWindow.IsDirty) then
+		FRONTPAGE_saveOpenedFile = true
+	end if
+end function
+
+
+'----------------------------------------------------------------------------------
+'* FRONTPAGE: Zamknij aktywny dokument
+'----------------------------------------------------------------------------------
+function FRONTPAGE_closeOpenedFile(byref pNavoCommandExecution): FRONTPAGE_closeOpenedFile = false
+	on error resume next
+
+	pNavoCommandExecution.m_pActiveWindow.Close
+
+	FRONTPAGE_closeOpenedFile = (err.number=0)
+	on error goto 0
+end function
+
+
+'****************************************
+'*										*
+'*        MICROSOFT OUTLOOK 			*
+'*										*
+'****************************************
+
+
+'----------------------------------------------------------------------------------
+'* OUTLOOK: Zapisz zaznaczone listy
+'----------------------------------------------------------------------------------
+function OUTLOOKCommand(ByRef oApp, ByRef strCommand)
+
+	dim pPage 'pobieranie poczty
+	set pPage = doc_.getmodule( 60124 )
+	
+	if (not pPage is nothing) then
+
+		'Sprawdzamy czy uzytkownik ma domyslnego wykonawce
+		dim bIsPerformer
+		bIsPerformer = false
+		
+		while (not bIsPerformer)
+			bIsPerformer = pPage.CanReadMail()
+			
+			if (not bIsPerformer) then
+				Enterprise_Bring2Top
+				if (MessageBox ("Czy chcesz zrezygnować z importu wiadomości?","Brak wykonawcy", vbYesNo, vbInformation) = vbYes) then
+					exit function
+				end if
+			end if
+		wend
+ 
+		dim oMail 'As Outlook.MailItem
+		set oMail = nothing
+		
+		dim oExpl 'As Outlook.Explorer
+		set oExpl = nothing
+		
+		'Czy ignorowac 2'jne wiadomosci
+		dim bIgnoreDoubleMail
+		bIgnoreDoubleMail = false
+
+		on error resume next
+		set oExpl = oApp.ActiveExplorer
+		if (err.number<>0) then
+			Enterprise_Bring2Top
+			MessageBox "Nie udało się pobrać obiektu aktywnego okna z aplikacji Offic'a.", "Zapis poczty", vbOkOnly, vbInformation 
+			exit function
+		end if
+		on error goto 0
+
+		'Liczba zaznaczonych elementow
+		dim nSelectionCount: nSelectionCount = CLng(0)
+		
+		on error resume next
+		nSelectionCount = oExpl.Selection.count
+		on error goto 0
+
+		if (nSelectionCount>0) then
+
+			dim nProcessedItems: nProcessedItems=0
+
+			dim i
+			for i = 1 To nSelectionCount
+			
+				set oMail = nothing
+
+				on error resume next
+				set oMail = oExpl.Selection.Item(i)
+				on error goto 0
+
+				if (not oMail is nothing) then
+					
+					on error resume next
+					dim strItemType
+					strItemType = TypeName( oMail )
+
+					if (strItemType="MailItem" or _
+						strItemType="PostItem") then
+
+						pPage.saveMailItemToDB oMail, bIgnoreDoubleMail
+						nProcessedItems = nProcessedItems + 1
+
+					end if
+					on error goto 0
+
+				end if 'NOT oMail is nothing
+
+			next
+
+			if (nProcessedItems=0) then
+				Enterprise_Bring2Top
+				MessageBox "Eksportować można tylko wiadomości e-mail.", "Zapis poczty", vbOkOnly, vbInformation 
+				exit function
+			end if
+
+		else
+			Enterprise_Bring2Top
+			MessageBox "Nie zaznaczono wiadomości do eksportu.", "Zapis poczty", vbOkOnly, vbInformation 
+			exit function			
+		end if
+
+	end if 'not pPage is nothing
+
+end function
+
+
+'*****************************************
+'*										 *
+'*             EXTENSIONS			     *
+'* Wywolywanie komend bez aplikacji Off. *
+'*  za pomoca klasy NAVOOffC.Extensions  *
+'*										 *
+'*****************************************
+
+
+'----------------------------------------------------------------------------------
+'* EXTENSIONS: Otwarcie nowego pliku
+'----------------------------------------------------------------------------------
+function EXTENSIONS_OpenFile(byref pNavoCommandExecution): EXTENSIONS_OpenFile = false
+	pNavoCommandExecution.m_varParam = pNavoCommandExecution.m_strFile2Open
+	EXTENSIONS_OpenFile = true
+end function
+
+
+'----------------------------------------------------------------------------------
+'* EXTENSIONS: Sprawdzenie czy dany plik jest juz otwarty
+'----------------------------------------------------------------------------------
+function EXTENSIONS_isFileOpen(byref pNavoCommandExecution)
+	'Jezeli jest uzywany to dostaniemy blad i tyle
+	EXTENSIONS_isFileOpen = false
+end function
+
+class CExtensionsContainer
+end class
+
+'----------------------------------------------------------------------------------
+'* FRONTPAGE: Pobierz obiekt aktywnego dokumentu
+'----------------------------------------------------------------------------------
+function EXTENSIONS_getOpenedDocObj(byref pNavoCommandExecution): set EXTENSIONS_getOpenedDocObj = nothing
+	'Zwracamy obiekt kontenera
+	set EXTENSIONS_getOpenedDocObj = new CExtensionsContainer
+end function
+
+
+'----------------------------------------------------------------------------------
+'* EXTENSIONS: Pobierz sciezke do aktywnego dokumentu
+'----------------------------------------------------------------------------------
+function EXTENSIONS_getOpenedFilePath(byref pNavoCommandExecution): EXTENSIONS_getOpenedFilePath = ""
+	EXTENSIONS_getOpenedFilePath = CStr(pNavoCommandExecution.m_varParam)
+end function
+
+
+'----------------------------------------------------------------------------------
+'* EXTENSIONS: Zapisz aktywny dokument
+'----------------------------------------------------------------------------------
+function EXTENSIONS_saveOpenedFile(byref pNavoCommandExecution)
+	'Nie ma co zapisywac bo nie ma obiektu aplikacji
+	EXTENSIONS_saveOpenedFile = true
+end function
+
+
+'----------------------------------------------------------------------------------
+'* FRONTPAGE: Zamknij aktywny dokument
+'----------------------------------------------------------------------------------
+function EXTENSIONS_closeOpenedFile(byref pNavoCommandExecution)
+	'Nie ma co zamykac bo nie ma obiektu aplikacji
+	EXTENSIONS_closeOpenedFile = true
+end function
+
+]]>
+</script>
+</config>
+	<body></body>
+</page>

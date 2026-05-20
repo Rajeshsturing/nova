@@ -1,0 +1,396 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+
+<!-- 18.07.2004 filtr na grupe nie jako checkboxy -->
+<!-- 13.01.2005 podgrupy produktow -->
+
+<!--
+
+RAPTEMPLATE_MAG_PRZYCH_ROZCHODY
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1250.h"
+
+#define RAPORT_TITLE Przychody i rozchody
+
+
+#ifdef APPCONFIG_RAPORT_BY_PROD_INX
+	#define C_FIELD_FIRST_EXPR		t_prod.strIndeks
+	#define C_FIELD_SECOND_EXPR		t_prod.strNazwa
+	#define C_FIELD_FIRST_HUMANNAME Indeks
+	#define C_FIELD_SECOND_HUMANNAME Nazwa
+#else
+	#define C_FIELD_FIRST_EXPR		t_prod.strNazwa
+	#define C_FIELD_SECOND_EXPR		t_prod.strIndeks
+	#define C_FIELD_FIRST_HUMANNAME		Nazwa
+	#define C_FIELD_SECOND_HUMANNAME	Indeks
+#endif
+
+-->
+
+<page style='36'>
+<config>
+<title>RAPORT_TITLE</title>
+<script>
+<![CDATA[
+<%
+function query()
+	query = "select 'c_mag_nazwa'=t_mag.strNazwa,'c_field_second'=C_FIELD_SECOND_EXPR,'c_field_first'=C_FIELD_FIRST_EXPR,'c_opak_nazwa'=t_opak.strNazwa, " +_
+	"'c_i_przed'= t_tmp.curIloscOpakB, 'c_w_przed'= t_tmp.curWartoscB, " +_
+	"'c_i_przych' = t_tmp.curIloscOpakPI, 'c_w_przych' = t_tmp.curWartoscPI, 'c_i_rozch'= t_tmp.curIloscOpakRI, 'c_w_rozch'= t_tmp.curWartoscRI," +_
+	"'c_i_po' = t_tmp.curIloscOpakB + t_tmp.curIloscOpakPI - t_tmp.curIloscOpakRI, " +_
+	"'c_w_po' = t_tmp.curWartoscB + t_tmp.curWartoscPI - t_tmp.curWartoscRI, " +_
+	"'c_jedn'=t_jedn.strSkrot,'c_prec'=t_jedn.nDokladnosc,'c_prod_idobj'=t_prod.IdObj , 'c_oznprod' = t_prod.strCecha1  from " +_
+	"#tmp_stanmag_moment as t_tmp " +_
+	" inner join n5magazyn as t_mag on t_tmp.pMagazyn = t_mag.IdObj " +_
+	" inner join n5produkt as t_prod on t_tmp.pProdukt = t_prod.IdObj " +_
+	" inner join n5opakowanie_produktu as t_opak on t_tmp.pOpak = t_opak.IdObj " +_
+	" inner join n5jednostka as t_jedn on t_opak.pJednOpak = t_jedn.IdObj  " +_
+#ifdef _MILOMLYN
+	" where (t_tmp.curIloscOpakPI <> 0 or t_tmp.curIloscOpakRI <> 0) and t_prod.pGrupaProd in (select tmp_group_idobj from #tmp_prod_hierarchy) "+_
+#else
+	" where  t_prod.pGrupaProd in (select tmp_group_idobj from #tmp_prod_hierarchy) "+_
+#endif  
+	" and %1 and %2 and %3  and t_prod.eRodzaj=1 order by c_mag_nazwa,c_field_first,c_field_second,c_opak_nazwa"
+end function
+%>
+<%
+
+'' jest używane poza default_param()
+dim RaportOkresParam
+
+dim utilProdHierarchy : set utilProdHierarchy = doc_.getmodule(60246)
+dim pProdHierarchy : set pProdHierarchy = utilProdHierarchy.new_prod_hierarchy()
+
+dim pParamArray
+dim pGrupaParam
+
+
+function default_param()
+	set pParamArray = doc_.afc.new_navoarray()
+
+	pParamArray.add doc_.getmodule(43025).new_filtr_magazyn("t_mag.idobj","N5TYPMAG_PODSTAWOWY,N5TYPMAG_ZWROTY,N5TYPMAG_PRODUKCJAWTOKU,N5TYPMAG_REZERWACJE")
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwa produktu").bindexpr("t_prod.strNazwa")
+	pParamArray.add doc_.afc.rap.param.new_text("Indeks produktu").bindexpr("t_prod.strIndeks")
+	set pGrupaParam = doc_.afc.rap.param.new_text("Grupa produktów").bindexpr("strNazwa")
+	pParamArray.add pGrupaParam 
+
+	'pParamArray.add doc_.afc.rap.param.new_text("Nazwa grupy").bindexpr("t_grupy.strNazwa")
+	'pParamArray.add doc_.getmodule(43025).new_filtr_grupa_prod("t_prod.pGrupaProd")
+
+	set RaportOkresParam = doc_.afc.rap.param.new_date_range("Analizowany okres").bindexpr("")
+	pParamArray.add RaportOkresParam
+		
+	set default_param = pParamArray
+end function
+%>
+<%
+function write_actual_param(byref pActualParam)
+	dim iter
+	dim bAnyWritten : bAnyWritten = false
+	if not pActualParam is nothing then
+		dim where_str : where_str = RaportOkresParam.BindExpr("ddatawyst").get_where_part(trans_)
+
+		dim nNumOpStart 
+		dim nNumOpEnd
+
+		dim pModUtil : set pModUtil = doc_.getmodule(60253)
+		pModUtil.sql_prepare_tmp_stanmag_moment
+	
+		if pModUtil.convert_date_range_to_num_oper_range(where_str,nNumOpStart,nNumOpEnd) then
+#ifdef _MILOMLYN
+			nNumOpStart = 0
+#else
+			pModUtil.sql_exec_tmp_stanmag_moment nNumOpStart,nNumOpEnd
+#endif
+		end if
+#ifdef _MILOMLYN
+		pModUtil.sql_exec_tmp_stanmag_moment nNumOpStart,nNumOpEnd
+#endif		
+
+		for iter = 0 to pActualParam.upperIndex
+			if pActualParam.value(iter).get_desc() <> "" then 
+				bAnyWritten = true
+				so.write "<t size='5' /><text fontsize='4'><![CD"+"ATA[" + pActualParam.value(iter).get_desc() + "]"+"]></text><br/>"
+			end if
+		next
+	end if
+	if not bAnyWritten then 
+		so.write "<t fontsize='4'>brak</t><br/>"
+	end if
+		so.write "<br/>"
+	end function
+%>
+<%
+function section_header_1(byref pSection,byref pRec)
+%>
+<tr userprop='propc_section_start="1" propc_section_hidden="0" propc_section_req="0"' fontsize='4'>
+#ifdef _IOW
+	<td style='27' colspan='14'>
+#else
+	<td style='27' colspan='13'>
+#endif	
+		<picture name='<%so.write cstr(nSectionPicCounter)%>' tip='Zwiń' ignoresysdisable='true' image='PICTURE_SMALL_MINUS' width='SIZE_FOR_PLUS' height='SIZE_FOR_PLUS' href='vs1022="section_hideshow_hli" vn100="<%so.write cstr(nSectionPicCounter)%>"'/>
+	RXE_AUTO_TEXT(c_mag_nazwa)
+</td>
+</tr>
+<%
+nSectionPicCounter=nSectionPicCounter+1
+end function
+%>
+<%
+function section_footer_1(byref pSection)
+%>
+<tr fontsize='4'>
+#ifdef _IOW
+	<td style='27' colspan='7' />
+#else
+	<td style='27' colspan='6' />
+#endif
+	<td style='27' align='right'>
+		<t><%so.write doc_.afc.display.quantity(pSection.counter(0).result,"",2)%></t>
+	</td>
+	<td style='27' />
+	<td style='27' align='right'>
+		<t><%so.write doc_.afc.display.quantity(pSection.counter(1).result,"",2)%></t>
+	</td>
+	<td style='27' />
+	<td style='27' align='right'>
+		<t><%so.write doc_.afc.display.quantity(pSection.counter(2).result,"",2)%></t>
+	</td>
+	<td style='27' />
+	<td style='27' align='right'>
+		<t><%so.write doc_.afc.display.quantity(pSection.counter(3).result,"",2)%></t>
+	</td>
+</tr>
+#ifdef _IOW
+<tr border='0'><td colspan='14' /></tr>
+<tr hide='true' userprop='propc_section_end="1"'><td colspan='14' /></tr>
+#else
+<tr border='0'><td colspan='13' /></tr>
+<tr hide='true' userprop='propc_section_end="1"'><td colspan='13' /></tr>
+#endif
+<%
+end function
+%>
+<%
+function body_row(byref pSection,byref pRec)
+if pRapExec.RecNr mod 2 = 0 then
+%>
+<tr bordercolor='white'>
+<%
+else
+%>
+<tr bordercolor='white' style='37'>
+<%
+end if
+%>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+	<td align='right'>RXE_LP</td>
+	<td>
+		RXE_TEXT_LINK_FORM_VCC(TYPEID_N5PRODUKT,c_prod_idobj,c_field_first)
+	</td>
+
+#ifdef _IOW
+	<td>
+		RXE_AUTO_TEXT(c_oznprod)
+	</td>
+#endif
+
+	<td>
+		RXE_AUTO_TEXT(c_field_second)
+	</td>
+	<td>
+		RXE_AUTO_TEXT(c_opak_nazwa)
+	</td>
+	<td align='right'>
+		RXE_QUANTITY_CCC(c_i_przed,c_jedn,c_prec)
+	</td>
+	<td align='right'>
+		RXE_QUANTITY_CVV(c_w_przed,"",2)
+	</td>
+	<td align='right'>
+		RXE_QUANTITY_CCC(c_i_przych,c_jedn,c_prec)
+	</td>
+	<td align='right'>
+		RXE_QUANTITY_CVV(c_w_przych,"",2)
+	</td>
+	<td align='right'>
+		RXE_QUANTITY_CCC(c_i_rozch,c_jedn,c_prec)
+	</td>
+	<td align='right'>
+		RXE_QUANTITY_CVV(c_w_rozch,"",2)
+	</td>
+	<td align='right'>
+		RXE_QUANTITY_CCC(c_i_po,c_jedn,c_prec)
+	</td>
+	<td align='right'>
+		RXE_QUANTITY_CVV(c_w_po,"",2)
+	</td>
+</tr><%
+end function
+%>
+<%
+function body_header(byref pSection,byref pRec)
+'so.write "<p backcolor='yellow'><text><![CD"+"ATA["+pRapExec.get_final_query() + "]"+"]></text></p><br/>" 
+%>
+<table border='1'>
+<thead>
+<tr style='21'>
+	<td bordercolor='transparent' width='min' rowspan='2'><t>&nbsp;</t></td>
+	<td width='min' rowspan='2'><t>LP</t></td>
+	<td width='min' rowspan='2'>
+		<text><![CDATA[C_FIELD_FIRST_HUMANNAME]]></text>
+	</td>
+
+#ifdef _IOW
+	<td width='max' rowspan='2'>
+		<text><![CDATA[Oznaczenie producenta]]></text>
+	</td>
+#endif
+
+	<td width='max' rowspan='2'>
+		<text><![CDATA[C_FIELD_SECOND_HUMANNAME]]></text>
+	</td>
+	<td width='min' rowspan='2'>
+		<text><![CDATA[Opakowanie]]></text>
+	</td>
+	<td width='min' colspan='2'>
+		<text><![CDATA[Stan przed]]></text>
+	</td>
+	<td width='min'  colspan='2'>
+		<text><![CDATA[Przychody]]></text>
+	</td>
+	<td width='min'  colspan='2'>
+		<text><![CDATA[Rozchody]]></text>
+	</td>
+	<td width='min'  colspan='2'>
+		<text><![CDATA[Stan po]]></text>
+	</td>
+</tr>
+<tr style='21'>
+	<td width='min'>
+		<t><![CDATA[Ilość]]></t>
+	</td>
+	<td width='min'>
+		<t><![CDATA[Wartość]]></t>
+	</td>
+	<td width='min'>
+		<t><![CDATA[Ilość]]></t>
+	</td>
+	<td width='min'>
+		<t><![CDATA[Wartość]]></t>
+	</td>
+	<td width='min'>
+		<t><![CDATA[Ilość]]></t>
+	</td>
+	<td width='min'>
+		<t><![CDATA[Wartość]]></t>
+	</td>
+	<td width='min'>
+		<t><![CDATA[Ilość]]></t>
+	</td>
+	<td width='min'>
+		<t><![CDATA[Wartość]]></t>
+	</td>
+</tr>
+</thead>
+<tbody>
+<%
+end function
+%>
+<%
+function body_footer(byref pSection)
+%>
+</tbody>
+<tfoot>
+<tr style='21'>
+#ifdef _IOW
+<td style='27' colspan='7' />
+#else
+<td style='27' colspan='6' />
+#endif
+	
+	<td style='27' align='right'>
+		<t><%so.write doc_.afc.display.quantity(pSection.counter(0).result,"",2)%></t>
+	</td>
+	<td style='27' />
+	<td style='27' align='right'>
+		<t><%so.write doc_.afc.display.quantity(pSection.counter(1).result,"",2)%></t>
+	</td>
+	<td style='27' />
+	<td style='27' align='right'>
+		<t><%so.write doc_.afc.display.quantity(pSection.counter(2).result,"",2)%></t>
+	</td>
+	<td style='27' />
+	<td style='27' align='right'>
+		<t><%so.write doc_.afc.display.quantity(pSection.counter(3).result,"",2)%></t>
+	</td>
+</tr>
+</tfoot>
+</table>
+<%
+end function
+%>
+<%dim nSectionPicCounter : nSectionPicCounter = 10000000%>
+function section_hideshow_hli(byref pHLI)
+doc_.afc.formsection.section_hideshow page_, pHLI.prop(100)
+end function
+]]>
+</script>
+</config>
+<header>
+</header>
+<body>
+<p>
+RAPORT_HEADER(3,0)
+</p>
+
+<p>
+<t size='2'/>
+</p>
+
+<p><text fontsize='7'><![CDATA[RAPORT_TITLE]]></text></p><br/><br/>
+<%
+if not doc_.getmodule(60253).gm_ensure_accuracy_ui(true) then
+%>
+<p border='1' fontsize='5' forecolor='red' bold='true'><t>Uwaga! Niepoprawny stan magazynu</t></p><br/><br/>
+<%
+end if
+%>
+<t fontsize='5' bold='true'>Kryteria selekcji:</t><br/>
+<%
+
+dim pRapExec : set pRapExec = rapeng_.new_engine()
+with pRapExec
+	.add_body_ex(getref("body_header"),getref("body_footer"),getref("body_row")).add_sumator("c_w_przed").add_sumator("c_w_przych").add_sumator("c_w_rozch").add_sumator("c_w_po")
+	.add_group_section(0,getref("section_header_1"),getref("section_footer_1")).add_sumator("c_w_przed").add_sumator("c_w_przych").add_sumator("c_w_rozch").add_sumator("c_w_po")
+if .prepare("RAPORT_TITLE",default_param(),rapeng_.get_raport_param(),query()) then
+%>
+<%
+	dim pPerf : set pPerf = doc_.performing("Trwa przygotowywanie wyników...")
+		pProdHierarchy.fill_on_prodgrupa_param pGrupaParam
+	set pPerf = nothing
+
+	write_actual_param rapeng_.get_raport_param()
+	if not .perform then
+		so.write "<p style='21'><t>Brak danych spełniających podane kryteria</t></p>"
+	end if
+	doc_.getmodule(60253).sql_clean_tmp_stanmag_moment()
+%>
+<%
+end if
+end with
+
+pProdHierarchy.manual_done() : set pProdHierarchy = nothing
+set utilProdHierarchy = nothing
+
+
+%>
+</body>
+<footer>
+</footer>
+</page>

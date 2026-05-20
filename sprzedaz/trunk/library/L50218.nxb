@@ -1,0 +1,622 @@
+'//////////////////////////////////////////
+'// (C) 2001 NAVO					     //
+'// Wykresy (chart)						 //
+'// internal / advanced usage  			 //
+'//////////////////////////////////////////
+
+#ifndef LIBRARY_50218
+#define LIBRARY_50218
+
+
+
+class CChartDataSource_SQL
+
+	private m_SQLquery
+	
+	private m_rowNames()
+	private m_colNames()
+	private m_Values()
+	
+	'-----------------------------------
+	public sub class_initialize
+		m_SQLquery = ""
+		Redim m_rowNames(1,0)
+		Redim m_colNames(1,0)
+	end sub 
+
+	'-----------------------------------
+	public property let rowCount (par)
+	end property
+	public property get rowCount ()
+		rowCount = UBound(m_rowNames,2)
+	end property
+
+	'-----------------------------------
+	public property let colCount (par)
+	end property
+	public property get colCount ()
+		colCount = UBound(m_colNames,2)
+	end property
+
+	'-----------------------------------
+	public property let SQLquery (par)
+		m_SQLquery = par  
+	end property
+	public property get SQLquery ()
+		SQLquery = m_SQLquery
+	end property
+	
+	'-----------------------------------
+	public property get value(row,col)
+		value=m_Values(row,col)
+	end property
+
+	'-----------------------------------
+	public property get colName(col)
+		colName=m_colNames(1,col)
+	end property
+
+	'-----------------------------------
+	public property get rowName(row)
+		rowName=m_rowNames(1,row)
+	end property
+
+	'-----------------------------------
+	private function findInNames(byRef arrY,byVal value):findInNames=-1
+		dim f
+		for f=LBound(arrY,2) to UBound(arrY,2)
+			if arrY(0,f)=value then
+				findInNames=f
+				exit function
+			end if
+		next
+	end function
+	
+	private function addName(byRef arrY,byVal value,byVal Name):addName=-1
+		dim f
+		f=findInNames(arrY,value)
+		if f<0 then
+			redim preserve arrY(1,UBound(arrY,2)+1)
+			f=UBound(arrY,2)
+		end if
+		arrY(0,f)= value
+		arrY(1,f)= Name
+	end function
+	
+
+	'-----------------------------------
+	public sub connect(SQLquery)
+		me.SQLquery=SQLquery
+		dim colVal:colVal=""
+		dim rowVal:rowVal=""
+		dim colName:colName=""
+		dim rowName:rowName=""
+		dim inCol:inCol=CInt(-1)
+		dim inRow:inRow=CInt(-1)
+		
+		dim adoRS : set adoRS = trans_.createadors(m_SQLquery)
+		
+		if not ( adoRS.BOF and adoRS.EOF )then
+			adoRS.moveFirst
+			do while not adoRS.EOF
+				rowVal	=cstr(adoRS(0))
+				rowName	=cstr(adoRS(1))
+				colVal	=cstr(adoRS(2))
+				colName	=cstr(adoRS(3))
+				addName m_rowNames,rowVal,rowName
+				addName m_colNames,colVal,colName
+
+				adoRS.movenext
+			loop
+
+			Redim m_Values(UBound(m_rowNames,2),UBound(m_colNames,2))
+		
+			adoRS.moveFirst
+			do while not adoRS.EOF
+				rowVal	=cstr(adoRS(0))
+				rowName	=cstr(adoRS(1))
+				colVal	=cstr(adoRS(2))
+				colName	=cstr(adoRS(3))
+				inRow=findInNames(m_rowNames,rowVal)
+				inCol=findInNames(m_colNames,colVal)
+				m_Values(inRow,inCol)=adoRS(4)
+				adoRS.movenext
+			loop
+		end if
+	end sub
+end class
+
+
+class CChartMaker
+	private m_idChart
+	private m_chartType
+	private m_chartTypeArray
+
+	private m_strSQL
+	
+	private m_strHeader
+	private m_strFooter
+
+	private m_DataSource
+
+	private m_maxRows
+	private m_maxCols
+	private m_Stacking
+	private m_bNormalize
+
+	private m_ShowLegend
+
+
+	public sub class_initialize()
+		m_idChart = 0
+		m_strHeader =""
+		m_strFooter =""
+		set m_DataSource = nothing
+		m_ShowLegend = true
+		m_Stacking	 = false
+		m_bNormalize = false
+
+		m_chartType=0
+'		Redim m_chartTypeArray(1,11)
+		Redim m_chartTypeArray(1,9)
+
+		m_chartTypeArray(0,0)=0
+		m_chartTypeArray(0,1)=2
+		m_chartTypeArray(0,2)=4
+		m_chartTypeArray(0,3)=6
+		m_chartTypeArray(0,4)=1
+		m_chartTypeArray(0,5)=3
+		m_chartTypeArray(0,6)=5
+		m_chartTypeArray(0,7)=7
+		m_chartTypeArray(0,8)=14
+		m_chartTypeArray(0,9)=16
+'		m_chartTypeArray(0,10)=8
+'		m_chartTypeArray(0,11)=9
+		
+		m_chartTypeArray(1,0)="3D bar"
+		m_chartTypeArray(1,1)="3D line"
+		m_chartTypeArray(1,2)="3D area"
+		m_chartTypeArray(1,3)="3D step"
+		m_chartTypeArray(1,4)="2D bar"
+		m_chartTypeArray(1,5)="2D line"
+		m_chartTypeArray(1,6)="2D area"
+		m_chartTypeArray(1,7)="2D step"
+		m_chartTypeArray(1,8)="2D pie"
+		m_chartTypeArray(1,9)="2D XY"
+'		m_chartTypeArray(1,10)="3D comb"
+'		m_chartTypeArray(1,11)="2D comb"
+
+	end sub 
+	public function NextView
+		dim f
+		for f=LBound(m_chartTypeArray,2) to UBound(m_chartTypeArray,2)-1
+			if m_chartTypeArray(0,f)=m_chartType then
+				m_chartType=m_chartTypeArray(0,f+1)
+				NextView=m_chartTypeArray(1,f+1)
+				page_.ctrl(m_idChart).olecontrol.chartType=m_chartType
+				page_.ctrl(m_idChart).olecontrol.Stacking =m_Stacking
+				exit function
+			end if
+		next
+		m_chartType=m_chartTypeArray(0,UBound(m_chartTypeArray,2))
+		NextView=m_chartTypeArray(1,UBound(m_chartTypeArray,2))
+	end function 
+
+	public function PrevView
+		dim f
+		for f=UBound(m_chartTypeArray,2) to LBound(m_chartTypeArray,2)+1 step -1
+			if m_chartTypeArray(0,f)=m_chartType then
+				m_chartType=m_chartTypeArray(0,f-1)
+				PrevView=m_chartTypeArray(1,f-1)
+				page_.ctrl(m_idChart).olecontrol.chartType=m_chartType
+				page_.ctrl(m_idChart).olecontrol.Stacking =m_Stacking
+				exit function
+			end if
+		next
+		m_chartType=m_chartTypeArray(0,LBound(m_chartTypeArray,2))
+		PrevView=m_chartTypeArray(1,LBound(m_chartTypeArray,2))
+	end function 
+
+
+	property set DataSource (obj)
+		set m_DataSource = obj
+	end property
+	property get DataSource ()
+		set DataSource = m_DataSource
+	end property
+
+
+	property let Normalize(value)
+		m_bNormalize = value
+	end property
+
+	property get Normalize()
+		Normalize= m_bNormalize
+	end property
+
+
+	property let Stacking(value)
+		m_Stacking = value
+	end property
+
+	property get Stacking()
+		Stacking= m_Stacking
+	end property
+
+	property let ShowLegend(value)
+		m_ShowLegend = value
+	end property
+
+	property get ShowLegend ()
+		ShowLegend = m_ShowLegend
+	end property
+
+	property let strFooter(value)
+		m_strFooter = value
+	end property
+
+	property get strFooter ()
+		strFooter = m_strFooter
+	end property
+
+	property let strHeader(value)
+		m_strHeader = value
+	end property
+
+	property get strHeader ()
+		strHeader = m_strHeader
+	end property
+
+	property let chartType(value)
+		if CInt(value) <100 then
+			m_chartType = value
+			m_Stacking = false
+		else
+			m_chartType = value mod 100
+			m_Stacking = true
+		end if
+	end property
+
+	property get chartType ()
+		chartType = m_chartType
+	end property
+
+	property let maxRows(value)
+		m_maxRows = value
+	end property
+	property get maxRows()
+		maxRows = m_maxRows
+	end property
+
+	property let maxCols(value)
+		m_maxCols = value
+	end property
+	property get maxCols()
+		maxCols = m_maxCols
+	end property
+
+
+	public function ZoomIn
+	   page_.ctrl(m_idChart).olecontrol.Plot.AutoLayout = False
+	   With page_.ctrl(m_idChart).olecontrol.Plot.LocationRect
+		  .Min.x = .Min.x * 1.2
+		  .Min.Y = .Min.Y * 1.2
+		  .Max.x = .Max.x * 1.2
+		  .Max.Y = .Max.Y * 1.2
+	   End With
+	end function
+
+	public function ZoomOut
+	   page_.ctrl(m_idChart).olecontrol.Plot.AutoLayout = False
+	   With page_.ctrl(m_idChart).olecontrol.Plot.LocationRect
+		  .Min.x = .Min.x / 1.2
+		  .Min.Y = .Min.Y / 1.2
+		  .Max.x = .Max.x / 1.2
+		  .Max.Y = .Max.Y / 1.2
+	   End With
+	end function
+
+	public function setup(byval idChart) : setup = false
+		m_idChart = idChart
+		dim pTestChart : set pTestChart = nothing
+		on error resume next
+		set pTestChart = createobject("mschart20lib.mschart.2")
+		if err.number <> 0 then
+			exit function
+		end if
+		if pTestChart is nothing then
+			setup = install_chart()
+		else
+			setup = true
+		end if
+	end function
+
+
+	private function install_chart() : install_chart = false
+		dim instses : set instses = createobject("navoinstall.session")
+		instses.setlogname "NAVO Kontakt 2002 - Components Setup log.txt"
+		dim strSource : strSource = instses.getmediaurl("","components\other\","mschrt20.ocx","Komponent MSChart")
+		if not instses.installfile(strSource+"mschrt20.ocx",doc_.system.sysdir + "\mschrt20.ocx") then
+			instses.addlogmsg "MSCHRT20.OCX copying failed. Error = " + CStr(instses.lasterror)
+			exit function
+		end if
+		' register file
+		dim nRegRes : nRegRes = doc_.system.registerdll(doc_.system.sysdir + "\mschrt20.ocx")
+		if nRegRes <> 0 then
+			instses.addlogmsg "MSCHRT20.OCX registration failed. Error = " + CStr(nRegRes)
+			exit function
+		end if
+		' register licence
+		doc_.system.registry(hKey_ClassesRoot,"Licenses\7C35CA30-D112-11cf-8E72-00A0C90F26F8","") = "whmhmhohmhiorhkouimhihihwiwinhlosmsl"
+		install_chart = true
+	end function
+
+	public sub fill()
+
+		with page_.ctrl(m_idChart).olecontrol
+
+			.Repaint = False
+			While .DataGrid.ColumnCount > 0
+				.DataGrid.DeleteColumns 1, 1
+			Wend
+			.Repaint = True
+		end with 
+
+		if m_DataSource is nothing then
+			exit sub
+		end if
+		if m_DataSource.colCount<1 then
+			exit sub
+		end if
+
+		dim nRow : nRow = m_DataSource.rowCount
+		dim nCol : nCol = m_DataSource.colCount
+		if m_maxCols<nCol then nCol=m_maxCols
+		if m_maxRows<nRow then nRow=m_maxRows
+		dim r,c
+		dim sumVal:sumVal=CCur(0)
+
+		with page_.ctrl(m_idChart).olecontrol
+			dim fontName:fontName="Arial CE"
+			.Legend.VtFont.Name = fontName
+			.Title.VtFont.Name = fontName
+			.Footnote.VtFont.Name = fontName
+			.Plot.Axis(0).Labels(1).VtFont.Name = fontName
+			.Plot.Axis(1).Labels(1).VtFont.Name = fontName
+			.Plot.Axis(2).Labels(1).VtFont.Name = fontName
+			.Plot.Axis(3).Labels(1).VtFont.Name = fontName
+
+			.chartType = m_chartType
+			.ColumnCount = nCol
+			.RowCount = nRow
+			for r=1 to nRow
+				'.Row = r
+				.Row = 1 + (r + .RowCount - 1) Mod .RowCount
+
+				if m_bNormalize then
+					sumVal = CCur(0)
+					For c = 1 To nCol
+						sumVal = sumVal + CCur(m_DataSource.value(r,c))
+					Next
+					
+				end if
+
+				for c = 1 to nCol
+					.column = c
+					if m_bNormalize=true then
+						if sumVal=0 then 
+							.data = CCur(0.000003)'CCur(100/nCol)
+						else
+							dim tData
+							tData=CCur((100*CCur(m_DataSource.value(r,c)))/ sumVal)
+							'omijam bug w mschart!!!!
+							if tData=0 then tData=CCur(0.000003)
+							.data = tData
+
+						end if
+					else
+							.data = CCur(m_DataSource.value(r,c))
+					end if
+				next
+			next 
+
+			for c = 1 to nCol
+				.column = c
+				.columnlabel = m_DataSource.colName(c)
+			next
+
+			for r = 1 to nRow
+				.Row  = r
+				.RowLabel = m_DataSource.rowName(r)
+			next
+
+			.TitleText = m_strHeader 
+			.FootnoteText = m_strFooter
+			.ShowLegend = m_ShowLegend
+			Colorize
+
+			if m_bNormalize=true then
+				.Plot.Axis(1).ValueScale.Auto = False
+				.Plot.Axis(1).ValueScale.Maximum = CCur(100)
+			end if
+
+			.Stacking  = m_Stacking
+
+
+	   end with
+	end sub
+
+private Function x2RGB(ByVal f , ByVal n , ByRef R , ByRef G , ByRef B )
+    
+    Dim pnt: pnt = 100 / n
+    Dim x: x = Int(f * pnt)
+    If (x < 0) Then x = CInt(-1) * x
+    If (x > 100) Then x = x Mod 100
+    
+    R = 0
+    G = 0
+    B = 0
+    Dim interval: interval = (Int(x / 9)) Mod 12
+    
+    If n < 13 Then
+        Dim dark
+        dark = False
+        interval = (f - 1) Mod 6
+        If n > 6 Then
+        Dim offs
+            offs = n - 6
+            If f > (2 * offs - 1) Then
+                interval = (6 + interval - offs) Mod 6
+            Else
+                interval = (6 + interval - Int(f / 2)) Mod 6
+            End If
+            If f <= offs * 2 And f Mod 2 = 0 Then dark = True
+            
+        End If
+            Select Case interval
+            Case 0:
+                R = 0
+                G = 100
+                B = 0
+            Case 1:
+                R = 100
+                G = 100
+                B = 0
+            Case 2:
+                R = 100
+                G = 0
+                B = 0
+            Case 3:
+                R = 100
+                G = 0
+                B = 100
+            Case 4:
+                R = 0
+                G = 0
+                B = 100
+            Case 5:
+                R = 0
+                G = 100
+                B = 100
+            End Select
+            
+            Select Case dark
+            Case False:
+                R = 2.5 * R
+                G = 2.5 * G
+                B = 2.5 * B
+            Case True:
+                R = 2.1 * R
+                G = 2.1 * G
+                B = 2.1 * B
+            End Select
+            
+            
+    Else
+            Select Case interval
+            Case 0:
+                R = 50
+                G = 100
+                B = 50
+            Case 1:
+                R = 80
+                G = 100
+                B = 50
+            Case 2:
+                R = 100
+                G = 100
+                B = 50
+            Case 3:
+                R = 100
+                G = 90
+                B = 60
+            Case 4:
+                R = 100
+                G = 70
+                B = 50
+            Case 5:
+                R = 100
+                G = 30
+                B = 30
+            Case 6:
+                R = 100
+                G = 40
+                B = 70
+            Case 7:
+                R = 80
+                G = 50
+                B = 100
+            Case 8:
+                R = 50
+                G = 50
+                B = 100
+            Case 9:
+                R = 50
+                G = 80
+                B = 100
+            Case 10:
+                R = 50
+                G = 100
+                B = 100
+            Case 11:
+                R = 80
+                G = 100
+                B = 100
+            Case Else
+                MsgBox interval
+            
+            End Select
+            
+            Select Case Int(f Mod 3)
+            Case 0:
+                R = 2.5 * R
+                G = 2.5 * G
+                B = 2.5 * B
+            Case 1:
+                R = 2.3 * R
+                G = 2.3 * G
+                B = 2.3 * B
+            Case 2:
+                R = 2.1 * R
+                G = 2.1 * G
+                B = 2.1 * B
+            End Select
+    End If
+End Function
+
+private Sub Colorize()
+    
+    Dim count, f
+	dim MSChart:set MSChart= page_.ctrl(m_idChart).olecontrol
+    count = MSChart.Plot.SeriesCollection.count
+    
+    Dim Red , Green , Blue 
+    Red =CInt(0)
+	Green =CInt(0)
+	Blue=CInt(0) 
+
+    Dim s
+    s = 100 / (count)
+    For f = 1 To count
+        x2RGB f, count, Red, Green, Blue
+		'2=VtChChartType3dLine
+		'3=VtChChartType2dLine 
+        If MSChart.chartType <> 3 Or _
+        MSChart.chartType <> 2 Then
+               MSChart.Plot.SeriesCollection(f). _
+              DataPoints(-1).Brush.FillColor. _
+              Set Red, Green, Blue
+        Else
+           MSChart.Plot.SeriesCollection(f).Pen. _
+              VtColor.Set Red, Green, Blue
+        End If
+    Next
+
+End Sub
+
+
+
+end class
+
+
+#endif

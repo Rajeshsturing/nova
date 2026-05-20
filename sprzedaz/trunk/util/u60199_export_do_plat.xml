@@ -1,0 +1,1379 @@
+#include "h1000.h"
+#include "h1001.h"
+#include "h1004.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1240.h"
+#include "h1201.h"
+#include "h1251.h"
+
+#define PAGE_FORM_WIZZARD_EXPPLAT_WITAMY				20357
+#define PAGE_FORM_WIZZARD_EXPPLAT_OKRES					20359
+#define PAGE_FORM_WIZZARD_EXPPLAT_LOKALIZACJA_PLIKU		20360
+#define PAGE_FORM_WIZZARD_EXPPLAT_OSOBA_PRAWNA			20361
+#define PAGE_FORM_WIZZARD_EXPPLAT_WYBOR_DOKUMENTOW		20362
+#define PAGE_FORM_WIZZARD_EXPPLAT_PODSUMOWANIE			20364
+
+
+
+#define DEFAULT_PROGRAM		2
+#define EXPPLATNIK_APP_KADRYPLACE	1
+#define EXPPLATNIK_APP_NAVOFIRMA	2
+#define EXPPLATNIK_APP_EPLATNIK		3
+
+#define EXPPLATNIK_OSOBA_PRAWNA			1
+#define EXPPLATNIK_OSOBA_FIZYCZNA		2
+
+
+
+
+#define NV_ALL		1
+#define NV_NONE		2
+#define NV_SYB		3
+#define NV_SQL		4
+#define NV_KADRY	5
+
+
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+
+
+-->
+<page>
+<config>
+<title>Kreator eksportu do Płatnika</title>
+<script>
+<!--
+
+-->
+<![CDATA[
+#include "50209"
+
+'messagebox
+#include "50122"
+
+'currentFirma
+#include "50203"
+
+'import
+#include "50615"
+'CImportManager
+#include "50614"
+'view_message
+#include "50516"
+
+
+
+'harui
+#include "50101"
+
+
+class CEXPlatnik
+	private m_nProgram'jakiego programu będziemy używac do wygenerowania pliku KDU
+	private m_strNazwaFirmy'jaka firma zostala wybrana w przypadku NAVO Firmy
+	private m_nFirmaId
+
+
+	'logowanie do navo firmy
+	public m_nNavoVersion
+	public m_strServer
+	public m_strPass
+	public m_bDefault
+	public m_strLogin
+	public m_nNavoShow
+
+	'połączenia
+	public m_pExportManager
+	public m_pImportContainer
+
+
+	'zakres dat
+	public m_dDataOd
+	public m_dDataDo
+
+	'plik
+	public m_strPath
+
+
+	public m_pPlatnik
+	public m_nOsobaPrawna
+
+	public m_nCount
+
+
+
+	public m_strLicense
+	public m_strKod
+	public m_strModuleName
+	public m_strCodeFirma
+
+
+	private sub class_initialize()
+		m_nProgram = clng(DEFAULT_PROGRAM)		
+
+		'mamy do czynienia z europracownikiem
+		if trans_.isvar(APPVAR_MODE) then
+			m_nProgram = EXPPLATNIK_APP_EPLATNIK
+		end if
+
+		m_strNazwaFirmy = ""
+		m_nFirmaId = clng(0)
+		m_bDefault = true
+		m_nNavoVersion = ""
+		m_strLogin = "sa"
+		m_strPass = ""
+		m_strServer = "."
+		m_nNavoShow = NV_NONE
+
+		fromRegistry()
+
+		set m_pImportContainer = new CImportContainer
+		set m_pExportManager = new CADOExportManager					
+
+		setInitDates CDate(trans_.var(GVAR_SYSDATE))
+
+		m_nOsobaPrawna = EXPPLATNIK_OSOBA_PRAWNA
+
+	end sub
+
+	public sub setInitDates(byval dDate)
+
+		m_dDataOd = dateserial (year(dDate) , month(dDate) -1 , 1)
+		m_dDataDo = dateserial (year(dDate) , month(dDate) , 1) -1
+
+	end sub
+
+
+	public function license()
+		license = m_strLicense
+	end function
+
+	public function readLicense()
+		dim pRecordset		
+		if NavoFirma then
+			set pRecordset = ado_man.getConnection().execute("select * from navolicence where Code<>'' and (ModName like 'NAVOFK' or ModName like 'KPIR100') order by modname desc ")
+			if not pRecordset.eof then
+				m_strModuleName = cstr(pRecordset.fields("ModName").value)
+				select case ltrim(rtrim(m_strModuleName))
+					case "NAVOFK"
+						m_strModuleName = "NAVO Finanse i księgowość"
+					case "KPIR100"
+						m_strModuleName = "NAVO Księga przychodów i rozchodów"
+				end select
+				m_strLicense = cstr(pRecordset.fields("Licence").value)
+				m_strCodeFirma = cstr(pRecordset.fields("Code").value)
+			else
+				m_strLicense = "<brak>"
+				m_strCodeFirma = ""
+			end if
+		else
+			m_strModuleName = "NAVO Kadry i Płace"
+			'tu mamy juz polaczenie
+			set pRecordset = ado_man.getConnection().execute("select * from master..neflicence where navomatch <> ''")
+			if not pRecordset.eof then
+				m_strLicense = cstr(pRecordset.fields("NAVOUniCode").value)
+				m_strCodeFirma = cstr(pRecordset.fields("NAVOMatch").value)				
+			else
+				m_strLicense = "<brak>"
+				m_strCodeFirma = ""
+			end if
+
+
+		end if		
+	end function
+
+
+	public property get kod()
+		kod = m_strKod
+	end property
+	public property let kod(strKod)
+		m_strKod = strKod
+	end property
+
+
+	public function kod_isOK():kod_isOK = false	
+#ifdef _DEBUG
+		kod_isOK = true
+		exit function
+#endif
+
+
+#ifdef _NZOS
+		kod_isOK = true
+		trans_.message 7000 , 0 , "wersja dla 'NZOS Nowy Dwór'"
+		exit function
+#endif
+
+		if isnumeric(rtrim(ltrim(m_strCodeFirma))) and isnumeric(rtrim(ltrim(kod)))  then
+			kod_isOK = clng(rtrim(ltrim(m_strCodeFirma))) = clng(rtrim(ltrim(kod))) - 1
+		else
+			if rtrim(ltrim(m_strCodeFirma)) = "<brak>" then
+				trans_.message 1002,0,"Posiadana przez Ciebie aplikacja, z której dane chcesz eksportować nie jest zarejestrowana"
+			end if
+		end if
+
+	end function
+
+
+	public sub setNextDate	
+		setInitDates dateserial(year(m_dDataOd) , month(m_dDataOd)+2 , 15)
+	end sub
+
+
+	public sub setPrevDate
+		setInitDates dateserial(year(m_dDataOd) , month(m_dDataOd) , 15)
+	end sub
+
+
+
+	public property get firma_sql()
+		firma_sql = m_nNavoVersion = "SQL"
+	end property
+
+
+
+	public property get dataOd()
+		dataOd = m_dDataOd
+	end property
+	public property let dataOd(dDataOd)
+		m_dDataOd = cdate(dDataOd)
+	end property
+
+	public property get dataDo()
+		dataDo = m_dDataDo
+	end property
+	public property let dataDo(dDataDo)
+		m_dDataDo = cdate(dDataDo)
+	end property
+
+
+
+
+
+	public property get program()
+		program = clng(m_nProgram)
+	end property
+	public property let program(nProgram)
+		
+		m_nProgram = clng(nProgram)
+		if KadryPlace then
+			setKadry
+		end if
+		'sprawdzamy, czy zmieniono ustawienie z tego, co bylo ostatnim razem - jezeli tak to nal;ezy ustawic domyslne logowanie
+		dim str:str = doc_.system.registry(hKey_LocalMachine , "HKLM_PATH", "App")
+		if str <> "" then
+			if clng(str) <> m_nProgram then
+				m_bDefault = true
+			end if
+		end if
+	end property
+
+	public property get nazwa_firmy()
+		nazwa_firmy = clng(m_strNazwaFirmy)
+	end property	
+
+	public property get import()
+		set import = m_pImportContainer
+	end property	
+	public property get ado_man()
+		set ado_man = m_pExportManager
+	end property	
+
+	public function NavoFirma
+		NavoFirma = m_nProgram = EXPPLATNIK_APP_NAVOFIRMA		
+	end function
+	public function KadryPlace
+		KadryPlace = m_nProgram = EXPPLATNIK_APP_KADRYPLACE
+	end function
+	public function FirmaID()
+		FirmaID = m_nFirmaId
+	end function
+	public function ePlatnik
+		ePlatnik = m_nProgram = EXPPLATNIK_APP_EPLATNIK
+	end function
+
+	public function checkNavoFirmaVer
+
+		dim pInstallModule
+		set pInstallModule = doc_.getmodule(60116)
+
+		dim pNVInfo
+		set pNVInfo = pInstallModule.get_navo_firma_info()
+
+		if (pNVInfo.m_Sybase and pNVInfo.m_MsSQL) then
+			m_nNavoVersion = "SQL"
+			m_nNavoShow = NV_ALL
+		elseif (pNVInfo.m_MsSQL) then
+			m_nNavoVersion = "SQL"
+			m_nNavoShow = NV_SQL
+		elseif (pNVInfo.m_Sybase) then
+			m_nNavoVersion = "SYBASE"
+			m_nNavoShow = NV_SYB
+		end if
+	end function
+
+	public sub setKadry
+		m_nNavoVersion = "KADRY"
+		m_nNavoShow = NV_KADRY
+	end sub
+
+
+	public function connect_firma():connect_firma = false
+		'łączymy się do źródla danych
+		if (not firma_sql) then
+			if (not pParamClass.import.database_logon("", "", "", false, ado_man)) then
+				Export_DestroyPerforming ado_man
+				exit function
+			end if
+		else
+			if (m_bDefault) then
+				if (not import.database_logon("sa", "", ".", true, ado_man)) then					
+					Export_DestroyPerforming ado_man
+					exit function
+				end if
+			else
+				if (not import.database_logon(m_strLogin, m_strPass, m_strServer, true, ado_man)) then
+					Export_DestroyPerforming ado_man
+					exit function
+				end if
+			end if
+		end if		
+		
+		
+		'wybieramy firme
+		if not import.choiceFirma(ado_man) then
+			Export_DestroyPerforming ado_man
+			exit function
+		end if
+
+		Export_DestroyPerforming ado_man
+
+		m_nFirmaId = import.idFirmy
+		if m_nFirmaId = 0 then
+			trans_.message 7000 , 0 , "W wybranym źródle danych nie ma żadnej firmy"
+			exit function
+		end if
+
+		dim rs_temp:set rs_temp = ado_man.getConnection().execute("select count(*) as ilosc from pracownik where idFirmy=" +cstr(m_nFirmaId))
+		m_nCount = clng(rs_temp.fields("ilosc").value)								
+
+
+		connect_firma = true
+	end function
+
+	public function connect_kadry():connect_kadry = false
+		if (m_bDefault) then
+			if (not import.database_logon_kadry("sa", "", ".", ado_man)) then					
+				Export_DestroyPerforming ado_man
+				exit function
+			end if
+		else
+			if (not import.database_logon_kadry(m_strLogin, m_strPass, m_strServer, ado_man)) then
+				Export_DestroyPerforming ado_man
+				exit function
+			end if
+		end if
+
+		on error resume next
+		dim rs_temp:set rs_temp = ado_man.getConnection().execute("select count(*) as ilosc from pracownik")
+		m_nCount = clng(rs_temp.fields("ilosc").value)
+
+		if (err.number<>0) then
+			view_message1 6343, 0, err.description
+			pContainer.cancel
+			Export_DestroyPerforming ado_man
+			exit function
+		end if
+
+		on error goto 0
+
+		Export_DestroyPerforming ado_man
+
+		connect_kadry = true
+	end function
+
+	public function get_connection()
+		set get_connection = ado_man.getConnection()
+	end function
+
+
+	public property get osoba_prawna()
+		osoba_prawna = clng(m_nOsobaPrawna)
+	end property
+	public property let osoba_prawna(nOsoba)
+		m_nOsobaPrawna = clng(nOsoba)
+	end property
+
+
+	public function fill_platnik():fill_platnik = false		
+
+		set m_pPlatnik = new CPlatnik
+		
+		dim pRecordset
+
+		'najpierw wypelnienie m_bOsobaFizyczna i m_nApp
+		'dane platnika
+		if NavoFirma then 'tutaj nie wiadomo - pytalismy na jednej ze stron kreatora i to wstawiamy			
+			m_pPlatnik.setApp EXPPLATNIK_APP_NAVOFIRMA
+			m_pPlatnik.m_bOsobaPrawna = (osoba_prawna = EXPPLATNIK_OSOBA_PRAWNA)
+		elseif ePlatnik then 'w platniku forma spolki musi byc taka jak nizej
+			m_pPlatnik.setApp EXPPLATNIK_APP_EPLATNIK
+			m_pPlatnik.m_bOsobaPrawna = (getCurrentFirma.eForma = N5FIRMA_FORMA_ZOO) or (getCurrentFirma.eForma = N5FIRMA_FORMA_AKCYJNA)
+		else
+			m_pPlatnik.setApp EXPPLATNIK_APP_KADRYPLACE			
+			set pRecordset = ado_man.getConnection().execute("select osobafiz from firma")
+			if pRecordset.EOF then
+				exit function
+			end if			
+			m_pPlatnik.m_bOsobaPrawna = (clng(pRecordset.fields("osobafiz").value) = clng(0))			
+		end if
+
+		dim iter
+		dim perf:set perf = doc_.performing("Tworzenie listy dokumentów . . .")
+
+
+		dim pUbezpieczony
+		dim rs,rs_temp
+		dim bRCA,bZUA
+
+		iter = 1
+
+
+		'Tworzenie propozycji 
+		'Domyslnie zaden dokument nie jest zaznaczony
+		'Jesli analiza danych wykaze koniecznosc tworzenia - flaga zastanie przestawiona
+		'***********************************
+		'Navo Firma
+		if NavoFirma then			
+			
+			
+			set rs = ado_man.getConnection().execute("select * from pracownik where idFirmy="+cstr(m_nFirmaId)+" order by nazwisko,imie1")
+			while not rs.eof
+
+				
+
+				perf.text = "Tworzenie listy dokumentów - zrobiono  " + cstr(cint((iter/m_nCount)*100))  + "%"
+
+				bRCA = false
+
+				set pUbezpieczony = new CUbezpieczony
+				'wypelniam
+				pUbezpieczony.m_strAsText = cstr(rs.fields("Nazwisko").value) + " " + cstr(rs.fields("Imie1").value)
+				pUbezpieczony.m_nId = clng(rs.fields("IdPrac").value)
+
+
+				'***********************************
+				'RCA
+				'gdy było coś w ewidencji wynagrodzeń w okresie exportu jeśli typ umowy jest inny niż "Umowa zlecenia bez ZUS"
+				set rs_temp = ado_man.getConnection().execute("select * from wynagrodzenie where dataod between "+trans_.afc.convert.date2SQL(m_dDataOd)+" and "+trans_.afc.convert.date2SQL(m_dDataDo)+" and (idPrac="+cstr(pUbezpieczony.m_nId)+") and (typwynagr <> TYP_WYNAGR_UM_ZLEC_BEZ_ZUS)")
+				if not rs_temp.eof then
+					pUbezpieczony.rca = "1"
+					m_pPlatnik.m_nDRA = "1"
+					bRCA = true
+				end if
+
+
+				'***********************************
+				'RZA
+				'gdy wszytko w ewidencji wynagrodzeń w okresie exportu ma typ umowy równy "Umowa zlecenia bez ZUS"
+				if not bRCA then
+					set rs_temp = ado_man.getConnection().execute("select * from wynagrodzenie where dataod between "+trans_.afc.convert.date2SQL(m_dDataOd)+" and "+trans_.afc.convert.date2SQL(m_dDataDo)+" and (idPrac="+cstr(pUbezpieczony.m_nId)+")")
+					if not rs_temp.eof then
+						'jezeli cos jest to sprawdzamy czy wszystko ma typ
+						'zakladamy ze tak
+						pUbezpieczony.rza = "1"
+						while not rs_temp.eof
+							'jesli jednak nie to nie generujemy
+							if clng(rs_temp.fields("typwynagr").value) <> TYP_WYNAGR_UM_ZLEC_BEZ_ZUS then
+								pUbezpieczony.rza = "0"
+								m_pPlatnik.m_nDRA = "1"
+							end if
+							rs_temp.movenext						 	
+						wend					
+					end if
+				end if
+
+
+				'***********************************
+				'RSA
+				'gdy w ewidencji jest liczba dni choroby <> 0
+				set rs_temp = ado_man.getConnection().execute("select * from wynagrodzenie where dataod between "+trans_.afc.convert.date2SQL(m_dDataOd)+" and "+trans_.afc.convert.date2SQL(m_dDataDo)+" and (idPrac="+cstr(pUbezpieczony.m_nId)+") and (dnichoroby <> 0)")
+				if not rs_temp.eof then
+					pUbezpieczony.rsa = "1"
+					m_pPlatnik.m_nDRA = "1"
+				end if
+
+
+				'dodaje
+				m_pPlatnik.addUbezpieczony pUbezpieczony
+				rs.movenext
+
+				iter = iter + 1
+
+			wend
+			
+										
+		elseif ePlatnik then
+
+			dim pracownik
+			dim cursor:set cursor = trans_.createrawcursor(TYPEID_N5PRACOWNIK,"eAktywny=N5PRACOWNIK_AKTYWNY_AKTYWNY","strNazwisko","")
+			m_nCount = cursor.count
+			#ifdef _AMPLUS
+				dim dDataPocz : dDataPocz = m_dDataOd
+				dim dDataOdPocz : dDataOdPocz = dateserial(year(dDataPocz),month(dDataPocz) - 1,1)
+				dim dDataDoPocz : dDataDoPocz = dateserial(year(dDataPocz),month(dDataPocz),1) - 1
+			#endif
+			for each pracownik in cursor
+
+				perf.text = "Tworzenie listy dokumentów - zrobiono  " + cstr(cint((iter/m_nCount)*100))  + "%"
+
+				bRCA = false
+
+				set pUbezpieczony = new CUbezpieczony
+				'wypelniam
+				pUbezpieczony.m_strAsText = pracownik.text
+				pUbezpieczony.m_nId = pracownik.idobj
+
+				
+				dim strWhere
+				strWhere = doc_.afc.convert.formatter( _ 				
+				" pPracownik = %1  and " + _
+				" idobj not in (select pUmowaPop from n5plumowa where pPracownik=%1) " ) _
+				.add(cstr(pUbezpieczony.m_nId)) _
+				.done()
+				
+				dim umowa
+				dim cursor_umowy: set cursor_umowy = trans_.createrawcursor(TYPEID_N5PLUMOWA,strWhere,"","")
+
+				for each umowa in cursor_umowy
+					'ZUA 
+					'data zawarcia umowy w okresie exportu i zaznaczone inne ubezpieczenie oprócz zdrowotnego
+					if (umowa.dDataOd >= m_dDataOd and umowa.dDataOd <= m_dDataDo) and (umowa.cUbEm = "1" or umowa.cUbRe = "1" or umowa.cUbCh = "1" or umowa.cUbWyp = "1" ) then
+						'gdy kontynuacja umowy - nie zgłaszaj ZUA
+						dim dDateYest : dDateYest = DateAdd("d",-1,umowa.dDataOd)
+						dim oRSbef : set oRSbef = trans_.createrawcursor(TYPEID_N5PLUMOWA,"pPracownik = " + cstr(pUbezpieczony.m_nId) + " and dDataDo = " + trans_.afc.convert.date2SQL(dDateYest), "" , "")
+						if oRSbef.exists(1) then
+							pUbezpieczony.zua = "0"
+						else
+							pUbezpieczony.zua = "1"
+							bZua = true
+						end if
+					end if       
+          
+					'ZWUA 
+					'data zakończenia umowy w okresie exportu - typ umowy odpowiada za wartość pola w ZWUA.
+					if (umowa.dDataDo >= m_dDataOd and umowa.dDataDo <= m_dDataDo) then
+						'gdy kontynuacja umowy - nie zgłaszaj ZWUA
+						dim dDateTom : dDateTom = DateAdd("d",1,umowa.dDataDo)
+						dim oRSaft : set oRSaft = trans_.createrawcursor(TYPEID_N5PLUMOWA,"pPracownik = " + cstr(pUbezpieczony.m_nId) + " and dDataOd = " + trans_.afc.convert.date2SQL(dDateTom), "" , "")
+						if oRSaft.exists(1) then
+							pUbezpieczony.zwua = "0"
+						else
+							pUbezpieczony.zwua = "1"
+						end if
+					end if
+
+
+					'ZZA 
+					'data zawarcia umowy w okresie exportu i zaznaczone tylko ubezpieczenie zdrowotne
+					if (umowa.dDataOd >= m_dDataOd and umowa.dDataOd <= m_dDataDo) and (umowa.cUbEm = "0" and umowa.cUbRe = "0" and umowa.cUbCh = "0" and umowa.cUbWyp = "0" and umowa.cUbZdr = "1"  ) then
+						pUbezpieczony.zza = "1"
+					end if
+
+
+					'RCA
+					'gdy wszystkie naliczenia w okresie exportu pochodzą z umowy/umów mającej zaznaczone cos wiecej niz tylko zdropwotne
+					strWhere = doc_.afc.convert.formatter( _ 				
+					" pPracownik = %1  and " + _
+					" dDataOd between %2 and %3  and " + _
+					" dDataDo between %2 and %3 " + _
+					"  " ) _
+					.add(cstr(pUbezpieczony.m_nId)) _
+#ifdef _AMPLUS
+					.add(trans_.afc.convert.date2SQL(dDataOdPocz)) _
+					.add(trans_.afc.convert.date2SQL(dDataDoPocz)) _
+#else
+					.add(trans_.afc.convert.date2SQL(m_dDataOd)) _
+					.add(trans_.afc.convert.date2SQL(m_dDataDo)) _
+#endif
+					.done()
+					bRca = false
+					dim naliczenie
+					dim cursor_naliczenia: set cursor_naliczenia = trans_.createrawcursor(TYPEID_N5PLNALICZENIE,strWhere,"","")
+					for each naliczenie in cursor_naliczenia
+						'teraz sprawdzamy, ktore naliczenie ma w skladnikach te pochodzące od umowy
+						dim skladnik
+						for each skladnik in naliczenie.listSkladnik
+							if skladnik.wrefDokument.type = TYPEID_N5PLUMOWA then
+								set umowa = skladnik.wrefDokument
+								if (umowa.cUbEm = "1" or umowa.cUbRe = "1" or umowa.cUbCh = "1" or umowa.cUbWyp = "1") and umowa.cUbZdr = "1" then
+									bRca = true
+									pUbezpieczony.rca = "1"
+									m_pPlatnik.m_nDRA = "1"
+								end if
+							end if
+						next 
+					next
+
+					
+					'RZA
+					dim bRza:bRza = false
+					dim bExit:bExit = false
+					for each naliczenie in cursor_naliczenia
+						'teraz sprawdzamy, ktore naliczenie ma w skladnikach te pochodzące od umowy
+						for each skladnik in naliczenie.listSkladnik
+							if skladnik.wrefDokument.type = TYPEID_N5PLUMOWA then
+								set umowa = skladnik.wrefDokument
+								if (umowa.cUbEm = "1" or umowa.cUbRe = "1" or umowa.cUbCh = "1" or umowa.cUbWyp = "1") and umowa.cUbZdr = "1" then
+									bExit = true
+									exit for
+								end if
+								bRza = true
+							else
+								bExit = true
+								exit for
+							end if
+						next
+						if bExit then
+							exit for
+						end if
+					next
+					if bExit then
+						bRza = false
+					end if
+					if bRza then 
+						pUbezpieczony.rza = "1"
+						m_pPlatnik.m_nDRA = "1"
+					end if
+				next
+
+
+
+
+				strWhere = doc_.afc.convert.formatter( _ 				
+					" pPracownik = %1  and " + _
+					" ((dDataOd between %2 and %3) or (dDataDo between %2 and %3) or (dDataOd<=%2 and dDataDo>=%3 ) ) and " + _
+					" eTyp = N5PL_NIEOB_URL_WYCHOW  " + _
+					"  " ) _
+					.add(cstr(pUbezpieczony.m_nId)) _
+					.add(trans_.afc.convert.date2SQL(m_dDataOd)) _
+					.add(trans_.afc.convert.date2SQL(m_dDataDo)) _
+					.done()
+
+				dim nieobecnosc
+				dim cursor_nieobecnosci: set cursor_nieobecnosci = trans_.createrawcursor(TYPEID_N5PLNIEOB,strWhere,"","")
+				if cursor_nieobecnosci.exists(1) then
+					pUbezpieczony.rsa = "1"
+				end if
+				
+				'--- jesli nie bylo urlopow to sprawdz choroby --
+				if pUbezpieczony.rsa <> "1" then
+#ifdef _AMPLUS
+					strWhere = doc_.afc.convert.formatter( _
+					" pPracownik = %1  and " + _
+					" ((dDataOd between %2 and %3) or (dDataDo between %2 and %3) or (dDataOd<=%2 and dDataDo>=%3 ) ) " ) _
+					.add(cstr(pUbezpieczony.m_nId)) _
+					.add(trans_.afc.convert.date2SQL(dDataOdPocz)) _
+					.add(trans_.afc.convert.date2SQL(dDataDoPocz)) _
+					.done()
+#else
+					strWhere = doc_.afc.convert.formatter( _
+					" pPracownik = %1  and " + _
+					" ((dDataOd between %2 and %3) or (dDataDo between %2 and %3) or (dDataOd<=%2 and dDataDo>=%3 ) ) " ) _
+					.add(cstr(pUbezpieczony.m_nId)) _
+					.add(trans_.afc.convert.date2SQL(m_dDataOd)) _
+					.add(trans_.afc.convert.date2SQL(m_dDataDo)) _
+					.done()
+#endif
+					dim oCrsrChoroby : set oCrsrChoroby = trans_.createrawcursor(TYPEID_N5PLCHOROBA,strWhere,"","")
+					if oCrsrChoroby.exists(1) then
+						pUbezpieczony.rsa = "1"
+					end if
+				end if 
+
+
+				m_pPlatnik.addUbezpieczony pUbezpieczony
+				iter = iter + 1
+				
+			next
+
+
+		'***********************************
+		'Kadry i płące
+		else
+
+			iter = 1
+		
+			set rs = ado_man.getConnection().execute("select * from pracownik order by nazwisko,imie1")
+			dim strQuery
+
+			while not rs.eof
+
+				perf.text = "Tworzenie listy dokumentów - zrobiono  " + cstr(cint((iter/m_nCount)*100)) + "%"
+				
+				bZua = false
+				bRca = false
+
+				set pUbezpieczony = new CUbezpieczony
+				pUbezpieczony.m_strAsText = cstr(rs.fields("Nazwisko").value) + " " + cstr(rs.fields("Imie1").value)
+				pUbezpieczony.m_nId = clng(rs.fields("IdObj").value)
+
+
+				'***********************************
+				'ZUA 
+				'data zawarcia umowy w okresie exportu i zaznaczone inne ubezpieczenie oprócz zdrowotnego				
+
+				strQuery = doc_.afc.convert.formatter( _ 
+				" select * from GlobPrac join pracownik on pracownik.idobj = globprac.idosoba where   " + _
+				" GlobPrac.idosoba = %1  and " + _
+				" GlobPrac.idobj not in (select idAneks from GlobPrac) and " +_
+				" dataod between %2 and %3 and " + _				
+				" (ubEmeryt like '1' or ubRentowe like '1' or ubChorob like '1' or ubWypad like '1' )") _
+				.add(cstr(pUbezpieczony.m_nId)) _
+				.add(trans_.afc.convert.date2SQL(m_dDataOd)) _
+				.add(trans_.afc.convert.date2SQL(m_dDataDo)) _
+				.done()
+
+				set rs_temp = ado_man.getConnection().execute(strQuery)
+
+				if not rs_temp.eof then
+					pUbezpieczony.zua = "1"
+					bZua = true
+				end if
+
+
+				'***********************************
+				'ZWUA 
+				'data zakończenia umowy w okresie exportu - typ umowy odpowiada za wartość pola w ZWUA.
+				strQuery = doc_.afc.convert.formatter( _ 
+				" select * from GlobPrac join pracownik on pracownik.idobj = globprac.idosoba where   " + _
+				"((GlobPrac.TypUmowy = TYP_UM_PRACE " + _
+				"and GlobPrac.Status = STATUS_UMOWA_ROZWIAZANA) " + _
+				" or GlobPrac.TypUmowy = TYP_UM_ZLEC or GlobPrac.TypUmowy = TYP_UM_AGEN or GlobPrac.TypUmowy = TYP_UM_DZIELO or GlobPrac.TypUmowy = TYP_UM_ZLEC_ZRYCZ ) " + _
+				"and (ubEmeryt like '1' or ubRentowe like '1' or ubChorob like '1' or ubWypad like '1' ) " + _
+				"and GlobPrac.DataDo BETWEEN %2 and %3 " + _
+				"and Pracownik.IdObj = %1 " ) _
+				.add(cstr(pUbezpieczony.m_nId)) _
+				.add(trans_.afc.convert.date2SQL(m_dDataOd)) _
+				.add(trans_.afc.convert.date2SQL(m_dDataDo)) _				
+				.done()
+				set rs_temp = ado_man.getConnection().execute(strQuery)
+				if not rs_temp.eof then
+					pUbezpieczony.zwua = "1"
+				end if
+
+				'***********************************
+				'ZZA 
+				'data zawarcia umowy w okresie exportu i zaznaczone tylko ubezpieczenie zdrowotne
+				if not bZua then
+					strQuery = doc_.afc.convert.formatter( _ 
+					" select * from GlobPrac join pracownik on pracownik.idobj = globprac.idosoba where   " + _
+					" GlobPrac.idosoba = %1  and " + _
+					" dataod between %2 and %3 and " + _				
+					" ubEmeryt like '0' and ubRentowe like '0' and ubChorob like '0' and ubWypad like '0' and ubZdrow like '1' ") _
+					.add(cstr(pUbezpieczony.m_nId)) _
+					.add(trans_.afc.convert.date2SQL(m_dDataOd)) _
+					.add(trans_.afc.convert.date2SQL(m_dDataDo)) _
+					.done()
+
+					set rs_temp = ado_man.getConnection().execute(strQuery)
+					if not rs_temp.eof then
+						pUbezpieczony.zza = "1"
+					end if
+					
+				end if
+
+
+				'***********************************
+				'RCA
+				'gdy dowolne nalicznie w okresie exportu pochodzi z umowy mającej zaznaczone coś więcej niż tylko zdrowotne
+				strQuery = doc_.afc.convert.formatter( _ 
+				" select * from naliczenie join GlobPrac on naliczenie.pGlobPrac = globprac.idobj where   " + _
+				" GlobPrac.idosoba = %1  and " + _
+				" naliczenie.DataPlat between %2 and %3 and " + _				
+				" ubZdrow like '1' and " + _
+				" (ubEmeryt like '1' or ubRentowe like '1' or ubChorob like '1' or ubWypad like '1')") _
+				.add(cstr(pUbezpieczony.m_nId)) _
+				.add(trans_.afc.convert.date2SQL(m_dDataOd)) _
+				.add(trans_.afc.convert.date2SQL(m_dDataDo)) _
+				.done()
+				set rs_temp = ado_man.getConnection().execute(strQuery)
+				if not rs_temp.eof then
+					pUbezpieczony.rca = "1"
+					m_pPlatnik.m_nDRA = "1"
+					bRca = true
+				end if
+
+
+				'***********************************
+				'RZA
+				'gdy wszystkie naliczenia w okresie exportu pochodzą z umowy/umów mającej zaznaczone wyłącznie tylko zdrowotne
+				if not bRCA then
+					strQuery = doc_.afc.convert.formatter( _ 
+					" select * from naliczenie join GlobPrac on naliczenie.pGlobPrac = globprac.idobj where   " + _
+					" GlobPrac.idosoba = %1  and " + _
+					" naliczenie.DataPlat between %2 and %3 and " + _				
+					" ubZdrow like '1' and" + _
+					" ubEmeryt like '0' and ubRentowe like '0' and ubChorob like '0' and ubWypad like '0'") _
+					.add(cstr(pUbezpieczony.m_nId)) _
+					.add(trans_.afc.convert.date2SQL(m_dDataOd)) _
+					.add(trans_.afc.convert.date2SQL(m_dDataDo)) _
+					.done()
+
+					set rs_temp = ado_man.getConnection().execute(strQuery)
+					if not rs_temp.eof then
+						pUbezpieczony.rza = "1"
+						m_pPlatnik.m_nDRA = "1"
+					end if
+
+				end if
+
+
+				'***********************************
+				'RSA
+				'nieobecność <> (urlop wypoczynkowy, okolicznościowy)
+				'1. szukamy naliczenia
+				strQuery = doc_.afc.convert.formatter( _ 
+					" select * from naliczenie where idosoba = %1 and DataPlat between %2 and %3") _				
+					.add(cstr(pUbezpieczony.m_nId)) _
+					.add(trans_.afc.convert.date2SQL(m_dDataOd)) _
+					.add(trans_.afc.convert.date2SQL(m_dDataDo)) _
+					.done()
+
+				set rs_temp = ado_man.getConnection().execute(strQuery)
+
+				if not rs_temp.eof then
+
+					dim dtDataNaliczeniaOd : dtDataNaliczeniaOd = cdate(rs_temp("DataOd").value)
+					dim dtDataNaliczeniaDo : dtDataNaliczeniaDo = cdate(rs_temp("DataDo").value)
+
+					'2. szukamy rozliczenieCP ale dla okresu z naliczenia
+					strQuery = doc_.afc.convert.formatter( _ 
+					" select  * from rozliczenieCP where   " + _
+					" idosoba = %1  and " + _
+					" dataod between %2 and %3 and " + _				
+					" datado between %2 and %3 and " + _								
+					" DniChorobyRob + DniUrlopuWychowRob + DniUrlopuBezplRob + DniNieobNieuspRob + DniOpiekiRob + DniUrlopuMacierob <> 0" ) _
+					.add(cstr(pUbezpieczony.m_nId)) _
+					.add(trans_.afc.convert.date2SQL(dtDataNaliczeniaOd)) _
+					.add(trans_.afc.convert.date2SQL(dtDataNaliczeniaDo)) _
+					.done()
+
+					set rs_temp = ado_man.getConnection().execute(strQuery)
+					if not rs_temp.eof then
+						pUbezpieczony.rsa = "1"
+						m_pPlatnik.m_nDRA = "1"
+					end if
+
+				end if
+
+				'***********************************
+				'RSA
+
+				m_pPlatnik.addUbezpieczony pUbezpieczony
+				rs.movenext
+				iter = iter + 1
+			wend
+			
+		end if
+
+		set perf = nothing
+
+		fill_platnik = true
+
+	end function
+
+
+
+
+	public property get platnik()
+		set platnik = m_pPlatnik
+	end property
+	public property let platnik(byref pPlatnik)
+		set m_pPlatnik = pPlatnik
+	end property
+
+	public function fromRegistry
+		getPath()
+		getKod()
+	end function
+
+
+	public function toRegistry
+		savePath()
+		saveApp()
+		saveShow()
+		saveDefaultLogin()
+		saveSrv()
+		savePass()
+		saveLogin()
+		savePrawna()
+		saveVer()	
+		saveFirma()
+		saveKod()
+	end function
+
+
+
+'***********************************************************
+	'zapis i odczyt z rejestru
+	public function getPath()
+		m_strPath = doc_.system.registry(hKey_LocalMachine , "HKLM_PATH", "EksportPath")
+	end function
+	
+	public function savePath()
+		doc_.system.registry(hKey_LocalMachine,"HKLM_PATH","EksportPath") = m_strPath
+	end function
+
+	public function getKod()
+		m_strKod = doc_.system.registry(hKey_LocalMachine , "HKLM_PATH", "LicInfoExtra")
+	end function
+
+	public function saveKod()
+		doc_.system.registry(hKey_LocalMachine,"HKLM_PATH","LicInfoExtra") = cstr(m_strKod)
+	end function
+
+
+	public function getApp()
+		dim str:str = doc_.system.registry(hKey_LocalMachine , "HKLM_PATH", "App")
+		if str <> "" then
+			program = clng(str)
+		end if
+	end function
+	public function saveApp()
+		doc_.system.registry(hKey_LocalMachine,"HKLM_PATH","App") = cstr(m_nProgram)
+	end function
+	public function getFirma()
+		m_strNazwaFirmy = doc_.system.registry(hKey_LocalMachine , "HKLM_PATH", "Firma_nazwa")
+		dim str:str = doc_.system.registry(hKey_LocalMachine , "HKLM_PATH", "Firma_id")
+		if str<>"" then
+			m_nFirmaId = clng(str)
+		else
+			m_nFirmaId = clng(-1)
+		end if
+	end function
+	public function saveFirma()
+		doc_.system.registry(hKey_LocalMachine,"HKLM_PATH","Firma_nazwa") = cstr(m_strNazwaFirmy)
+		doc_.system.registry(hKey_LocalMachine,"HKLM_PATH","Firma_id") = clng(m_nFirmaId)
+	end function
+	public function getVer()
+
+		dim str:str = doc_.system.registry(hKey_LocalMachine , "HKLM_PATH", "Ver")
+		if str<> "" then
+			m_nNavoVersion = str
+		end if
+		
+		if m_nNavoVersion = "SYBASE" or m_nNavoVersion = "" then
+			m_bDefault = true						
+		end if
+
+		if m_nNavoVersion = "KADRY" then
+			setKadry
+		end if
+
+	end function
+
+	public function saveVer()
+		doc_.system.registry(hKey_LocalMachine,"HKLM_PATH","Ver") = cstr(m_nNavoVersion)
+		'jezeli to sybase to ustawiamy logowanie wg ustawien domyslnych
+		if m_nNavoVersion = "SYBASE" then
+			m_bDefault = true
+			saveDefaultLogin()
+		end if
+	end function
+
+	public function getSrv()
+		m_strServer = doc_.system.registry(hKey_LocalMachine , "HKLM_PATH", "Srv")
+		if m_strServer = "" then
+			m_strServer = "."
+		end if
+	end function
+	public function saveSrv()
+		doc_.system.registry(hKey_LocalMachine,"HKLM_PATH","Srv") = m_strServer		
+	end function
+	public function getPass()
+		m_strPass = doc_.system.registry(hKey_LocalMachine , "HKLM_PATH", "Pass")
+	end function
+	public function savePass()
+		doc_.system.registry(hKey_LocalMachine,"HKLM_PATH","Pass") = m_strPass
+	end function
+	public function getLogin()
+		m_strLogin = doc_.system.registry(hKey_LocalMachine , "HKLM_PATH", "Login")
+		if m_strLogin = "" then
+			m_strLogin = "sa"
+		end if
+	end function
+	public function saveLogin()
+		doc_.system.registry(hKey_LocalMachine,"HKLM_PATH","Login") = m_strLogin
+	end function
+	public function getShow()
+		dim str:str = doc_.system.registry(hKey_LocalMachine , "HKLM_PATH", "Show")
+		if str <> "" then
+			m_nNavoShow = clng(str)
+		end if
+
+		if m_nNavoVersion = "KADRY" then
+			setKadry
+		end if
+
+	end function
+	public function saveShow()
+		doc_.system.registry(hKey_LocalMachine,"HKLM_PATH","Show") = cstr(m_nNavoShow)
+	end function
+
+	public function getPrawna()
+		dim str:str = doc_.system.registry(hKey_LocalMachine , "HKLM_PATH", "Prawna")
+		if str <> "" then
+			m_nOsobaPrawna = clng(str)
+		end if
+	end function
+	public function savePrawna()
+		doc_.system.registry(hKey_LocalMachine,"HKLM_PATH","Prawna") = cstr(m_nOsobaPrawna)
+	end function
+
+	public function getDefaultLogin()
+
+		dim str:str = doc_.system.registry(hKey_LocalMachine , "HKLM_PATH", "DefaultLogin")
+		if str="0" and m_nNavoVersion <> "SYBASE" then
+			m_bDefault = false
+		else
+			m_bDefault = true
+		end if
+	end function
+
+	public function saveDefaultLogin()
+
+		dim str
+		if m_bDefault and m_nNavoVersion <> "SYBASE" then
+			str = "1"
+		else
+			str = "0"
+		end if			
+		doc_.system.registry(hKey_LocalMachine , "HKLM_PATH", "DefaultLogin") = cstr(str)
+	end function
+
+'***********************************************************
+
+
+	
+
+end class
+
+
+class CUbezpieczony
+	public m_nId
+	public m_strAsText
+
+	public m_nZUA
+	public m_nZIUA
+	public m_nZWUA
+	public m_nZZA
+	public m_nRCA
+	public m_nRZA
+	public m_nRSA
+
+
+	private sub class_initialize()
+		m_nZUA = clng(0)
+		m_nZIUA = clng(0)
+		m_nZWUA = clng(0)
+		m_nZZA = clng(0)
+		m_nRCA = clng(0)
+		m_nRZA = clng(0)
+		m_nRSA = clng(0)
+	end sub
+
+
+	public property get text()
+		text = m_strAsText
+	end property	
+
+
+	public property get zua()
+		zua = cstr(m_nZUA)
+	end property
+	public property let zua(byval strZua)
+		m_nZUA = clng(strZua)
+	end property
+
+
+	public property get ziua()
+		ziua = cstr(m_nZIUA)
+	end property
+	public property let ziua(byval strZiua)
+		m_nZIUA = clng(strZiua)
+	end property	
+
+
+	public property get zwua()
+		zwua = cstr(m_nZWUA)
+	end property
+	public property let zwua(byval strZwua)
+		m_nZWUA = clng(strZwua)
+	end property
+
+	public property get zza()
+		zza = cstr(m_nZZA)
+	end property
+	public property let zza(byval strZza)
+		m_nZZA = clng(strZza)
+	end property
+
+
+	public property get rca()
+		rca = cstr(m_nRCA)
+	end property
+	public property let rca(byval strRca)
+		m_nRCA = clng(strRca)
+	end property
+
+
+	public property get rza()
+		rza = cstr(m_nRZA)
+	end property
+	public property let rza(byval strRza)
+		m_nRZA = clng(strRza)
+	end property
+
+
+	public property get rsa()
+		rsa = cstr(m_nRSA)
+	end property
+	public property let rsa(byval strRsa)
+		m_nRSA = clng(strRsa)
+	end property
+
+	
+		
+		
+end class
+
+
+class CPlatnik
+
+	public m_bOsobaPrawna
+
+	public m_nZPA
+	public m_nZFA
+
+	public m_nZBA
+	public m_nZAA
+
+	'proponowane gdy choc raz jest rsa, rza lub rca
+	public m_nDRA
+
+	private m_paUbezpieczeni
+
+	private m_nApp	'jaka aplikacja - od tego zalezy odpowiednie prełączanie mozliwosci 
+					'generowania pewnych dokumentów
+
+	
+	private sub class_initialize()
+		m_nZPA =  clng(DOK_NIEGENERUJ)
+		m_nZFA =  clng(DOK_NIEGENERUJ)
+
+		m_nZBA =  clng(DOK_NIEGENERUJ)
+		m_nZAA =  clng(DOK_NIEGENERUJ)
+
+		m_nDRA =  "0"
+
+		set m_paUbezpieczeni = trans_.afc.new_navoarray()
+
+	end sub
+
+	public sub addUbezpieczony(pUbezpieczony)
+		m_paUbezpieczeni.add(pUbezpieczony)	
+	end sub
+
+	public property get ubezpieczeni()
+		set ubezpieczeni = m_paUbezpieczeni
+	end property	
+	
+	
+	public sub setApp(nApp)	
+		m_nApp = nApp
+	end sub
+
+
+	'wykorzystywane w kroku kreatora
+	public property get dra()
+		dra = m_nDRA =  "1"
+	end property
+
+	public property get zpa()
+		zpa = clng(m_nZPA)
+	end property
+	public property get zba()
+		zba = clng(m_nZBA)
+	end property
+	public property get zaa()
+		zaa = clng(m_nZAA)
+	end property
+	'gdy generujemy ZPA/AFA to:
+	'dla wszystkich procz navofirmy apklikacji generujemy ZBA
+	'dla platnika generujemy ZAA - dla kazdej jo
+	public property let zpa(byref nZPA)
+		m_nZPA = nZPA
+		if (nZPA <> DOK_NIEGENERUJ) and (m_nApp <>EXPPLATNIK_APP_NAVOFIRMA) then
+			m_nZBA = clng(DOK_GENERUJ)
+		end if
+
+		if (nZPA <> DOK_NIEGENERUJ) and (m_nApp = EXPPLATNIK_APP_EPLATNIK) then
+			m_nZAA = clng(DOK_GENERUJ)
+		end if
+
+		if (nZPA = DOK_NIEGENERUJ) then
+			m_nZBA = clng(DOK_NIEGENERUJ)
+			m_nZAA = clng(DOK_NIEGENERUJ)
+		end if
+
+	end property
+
+	'wykorzystywane w kroku kreatora
+	public property get zfa()
+		zfa = m_nZFA
+	end property
+	'gdy generujemy ZPA/AFA to:
+	'dla wszystkich procz navofirmy apklikacji generujemy ZBA
+	'dla platnika generujemy ZAA - dla kazdej jo
+	public property let zfa(byref nZFA)
+		m_nZFA = clng(nZFA)
+		if (nZFA <> DOK_NIEGENERUJ) and (m_nApp<>EXPPLATNIK_APP_NAVOFIRMA) then
+			m_nZBA = clng(DOK_GENERUJ)
+		end if
+
+		if (nZFA <> DOK_NIEGENERUJ) and (m_nApp = EXPPLATNIK_APP_EPLATNIK) then
+			m_nZAA = clng(DOK_GENERUJ)
+		end if
+
+		if (nZFA = DOK_NIEGENERUJ) then
+			m_nZBA = clng(DOK_NIEGENERUJ)
+			m_nZAA = clng(DOK_NIEGENERUJ)
+		end if
+	end property
+
+end class
+
+
+dim pParamClass
+
+function fopen()
+#ifndef APP_EXPORT_PLATNIK
+	if HARUI(UAR_CMDID(CMDID_WIZZARD_EXPPLAT)) then
+#endif
+
+		run_this	'uruchom modul automatycznie
+
+#ifndef APP_EXPORT_PLATNIK
+	end if
+#endif
+	fopen=false
+end function
+
+
+function run_this()
+
+	dim pWizzard
+	set pParamClass = new CEXPlatnik
+
+	set pWizzard=CWizzard(false)
+	pWizzard.add_container pParamClass
+
+	'to po to, aby dobrze preprocesorwac plik z wybotrem wersji navo  firmy
+	trans_.var(APPVAR_IMPORT_KIND) = clng(IMPFRM)
+
+	pWizzard.add_step PAGE_FORM_WIZZARD_EXPPLAT_WITAMY
+	
+	if not trans_.isvar(APPVAR_MODE) then	
+	end if
+
+	pWizzard.add_step PAGE_FORM_WIZZARD_EXPPLAT_OKRES
+	pWizzard.add_step PAGE_FORM_WIZZARD_EXPPLAT_LOKALIZACJA_PLIKU
+
+	if not trans_.isvar(APPVAR_MODE) then	
+		pWizzard.add_step PAGE_FORM_WIZZARD_EXPPLAT_OSOBA_PRAWNA
+	end if
+
+	pWizzard.add_step PAGE_FORM_WIZZARD_EXPPLAT_WYBOR_DOKUMENTOW
+	pWizzard.add_step PAGE_FORM_WIZZARD_EXPPLAT_PODSUMOWANIE
+
+	pWizzard.run
+
+end function
+
+function onPageEnter(pWizzardPage)
+end function
+
+function onPageExit(pWizzardPage)
+
+	onPageExit=PAGE_DEFAULT
+	select case ( pWizzardPage.m_nPage )
+	
+		case PAGE_FORM_WIZZARD_EXPPLAT_LOKALIZACJA_PLIKU
+			if pParamClass.m_strPath = "" then
+				
+				trans_.message 7000 , 0 , "Musisz podać docelową lokalizacje pliku KDU"
+				onPageExit=PAGE_DONOTEXIT				
+				exit function
+			end if
+			if not pParamClass.NavoFirma then
+				'jezeli nie mamy doczynienia z navo firmą
+				'nie pokazyjemy strony do wskazania, czy osoba prawna czy fizyczna
+				'przed wyborem listy dokumantow tworzymy propozycje
+				pWizzardPage.m_pPage.updateview
+				pParamClass.fill_platnik 
+				onPageExit=PAGE_FORM_WIZZARD_EXPPLAT_WYBOR_DOKUMENTOW
+			end if
+		case PAGE_FORM_WIZZARD_EXPPLAT_OSOBA_PRAWNA:
+			'przed wyborem listy dokumantow tworzymy propozycje
+			pWizzardPage.m_pPage.updateview
+			pParamClass.fill_platnik			
+
+	end select
+end function
+
+function onPageInit(pWizzardPage)
+	select case ( pWizzardPage.m_nPage )
+		case PAGE_FORM_WIZZARD_EXPPLAT_OSOBA_PRAWNA:
+			pParamClass.getPrawna()
+			
+	end select
+end function
+
+function onWizzardComplete(pWizzardPage): onWizzardComplete = false
+	dim pContainer : set pContainer = pWizzardPage.m_pContainer
+
+	dim pExportModule : set pExportModule = doc_.getmodule(60303)
+	if (pExportModule is nothing) then
+		exit function
+	end if
+
+	dim pPerforming : set pPerforming = doc_.performing( "Trwa eksport danych do Płatnika ..." )
+
+	onWizzardComplete = pExportModule.export2platnik(pContainer)
+
+	set pPerforming = nothing
+
+	if (onWizzardComplete) then
+		MessageBox "Eksport zakończył się pomyślnie.", "Zakończono eksport", vbOKOnly, vbInformation
+	else
+		MessageBox "Eksport nie powiódł się", "UWAGA", vbOKOnly, vbInformation
+	end if
+
+#ifdef _DEBUG
+	onWizzardComplete = false
+#endif
+
+end function
+
+
+]]>
+</script>
+</config>
+<body></body>
+</page>
+

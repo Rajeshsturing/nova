@@ -1,0 +1,290 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1001.h"
+#include "h1203.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1200.h"
+#include "h1201.h"
+-->
+<page style='STYLE_PAGE'>
+
+<!--
+ALWAYS MANUAL
+Import faktur konkretnego klienta
+-->
+<config>
+
+	<title>
+	Import danych dotyczących klienta
+	</title>
+<startpos>center</startpos>
+
+<script>
+<![CDATA[
+
+#define	KONTRA_SEARCH_BY_INDEKS	1
+#define KONTRA_SEARCH_BY_NAME	2
+
+#include "50306"
+#include "50516"
+
+dim root
+function fopen()
+	if trans_.isvar(GVAR_CURRENT_CUSTOMER) then
+		if trans_.var(GVAR_CURRENT_CUSTOMER) > clng(0) then
+			set root = trans_.getobj(TYPEID_N5KLIENT, trans_.var(GVAR_CURRENT_CUSTOMER))
+			if root is nothing then 
+				fopen = false
+				exit function
+			end if
+		end if
+		'msgbox cstr(trans_.var(GVAR_CURRENT_CUSTOMER))
+	end if
+	
+	page_.ctrl(20).value = root.strIndeks
+	page_.ctrl(21).value = root.strNazwa
+	page_.ctrl(30).value = "1"
+	page_.ctrl(10).value = clng(KONTRA_SEARCH_BY_INDEKS)
+	page_.ctrl(40).value = clng(1)
+	page_.ctrl(51).value = "sa"
+	page_.ctrl(53).value = ""
+	page_.ctrl(55).value = "<Lokalny>"
+
+	fopen = true
+	page_.result = clng(0)
+end function
+
+function c40_ongetdata(ctrl)
+	ShowHide
+end function
+
+function c40_ondataentered(ctrl, value)
+	ShowHide
+	c40_ondataentered = true
+end function
+
+function ShowHide()
+	if page_.ctrl(40).value = clng(1) then 'sybase
+		page_.ctrl(50).hide = true
+		page_.ctrl(51).hide = true
+		page_.ctrl(52).hide = true
+		page_.ctrl(53).hide = true
+		page_.ctrl(54).hide = true
+		page_.ctrl(55).hide = true
+		page_.ctrl(56).hide = true
+	else
+		page_.ctrl(50).hide = false
+		page_.ctrl(51).hide = false
+		page_.ctrl(52).hide = false
+		page_.ctrl(53).hide = false
+		page_.ctrl(54).hide = false
+		page_.ctrl(55).hide = false
+		page_.ctrl(56).hide = false
+	end if 
+end function
+
+#include "50615"
+#include "50616"
+
+'*********************************************************
+'Funkcje używane podczas importu dodatkowych danych
+'*********************************************************
+
+private function find_idkontra_in_firma37(byref pContext, byval strKryterium, byval nType, byval nIdFirmy)
+	'todo: wybór jeżeli znajdzie więcej
+	find_idkontra_in_firma37 = clng(0)
+
+	dim strSrcSQL:strSrcSQL = "SELECT IdKontra FROM Kontrahent " 
+	
+	select case nType
+		case KONTRA_SEARCH_BY_INDEKS
+			strSrcSQL = strSrcSQL + " WHERE Indeks = '"+ cstr(strKryterium) + "' AND IdFirma = " + cstr(nIdFirmy)
+		case KONTRA_SEARCH_BY_NAME
+			strSrcSQL = strSrcSQL + " WHERE Nazwa = '"+ cstr(strKryterium) + "'  AND IdFirma = " + cstr(nIdFirmy)
+	end select
+	
+	dim rs : set rs = pContext.getConnection().execute(strSrcSQL)
+	dim IdKontra:IdKontra = clng(0)
+	if rs.EOF = false then
+		find_idkontra_in_firma37 = clng(rs.fields("IdKontra").value)
+	end if
+	rs.close
+	set rs = nothing
+end function
+
+function GO()
+
+	dim strTempServer
+	if page_.ctrl(55).value = "<Lokalny>" then
+		strTempServer = "."
+	else
+		strTempServer = cstr(page_.ctrl(55).value)
+	end if
+
+	'Tworzenie obiektow importowo/eksportowych
+	dim pContainer
+	set pContainer = new CImportContainer
+
+	dim pExportManager
+	set pExportManager = new CADOExportManager
+
+	set pContainer.pExport = pExportManager
+
+	if page_.ctrl(40).value = clng(2) then
+		'Połączenie z bazą SQL Server
+		if (not pContainer.logon(CStr(page_.ctrl(51).value), CStr(page_.ctrl(53).value), strTempServer, true, pExportManager)) then
+			exit function
+		end if
+	else
+		'Połączenie z bazą Sybase
+		if (not pContainer.logon("", "", "", false, pExportManager)) then
+			exit function
+		end if
+	end if
+
+	dim strKryterium:strKryterium = ""
+	select case page_.ctrl(10).value
+		case KONTRA_SEARCH_BY_INDEKS
+			strKryterium = page_.ctrl(20).value
+		case KONTRA_SEARCH_BY_NAME
+			strKryterium = page_.ctrl(21).value
+	end select
+
+	dim idKontra37:idKontra37 = clng(0)
+	idKontra37 = find_idkontra_in_firma37(pExportManager, strKryterium, page_.ctrl(10).value, pContainer.idFirmy)
+	if not (idKontra37 > clng(0)) then
+		exit function
+	end if
+
+	if (page_.ctrl(30).value="1") then
+		'Import faktur
+		export_Sprzedaz pExportManager, "Sprzedaz.IdFirmy=" + CStr(pContainer.idFirmy) + " and Sprzedaz.IdKontra=" + CStr(idKontra37)
+	end if
+
+	if (page_.ctrl(31).value="1") then
+		'Import płatności
+		'export_Platnosc pExportManager, "Kasa.IdFirma=" + CStr(pContainer.idFirmy) + " and PozKasa."
+	end if
+
+	pExportManager.performing_destroy
+	if (pContainer.end_import()) then
+		MessageBox "Operacja się powiodła", "Import dodatkowych danych", vbOKOnly, vbInformation
+	else
+		MessageBox "Operacja się NIE powiodła!", "Import dodatkowych danych", vbOKOnly, vbInformation
+	end if
+end function
+
+function local()
+	page_.ctrl(52).value = "<Lokalny>"
+end function
+]]>
+</script>
+</config>
+<body>
+<table>
+	<thead>
+	<tr>
+		<td colspan = '2' style='STYLE_TABLE_HEADER'>
+		<t bold = 'true'>
+			Wybierz sposób wyszukiwania klienta w bazie źródłowej
+		</t>
+		</td>
+	</tr>
+	<tr>
+		<td rowspan = '2'>
+			<radio name='e10'>
+				<t>Szukaj wg indeksu</t>
+				<t>szukaj wg nazwy</t>
+			</radio>
+		</td>
+		<td>
+			<t name = 'c20' size = '32' disable = 'true'>
+			</t>
+			<br/>
+			<t name = 'c21' size = '32' disable = 'true'>
+			</t>
+		</td>
+	</tr>
+	<tr style='STYLE_TABLE_HEADER'>
+		<td colspan = '2'>
+		<t bold = 'true'>
+			Opcje:
+		</t>
+		</td>
+	</tr>	
+	<tr>
+		<td>
+			<checkbox name = 'c30'>
+			<t>Importuj faktury</t>
+			</checkbox>
+		</td>
+		<td>
+			<checkbox name = 'c31' disable = 'true'>
+			<t>Importuj płatności</t>
+			</checkbox>
+		</td>
+	</tr>
+	<tr style='STYLE_TABLE_HEADER'>
+		<td colspan = '2'>
+		<t bold = 'true'>
+			Źródło danych
+		</t>
+		</td>
+	</tr>	
+	<tr>
+		<td colspan = '2'>
+			<radio name='e40'>
+				<t>Baza Sybase</t>
+				<t>Baza MS SQL</t>
+				<transfer mode='custom'/>
+			</radio>
+		</td>
+	</tr>
+	<tr>
+		<td>
+			<t name='e50'>Login</t>
+		</td>
+		<td>
+			<edit size='20' name='e51' style='STYLE_CTRL'>
+			</edit>
+		</td>
+	</tr>
+
+	<tr>
+		<td>
+			<t name='e52'>Hasło:</t>
+		</td>
+		<td>
+			<edit password='true' size='20' name='e53' style='STYLE_CTRL'>
+			</edit>
+		</td>
+	</tr>
+	<tr>
+		<td>
+			<t name='e54'>Serwer:</t>				
+		</td>
+		<td>
+			<edit size='20' name='e55' style='STYLE_CTRL'>
+			</edit>
+			<button style='STYLE_BUTTON' href='varFunction="local"' name='e56'>Lokalny</button><t/>
+		</td>
+	</tr>
+	
+	<tr>
+		<td>
+		<button style='STYLE_BUTTON' style='STYLE_BUTTON' href='varFunction="GO"'>Importuj</button><br/>
+		</td>
+	</tr>
+
+	</thead>
+	<tbody>
+	</tbody>
+</table>
+
+
+
+</body>
+</page>

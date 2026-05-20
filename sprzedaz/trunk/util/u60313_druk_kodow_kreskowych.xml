@@ -1,0 +1,530 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!-- 
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1222.h"
+#include "h1234.h"
+#include "h1228.h"
+
+#define KOL_NAZWA				2
+#define KOL_INDEX				3
+#define KOL_ILOSC				4
+#define KOL_CHECKBOX			5
+
+#define CTRL_ID_ILOSC			101
+#define CTRL_ID_BODY			102
+
+#define CTRL_TABLE				110
+
+#define	CTRLID_CHECKBOX_PROD				111
+#define CTRL_ID_SUMA_ETYK					112
+#define CTRL_ID_CHECK_FOR_ALL				113
+#define USER_PROP_INTEDIT_NR_WIERSZA		300
+#define USER_PROP_CHECKBOX_NR_WIERSZA		310
+	
+#define PROP_NR_ROW_BUTTON					290
+#comment liczba mowi po jakiej ilosci drukowanych etykiet mamy przerwac dla sprawdzenia czy etykiety nie sa przesuniete na wydruku
+#define LIMIT_DRUKU_DO_POTWIERDZENIA		500
+-->
+<page style='STYLE_PAGE'>
+<config>
+	<startpos>center</startpos>
+	<title>
+		Drukowanie etykiet towarowych 
+		#ifdef _DEBUG
+	[THIS_FILE]
+#endif
+</title>
+	<script>
+<![CDATA[
+#include "50518"
+dim g_iSum: g_iSum=0 'laczna liczba etykiet do drukowania'
+dim g_oKodKreskowy : set g_oKodKreskowy = new NavoDrukKodowKresk
+dim row
+
+class NavoDrukKodowKresk
+	private m_sumaIloscDrukowanychEtyk	'laczna ilosc drukowanych etykiet'
+	private m_liczbaProduktow			'ilosc produktow ktore chcemy wydrukowac '
+	private m_ArrayIdobj				'tablica idobjotow'
+	private m_ArrayIlosc				'tablica z iloscia etykiet ktore maja byc wydrukowane'
+	private m_ArrayZaznaczen			'tablica z infromacja ktory produkt drukujemy ()'
+	private m_ArrayIdobjToPrint			'tablica zawiera po kolei indeks tyle razy ile chcemy wydrukowac etykiet np dla Prod1 i Prod2 ktorych chcemy wydruk odpowiednio 5 i 3 szt. tablica ma indeks prod1 powtorzony 5 razy i dalej index prod2 powtorzony 3 razy '
+	private m_iIloscArrayIdobjToPrint	'wielkosc tablicy do drukowanej jw.'
+	private m_iLimitDoPotw				'ustaw ile etykiet mamy wdrukowac dla sprawdzenia czy druk zawiera sie na wydruku etykiety'
+	public m_nazwaDok
+	public m_czyLogo					'czy ma byc drukowane logo'
+	public m_czyLinie
+  public m_licznikDlaKOPI   			' pamieta idobj produktu 
+	public o_Page             			' obiekt dokumentu PZ , WZ
+	public m_licznikPozycjaListPoz		' ktora pozycje akturalnie bierzemy z listPozycji
+	
+	public sub class_initialize()
+		m_sumaIloscDrukowanychEtyk = 0
+		m_liczbaProduktow =0
+		m_iIloscArrayIdobjToPrint =0
+		set m_ArrayIdobj		= nx_.new_array()
+		set m_ArrayIlosc		= nx_.new_array()
+		set m_ArrayZaznaczen	= nx_.new_array()
+		set m_ArrayIdobjToPrint = nx_.new_array()
+		m_czyLinie	= 0
+		m_czyLogo = 1
+    m_licznikDlaKOPI = 0
+	end sub
+'---------------------''---------------------''---------------------''---------------------'
+'zapamietanie tablicy z ciagiem idobjotow do druku'
+	public sub zapisz_ArrayIdobjToPrint(byval val)
+		m_ArrayIdobjToPrint.add val
+		m_iIloscArrayIdobjToPrint = m_ArrayIdobjToPrint.upper_index
+	end sub
+	
+'wyczysc tablice idobjotow drukowania'
+	public sub czysc_ArrayIdobjToPrint()
+		set m_ArrayIdobjToPrint = nx_.new_array()
+	end sub
+'zapamietanie tablicy z idobj produktow'
+	public sub zapisz_ArrayIdobj(byref ArrayIdobj)
+		dim iter
+		for iter=0 to ArrayIdobj.upper_index
+			m_ArrayIdobj.add ArrayIdobj(iter)
+		next
+		'przypisanie do m_liczbaProduktow ilosci prod. przekazanych do obiektu'
+		m_liczbaProduktow=ArrayIdobj.upper_index + 1
+	end sub
+'zapamietanie w tablicy z ilosciami do druku dla produkow'
+	public sub zapisz_ArrayIlosc(byref ArrayIlosc)
+		dim iter
+		dim i_SumIlosc:i_SumIlosc=0
+		for iter=0 to ArrayIlosc.upper_index
+			m_ArrayIlosc.add ArrayIlosc(iter)
+			i_SumIlosc=i_SumIlosc+ArrayIlosc(iter)
+		next
+		m_sumaIloscDrukowanychEtyk=i_SumIlosc
+		zapisz_ArrayZaznaczenia(ArrayIlosc)
+	end sub
+'zapamietanie tablicy na drukowanie wszystkich produktow 1-tak 0-nie'
+	public sub zapisz_ArrayZaznaczenia(byref ArrayIlosc)
+		dim iter
+		for iter=0 to m_liczbaProduktow-1
+			m_ArrayZaznaczen.add CLng(1)
+		next
+	end sub	
+'zapamietaj ilosc etyk do druku'
+	public function zapisz_SumaIlosciEytkDoDruku(byval value)
+		m_sumaIloscDrukowanychEtyk = value
+	end function
+
+'zapamietanie wiersza tablicy na ilosci produktow'
+	public sub zapisz_RowArrayIlosc(byval number,byval varValue)
+			m_ArrayIlosc(number) = varValue
+	end sub	
+'zapamietanie wiersza tablicy na zaznaczone wszystkich produktow 1-tak 0-nie'
+	public sub zapisz_RowArrayZaznaczenia(byval number,byval varValue)
+			m_ArrayZaznaczen(number) = varValue
+	end sub	
+'zapamietanie wiersza tablicy na zaznaczenie wszystkich prod jako "nie czyli 0"'
+	public sub zapisz_AllZaznaczeniaNaZero()
+		dim number
+		for number=0 to m_liczbaProduktow-1
+			m_ArrayZaznaczen(number) = "0"
+		next
+	end sub	
+
+'---------------''---------------''---------------''---------------''---------------''get'
+'zwroc tablice idobj'
+	public function zwroc_ArrayIdobj()
+		set zwroc_ArrayIdobj = m_ArrayIdobj
+	end function
+'zwroc tablice ilosci'
+	public function zwroc_ArrayIlosc()
+		set zwroc_ArrayIlosc = m_ArrayIlosc
+	end function
+'zwroc tablice zaznaczen'
+	public function zwroc_ArrayZaznaczen()
+		set zwroc_ArrayZaznaczen = m_ArrayZaznaczen
+	end function
+'----------------'
+'zwroc idobj wskaznaego wiersza'
+	public function zwroc_RowArrayIdobj(byval number)
+		zwroc_RowArrayIdobj = m_ArrayIdobj(number)
+	end function
+'zwroc ilosc wskazanego wiersza'
+	public function zwroc_RowArrayIlosc(byval number)
+		zwroc_RowArrayIlosc = m_ArrayIlosc(number)
+	end function
+'zwroc zaznaczenie wskazanego wiersza'
+	public function zwroc_RowArrayZaznaczen(byval number)
+		zwroc_RowArrayZaznaczen = m_ArrayZaznaczen(number)
+	end function
+'zwroc zwroc wielkosc tablicy do druku'
+	public function zwroc_wielkoscArrayIdobjToPrint
+		zwroc_wielkoscArrayIdobjToPrint = m_iIloscArrayIdobjToPrint
+	end function
+'---------------'
+
+'zwroc laczna ilosc do druku'
+	public function zwroc_sumaIlosciEtykDoDruk()
+		zwroc_sumaIlosciEtykDoDruk = m_sumaIloscDrukowanychEtyk
+	end function
+'zwroc ilosc otrzymanych na poczatku produktow Do Druku'
+	public function zwroc_calkowitaIloscProd()
+		zwroc_calkowitaIloscProd = m_liczbaProduktow 
+	end function
+'zaznacz wszystki "zaznaczenia"'
+	public function zaznaczAllZaznaczenia(byval newVal)
+		dim iter
+		for iter=0 to m_liczbaProduktow-1
+			m_ArrayZaznaczen(iter)= CLng(newVal)
+		next
+	end function
+'zwroc tablice druku'
+	public function zwroc_ArrayIdobjToPrint()
+		set zwroc_ArrayIdobjToPrint = m_ArrayIdobjToPrint
+	end function
+'sumowanie wszystkich etykiet'
+	public function zsumujEtykietyDoDruku()
+		dim row,iNewSum:iNewSum=0
+			for row=0 to zwroc_calkowitaIloscProd-1
+				if zwroc_RowArrayZaznaczen(row) = "1" then
+					iNewSum=iNewSum+g_oKodKreskowy.zwroc_RowArrayIlosc(row)
+				end if
+			next
+		zapisz_SumaIlosciEytkDoDruku(iNewSum)
+	end function
+'zapis ustawien druku'
+	public function UstawParamDruku(byval iLimitPotw)
+		m_iLimitDoPotw = iLimitPotw
+	end function
+	
+	public function ZwrocParamDruku()
+		ZwrocParamDruku = m_iLimitDoPotw
+	end function
+end class
+'----------------END CLASS--------------------------------------------------------------------------------'
+'---------------------------------------------------------------------------------------------------------'
+function update_ui_suma
+	page_.ctrl(CTRL_ID_SUMA_ETYK).value = CLng(g_oKodKreskowy.zwroc_sumaIlosciEtykDoDruk())
+end function
+
+'zaktualizuj wszystkie checkBoxy z tablicy m_ArrayZaznaczen'
+function update_ui_checkboxes			
+	dim iInx,o_Check
+	dim oBody : set oBody = page_.ctrl(CTRL_ID_BODY)
+	for iInx = 1  to oBody.count
+		set o_Check = oBody.row(iInx).cell(KOL_CHECKBOX).element(1)
+		o_Check.value cstr(g_oKodKreskowy.zwroc_RowArrayZaznaczen(iInx-1))
+	next
+end function
+
+'sprawdz ktore zaznaczone i zsumuj'
+function sumowanie()
+   g_oKodKreskowy.zsumujEtykietyDoDruku()
+	update_ui_suma
+end function
+'''-------------------------------------------------------------------''check''check'
+function c##CTRLID_CHECKBOX_PROD##_ondataentered(byref pCtrl,byval varValue)
+	c##CTRLID_CHECKBOX_PROD##_ondataentered = true
+	page_.ctrl(CTRL_ID_CHECK_FOR_ALL).value=cstr(0)		'wylacz glowny checkBox zaznaczajacy wszystko'
+	dim iWiersz
+	iWiersz = pCtrl.userprop.prop(USER_PROP_CHECKBOX_NR_WIERSZA)
+	g_oKodKreskowy.zapisz_RowArrayZaznaczenia iwiersz,pCtrl.value 
+	sumowanie()
+end function
+
+function c##CTRLID_CHECKBOX_PROD##_ongetdata(byref pCtrl):c##CTRLID_CHECKBOX_PROD##_ongetdata=true
+end function
+'''-------------------------------------------------------------------''edit''edit'
+function c##CTRL_ID_ILOSC##_ondataentered(byref pCtrl, varValue):c##CTRL_ID_ILOSC##_ondataentered=true
+	dim iWiersz
+	iWiersz = pCtrl.userprop.prop(USER_PROP_INTEDIT_NR_WIERSZA)
+	g_oKodKreskowy.zapisz_RowArrayIlosc iwiersz,pCtrl.value 
+	sumowanie()
+end function
+
+function c##CTRL_ID_ILOSC##_ongetdata(byref pCtrl):c##CTRL_ID_ILOSC##_ongetdata=true
+end function
+'''-------------------------------------------------------------------''wspolny checkBox'
+function c##CTRL_ID_CHECK_FOR_ALL##_ondataentered(byref pCtrl, varValue):c##CTRL_ID_CHECK_FOR_ALL##_ondataentered=true
+		g_oKodKreskowy.zaznaczAllZaznaczenia varValue
+	g_oKodKreskowy.zaznaczAllZaznaczenia varValue
+	update_ui_checkboxes 'zaktualizuj checkboxy na podstawie tablicy ArrayZaznaczenia'
+	sumowanie()			'zsumowanie zaznaczonych ilosci'
+end function
+
+function c##CTRL_ID_CHECK_FOR_ALL##_ongetdata(byref pCtrl):c##CTRL_ID_CHECK_FOR_ALL##_ongetdata=true
+end function
+'-------------------------------------------uruchom''-------------------------------------------uruchom'
+dim g_ObjDokMag
+function uruchom(byref ArrayIdobj,byref ArrayIlosc,byval oParentObject)
+	dim pTab,iter,oProdukt
+  set g_ObjDokMag = oParentObject
+	page_.ctrl(CTRL_ID_CHECK_FOR_ALL).value=cstr(1)
+	set pTab = doc_.afc.new_tb(page_).attach(page_.ctrl(CTRL_TABLE))
+
+	g_oKodKreskowy.zapisz_ArrayIdobj(ArrayIdobj)
+	g_oKodKreskowy.zapisz_ArrayIlosc(ArrayIlosc)
+  if not oParentObject is nothing then
+	   g_oKodKreskowy.m_nazwaDok = oParentObject.text
+  end if   
+	for iter = 0 to g_oKodKreskowy.zwroc_calkowitaIloscProd()-1
+	set oProdukt=trans_.getobj(TYPEID_N5PRODUKT ,g_oKodKreskowy.zwroc_RowArrayIdobj(iter) )	
+		
+		pTab.newrow	
+			if iter mod 2 = 0 then
+			pTab.row.styleitem = STYLE_ROW_EVEN
+		end if
+		
+		pTab.newcell
+		pTab.cell.align = ALIGN_RIGHT
+		pTab.addtext cstr(iter+1)
+	
+		pTab.newcell.addtext oProdukt.strIndeks
+		
+'		pTab.newcell.addtext oProdukt.strNazwa	
+		
+		with pTab.newcell
+			.addctrl(CTRL_TYPE_STATICEX,-1).element.value = oProdukt.strNazwa
+		end with
+		
+'------------------------pole edycyjne'
+		dim pREdit: set pREdit = pTab.newcell
+		pREdit.cell.align = ALIGN_RIGHT
+		dim pRichEdit:set pRichEdit = pREdit.addctrl(CTRL_TYPE_INTEDIT, -1).element()
+		pRichEdit.size = 4
+		pRichEdit.value = CLng( g_oKodKreskowy.zwroc_RowArrayIlosc(iter))
+		pRichEdit.customredirect = clng(CTRL_ID_ILOSC)
+		set pRichEdit.transfer = page_.createtransfer("custom")
+		dim pUserHli
+		set pUserHli = doc_.createhli()
+		pUserHli.prop(USER_PROP_INTEDIT_NR_WIERSZA) = CLng(iter)      ' numer wiersza
+		set pRichEdit.userprop = pUserHli
+'------------------------pole checkBox'
+		dim pChBox: set pChBox = pTab.newcell
+		pChBox.cell.align = ALIGN_CENTER
+	dim pCheckBox:set pCheckBox = pChBox.addctrl(CTRL_TYPE_CHECKBOX, -1).element()
+			pCheckBox.border = 0
+			pCheckBox.tip = "Drukuje zaznaczone pozycje"
+			pCheckBox.customredirect = CLng(CTRLID_CHECKBOX_PROD)
+			set pCheckBox.transfer = page_.createtransfer("custom")
+		dim pText
+		set pText=pCheckBox.addnew(CTRL_TYPE_STATIC, -1)
+		pText.disable = false
+		set pUserHli = doc_.createhli()
+		pUserHli.prop(USER_PROP_CHECKBOX_NR_WIERSZA) = CLng(iter)      ' numer wiersza
+		set pCheckBox.userprop = pUserHli
+'--------------------------------------'
+		pTab.newcell
+		dim pButt: set pButt = pTab.addctrl(CTRL_TYPE_BUTTON,-1).element()
+		with pButt
+				.text = "Drukuj"
+				.styleitem = STYLE_BUTTON
+			set .hli =doc_.createhli()
+			.hli.prop(PROP_NR_ROW_BUTTON)=iter
+			.hli.prop(GVAR_FUNCTIONHLI) = "drukuj_pojedynczy"
+		end with
+	next
+	
+	update_ui_checkboxes
+	sumowanie()
+	
+	page_.domodalauto()
+end function
+
+function ustawArrayIdobjToPrint()
+	g_oKodKreskowy.czysc_ArrayIdobjToPrint()
+	dim iProd,iIloscProd
+	for iProd=0 to g_oKodKreskowy.zwroc_calkowitaIloscProd-1
+		for iIloscProd=0 to g_oKodKreskowy.zwroc_RowArrayIlosc(iProd)-1
+		if g_oKodKreskowy.zwroc_RowArrayZaznaczen(iProd)= "1" then
+			if g_oKodKreskowy.zwroc_RowArrayIlosc(iProd)> 0 then
+				g_oKodKreskowy.zapisz_ArrayIdobjToPrint(g_oKodKreskowy.zwroc_RowArrayIdobj(iProd))
+			end if
+		end if
+		next
+	next
+end function
+
+function ustawArrayIdobjToPrint_dla_jednego_prod(byval iRow)
+	g_oKodKreskowy.czysc_ArrayIdobjToPrint()
+		dim iIloscProd
+	for iIloscProd=0 to g_oKodKreskowy.zwroc_RowArrayIlosc(iRow)-1
+		g_oKodKreskowy.zapisz_ArrayIdobjToPrint(g_oKodKreskowy.zwroc_RowArrayIdobj(iRow))
+	next
+end function
+
+function drukuj_pojedynczy(byref oHLI)
+dim iPubl:iPubl=0
+g_oKodKreskowy.UstawParamDruku LIMIT_DRUKU_DO_POTWIERDZENIA
+set g_oKodKreskowy.o_Page = g_ObjDokMag
+	if not spr_publ(iPubl) then
+		      dim oHLIResult : set oHLIResult = doc_.createhli()
+          dim iWiersz:iWiersz=oHLI.prop(PROP_NR_ROW_BUTTON)		'numer wiersza'
+					ustawArrayIdobjToPrint_dla_jednego_prod(iWiersz)
+	           g_oKodKreskowy.m_licznikDlaKOPI = g_oKodKreskowy.zwroc_RowArrayIdobj(iWiersz)
+             trans_.var(2928) = 1
+									if g_oKodKreskowy.zwroc_wielkoscArrayIdobjToPrint >= 0 then  'czy jest cos do drukowania
+                      realize_publication iPubl,g_oKodKreskowy,false,oHLIResult
+									end if
+   end if
+end function
+
+function drukuj_calosc()
+  ustawArrayIdobjToPrint()							'wczyta do tablicy tyle idobj (roznych) ile bedzie wydrukowanych etykiet'
+	drukuj_internal
+	
+	KrokDruku
+  sumowanie()
+  update_iniedit_fromArray 'pomniejsz ilosc etykiet o te wydrukowane
+end function
+
+function update_iniedit_fromArray
+	dim oRow,var,row
+	row=0
+	for each oRow in page_.ctrl(102)
+	 oRow.cell(4).element(1).value=g_oKodKreskowy.zwroc_RowArrayIlosc(row)
+	 row=row+1
+	next
+end function
+
+function KrokDruku_pojProdukt(byval iWiersz)
+	dim y
+	y = 0 
+
+	do while y<=LIMIT_DRUKU_DO_POTWIERDZENIA-1 									'g_oKodKreskowy.zwroc_sumaIlosciEtykDoDruk	'while''
+		if g_oKodKreskowy.zwroc_RowArrayIlosc(iWiersz)>0 then
+			g_oKodKreskowy.zapisz_RowArrayIlosc iWiersz,g_oKodKreskowy.zwroc_RowArrayIlosc(iWiersz)-1
+			y=y+1
+		else 
+		exit function
+		end if
+	loop	
+end function
+
+function KrokDruku()
+	dim y
+	y = 0 
+	row=0
+	
+if row>=g_oKodKreskowy.zwroc_calkowitaIloscProd then
+	exit function
+end if
+
+	do while y<=LIMIT_DRUKU_DO_POTWIERDZENIA-1 									'g_oKodKreskowy.zwroc_sumaIlosciEtykDoDruk	'while''
+		if row>g_oKodKreskowy.zwroc_calkowitaIloscProd()-1 then
+			exit function
+		end if
+		
+		if g_oKodKreskowy.zwroc_RowArrayIlosc(row)>0 and g_oKodKreskowy.zwroc_RowArrayZaznaczen(row)="1" then
+			g_oKodKreskowy.zapisz_RowArrayIlosc row,g_oKodKreskowy.zwroc_RowArrayIlosc(row)-1
+			y=y+1
+				if g_oKodKreskowy.zwroc_RowArrayIlosc(row)=0 then
+					row=row+1
+						if row+1>g_oKodKreskowy.zwroc_calkowitaIloscProd then
+						exit function
+						end if
+				end if
+		else 
+		row=row+1
+		end if
+	loop	
+end function
+
+'fire_choice_list
+#include "50200"
+
+
+'message box
+#include "50122"
+
+function spr_publ(byref idDPC_zwr)
+	spr_publ=false
+'	dim iTypDokumentu : iTypDokumentu = trans_.findobjid(TYPEID_N5TYPDOKUMENTU,"strNazwa='Etykiety towarowe'")
+'	if iTypDokumentu <= 0 then
+'		nx_.trace.fatal "FKK001","Brak typu dokumentu 'Etykiety towarowe'"
+'		spr_publ=true
+'		exit function
+'	end if
+	
+	dim idDPC : idDPC = trans_.findobjid(TYPEID_N5DPC, "ePubType=" + CStr(58)) '58 dla inne
+	if idDPC < 1 then
+		idDPC = fire_choice_list( TYPEID_N5DPC , "Publikacja typu 'Etykiety towarowe'" ,"strNazwa","pub_nInnytyp=" + CStr(N5DPC_PUBTYPE_INNY_WYDRUK_KODOW_KRESKOWYCH) ,"",""	)	
+		if idDPC = 0 then
+			nx_.trace.fatal "FKK002","Brak publikacji typu 'Etykiety towarowe'"
+			spr_publ=true
+			exit function
+		end if
+	end if
+	idDPC_zwr=idDPC
+end function
+
+'funkcja druku glownego otwierajaca e95630 - tworzenia eykiet'
+function drukuj_internal
+	g_oKodKreskowy.UstawParamDruku LIMIT_DRUKU_DO_POTWIERDZENIA
+	dim iPubl:iPubl=0
+	if not spr_publ(iPubl) then
+		dim oHLIResult : set oHLIResult = doc_.createhli()
+    dim pomDoKopii
+    
+    'zmiana dla Grajewskich
+    dim ipozListPozycje:ipozListPozycje=1
+    set g_oKodKreskowy.o_Page = g_ObjDokMag
+    for pomDoKopii=0 to g_oKodKreskowy.zwroc_calkowitaIloscProd-1
+        if g_oKodKreskowy.zwroc_RowArrayZaznaczen(pomDoKopii)="1" then
+            if g_oKodKreskowy.zwroc_RowArrayIlosc(pomDoKopii) > 0 then
+								g_oKodKreskowy.m_licznikPozycjaListPoz = ipozListPozycje
+								g_oKodKreskowy.m_licznikDlaKOPI = g_oKodKreskowy.zwroc_RowArrayIdobj(pomDoKopii)
+								trans_.var(2928) = g_oKodKreskowy.zwroc_RowArrayIlosc(pomDoKopii)  ' ile kopii wydrukowac
+								realize_publication iPubl,g_oKodKreskowy,false,oHLIResult
+           end if
+       end if
+	  ipozListPozycje=ipozlistpozycje+1
+    next
+		 
+	end if
+	
+end function
+
+
+
+
+]]>
+</script>
+</config>
+<body>
+	<table name='CTRL_TABLE'>
+		<thead style='STYLE_TABLE_HEADER'>			
+			<tr>
+				<td><t>Lp</t></td>
+				<td><t>Indeks</t></td>
+				<td width='6000'><t>Nazwa</t></td>
+				<td><t>Ilość</t></td>
+				<td colspan='2'><t>Czynności</t></td>
+			</tr>
+		</thead>
+		<tbody name='CTRL_ID_BODY'>
+		</tbody>	
+		<tfoot>
+			<tr>
+				<td><t></t></td>
+				<td><t></t></td>
+				<td bold='true' align='right'><t>Łącznie do druku:</t></td>
+				<td align='right'><intedit name='CTRL_ID_SUMA_ETYK' border='0' disable='true'></intedit></td>
+				<td align='center'>							
+					<checkbox value='1' border='0' name='CTRL_ID_CHECK_FOR_ALL'>
+						<t></t>
+						<transfer mode='custom' />
+					</checkbox></td>
+				<td></td>
+			</tr>
+			<tr  style='STYLE_ROW_BTN'>
+				<td colspan='4'></td>
+				<td><button style = 'STYLE_BUTTON' href='varFunction="drukuj_calosc"'> Wydrukuj </button></td>				
+				<td><button style = 'STYLE_BUTTON' href='varCmd=CMD_GOBACK'> Anuluj </button></td>
+			</tr>
+		</tfoot>	
+	</table>	
+</body>
+</page>

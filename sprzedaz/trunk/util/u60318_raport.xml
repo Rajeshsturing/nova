@@ -1,0 +1,927 @@
+<?xml version="1.0" encoding="windows-1250"?>
+
+<!--
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1004.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1201.h"
+#include "h1232.h"
+#include "h1223.h"
+#include "h1234.h"
+
+#define PAGE_WIZZARD_EXPORT_IMPORT_FILE_STEP			20616
+#define PAGE_WIZZARD_EXPORT_IMPORT_FIELD_STEP			20615
+#define PAGE_WIZZARD_EXPORT_IMPORT_RESUME_STEP			20406
+
+-->
+
+
+<page>
+	<config>
+		<title>Wizzard</title>
+		<script>
+
+			<!--
+	ALWAYS MANUAL
+	Kreator eksportu/importu
+-->
+
+			<![CDATA[
+'nx_trace
+#include "50519"
+
+'HAR*
+#include "50101"
+'MessageBox
+#include "50122"
+'getCurrent*
+#include "50203"
+'system_add_root
+#include "50204"
+'Excel*
+#include "50205"
+'CWizzard
+#include "50209"
+'CFilesDrives
+#include "50211"
+'Preload functions
+#include "50303"
+'Licence XML
+#include "50304"
+'Export Firma
+#include "50615"
+'ImportSTREAM -> NE OBJECTS
+#include "50616"
+
+function fopen(): fopen = false
+	
+	if (trans_.isvar(APPVAR_IMPORT_KIND)) then
+
+		select case trans_.var(APPVAR_IMPORT_KIND)
+			case IMPFRM
+				if (not HARUI(UAR_CMDID(CMDID_WIZZARD_IMPEXP38))) then
+					exit function
+				end if
+		
+			case IMPXML
+				if (not HARUI(UAR_CMDID(CMDID_WIZZARD_IMPEXPEUROBIZNES))) then
+					exit function
+				end if
+		
+			case IMPXLS
+				if (not HARUI(UAR_CMDID(CMDID_WIZZARD_IMPEXPXLS))) then
+					exit function
+				end if
+	
+			case IMPEXT
+				if (not HARUI(UAR_CMDID(CMDID_WIZZARD_IMPEXPEXT))) then
+					exit function
+				end if
+				
+			case EXPXML
+				if (not HARUI(UAR_CMDID(CMDID_WIZZARD_EXPXML))) then
+					exit function
+				end if
+
+		end select
+
+	end if
+
+	'Uruchom wizzard
+#ifdef _HJORT
+  start_wizzard2
+#else
+	start_wizzard
+#endif  
+
+end function
+
+#define NV_ALL		1
+#define NV_NONE		2
+#define NV_SYB		3
+#define NV_SQL		4
+#define NV_KADRY	5
+
+'-------------------------------------------------------------------------------------------
+' Kontener wizarda importu / eksportu
+'-------------------------------------------------------------------------------------------
+'----------------------------------------------------------------
+'NEW_FIRMA_IMPORT
+'----------------------------------------------------------------
+dim g_pM60319 : set g_pM60319 = doc_.getmodule(60319)
+
+class CImportWizzardContainer
+	public m_strPath
+	public m_strImportType
+	public m_nNavoVersion
+	public m_nNavoShow
+	public m_bDefault
+	public m_strLogin
+	public m_strPass
+	public m_strServer
+	public m_pItems
+	public m_bResult
+
+	private m_oNAVOFirmaImportOptions
+'----------------------------------------------------------------
+	public m_oarrExpFilter
+	public m_nChoosenFilter
+
+	public m_nExportWay
+
+	Private Sub Class_Initialize()		
+		set m_pItems = trans_.afc.new_navoarray()
+	
+		m_strPath = ""
+		m_nExportWay = clng(1)
+		m_strImportType = ""
+		m_nNavoVersion = ""
+#if appvarImportKind = EXPXML
+		m_strLogin = getCurrentUser().strLogin
+#else
+		m_strLogin = "sa"
+#endif
+		m_strPass = ""
+		m_strServer = "."
+		m_nNavoShow = NV_NONE
+
+		m_bDefault = true
+
+		set m_oarrExpFilter = nothing
+		m_nChoosenFilter = -1
+
+		set m_oNAVOFirmaImportOptions = g_pM60319.new_Option()
+	End Sub
+
+	public function NewItemToImport()
+		dim pNewItem
+		set pNewItem = new CItemToImport
+
+		m_pItems.Add pNewItem
+		set NewItemToImport = pNewItem
+	end function
+#if appvarImportKind = EXPXML
+	public function get_suggested_path()
+		'compose new suggested file name
+		dim pFD, bOK
+		set pFD = CFileDrive(bOK)
+		if (not bOK) then
+			view_message 6161, 0
+		end if
+
+		dim strStartFile : strStartFile = m_oarrExpFilter.Value(m_nChoosenFilter).nazwa +_
+				"_z_" + CStr(Year(Now)) + "_" + CStr(Month(Now)) + "_" + CStr(Day(Now)) + ".nxd"
+
+		dim strStartPath : strStartPath = pFD.GetPath( m_strPath )
+		if (strStartPath="") then
+			strStartPath="c:\"
+		end if
+		if right(strStartPath,1) <> "\" then
+			strStartPath = strStartPath + "\"
+		end if
+		get_suggested_path = strStartPath + strStartFile
+	end function
+#endif
+	
+	public property get NFIO
+		set NFIO = m_oNAVOFirmaImportOptions
+	end property
+end class
+
+
+'-------------------------------------------------------------------------------------------
+' Klasa opisująca jeden element importowany / eksportowany
+'
+' m_nTypeID		- identyfikator typu
+' m_strName		- nazwa wyswietlana w podsumowniu
+' m_strParam1	- parametr 1
+' m_strParam2	- parametr 2
+' bDisplay		- czy wyswietlac w podsumowaniu
+'-------------------------------------------------------------------------------------------
+class CItemToImport
+	public m_nTypeID
+	public m_strName
+	public m_strParam1
+	public m_strParam2
+	public bDisplay
+end class
+
+
+'-------------------------------------------------------------------------------------------
+' Rozpocznij wizzard
+'-------------------------------------------------------------------------------------------
+dim g_pModule60272 : set g_pModule60272 = nothing
+
+function start_wizzard()
+
+	if MessageBox("Czy chcesz pobrać dane z pliku?", "Pobieranie danych", vbYesNo, vbQuestion) = vbYes then
+	  dim pWizzard
+	  set pWizzard = CWizzard( false )
+
+	  dim pContainer
+	  set pContainer = new CImportWizzardContainer
+
+	  pContainer.m_strImportType = trans_.var(APPVAR_IMPORT_KIND)
+	  pContainer.m_strPath = "C:\Opakowania.xls"
+
+	  if (pContainer.m_strImportType = EXPXML) then
+		  set g_pModule60272 = doc_.getmodule(60272)
+		  set pContainer.m_oarrExpFilter = doc_.afc.new_navoarray()
+		  'wczytaj definicję
+		  dim idGlobFile : idGlobFile = trans_.findobjid(TYPEID_N5GLOBFILE,"nIndeks=GLOB_FILE_EXPORT_FILTER_DEFINITION")
+		  if idGlobFile > 0 then
+			  dim pGlobFile : set pGlobFile = trans_.getobj(TYPEID_N5GLOBFILE,idGlobFile)
+			  if not pGlobFile.fPlik.isempty() then
+				  g_pModule60272.load_data pContainer.m_oarrExpFilter, pGlobFile.fPlik 
+			  end if
+		  end if
+		  if pContainer.m_oarrExpFilter.Count() <= 0 then
+			  MessageBox "Nie zdefiniowano żadnego schematu eksportu", "Kreator eksportu/importu", vbOKOnly, vbInformation
+			  exit function
+		  end if
+		  pContainer.m_nChoosenFilter = 0
+	  end if
+  		
+	  if (pContainer.m_strImportType <> IMPEXT and pContainer.m_strImportType <> EXPXML) then
+		  pWizzard.add_step PAGE_WIZZARD_EXPORT_IMPORT_FILE_STEP
+	  end if
+
+	  dim bMiniImportFirma: bMiniImportFirma = false
+
+	  if (trans_.isvar(APPVAR_SHORTIMPORT)) then
+		  if (trans_.var(APPVAR_SHORTIMPORT) = 1) then
+			  bMiniImportFirma = true
+		  end if
+	  else
+		  trans_.var(APPVAR_SHORTIMPORT) = CLng(0)
+	  end if
+  	
+	  if (pContainer.m_strImportType <> IMPXML and (not bMiniImportFirma)) then 
+		  pWizzard.add_step PAGE_WIZZARD_EXPORT_IMPORT_FIELD_STEP
+	  end if
+
+	  if (pContainer.m_strImportType = EXPXML) then
+		  pWizzard.add_step PAGE_WIZZARD_EXPORT_IMPORT_FILE_STEP
+	  end if
+
+  	
+	  pWizzard.add_container pContainer
+	  pWizzard.run
+    
+  else
+    import_XLSOpakowania nothing, ""   
+  end if
+  
+  doc_.postcommand "varCmd=CMD_OPEN_STATIC_PAGE varDestPage=43016 appvar_raport_type=RAPTEMPLATE_MAGAZYN_OPAKOWANIE_ZWROTNE varNewThread=1"
+
+end function
+
+function start_wizzard2()
+
+  dim pWizzard
+  set pWizzard = CWizzard( false )
+
+  dim pContainer
+  set pContainer = new CImportWizzardContainer
+
+  pContainer.m_strImportType = trans_.var(APPVAR_IMPORT_KIND)
+		
+  if (pContainer.m_strImportType <> IMPEXT and pContainer.m_strImportType <> EXPXML) then
+	  pWizzard.add_step PAGE_WIZZARD_EXPORT_IMPORT_FILE_STEP
+  end if
+
+  dim bMiniImportFirma: bMiniImportFirma = false
+
+  if (trans_.isvar(APPVAR_SHORTIMPORT)) then
+	  if (trans_.var(APPVAR_SHORTIMPORT) = 1) then
+		  bMiniImportFirma = true
+	  end if
+  else
+	  trans_.var(APPVAR_SHORTIMPORT) = CLng(0)
+  end if
+	
+  if (pContainer.m_strImportType <> IMPXML and (not bMiniImportFirma)) then 
+	  pWizzard.add_step PAGE_WIZZARD_EXPORT_IMPORT_FIELD_STEP
+  end if
+	
+  pWizzard.add_container pContainer
+  pWizzard.run
+
+end function
+
+
+'-------------------------------------------------------------------------------------------
+'
+'						OBSLUGA KROKOW WIZZARDA
+'
+'-------------------------------------------------------------------------------------------
+
+
+'-------------------------------------------------------------------------------------------
+' Inicjacja strony kroku wizzarda
+'-------------------------------------------------------------------------------------------
+function onPageInit(pWizzardPage)
+
+	with pWizzardPage.m_pContainer
+
+	select case ( pWizzardPage.m_nPage )
+
+		case PAGE_WIZZARD_EXPORT_IMPORT_FILE_STEP
+			
+#if appvarImportKind <> EXPXML
+			'Zainicjuj storne informacjami o dostepnych wersjach
+			'Navo Firma
+			dim pInstallModule
+			set pInstallModule = doc_.getmodule(60116)
+
+			dim pNVInfo
+			set pNVInfo = pInstallModule.get_navo_firma_info()
+
+			if (not pNVInfo is nothing) then
+
+				'Instalacja zrodla danych Navo Firma jezeli
+				'go nie ma i jezeli wybralismy import z Navo Firma
+				if (.m_strImportType = IMPFRM) then
+
+					if (pNVInfo.m_Sybase) then
+
+						'Tutaj tymczasowo inicjujemy kalsy eksportu 
+						'by sprawdzic czy zalogowanie do wersji Sybase
+						'jest mozliwe i jezeli nie jest podejmujemy
+						'probe instalacji odpowiednich plikow
+
+						dim pTempExportManager
+						set pTempExportManager = new CADOExportManager
+						
+						pTempExportManager.m_bOnlyLogonTest = true
+					
+						dim pImportContainer
+						set pImportContainer = new CImportContainer
+
+						if (not pImportContainer.database_logon("", "", "", false, pTempExportManager)) then
+
+							view_message 6314, 0
+
+							dim instses
+							set instses = createobject("navoinstall.session")
+							instses.setlogname "navoSPRZEDAZ Serwer Setup.txt"
+
+							doc_.getmodule(72002).install_FirmaODBC pInstallModule, instses, false, false
+
+							if (not pImportContainer.database_logon("", "", "", false, pTempExportManager)) then
+								'Jeszcze jedna próba ale z instalacją sterownika ODBC
+								doc_.getmodule(72002).install_FirmaODBC pInstallModule, instses, false, true
+							else
+								view_message 6315, 0
+							end if
+
+						end if
+
+						set pImportContainer = nothing
+						set pTempExportManager = nothing
+
+					end if
+
+				end if
+
+				'Ustaw wartości domyślne dla kontrolek
+				if (pNVInfo.m_Sybase and pNVInfo.m_MsSQL) then
+					.m_nNavoVersion = "SQL"
+					.m_nNavoShow = NV_ALL
+				elseif (pNVInfo.m_MsSQL) then
+					.m_nNavoVersion = "SQL"
+					.m_nNavoShow = NV_SQL
+				elseif (pNVInfo.m_Sybase) then
+					.m_nNavoVersion = "SYBASE"
+					.m_nNavoShow = NV_SYB
+				end if
+
+			end if
+#endif
+	end select
+
+	end with
+
+end function
+
+'-------------------------------------------------------------------------------------------
+' Wejscie w jakis krok wizzarda
+'-------------------------------------------------------------------------------------------
+function onPageEnter(pWizzardPage)
+
+	with pWizzardPage.m_pContainer
+	
+	select case ( pWizzardPage.m_nPage )
+	
+		case PAGE_WIZZARD_EXPORT_IMPORT_FILE_STEP
+#if appvarImportKind = EXPXML
+			'Ustaw zapamietana wczesniej sciezke dla wyboru plików
+			.m_strPath = getglobprofile( GLOBPROF_EXPORT_PATH )
+			.m_strPath = .get_suggested_path()
+			.m_strServer = getglobprofile( GLOBPROF_EXPORT_REMOTE_COMPUTER )
+#else			
+
+			'Jesli import z firmy inicjujemy specjalnie nasza
+			'strone wizzarda
+			if (.m_strImportType=IMPFRM) then
+
+				'Jakie mamy wersje Navo Firma
+				select case .m_nNavoShow
+					case NV_ALL
+						pWizzardPage.m_pPage.showNavoChoice()
+
+					case NV_NONE
+						pWizzardPage.m_pPage.showNoNavo()
+						
+					case NV_SYB
+						pWizzardPage.m_pPage.showNavoSybase()
+
+					case NV_SQL
+						pWizzardPage.m_pPage.showNavoPrestige()
+				end select
+
+			end if
+#endif
+		case PAGE_WIZZARD_EXPORT_IMPORT_RESUME_STEP:
+
+			select case .m_strImportType
+				
+				case EXPXML
+					if .m_nExportWay = 1 then
+						pWizzardPage.m_pPage.setFileInfo("do pliku " + .m_strPath)
+					else
+						pWizzardPage.m_pPage.setFileInfo("na komputer " + .m_strServer)
+					end if
+
+				case IMPXML
+					pWizzardPage.m_pPage.setFileInfo(.m_strPath)
+
+				case IMPXLS
+					pWizzardPage.m_pPage.setFileInfo(.m_strPath)
+
+				case IMPFRM
+					if (.m_nNavoVersion = "SQL") then 
+						pWizzardPage.m_pPage.setFileInfo("Wersja NAVO Prestige")
+					end if
+					if (.m_nNavoVersion = "SYBASE") then 
+						pWizzardPage.m_pPage.setFileInfo("Wersja NAVO Sybase")
+					end if
+
+			end select
+
+			'Wypełnij informacją o obiektach gdy jakieś są
+			pWizzardPage.m_pPage.fillObjsInfo
+
+#if appvarImportKind = EXPXML
+	case PAGE_WIZZARD_EXPORT_IMPORT_FIELD_STEP
+		pWizzardPage.m_pPage.fill_schemas
+#endif
+	end select
+
+	end with
+
+end function
+
+'-------------------------------------------------------------------------------------------
+' Wyjście ze strony wizzarda
+'-------------------------------------------------------------------------------------------
+function onPageExit(pWizzardPage)
+	onPageExit=PAGE_DEFAULT
+
+	with pWizzardPage.m_pContainer
+
+	select case ( pWizzardPage.m_nPage )
+
+		case PAGE_WIZZARD_EXPORT_IMPORT_FIELD_STEP:
+#if appvarImportKind = EXPXML
+			if .m_nChoosenFilter < 0 then
+				MessageBox "Aby kontynuować musisz wybrać jakiś schemat", "Kreator eksportu/importu", vbOKOnly, vbInformation
+				onPageExit = PAGE_DONOTEXIT
+				exit function				
+			end if
+#else
+#if appvarImportKind = IMPFRM
+		dim strCheckResult : strCheckResult = .NFIO.check()
+		if strCheckResult <> "" then
+			MessageBox strCheckResult, "Kreator eksportu/importu", vbOKOnly, vbInformation
+			onPageExit = PAGE_DONOTEXIT
+			exit function				
+		end if
+#else
+			if (.m_pItems.Count()=0) then
+				MessageBox "Aby kontynuować musisz wybrać jakieś pola.", "Kreator eksportu/importu", vbOKOnly, vbInformation
+				onPageExit = PAGE_DONOTEXIT
+				exit function				
+			end if
+#endif
+#endif
+		case PAGE_WIZZARD_EXPORT_IMPORT_FILE_STEP
+			'W przypadku importu z Navo Firma sprawdzamy
+			'czy jest jakas wersja NV
+			if (.m_strImportType=IMPFRM and .m_nNavoShow=NV_NONE) then
+					MessageBox "Nie ma w systemie wersji Navo Firma - nie można kontynuować.", "Kreator eksportu/importu", vbOKOnly, vbInformation
+					onPageExit = PAGE_DONOTEXIT
+					exit function
+			end if
+
+			'W przypadku import/eksportu z/do pliku sprawdzamy czy
+			'wybrano plik i ewentualnie czy on istenieje i jest
+			'poprawny
+			if (.m_strImportType=IMPXML or _
+				.m_strImportType=IMPXLS or _
+				.m_strImportType=EXPXML) then
+				
+				'Gdy mamy podana sciezke
+				if (.m_strPath <> "") then
+					
+					dim strDestPath
+					strDestPath = .m_strPath
+
+					dim pFD, bOK
+					set pFD = CFileDrive(bOK)
+
+					if (not bOK) then
+						view_message 6161, 0
+						onPageExit = PAGE_DONOTEXIT
+						exit function
+					end if
+
+					dim strFileName
+					strFileName = pFD.GetFileName( strDestPath )
+
+					'Sprawdzamy czy jest nazwa pliku
+					if (strFileName="") then
+						MessageBox "Nie podano nazwy pliku.", "Kreator eksportu/importu", vbOKOnly, vbInformation
+						onPageExit = PAGE_DONOTEXIT
+						exit function	
+					end if
+
+					'W przypadku importów plik musi istnieć
+					if (.m_strImportType <> EXPXML) then
+						
+						if (not pFD.isFile( .m_strPath )) then
+							MessageBox "Plik """ + CStr(.m_strPath) + """ nie istnieje.", "Kreator eksportu/importu", vbOKOnly, vbInformation
+							onPageExit = PAGE_DONOTEXIT
+							exit function
+						end if
+
+					else
+						
+						'Dodaj rozszerzenie nxd gdy nie podano
+						dim strCheckFileName
+						strCheckFileName = pFD.GetFileName( .m_strPath )
+
+						if (pFD.GetFileExtension( strCheckFileName )="" and strCheckFileName<>"") then
+							.m_strPath = .m_strPath + ".nxd"
+						end if
+						
+					end if
+
+				else 'path is empty
+					if .m_strImportType=EXPXML and .m_nExportWay = 1 then
+						MessageBox "Nie podano nazwy pliku.", "Kreator eksportu/importu", vbOKOnly, vbInformation
+						onPageExit=PAGE_DONOTEXIT
+						exit function	
+					end if
+				end if
+				if .m_strImportType=EXPXML and .m_nExportWay = 2 then
+					if trim(.m_strServer) = "" then
+						MessageBox "Nie podano nazwy komputera docelowego.", "Kreator eksportu/importu", vbOKOnly, vbInformation
+						onPageExit=PAGE_DONOTEXIT
+						exit function	
+					end if
+				end if
+			end if 'IMPXML, IMPXLS, EXPXML
+	end select
+
+	end with
+
+end function
+
+'-------------------------------------------------------------------------------------------
+' Zakończenie całego wizzarda
+'-------------------------------------------------------------------------------------------
+function onWizzardComplete(byref pWizzardPage): onWizzardComplete = false
+	NX_TRACE_START_STREAM("Import i eksport danych",nothing)
+
+	with pWizzardPage.m_pContainer
+
+	'Wykonaj odpowiedni tym importu	
+	select case (.m_strImportType)
+		
+		case IMPFRM
+			if (.m_nNavoVersion = "SQL") then
+				onWizzardComplete = Import_FromFirma37(true, pWizzardPage.m_pContainer)
+			end if
+			if (.m_nNavoVersion = "SYBASE") then
+				onWizzardComplete = Import_FromFirma37(false, pWizzardPage.m_pContainer)
+			end if
+
+		case EXPXML
+
+			onWizzardComplete = exportXML( pWizzardPage.m_pContainer )
+			
+			'store path for later
+			if (onWizzardComplete) then
+				dim pSubTrans
+				set pSubTrans=trans_.createsubtran()
+						
+					if .m_nExportWay = 1 then
+						setglobprofile GLOBPROF_EXPORT_PATH, .m_strPath
+					else
+						setglobprofile GLOBPROF_EXPORT_REMOTE_COMPUTER, .m_strServer
+					end if
+						
+					trans_.saveobjects
+
+				set pSubTrans=nothing
+			end if
+
+		case IMPXML
+			onWizzardComplete = (importXML( .m_strPath ) = 0)
+
+		case IMPXLS
+			onWizzardComplete = Import_FromExcel( .m_strPath, pWizzardPage.m_pContainer )        
+
+		case IMPEXT
+			onWizzardComplete = Import_AdditionalData( pWizzardPage.m_pContainer)
+
+	end select
+
+	'Aktywuj naszą stronę
+	pWizzardPage.m_pPage.activate 
+
+	'Komunikat czy się udało 
+	if .m_strPath <> "" then
+		if (onWizzardComplete) then
+			trans_.var(GVAR_MODALRES)=CLng(1)
+			MessageBox "Operacja pobrania danych się powiodła", "Kreator wczytywania danych", vbOKOnly, vbInformation
+		else	
+			MessageBox "Operacja pobrania danych się NIE powiodła - wczytano dane z bazy ", "Kreator wczytywania danych", vbOKOnly, vbInformation     
+		end if
+  	end if
+
+	end with
+  
+	NX_TRACE_SHOW_LOG(1)
+end function
+
+
+'-------------------------------------------------------------------------------------------
+'
+' 				    FUNCKJE IMPORTUJACE/EKSPORTUJACE
+'
+'-------------------------------------------------------------------------------------------
+
+
+'--------------------------------------------------------------------
+' Funkcja importu danych z NavoFirma
+'--------------------------------------------------------------------
+function Import_FromFirma37(byval bSQL, byref pWizzardContainer) : Import_FromFirma37 = false
+	dim pM60214 : set pM60214 = doc_.getmodule(60214)
+	
+	dim pForeignConn
+	if bSQL then
+		set pForeignConn = pM60214.connectFirmaSQL(pWizzardContainer.m_strServer)
+	else
+		set pForeignConn = pM60214.connectFirma38Sybase()
+	end if
+
+	if pForeignConn is nothing then
+		MessageBox "Połączenie z bazą danych NAVO Firma nieudane", "Kreator eksportu/importu", vbOKOnly, vbInformation
+		exit function
+	end if
+
+	'store
+	dim idUser : idUser = 0
+	if trans_.isvar(GVAR_USER) then
+		idUser = trans_.var(GVAR_USER)
+	end if
+	dim idRokKsieg : idRokKsieg = 0
+	if trans_.isvar(GVAR_ROKKSIEG) then
+		idRokKsieg = trans_.var(GVAR_ROKKSIEG)
+	end if
+
+	Import_FromFirma37 = g_pM60319.do_import(pForeignConn,pWizzardContainer.NFIO)
+
+	'restore
+	trans_.var(GVAR_USER) = idUser
+	trans_.var(GVAR_ROKKSIEG) = idRokKsieg
+	trans_.afc.userprofile.set_user trans_,trans_.var(GVAR_USER)
+end function
+
+'--------------------------------------------------------------------
+' Funkcja importu danych z pliku XLS (Excel)
+'--------------------------------------------------------------------
+function Import_FromExcel(byval strFileName, byref pImportContainer)
+	NX_TRACE_START_STREAM("Import z pliku XLS",nothing)
+
+	dim pContainer
+	set pContainer = new CExcelExpContainer
+
+	dim pExportManager
+	set pExportManager = new CADOExportManager
+
+	pContainer.setExport pExportManager
+
+	'Ustaw kontener exportu
+	pExportManager.setContainer pContainer
+
+	'Podlacz się do pliku excelowego
+	if strFileName <> "" then
+		if (not pContainer.logon(strFileName, pExportManager)) then
+			view_message1 6309, 0, strFileName
+		end if   
+	end if
+
+#ifdef _HJORT
+	'import danych pracowników dla potrzeb wydruku PIT-11 
+  doc_.getmodule(60284).import_XLSPit11Data pExportManager
+#else
+	'Importuj poszczególne obiekty
+	import_XLSOpakowania pExportManager, ""
+#endif  
+
+	Import_FromExcel = pContainer.end_import()
+
+	pExportManager.performing_destroy
+
+	set pExportManager = nothing
+	set pContainer = nothing
+	NX_TRACE_SHOW_LOG(1)
+
+end function
+
+'-----------------------------------------------------------------------------
+' Import dodatkowych danych kartotekowych
+'-----------------------------------------------------------------------------
+function Import_AdditionalData(byref pImportContainer): Import_AdditionalData = false
+
+	with pImportContainer.m_pItems 
+
+	dim i
+	for i=0 to .UpperIndex()
+
+		select case (.value(i).m_nTypeID)
+			case TYPEID_N5MIEJSCOWOSC
+				if (not imPreload(T_PODZIAL_TERYTORIALNY)) then
+					exit function
+				end if
+			
+			case TYPEID_N5INSTYTUCJA
+				if (.value(i).m_strParam1 = "US") then
+					if not imPreload(T_URZAD_SKRABOWY)then
+						exit function
+					end if	
+				end if
+			
+			case TYPEID_N5BRANZA
+				if (not imPreload(T_EKD)) then
+					exit function
+				end if	
+
+		end select
+
+	next
+
+	end with
+
+	if (not trans_.saveobjects) then
+		view_message 6159, 0
+		exit function
+	end if
+
+	Import_AdditionalData = true
+end function
+
+'-----------------------------------------------------------------------------
+' Eksport poszczególnych obiektów do pliku XML
+'-----------------------------------------------------------------------------
+function exportXML(byref pImportContainer): exportXML = false
+	dim pExportFilter : set pExportFilter = pImportContainer.m_oarrExpFilter.Value(pImportContainer.m_nChoosenFilter)
+	
+	if pImportContainer.m_nExportWay = 1 then
+		exportXML = (pExportFilter.perform(pImportContainer.m_strPath) = 0)
+	else
+		exportXML = (pExportFilter.perform_remote(pImportContainer.m_strServer,_
+			pImportContainer.m_strLogin,pImportContainer.m_strPass) = 0)
+	end if
+end function
+
+'-----------------------------------------------------------------------------
+' Import obiektów z pliku 
+'-----------------------------------------------------------------------------
+function importXML(byval strFileName)
+	dim pImportHelper : set pImportHelper =  doc_.getmodule(60211) 
+	importXML = pImportHelper.import_nxd_file_2_EB( strFileName )
+end function
+
+'-------------------------------------------------------------------------------------------
+' Sprawdza czy zaznaczono do eksportu Firme
+'-------------------------------------------------------------------------------------------
+function FirmaExist(byref pImportContainer): FirmaExist = false
+	dim i
+	for i = 0 to pImportContainer.m_pItems.UpperIndex()
+		if (pImportContainer.m_pItems.value(i).m_nTypeID = TYPEID_N5FIRMA) then
+			FirmaExist = true
+			exit function
+		end if
+	next
+end function
+
+'-------------------------------------------------------------------------------------------
+' Sprawdza czy zaznaczono użytkownika do eksportu
+'-------------------------------------------------------------------------------------------
+function UsersExist(byref pImportContainer): UsersExist = false
+	dim i
+	for i = 0 to pImportContainer.m_pItems.UpperIndex()
+		if (pImportContainer.m_pItems.value(i).m_nTypeID = TYPEID_N5UZYTKOWNIK) then
+			UsersExist = true
+			exit function
+		end if
+	next
+end function
+
+
+'-------------------------------------------------------------------------------------------
+'
+' 						 OBSŁUGA PERFORMING'A
+'
+'-------------------------------------------------------------------------------------------
+
+
+dim pPrerformingXMLImp
+set pPrerformingXMLImp = nothing
+dim strOldTextXMLImp
+
+'-----------------------------------------------------------------------------
+' Event: Torzymy performing
+'-----------------------------------------------------------------------------
+function ImportXML_CreatePerforming(byref pExpMan, byval strText)
+	if (pPrerformingXMLImp is nothing) then
+		page_.updateview
+		set pPrerformingXMLImp = doc_.performing( strText )
+		strOldTextXMLImp=strText
+		exit function
+	end if
+
+	pPrerformingXMLImp.text = strText
+	strOldTextXMLImp=strText
+end function
+
+'-----------------------------------------------------------------------------
+' Event: Niszczymy performing
+'-----------------------------------------------------------------------------
+function ImportXML_DestroyPerforming(byref pExpMan)
+	set pPrerformingXMLImp = nothing
+	strOldTextXMLImp = ""
+end function
+
+dim pPrerformingXML
+set pPrerformingXML = nothing
+
+dim strOldXMLText
+
+'-----------------------------------------------------------------------------
+' Event: Torzymy performing
+'-----------------------------------------------------------------------------
+function XMLExport_CreatePerforming(byref pExpMan, byval strToDisplay)
+	
+	if (strOldXMLText=strToDisplay) then
+		exit function
+	end if
+
+	if (pPrerformingXML is nothing) then
+		page_.updateview
+		set pPrerformingXML = doc_.performing( strToDisplay )
+		strOldXMLText = strToDisplay
+		exit function
+	end if
+
+	pPrerformingXML.text = strToDisplay
+	strOldXMLText = strToDisplay
+end function
+
+'-----------------------------------------------------------------------------
+' Event: Niszczymy performing
+'-----------------------------------------------------------------------------
+function XMLExport_DestroyPerforming(byref pExpMan)
+	set pPrerformingXML = nothing
+	strOldXMLText = ""
+end function
+
+]]>
+
+		</script>
+	</config>
+
+	<body>
+	</body>
+
+</page>

@@ -1,0 +1,161 @@
+#include "h1000.h"
+#include "h1001.h"
+#include "h1201.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1240.h"
+#include "h1200.h"
+
+
+#define FROM_USER						1
+#define FROM_TEMPLATE					2
+
+
+
+
+<?xml version="1.0" encoding="windows-1250" ?>
+<page>
+<config>
+<script>
+
+<![CDATA[
+
+#include "50105"
+#include "50100"
+#include "50101"
+#include "50203"
+#include "50516"
+#include "50122"
+
+'fire_choice_list
+#include "50200"
+
+dim pPerf
+
+function copyRightsFromTemplate(byval id)
+	copyRightsFromTemplate = copyRights (id, FROM_TEMPLATE)
+end function
+
+function copyRightsFromUser(byval id)
+	copyRightsFromUser = copyRights (id, FROM_USER)
+end function
+
+function copyRights(byval id, byval fromWho)
+	
+	
+	dim strSQLforChoice,strTitle,strSQLforCursor,element,pSO,pUser
+
+
+	
+	if fromWho=FROM_USER then
+		strSQLforChoice="eAktywny<>N5UZYTKOWNIK_SZABLON and idobj!=" + cstr(id)
+		strTitle="Wybór użytkownika"
+		trans_.var(USER_TEMPLATE)=0
+
+	elseif fromWho=FROM_TEMPLATE then
+		strSQLforChoice="eAktywny=N5UZYTKOWNIK_SZABLON"
+		strTitle="Wybór szablonu uzytkownika"
+
+		'gdyby ktos mial genialny pomysl aby dodac nowy szablon...
+		trans_.var(USER_TEMPLATE)=1
+
+	end if
+
+	dim choice : choice = fire_choice_list(TYPEID_N5UZYTKOWNIK, strTitle, "strNazwa", strSQLforChoice, "", "")
+	if choice<>0 then
+	dim pTrans:set pTrans=trans_.createsubtran()
+
+		dim pPerf:set pPerf = doc_.performing("Trwa nadawanie praw uzytkownikowi . . . .")
+
+		dim pUserSet: set pUserSet=trans_.getobj(TYPEID_N5UZYTKOWNIK, choice)
+		if (pUserSet is nothing) then
+			copyRights=false
+			set pPerf = nothing
+			exit function
+		end if
+
+		set pUser=trans_.getobj(TYPEID_N5UZYTKOWNIK,id)
+		if pUser is nothing then
+			view_message 6176,0,""
+			set pPerf = nothing
+			exit function
+		end if
+
+			'najpierw wszystko usuwamy
+		dim cursor:set cursor = trans_.createrawcursor(TYPEID_N5SECURITYOBJ, "pUser="+cstr(id), "", "")
+		for each element in cursor
+			element.markdel = true		
+		next
+		if not trans_.saveobjects() then
+			MessageBox "Nie udało sią zmienić uprawnień","Uprawnienia", vbOkOnly, vbInformation
+			set pPerf = nothing
+			exit function
+		end if
+
+
+		'Jezeli nie mamy doczynienia z administaratorem
+		if (pUserSet.strLogin<>ADMIN_LOGIN) then
+
+			strSQLforCursor = "pUser="+cstr(choice)
+			dim bResult:bResult=false
+			
+			set cursor = trans_.createrawcursor(TYPEID_N5SECURITYOBJ, strSQLforCursor, "", "")
+			
+			for each element in cursor
+				set pSO = trans_.newobj(TYPEID_N5SECURITYOBJ)
+				set pSO.pUser = pUser
+				set pSO.pSOD = element.pSOD
+			next
+
+		else
+			'mamy doczynienia z administratorem - nadajemy wszystkie
+			'uprawnienia
+			dim pCursor
+			set pCursor = trans_.createrawcursor(TYPEID_N5SOD, "",  "", "")
+
+			dim pSOD
+			for each pSOD in pCursor
+				if not pSOD is nothing then
+					set pSO = trans_.newobj(TYPEID_N5SECURITYOBJ)
+					set pSO.pSOD  = pSOD
+					set pSO.pUser = pUser
+				end if
+			next
+
+		end if
+
+		bResult = trans_.saveobjects()		
+		if not bResult then
+			if not pUser is nothing then
+				view_message1 6175, 0," dla użytkownika " + cstr(pUser.strNazwa)
+			else
+				view_message1 6175, 0,""
+			end if
+		end if
+		copyRights=bResult
+
+		set pUserSet=nothing
+
+	set pTrans=nothing
+
+	else
+		copyRights=false
+		set pPerf = nothing
+		exit function
+	end if
+
+	set pPerf = nothing
+
+end function
+
+
+
+
+]]>
+</script>
+</config>
+	<body>
+	</body>
+</page>

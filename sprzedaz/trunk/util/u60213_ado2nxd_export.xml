@@ -1,0 +1,347 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+	zamiana strumienia ADO na NXD
+
+#include "h1000.h"
+#include "h1200.h"
+-->
+<page>
+<config>
+<script>
+<![CDATA[
+#define TYPEID_SPECIAL_COMMAND		1
+#define TYPEID_FIRST_STANDARD		10000	
+#define ERRCODE_IMPORT_FAILED	-101
+
+#define TYPEID_SELFMAPID			2
+
+#macro PREPARE_KEY(_str_type_,_var_key_)	lcase(_str_type_ + "|" + cstr(_var_key_))
+
+class CADO2NXDHandler
+	private m_pExportPackage 
+	private m_pExportMsg
+	private m_pMapDict
+	private m_nAutoIdObj
+	private m_fpObjectProvider
+	private m_pImporter
+	private m_pPerforming
+	private m_nObjectCounter
+	private m_pSourceConnection
+	private m_nError
+	private m_strErrDesc
+	private m_nLevel
+
+	private sub class_initialize()
+		set m_pExportPackage = doc_.system.activex("navoexpimp.exportpackage")
+		set m_pMapDict = doc_.system.activex("scripting.dictionary")
+		set m_pExportMsg = nothing
+		set m_fpObjectProvider = nothing
+		set m_pSourceConnection = nothing
+		set m_pImporter = nothing
+		set m_pPerforming = nothing
+		m_nObjectCounter = 0
+		m_nAutoIdObj = 0
+		m_nError = 0
+		m_strErrDesc =""
+		m_nLevel = clng(1)
+	end sub
+
+	private sub class_terminate()   'OK
+		set m_pExportPackage = nothing
+		set m_pExportMsg = nothing
+		set m_pMapDict = nothing
+		set m_fpObjectProvider = nothing
+		set m_pSourceConnection = nothing
+		set m_pImporter = nothing
+		set m_pPerforming = nothing
+	end sub
+
+	public sub required_init(byref pSourceConnection,byref fpObjectProvider)
+		set m_pSourceConnection = pSourceConnection
+		set m_fpObjectProvider = fpObjectProvider
+	end sub
+
+	public function get_source()
+		set get_source = m_pSourceConnection
+	end function
+
+	public property get errordesc()
+		errordesc = m_strErrDesc
+	end property
+
+	public sub start_export2stream(byref pOutputStream,byval nMsgType,byval strInfo)
+		'inicjuj strumień
+		if m_pImporter is nothing then
+			pOutputStream.write "<?xml version=""1.0"" encoding=""windows-1250""?>" + vbCrLf
+		end if
+		'podłącz
+		m_pExportPackage.ostream pOutputStream
+		set m_pExportMsg = m_pExportPackage.newmsg()
+		
+		'wypełnij i zapisz header
+		with m_pExportMsg
+			.header("msgtype") = clng(nMsgType)
+			.header("format") = clng(NXD_MESSAGE_FORMAT)
+			.header("description") = strInfo
+		end with
+		if m_pImporter is nothing then
+			m_pExportMsg.header.save
+		else
+			dim bBreak
+			m_pImporter.OnMessageBegin m_pExportMsg.importmessage(),bBreak
+		end if
+	end sub
+	public sub stop_export()
+		if m_pImporter is nothing then
+			m_pExportMsg.Save
+			m_pExportPackage.Save
+		else
+			dim bBreak
+			m_pImporter.OnMessageEnd m_pExportMsg,bBreak
+		end if
+	end sub
+
+	public sub set_importer(byref pImporter)
+		set m_pImporter = pImporter
+	end sub
+	
+	public function is_error()
+		is_error = (m_nError <> 0)
+	end function
+
+	public function new_object(byval nTypeId,byval nIdObj)
+		if nIdObj <= 0 then
+			m_nAutoIdObj = m_nAutoIdObj + 1
+			nIdObj = m_nAutoIdObj
+		end if
+		set new_object = m_pExportMsg.newobj(nTypeId,nIdObj)
+	end function
+
+	public function new_special_object()
+		set new_special_object = m_pExportMsg.newobj(TYPEID_SPECIAL_COMMAND,m_nObjectCounter+1)
+	end function
+
+	public function new_nocu(byref pADORS,byval nTypeId,byval nIdObj,byval varSrcType,byval varSrcObjKey)
+		dim pNOCU : set pNOCU = new CA2NOCU
+		pNOCU.init Me,pADORS,nTypeId,nIdObj,varSrcType,varSrcObjKey
+		set new_nocu = pNOCU
+	end function
+
+	'maps ADO -> NXD
+	public sub setmapping(byval strSrcType,byval varSrcKeyId,byval nDestType,byval nDestIdObj)
+		dim strKey : strKey = PREPARE_KEY(strSrcType,varSrcKeyId)
+		m_pMapDict.Item(strKey) = cstr(nDestType) + ";" + cstr(nDestIdObj)
+	end sub
+	
+	public function getmapping(byval strSrcType,byval varSrcKeyId,byref nDestType,byref nDestIdObj)
+		dim strKey : strKey = PREPARE_KEY(strSrcType,varSrcKeyId)
+		
+		if m_pMapDict.Exists(strKey) then
+			dim strItem : strItem = m_pMapDict(strKey)
+			dim nSep : nSep = instr(1,strItem,";")
+			nDestType = clng(left(strItem,nSep - 1))
+			nDestIdObj = clng(mid(strItem,nSep + 1))
+			getmapping = true
+		else
+			getmapping = false
+		end if
+	end function
+
+	public function ismapping(byval strSrcType,byval strSrcKeyId)
+		dim strKey : strKey = PREPARE_KEY(strSrcType,varSrcKeyId)
+		ismapping = m_pMapDict.Exists(strKey)
+	end function
+
+	public function process_object(byref pExportObject) : process_object = true
+		if m_pImporter is nothing then
+			pExportObject.save
+			m_nObjectCounter = m_nObjectCounter + 1
+			if m_nObjectCounter mod 20 = 0 then
+				if pExportObject.typeid > TYPEID_FIRST_STANDARD then
+					dim pStdObjDef : set pStdObjDef = doc_.stdobjdef.getobjdef(pExportObject.typeid)
+					show_progress "Wykesportowano element nr " + cstr(m_nObjectCounter) + " (" + pStdObjDef.humanname + ")"
+				end if
+			end if
+		else
+			dim bBreak : bBreak = false
+			m_pImporter.OnObject pExportObject,bBreak
+			process_object = not bBreak
+			if bBreak then
+				m_nError = ERRCODE_IMPORT_FAILED
+				m_strErrDesc = "Import danych zgłosił błąd"
+			end if
+		end if
+	end function
+
+	public function get_ref_id(strSrcType,varKey) : get_ref_id = 0
+		dim nDestType
+		dim nDestIdObj
+		if not getmapping(strSrcType,varKey,nDestType,nDestIdObj) then
+			'-- import object
+			m_nLevel = m_nLevel + 1
+			nDestIdObj = m_fpObjectProvider(me,strSrcType,varKey)
+			m_nLevel = m_nLevel - 1
+		end if
+		get_ref_id = nDestIdObj
+	end function
+
+	public sub hide_progress()
+		set m_pPerforming = nothing
+	end sub
+
+	public sub show_progress(strText)
+		if m_pPerforming is nothing then
+			set m_pPerforming = doc_.performing(strText)
+		else
+			m_pPerforming.text = strText
+		end if
+	end sub
+	
+	public function get_level() 
+		get_level = m_nLevel
+	end function
+end class
+
+class CA2NOCU		'ADO to NXD Object Convert Utility
+	private m_pADO2NXDHandler
+	private m_pExpObject
+	private m_pStdObjdef4Map
+	private m_pADORS
+	private m_idObjExp
+
+	private sub class_initialize()
+		set m_pADO2NXDHandler = nothing
+		set m_pExpObject = nothing
+		set m_pStdObjdef4Map= nothing
+		set m_pADORS = nothing
+		m_idObjExp = 0
+	end sub
+
+	private sub class_terminate()   'OK
+		done
+
+		set m_pADO2NXDHandler = nothing
+		set m_pStdObjdef4Map= nothing
+		set m_pADORS = nothing
+	end sub
+
+	public sub init(byref pA2NH,byref pADORS,byval nTypeId,byval nIdObj,byval varSrcType,byval varSrcObjKey)
+		set m_pADO2NXDHandler = pA2NH
+		set m_pADORS = pADORS
+
+		set m_pExpObject = m_pADO2NXDHandler.new_object(nTypeId,nIdObj)
+		m_idObjExp = m_pExpObject.idobj
+		m_pADO2NXDHandler.setmapping varSrcType,varSrcObjKey,m_pExpObject.typeid,m_pExpObject.idobj
+		if nTypeId <> TYPEID_SELFMAPID then
+			set m_pStdObjdef4Map = doc_.stdobjdef.getobjdef(nTypeId)
+		end if
+	end sub
+
+	public sub done()
+		if not m_pExpObject is nothing then
+			if not m_pADO2NXDHandler.is_error() then
+				m_pADO2NXDHandler.process_object m_pExpObject
+			end if
+			set m_pExpObject = nothing
+		end if
+	end sub
+
+	public function std_convert_ado2nxd(byval strNXDField,byref varValue)
+		dim pFieldDef : set pFieldDef = m_pStdObjdef4Map.field(m_pStdObjdef4Map.getfieldindex(strNXDField))
+		select case pFieldDef.sqltype
+		case SQLlong
+			std_convert_ado2nxd = clng(varValue)
+		case SQLdate
+			if isnull(varValue) then
+				std_convert_ado2nxd = trans_.afc.globals.nulldate()
+			else
+				std_convert_ado2nxd = cdate(varValue)
+			end if 
+		case SQLcurrency, SQLqty
+			if isnull(varValue) then
+				std_convert_ado2nxd = ccur(0.0)
+			else
+				std_convert_ado2nxd = ccur(varValue)
+			end if
+		case SQLtime
+			std_convert_ado2nxd = clng(varValue)
+		case else
+			if pFieldDef.sqltype < SQLsmall then	
+				dim nFldLen : nFldLen = pFieldDef.sqltype
+				if nFldLen > 8192 then
+					nFldLen = nFldLen - 8192 
+				end if
+				if isnull(varValue) then
+					std_convert_ado2nxd = ""
+				else
+					std_convert_ado2nxd = rtrim(left(cstr(varValue),nFldLen))
+				end if
+			else
+				std_convert_ado2nxd = Empty
+			end if
+		end select
+	end function
+
+	public sub map_field(strNXDField,strADOField)
+		m_pExpObject(strNXDField) = std_convert_ado2nxd(strNXDField,m_pADORS(strADOField).value)
+	end sub
+
+	public sub map_ref(strNXDField,strSrcType,varKey,bCondition)
+		if bCondition then
+			m_pExpObject(strNXDField) = clng(m_pADO2NXDHandler.get_ref_id(strSrcType,varKey))
+		else
+			null_ref strNXDField
+		end if
+	end sub
+
+	public sub null_ref(strNXDField)
+		m_pExpObject(strNXDField) = clng(0)
+	end sub
+
+	public sub mark_as_child(byval nParentTypeId,byval nParentIdObj,byval strParentList,byval nListLP)
+		m_pExpObject("_parent_type") =  clng(nParentTypeId)
+		m_pExpObject("_parent_idobj") = clng(nParentIdObj)
+		m_pExpObject("_parent_list") =  cstr(strParentList)
+		m_pExpObject("_list_lp") = clng(nListLP)
+	end sub
+
+	public sub mark_as_last_child()
+		m_pExpObject("_last_child") = clng(0)
+	end sub
+
+	public sub mark_save_now()
+		m_pExpObject("_save_now") = clng(0)
+	end sub
+
+	public sub mark_begin_unit()
+		m_pExpObject("_begin_unit") = clng(0)
+	end sub
+
+	public sub mark_end_unit()
+		m_pExpObject("_end_unit") = clng(0)
+	end sub
+
+	public property let field(strNXDField,varValue)
+		m_pExpObject(strNXDField) = varValue
+	end property
+
+	public property get field(strNXDField)
+		field = m_pExpObject(strNXDField)
+	end property
+
+	public property get idobj()
+		idobj = m_idObjExp
+	end property
+end class
+
+function new_ado2nxd_handler()
+	set new_ado2nxd_handler = new CADO2NXDHandler
+end function
+
+]]>
+</script>
+
+</config>
+	<body>
+	</body>
+</page>

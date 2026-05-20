@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!-- nx_resultbuilder 
+#comment NX_READY
+
+#include "h1000"
+-->
+
+<page>
+<config>
+<script>
+<![CDATA[
+class cevaluatoritem
+	private m_nComputed			'0 - not computed, 1 - computing, 2 - computed
+	private m_oValue
+	private m_strExpression
+
+	private sub class_initialize()
+		m_nComputed = 0
+		m_strExpression = ""
+	end sub
+
+	public property get computed()
+		computed = (m_nComputed = 2)
+	end property
+
+	public sub mark_computed
+		m_nComputed = 2
+	end sub
+
+	public property get computing()
+		computing = (m_nComputed = 1)
+	end property
+
+	public sub mark_computing
+		m_nComputed = 1
+	end sub
+
+	public property get value
+		value = m_oValue
+	end property
+
+	public property let value(oValue)
+		m_oValue = oValue
+		mark_computed
+	end property
+
+	public property let expression(strExpression)
+		m_nComputed = 0
+		m_strExpression = strExpression
+	end property
+
+	public property get expression()
+		expression = m_strExpression
+	end property
+end class
+
+class cevaluator
+	private m_pSymbolDict
+
+	private sub class_initialize()
+		set m_pSymbolDict = doc_.system.activex("Scripting.Dictionary")
+	end sub
+
+	private sub class_terminate()   'OK
+		set m_pSymbolDict = nothing
+	end sub
+
+	private function get_item_on_sym(byref pObject,byval strSymbol)
+		dim strKey : strKey = cstr(pObject.type) + ";" + cstr(pObject.idobj) + ";" + strSymbol
+		if m_pSymbolDict.Exists(strKey) then
+			set get_item_on_sym = m_pSymbolDict.Item(strKey)
+		else
+			set get_item_on_sym = nothing
+		end if
+	end function
+
+	private function add_new_item(byref pObject,byval strSymbol)
+		dim strKey : strKey = cstr(pObject.type) + ";" + cstr(pObject.idobj) + ";" + strSymbol
+		dim oItem : set oItem = new cevaluatoritem
+		m_pSymbolDict.Add strKey, oItem
+		set add_new_item = oItem
+	end function
+
+	private function compute_one(byref oObject,byval strExpression)
+		dim strCode : strCode = "function result(byref oEval,byref oObject)" + vbCrLf + _
+		"with oEval"+ vbCrLf + _
+		strExpression + vbCrLf + _
+		"end with" + vbCrLf + _
+		"end function" + vbCrLf
+
+		execute strCode
+		compute_one = result(Me,oObject)
+	end function
+
+	public property get val(byref pObject,byval strSymbol)
+		dim pItem : set pItem = get_item_on_sym(pObject,strSymbol)
+		if pItem is nothing then
+			set pItem = add_new_item(pObject,strSymbol)
+			dim strExpression : strExpression = nx_.apprep.objects.get_object(pObject.type).fields.get_field(strSymbol).getexpression
+			if trim(strExpression) = "" then
+				strExpression = "pObject." + strSymbol
+			end if
+			pItem.expression = strExpression
+		end if
+		with pItem
+			if not .computed then
+				if .computing then
+					err.raise 7000,"Obliczanie wyników","Rekursja w obliczeniach symbolu: " + strSymbol
+				end if
+				.mark_computing
+				'obliczamy
+				.value = compute_one(pObject,.expression)
+			end if
+			val = .value
+		end with
+	end property
+	public property let val(byref pObject,byval strSymbol,byval oValue)
+		dim pItem : set pItem = get_item_on_sym(pObject,strSymbol)
+		if pItem is nothing then
+			set pItem = add_new_item(pObject,strSymbol)
+		end if
+		pItem.value = oValue
+	end property
+end class
+
+function prepare_err_msg(byval strCode)
+	prepare_err_msg = "Wystąpił błąd skryptu " + cstr(err.Number) + ", opis:" + err.Description + _
+	" dla wyrażenia [" + strCode + "]"
+end function
+
+function new_evaluator()
+	set new_evaluator = new cevaluator
+end function
+]]>
+</script>
+</config>
+<body>
+</body>
+</page>

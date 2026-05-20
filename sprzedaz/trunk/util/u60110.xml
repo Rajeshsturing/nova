@@ -1,0 +1,892 @@
+#include "h1000.h"
+#include "h1220.h"
+
+#define	FILE_CHOICE		-100
+#define END_CHOICE		-101
+
+<?xml version="1.0" encoding="windows-1250" ?>
+<page>
+<config>
+<script>
+<!--
+	Wybór pliku (plików)
+-->
+<![CDATA[
+
+
+#include "50516"
+#include "50211"
+
+
+#define MAX_DRIVES_IN_LINE		9
+
+
+'!!!!UWAGA!!!!!
+'w celu uzywania wyboru pliku należy wolac funkcje z
+'library 50203
+
+'klasa reprezentyje jeden folder
+class CFolder
+	public Path
+	public Name
+	public vType
+	public Size
+  public Date
+end class
+
+
+dim m_strPath			'aktywna ścieżka
+dim m_strMask			'maski rozszerzen plikow - patrz tablica dozwolonych rozszerzen
+dim m_strPermanentMask  'maska przekazana jako parametr w postaci "*.jpg|..."
+dim m_strFileName		'maska nazwy pliku jaki ma byc widoczny
+dim m_nFiles			'maksymalna liczba plikow mozliwa do wybrania
+
+
+dim m_pSO				  'StreamObject
+dim m_pFSO				'FileSystemObject
+
+dim m_pFiles			'tablica wybranych plikow
+
+dim m_pSubFolders		'zawiera tablice wyswietlanych katalogow
+dim m_pFilesInFolder	'zawiera tablice plikow w aktualnym katalogu
+dim m_pFilesExtensions	'zawiera tablice dozwolonych rozszerzen
+
+dim m_bOnlyFolders		'true jezeli mamy pokazywać tylko foldery
+dim m_bSelecNewFile		'true jezeli wybieramy nazwe nowego pliku
+dim m_strNewFileInit	'gdy m_bSelecNewFile true początkowa nazwa pliku
+
+						'do wpisania
+
+'zainicjuj wszystkie zmienne
+function init(strInitialDir, strMask, strNameMask, nMaxFiles)
+	m_strPath=CStr(strInitialDir)
+	m_strMask=CStr(strMask)
+  m_strPermanentMask = CStr(strMask)
+	m_strFileName=CStr(strNameMask)
+	m_nFiles=CLng(nMaxFiles)
+
+	'na stracie pokazujemy szystko
+	m_bOnlyFolders=false
+	
+	'domyślnie nie jest to wybór nowego pliku
+	m_bSelecNewFile=false
+	m_strNewFileInit=""
+
+	set m_pFSO=CreateObject("Scripting.FileSystemObject")
+	set m_pSubFolders=trans_.afc.new_navoarray()
+
+	set m_pFiles=trans_.afc.new_navoarray()
+
+	set m_pFilesInFolder=trans_.afc.new_navoarray()
+	set m_pFilesExtensions=trans_.afc.new_navoarray()
+
+	m_pFilesExtensions.AllowDuplicate=false
+
+	'zainicjuj tablice z dozwolonymi rozszerzeniami plikow
+	m_strMask=Replace(m_strMask, "*.*", "")
+	m_strMask=Replace(m_strMask, "*.", "")
+	dim arrExtensions
+	arrExtensions=split(m_strMask, "|")
+
+	dim i
+	for i=0 to ubound(arrExtensions)
+		m_pFilesExtensions.Add UCase(arrExtensions(i))
+	next
+end function
+
+'wyczysc wszystko
+function destroy()
+	set m_pSO=nothing
+	set m_pFSO=nothing
+	set m_pSubFolders=nothing
+	set m_pFiles=nothing
+	set m_pFilesExtensions=nothing
+end function
+
+'Usuwa niedozwolone znaki z nazwy pliku
+function ClearFileName(byval strFileName) 
+	strFileName=replace(strFileName, "\", "_")
+	strFileName=replace(strFileName, "/", "_")
+	strFileName=replace(strFileName, ":", "_")
+	strFileName=replace(strFileName, "*", "_")
+	strFileName=replace(strFileName, "?", "_")
+	strFileName=replace(strFileName, """", "_")
+	strFileName=replace(strFileName, "<", "_")
+	strFileName=replace(strFileName, ">", "_")
+	strFileName=replace(strFileName, "|", "_")
+	
+	ClearFileName=strFileName
+end function
+
+
+
+'petla otwierajaca strone z odpowiednia lokalizacja
+'konczy sie gdy ktos zrezyguje lub wybierze pliki
+'i zwraca wybrane pliki
+function page_loop():page_loop=""
+
+	dim nResult
+	
+	do
+		'generowanie strony
+		page_start
+		m_pSO.write "<table><tbody>"
+		m_pSO.write "<tr><td>"
+		page_path
+		m_pSO.write "</td></tr><tr><td>"
+		page_drives
+		m_pSO.write "</td></tr><tr><td>"
+		page_folders_files
+		m_pSO.write "</td></tr><tr><td>"
+		page_choice
+		m_pSO.write "</td></tr>"
+	
+		m_pSO.write "</tbody></table>"
+		page_end
+
+		'wygenerowano - otwieraj
+		nResult=page_open()
+		if (nResult=END_CHOICE) then
+			'dokonano wyboru
+
+			if (m_bOnlyFolders) then
+				'zwracamy folder
+				
+				if (not m_bSelecNewFile) then
+					page_loop=m_strPath
+				else
+					'gdy jeszcze istnieje wybor nazwy pliku to ja dodaj
+
+					if (len(m_strPath)>0) then
+						
+						if (mid(m_strPath, len(m_strPath), 1)="\") then
+							m_strPath=mid(m_strPath, 1, len(m_strPath)-1)
+						end if
+					end if
+          
+					page_loop=m_strPath + "\" + ClearFileName( m_strNewFileInit )
+				end if
+
+				exit function
+			else
+				'zwracamy sciezki do plikow
+				dim i
+				for i=0 to m_pFiles.Count()-1
+					if (i>0) then page_loop=page_loop+"|"
+					page_loop=page_loop + m_pFiles.Value(i)
+				next
+
+				exit function
+			
+			end if
+
+		end if
+	
+	loop until (nResult=CMD_GOBACK or nResult=0)
+
+end function
+
+'wyswietla aktualnie wybrane pliki
+'jednak tylko gdy można wybrać więcej niż 1
+'jak rowniez przyciski zakoncz wybror i anuluj wybor
+sub page_choice()
+
+	if (m_pFiles.Count()>0 and m_nFiles>1) then
+
+		'wyswietlamy wybrane pliki
+		m_pSO.write "<table border='1'>"
+		m_pSO.write "<tbody>"
+		m_pSO.write "<tr>"
+
+		m_pSO.write "<td><text>Wybrane pliki (" + CStr(m_pFiles.Count()) + "/" + CStr(m_nFiles) + ")</text></td>"
+
+		m_pSO.write "</tr>"
+
+		dim i
+		for i=0 to m_pFiles.Count()-1
+			m_pSO.write "<tr>"
+			m_pSO.write "<td><text><" + "!" + "[" + "CD" + "AT" + "A[" + m_pFiles.Value(i) + "]" + "]" + "></text></td>"
+			m_pSO.write "</tr>"
+		next
+
+		m_pSO.write "</tbody>"
+		m_pSO.write "</table>"
+
+	end if
+
+	if (m_bSelecNewFile) then
+		'kontrolka do wpisania nazwy pliku
+		m_pSO.write "<t/><br/><t bold='true'>Nazwa pliku</t><edit size='50' style='STYLE_CTRL' name='e100'><transfer mode='custom'/></edit><br/>"+ vbCrLf
+	end if
+
+	if ((m_pFiles.Count()>0 and m_nFiles>1) or (m_bOnlyFolders)) then
+
+		'wyswietlamy przyciski anulowania i potwierdzenia wyboru
+		m_pSO.write "<table><tbody><tr><td style='STYLE_EMPTY_CELL'><t></t></td></tr><tr style='STYLE_ROW_BTN'><td>"
+		m_pSO.write "<button style='STYLE_BUTTON' size='12' href='varFunction=""end_choice""'>Zakończ wybór</button><t/>"+ vbCrLf
+		m_pSO.write "<button style='STYLE_BUTTON' size='12' href='varCmd=""CMD_GOBACK""'>Anuluj</button>"+ vbCrLf
+		m_pSO.write "</td></tr></tbody></table>"
+
+	end if
+end sub
+
+function isCorrectFile(pFile):isCorrectFile=false
+	dim strFileName
+	strFileName=pFile.Name
+
+	dim strFileExtension:strFileExtension=""
+
+	'pobieramy rozszerzenie
+	dim nExtPos:nExtPos=InStrRev(strFileName, ".", Len(strFileName) )
+	if (nExtPos>0) then
+		strFileExtension=UCase(Mid(strFileName, nExtPos+1, len(strFileName)-nExtPos+1))
+	end if
+
+	if (m_pFilesExtensions.Count()>0) then
+		'teraz sprawdzamy
+	
+		if not (m_pFilesExtensions.exists(strFileExtension)) then
+			exit function
+		end if
+
+	end if
+
+	if (len(m_strFileName)>0) then
+		dim strLastChar:strLastChar=Mid(m_strFileName, len(m_strFileName), 1)
+		
+		if (strLastChar="*") then
+			'ostatni człon nazwy pliku może być dowolny
+			'poczatek ma byc rowny prefiksowi
+			dim strPrefix:strPrefix=Replace(m_strFileName, "*", "")
+
+			if (len(strFileName)<len(strPrefix)) then
+				exit function
+			end if
+
+			if (Mid(UCase(strFileName), 1, len(strPrefix))<>UCase(strPrefix)) then
+				exit function
+			end if
+
+		else
+			'cala nazwa pliku musi się zgadzać
+			if UCase(m_strFileName)<>Replace(UCase(strFileName), "." + strFileExtension, "") then
+				exit function
+			end if
+		end if
+
+	end if
+
+	isCorrectFile=true
+end function
+
+'wyswietla folder i katalogi
+sub page_folders_files()
+	'ustaw aktualny folder w obrebie ktorego bedziemy
+	'dzialac
+
+	dim pDrive
+	set pDrive=m_pFSO.GetDrive(m_pFSO.GetDriveName(m_strPath))
+
+	if (pDrive.isReady) then
+
+		dim pActiveFolder
+		set pActiveFolder=m_pFSO.GetFolder(m_strPath)
+
+		'wypelnij liste katalogow
+		m_pSubFolders.RemoveAll
+		dim bRootFolder:bRootFolder=pActiveFolder.IsRootFolder
+
+		'obiekt do umieszczenia na liscie folderow
+		dim oFolder
+	
+		if not bRootFolder then
+			set oFolder=new CFolder
+		
+			oFolder.Name=".."
+			oFolder.Path=pActiveFolder.ParentFolder.Path
+			m_pSubFolders.Add oFolder
+
+			set oFolder=nothing
+		end if
+
+		dim pFolder
+		for each pFolder in pActiveFolder.SubFolders
+			set oFolder=new CFolder
+		
+			oFolder.Name=pFolder.Name
+			oFolder.Path=pFolder.Path
+			m_pSubFolders.Add oFolder
+
+			set oFolder=nothing
+		next
+
+		'rozpoczynamy WYSWIETLANIE
+		m_pSO.write "<table>"
+		m_pSO.write "<thead style='STYLE_TABLE_HEADER'>"
+		m_pSO.write "<tr>"
+		m_pSO.write "<td><text>Nazwa</text></td>"
+    if (m_strPermanentMask="*.bmp|*.gif|*.jpg|*.pic|*.wmf") then
+		  m_pSO.write "<td><text>Widok</text></td>"
+    end if
+		m_pSO.write "<td><text>Typ</text></td>"
+		m_pSO.write "<td><text>Rozmiar</text></td>"
+    m_pSO.write "<td><text>Ostatnio modyfikowany</text></td>"
+		m_pSO.write "</tr>"
+		m_pSO.write "</thead>"
+		m_pSO.write "<tbody style='STYLE_TABLE_BODY'>"
+    
+	
+		'wszystkich folderow
+		dim i
+		for i=0 to m_pSubFolders.Count()-1
+			m_pSO.write "<tr>"
+		
+			dim strTextT:strTextT="t"
+			if (len(m_pSubFolders.Value(i).Name)>50) then
+				strTextT="text"
+			end if
+
+			if i=0 and not bRootFolder then
+				m_pSO.write "<td linealign='vcenter'><picture image='80010'/><" + strTextT + " width='max' href='varFunctionHLI=""change_folder"" varModalRes=" + CStr(i) + "'><" + "!" + "[CD" + "ATA" + "[" + m_pSubFolders.Value(i).Name + "]" + "]" + "></" + strTextT + "></td>"
+        if (m_strPermanentMask="*.bmp|*.gif|*.jpg|*.pic|*.wmf") then
+		      m_pSO.write "<td/>"
+        end if
+        m_pSO.write "<td linealign='vcenter'><text>POWRÓT</text></td>"
+			else
+				m_pSO.write "<td linealign='vcenter'><picture image='80009'/><" + strTextT + " width='max' href='varFunctionHLI=""change_folder"" varModalRes=" + CStr(i) + "'><" + "!" + "[CDA" + "TA[" + m_pSubFolders.Value(i).Name + "]" + "]" + "></" + strTextT + "></td>"
+				if (m_strPermanentMask="*.bmp|*.gif|*.jpg|*.pic|*.wmf") then
+		      m_pSO.write "<td/>"
+        end if
+        m_pSO.write "<td linealign='vcenter'><text>KATALOG</text></td>"
+			end if
+			m_pSO.write "<td/>"
+      m_pSO.write "<td/>"
+
+			m_pSO.write "</tr>"
+		next
+
+		'jezeli mamy pokazac pliki
+		if (not m_bOnlyFolders) then
+
+			'wypelniamy tablice z plikami
+			m_pFilesInFolder.RemoveAll
+
+			dim pFile
+      
+  'do obsługi funkcji miniaturek    
+      dim pSystem
+	    set pSystem=doc_.system
+			for each pFile in pActiveFolder.Files
+      dim pFD
+      dim bOK
+		  set pFD=CFileDrive(bOK)
+       
+       
+        dim pFileInf
+				set pFileInf=new CFolder
+
+			  pFileInf.Name=pFile.Name
+				pFileInf.Path=pFile.Path
+				pFileInf.vType=pFile.Type
+				pFileInf.Size=pFile.Size
+        pFileInf.Date=pFile.DateLastModified
+				
+				m_pFilesInFolder.Add pFileInf
+
+				set pFileInf=nothing
+			next
+
+			'teraz pliki
+			for i=0 to m_pFilesInFolder.Count()-1
+      
+				set pFile=m_pFilesInFolder.Value(i)
+
+				'sprawdzaj czy plik ma byc pokazany
+				if (isCorrectFile(pFile)) then
+        
+					m_pSO.write "<tr>"
+
+					dim strTextOrT:strTextOrT="t"
+					if (len(pFile.Name)>50) then
+						strTextOrT="text"
+					end if
+					
+          'tworzenie kopii wyświetlanej miniatury zdjęcia
+          dim tempPath : tempPath = pFile.Path
+          dim ext
+          dim x
+          
+          ext=pFD.GetFileExtension(pFile.Name)
+          ext=UCase(ext)
+          if (m_pFilesExtensions.exists(ext)) then
+            tempPath = pSystem.createtempfilename("",ext)
+            x=m_pFSO.CopyFile(m_pFilesInFolder.Value(i).Path, tempPath)
+          end if
+          
+          
+					m_pSO.write "<td linealign='vcenter'><picture image='80011'/><" + strTextOrT + " width='max' href='varFunctionHLI=""choice_file"" varModalRes=" + CStr(i) + "'><!" + "[CD" + "ATA[" + pFile.Name + "]" + "]" + "></" + strTextOrT + "></td>"
+          if (m_strPermanentMask="*.bmp|*.gif|*.jpg|*.pic|*.wmf") and m_pFilesExtensions.exists(ext) then
+					  m_pSO.write "<td><picture backcolor='#f0f0f0' scalingmode='1' border='1' image='" + tempPath + "' width='1000' height='1000'></picture></td>"
+          else 
+            if (m_strPermanentMask="*.bmp|*.gif|*.jpg|*.pic|*.wmf") then
+              m_pSO.write "<td/>"
+            end if
+          end if
+          m_pSO.write "<td linealign='vcenter'><text>" + pFile.vType + "</text></td>"
+					m_pSO.write "<td align='right' linealign='vcenter'><text>" + cstr(doc_.afc.display.quantity(pFile.Size/1024,"KB",0)) +"</text></td>"
+          m_pSO.write "<td align='right' linealign='vcenter'><text>" + cstr(doc_.afc.display.fulldate(pFile.Date)) +"</text></td>"
+
+					m_pSO.write "</tr>"
+				end if
+			next
+      
+		end if
+
+		m_pSO.write "</tbody>"
+		m_pSO.write "</table>"
+
+	else 'isReady
+		'wypisz komunikat, iż dysk nie jesr gotowy do pracy
+		m_pSO.write "<table border='1'>"
+		m_pSO.write "<tbody>"
+		m_pSO.write "<tr>"
+
+		m_pSO.write "<td><text>Wybrany dysk nie jest gotowy do pracy!</text></td>"
+
+		m_pSO.write "</tr>"
+		m_pSO.write "</tbody>"
+		m_pSO.write "</table>"
+	end if
+  
+  
+end sub
+
+'wyswietla dostepne dyski
+sub page_drives()
+	m_pSO.write "<table>"
+	m_pSO.write "<tbody>"
+	m_pSO.write "<tr style='STYLE_TABLE_BODY'>"
+
+	dim nCount:nCount=0
+
+	dim pDrive
+	for each pDrive in m_pFSO.Drives
+
+		nCount=nCount+1
+
+		dim strPicture:strPicture=""
+		
+		select case pDrive.DriveType
+			case 1: 'dyskietka
+				strPicture="<picture image='80008'/>"
+			case 2: 'hdd
+				strPicture="<picture image='80006'/>"
+			case 3: 'network
+				strPicture="<picture image='80005'/>"
+			case 4: 'cd-rom
+				strPicture="<picture image='80007'/>"
+		end select
+
+		m_pSO.write "<td><t href='varFunctionHLI=""change_drive"" varModalRes2=""" + pDrive.DriveLetter + ":\""'>" + pDrive.DriveLetter + ": </t>" + strPicture + "</td>"
+
+		if (nCount=MAX_DRIVES_IN_LINE) then
+			m_pSO.write "</tr>"
+			m_pSO.write "<tr>"
+			nCount=0
+		end if
+
+	next 
+
+	m_pSO.write "</tr>"
+	m_pSO.write "</tbody>"
+	m_pSO.write "</table>"
+
+
+	'specjalne foldery - Moje Dokumenty itp.
+
+	dim pSystem
+	set pSystem=doc_.system
+
+	m_pSO.write "<table>"
+	m_pSO.write "<tbody>"
+	m_pSO.write "<tr style='STYLE_TABLE_BODY'>"
+
+	dim strSpecialFolder
+	strSpecialFolder=pSystem.specialfolder( NSF_MYDOCUMENTS )
+
+	m_pSO.write "<td keepline='true'><t href='varFunctionHLI=""change_drive"" varModalRes2=""" + strSpecialFolder + "\""'>Moje dokumenty</t><picture image='80828'/></td>"
+
+	strSpecialFolder=pSystem.specialfolder( NSF_DESKTOP )
+	m_pSO.write "<td keepline='true'><t href='varFunctionHLI=""change_drive"" varModalRes2=""" + strSpecialFolder + "\""'>Pulpit</t><picture image='80829'/></td>"
+
+	strSpecialFolder=pSystem.specialfolder( NSF_FAVORITES )
+	m_pSO.write "<td keepline='true'><t href='varFunctionHLI=""change_drive"" varModalRes2=""" + strSpecialFolder + "\""'>Ulubione</t><picture image='80830'/></td>"
+
+	strSpecialFolder=pSystem.specialfolder( NSF_MYDOCUMENTS ) + "\" + trans_.var(GVAR_APPLICATION)
+	if (m_pFSO.FolderExists( strSpecialFolder )) then
+		m_pSO.write "<td keepline='true'><t href='varFunctionHLI=""change_drive"" varModalRes2=""" + strSpecialFolder + "\""'>Dokumenty programu</t><picture image='80020' width='SIZE_FOR_12PX' height='SIZE_FOR_12PX'/></td>"
+	end if
+		
+	m_pSO.write "</tr>"
+	m_pSO.write "</tbody>"
+	m_pSO.write "</table>"
+
+end sub
+
+'wyswietl aktualna lokalizacje
+sub page_path()
+	m_pSO.write "<table>"
+	m_pSO.write "<tbody>"
+	m_pSO.write "<tr style='STYLE_TABLE_HEADER'>"
+	m_pSO.write "<td><text><!" + "[CD" + "ATA[" + m_strPath + "]" + "]></text></td>"
+	m_pSO.write "</tr>"
+	m_pSO.write "</tbody>"
+	m_pSO.write "</table>"
+end sub
+
+'wyswietla wygenerowana strone
+function page_open()
+	dim pHli
+	set pHli=doc_.createhlistr("varCmd=CMD_OPEN_WIZARD_PAGE")
+	
+	'przypisz strumien strony i otworz stone
+	set pHli.prop(GVAR_DESTPAGE) = m_pSO.getstream
+	dim pPage: set pPage=doc_.getpagehli(pHli)
+	page_open=pPage.domodalauto()
+
+	m_strNewFileInit=pPage.getFileNames()
+
+	if (page_open=CMD_CHOICE) then
+		'zmien folder
+		
+		dim nIndex
+		nIndex=trans_.var(GVAR_MODALRES)
+
+		dim strNewPath
+		if (nIndex>=0) then
+			strNewPath=m_pSubFolders.Value( nIndex ).Path
+		else
+			strNewPath=trans_.var(GVAR_MODALRES2)
+		end if
+
+		Dim pDrive: set pDrive=nothing
+
+		on error resume next
+		Set pDrive = m_pFSO.GetDrive( m_pFSO.GetDriveName( strNewPath ) )
+		on error goto 0
+
+		if (not pDrive is nothing) then
+			if (pDrive.IsReady) then
+				dim pFolderToAccess
+				set pFolderToAccess=m_pFSO.GetFolder(strNewPath)
+
+				'Sprawdzamy czy mamy uprawnienia do wejscia do wybranego
+				'katalogu i jezeli tak to wchodzimy do niego
+				err.clear
+				on error resume next
+
+				dim iTestCount
+				iTestCount=pFolderToAccess.SubFolders.Count
+				iTestCount=pFolderToAccess.Files.Count
+
+				if (err.number=0) then
+					m_strPath=strNewPath
+				else
+					view_message1 4102, 0, err.description
+				end if
+
+				on error goto 0
+			else
+				view_message 6205, 0
+			end if
+		else
+			view_message 6205, 0
+		end if
+
+	end if
+
+	if (page_open=FILE_CHOICE) then
+		'dodaj wybrane pliki
+		m_pFiles.Add m_pFilesInFolder.Value( trans_.var(GVAR_MODALRES) ).Path
+
+		if (m_pFiles.Count()=m_nFiles) then
+			'jeżeli liczba wybranych plików równa jest
+			'maksymalnej dozwolonej liczbie plikow do
+			'wybrania to zakończ wybieranie
+			page_open=END_CHOICE
+		end if
+    
+	end if
+  
+	set pPage=nothing
+end function
+
+'generuj poczatek strony - naglowek itp.
+'i czesc skryptowa potrzebno do nawigacji
+sub page_start()
+
+	set m_pSO=nothing
+	set m_pSO=doc_.createstreamobj
+
+	m_pSO.write "<?xml version=""1.0"" encoding=""windows-1250"" ?>"
+	m_pSO.write	"<page width='20000' style='STYLE_PAGE'>"
+
+	m_pSO.write "<config>"
+	m_pSO.write "<script><![CD" + "ATA["
+
+	'zmienne globalne
+	m_pSO.write "dim strFileName"+vbNewLine
+
+	'kod dla fopen
+	m_pSO.write "function fopen()"+vbNewLine
+	m_pSO.write "page_.cmdenabled CMD_ENABLEEDIT, false"+vbNewLine
+	m_pSO.write "page_.cmdenabled CMD_UNDO, false"+vbNewLine
+	m_pSO.write "page_.cmdenabled CMD_FIRSTINCURSOR, false"+vbNewLine
+	m_pSO.write "page_.cmdenabled CMD_PREVINCURSOR, false"+vbNewLine
+	m_pSO.write "page_.cmdenabled CMD_NEXTINCURSOR, false"+vbNewLine
+	m_pSO.write "page_.cmdenabled CMD_LASTINCURSOR, false"+vbNewLine
+	m_pSO.write "page_.cmdenabled CMD_SEARCH, false"+vbNewLine
+	m_pSO.write "page_.cmdenabled CMD_NEWFORM, false"+vbNewLine
+	m_pSO.write "page_.cmdenabled CMD_DELETEFORM, false"+vbNewLine
+	m_pSO.write "page_.cmdenabled CMD_SAVEFORM, false"+vbNewLine
+	m_pSO.write "strFileName=""" + CStr(m_strNewFileInit) + """"+vbNewLine
+	m_pSO.write "fopen=true"+vbNewLine
+	m_pSO.write "end function"+vbNewLine
+
+	'funkcja transferu 100 entered
+	m_pSO.write "function c100_ondataentered(byref oCtrl, byval newValue)"+vbNewLine
+	m_pSO.write	"strFileName=CStr(newValue)"+vbNewLine
+	m_pSO.write	"c100_ondataentered=true"+vbNewLine
+	m_pSO.write "end function"+vbNewLine
+
+	'funkcja transferu 100 get
+	m_pSO.write "function c100_ongetdata(byref oCtrl)"+vbNewLine
+	m_pSO.write "oCtrl.value=CStr(strFileName)"+vbNewLine
+	m_pSO.write "c100_ongetdata=true"+vbNewLine
+	m_pSO.write "end function"+vbNewLine
+
+	'funkcja zwracajaca nazwe pliku
+	m_pSO.write "function getFileNames()"+vbNewLine
+	m_pSO.write "getFileNames=strFileName"+vbNewLine
+	m_pSO.write "end function"+vbNewLine
+	
+	'skrypt zmiany folderu lub wyboru dysku
+	m_pSO.write "sub change_folder(byref hli)"+vbNewLine
+	m_pSO.write "page_.result=CMD_CHOICE"+vbNewLine
+	m_pSO.write "page_.goback"+vbNewLine
+	m_pSO.write "trans_.var(GVAR_MODALRES)=hli.prop(GVAR_MODALRES)"+vbNewLine
+	m_pSO.write "end sub"+vbNewLine
+
+	'skrypt zmiany folderu lub wyboru dysku
+	m_pSO.write "sub change_drive(byref hli)"+vbNewLine
+	m_pSO.write "page_.result=CMD_CHOICE"+vbNewLine
+	m_pSO.write "page_.goback"+vbNewLine
+	m_pSO.write "trans_.var(GVAR_MODALRES)=CLng(-1)"+vbNewLine
+	m_pSO.write "trans_.var(GVAR_MODALRES2)=hli.prop(GVAR_MODALRES2)"+vbNewLine
+	m_pSO.write "end sub"+vbNewLine
+
+	'procedura wolana gdy ktos kliknie na plik
+	m_pSO.write "sub choice_file(byref hli)"+vbNewLine
+	m_pSO.write "page_.result=FILE_CHOICE"+vbNewLine
+	m_pSO.write "page_.goback"+vbNewLine
+	m_pSO.write "trans_.var(GVAR_MODALRES)=hli.prop(GVAR_MODALRES)"+vbNewLine
+	m_pSO.write "end sub"+vbNewLine
+
+	'procedura wolana gdy ktos nacisnie na zakoncz wybor
+	'powoduje wysjcie z petli strony (page_loop)
+	'i zwrocenie wynikow
+	m_pSO.write "sub end_choice()"+vbNewLine
+	m_pSO.write "page_.result=END_CHOICE"+vbNewLine
+	m_pSO.write "page_.goback"+vbNewLine
+	m_pSO.write "end sub"+vbNewLine
+
+	m_pSO.write "]" + "]></script>"
+	m_pSO.write "</config>"
+
+	m_pSO.write "<header></header>"
+	m_pSO.write "<body>"
+end sub
+
+'generuj zakonczenie strony
+sub page_end()
+	m_pSO.write "</body>"
+	m_pSO.write "<footer></footer>"
+	m_pSO.write "</page>"
+end sub
+
+
+'--------------------------------------------------------------------------
+'
+'	select_file
+'
+'	strInitialDir - katalog od którego należy rozpocząć poszukiwanie plików
+'	strMask	- maski rozszerzeń plików jakie mają być widoczne w postaci "*.doc|*.xls", pusty napis - wszystkie
+'	strNameMask - maska nazwy pliku jaka ma być widoczna w postaci "x*" , pusty napis - wszystkie
+'	
+'	zwraca pełną ścieżkę do wybranego pliku lub "" gdy użytkownik zrezygnował z wyboru
+'--------------------------------------------------------------------------
+function select_file(byval strInitialDir,byval strMask,byval strNameMask)
+	select_file=select_files(strInitialDir, strMask, strNameMask, 1)
+end function
+
+'--------------------------------------------------------------------------
+'
+'	select_files
+'
+'	strInitialDir - katalog od którego należy rozpocząć poszukiwanie plików
+'	strMask	- maski rozszerzeń plików jakie mają być widoczne w postaci "*.doc|*.xls", pusty napis - wszystkie
+'	strNameMask - maska nazwy pliku jaka ma być widoczna w postaci "x*" , pusty napis - wszystkie
+'	nMaxFiles - maksymalna liczba plików jaki można wybrać, dla wartości 1 wywołuje tak jak select_file
+'	
+'	zwraca pełne ścieżki do wybranych plików lub "" gdy użytkownik zrezygnował z wyboru
+'	ścieżki oddzielone znakiem "|" w postaci: "c:\a.xls|c:\temp\b.doc" (akceptowana przez VBfunkcję
+'	split)
+'--------------------------------------------------------------------------
+function select_files(byval strInitialDir,byval strMask,byval strNameMask, byval nMaxFiles)
+	init strInitialDir, strMask, strNameMask, nMaxFiles
+
+	select_files= page_loop()'"C:\navo2002\sprzedaz\picture\temp_pic\iso_drewtur.jpg" '
+ 
+	destroy
+end function
+
+
+'--------------------------------------------------------------------------
+'
+'	select_folder
+'
+'	strInitialDir - katalog od którego należy rozpocząć poszukiwanie katalogów
+'	
+'	zwraca pełną ścieżkę lub "" gdy użytkownik zrezygnował z wyboru
+'--------------------------------------------------------------------------
+function select_folder(byval strInitialDir)
+	init strInitialDir, "", "", 1
+	m_bOnlyFolders=true
+
+	dim strFolder
+	strFolder=page_loop()
+
+	if (len(strFolder)>0) then
+		
+		if (mid(strFolder, len(strFolder), 1)="\") then
+			strFolder=mid(strFolder, 1, len(strFolder)-1)
+		end if
+	end if
+
+	select_folder=strFolder
+
+	destroy
+end function
+
+'--------------------------------------------------------------------------
+'
+'	select_folder_newfile
+'
+'	strInitialDir - katalog od którego należy rozpocząć poszukiwanie katalogów
+'	strFileName - poczatkowa nazwa pliku
+'	
+'	zwraca pełną ścieżkę lub "" gdy użytkownik zrezygnował z wyboru
+'--------------------------------------------------------------------------
+function select_folder_newfile(byval strInitialDir, byval strFileName)
+	init strInitialDir, "", "", 1
+	
+	m_bOnlyFolders=true
+	m_bSelecNewFile=true
+
+	m_strNewFileInit=strFileName
+
+	dim strFolder
+	strFolder=page_loop()
+
+	if (len(strFolder)>0) then
+		
+		if (mid(strFolder, len(strFolder), 1)="\") then
+			strFolder=mid(strFolder, 1, len(strFolder)-1)
+		end if
+	end if
+
+	select_folder_newfile=strFolder
+
+	destroy
+end function
+
+function dekoduj(byval strInitialDir, byval strPathCodeExe)
+  
+  'katalog docelowy
+  dim strDestDir : strDestDir = Left(strInitialDir,Len(strInitialDir) - 1) + "_coded\"
+  
+  'obiekt zdefiniowany w bibliotece 50211 używany do tworzenia katalogów oraz kopiowania plików ...\extras\
+  dim CFileDrive : set CFileDrive = new CFilesDrives
+  
+  'stwórz katalog z plikami zdekodowanymi
+  if (not CFileDrive.IsFolder(strDestDir)) then
+    if (not CFileDrive.CreateFolder(strDestDir)) then
+      exit function
+    end if
+  end if
+  
+  'inicjacja zmiennych
+  init strInitialDir, "", "", 100
+	
+	dim pActiveFolder
+	set pActiveFolder = m_pFSO.GetFolder(m_strPath)
+
+	'wypelnij liste katalogow
+	m_pSubFolders.RemoveAll
+
+	dim oFolder, pFolder
+  
+  'utwórz tablicę z podkatalogami
+	for each pFolder in pActiveFolder.SubFolders
+		set oFolder = new CFolder
+		oFolder.Name=pFolder.Name
+		oFolder.Path=pFolder.Path
+		m_pSubFolders.Add oFolder
+		set oFolder=nothing
+	next
+
+	'dla wszystkich podkatalogów
+	dim i, pFile
+	for i = 0 to m_pSubFolders.Count() - 1
+    dim pActiveFolder1
+	  set pActiveFolder1 = m_pFSO.GetFolder(m_pSubFolders.value(i).Path)
+    
+    'pomiń ekstras
+    if m_pSubFolders.value(i).Name <> "extras" then
+        
+        if (not CFileDrive.IsFolder(strDestDir + m_pSubFolders.value(i).Name + "\")) then
+			    if (not CFileDrive.CreateFolder(strDestDir + m_pSubFolders.value(i).Name + "\")) then
+				    exit function
+			    end if
+		    end if
+        
+	      for each pFile in pActiveFolder1.Files
+          doc_.system.execute strPathCodeExe, m_pSubFolders.value(i).Path, " -i " + pFile.Path + " -o " +_
+                              strDestDir + m_pSubFolders.value(i).Name + "\" + pFile.Name, true, true
+		    next
+     else
+        'skopiuj extras
+        if (not CFileDrive.IsFolder(strDestDir + m_pSubFolders.value(i).Name + "\")) then
+			    if (not CFileDrive.CreateFolder(strDestDir + m_pSubFolders.value(i).Name + "\")) then
+				    exit function
+			    end if
+		    end if     
+        for each pFile in pActiveFolder1.Files
+           CFileDrive.CopyFile strInitialDir + m_pSubFolders.value(i).Name + "\" + pFile.Name,strDestDir +_
+                               m_pSubFolders.value(i).Name + "\" + pFile.Name 
+        next
+        
+     end if   
+    
+	next
+
+end function
+
+
+]]>
+</script>
+</config>
+	<body>
+		<t>Wybór pliku (plików)</t>
+	</body>
+</page>

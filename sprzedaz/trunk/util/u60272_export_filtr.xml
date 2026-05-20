@@ -1,0 +1,314 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+
+	Export filters manager
+
+
+	<"exportdefiniton">
+		<nazwa>
+		</nazwa>
+		<finalvbcode>
+		</finalvbcode>
+		<editor>
+			<position>
+				<typeid />
+				<rapdef />
+			</position>
+		</editor>
+	</"exportdefiniton">
+-->
+<page>
+<config>
+<script>
+<![CDATA[
+
+'------------------------------- definicja storage -------------------
+class cexpfilter
+	'--- members ----
+	private m_strNazwa
+	private m_strVBCode
+	private m_pModuleExport
+	private m_pModuleEBHelper
+	private m_pXMLExpManager
+	private m_nLastError
+
+	'--- init / done ----
+	public sub class_initialize()
+		m_strNazwa = ""
+		m_strVBCode = ""
+
+		init_all
+	end sub
+
+	private sub class_terminate() 'OK
+		clean_all
+	end sub
+	
+	private sub clean_all()
+		set m_pXMLExpManager = nothing
+		set m_pModuleExport = nothing
+	end sub
+	
+	private sub init_all()
+		set m_pXMLExpManager = nothing
+		set m_pModuleExport = doc_.getmodule(60210)
+		set m_pModuleEBHelper = doc_.getmodule(60212)
+		m_nLastError = 0
+	end sub
+	'----- properties -----
+	public property get nazwa()
+		nazwa = m_strNazwa
+	end property
+
+	public property let nazwa(strNazwa)
+		m_strNazwa = strNazwa
+	end property
+
+	public property get vbcode()
+		vbcode = m_strVBCode
+	end property
+
+	public property let vbcode(strVBCode)
+		m_strVBCode = strVBCode
+	end property
+
+	public function is_valid()
+		is_valid = (trim(nazwa) <> "")
+	end function
+
+	'----- API -----
+	public function exportobj(byref pObject)
+		exportobj = m_nLastError
+		if m_nLastError <> 0 then
+			exit function
+		end if
+		m_nLastError = m_pXMLExpManager.std_export_any_object(pObject.type,pObject)
+		exportobj = m_nLastError
+	end function
+
+	public function exportsetex(byval nTypeID, byval strWhere, byval strOrderBy, byval strJoin)
+		exportsetex = m_nLastError
+		if m_nLastError <> 0 then
+			exit function
+		end if
+		dim pCursor : set pCursor = trans_.createrawcursor(nTypeID, strWhere, strOrderBy, strJoin)
+		m_nLastError = m_pModuleExport.std_export_cursor(m_pXMLExpManager,pCursor)
+		exportsetex = m_nLastError
+	end function
+
+	public function exportset(byval nTypeID, byval strWhere)
+		exportset = exportsetex(nTypeID, strWhere, "", "")
+	end function
+
+	public property let importmode(byval nTypeID,byval nValue)
+		m_pXMLExpManager.importmode(nTypeId) = nValue
+	end property
+
+	'----- internal -----
+	public function prepare_export()
+		set prepare_export = preprare_export_ex(doc_.createstreamobj())
+	end function
+
+	public function preprare_export_ex(byref pSO)
+		set m_pXMLExpManager = m_pModuleExport.new_export_handler()
+		m_pXMLExpManager.start_export pSO,0, m_strNazwa
+		m_pModuleEBHelper.init_for_EB5 m_pXMLExpManager
+		set preprare_export_ex = pSO
+	end function
+
+	public function done_export(byref pSO,strDestFileName)
+		m_pXMLExpManager.stop_export
+		if strDestFileName <> "" then
+			pSO.save strDestFileName
+		end if
+
+		set m_pXMLExpManager = nothing
+		done_export = m_nLastError
+	end function
+
+	public function perform(byval strDestFileName)
+		dim pSO : set pSO = prepare_export()
+
+		with Me
+			execute m_strVBCode
+		end with
+
+		perform = done_export(pSO,strDestFileName)
+	end function
+
+	public function perform_to_stream()
+		set perform_to_stream = nothing
+
+		dim pSO : set pSO = prepare_export()
+
+		with Me
+			execute m_strVBCode
+		end with
+
+		m_pXMLExpManager.stop_export
+		set m_pXMLExpManager = nothing
+	
+		if m_nLastError = 0 then
+			set perform_to_stream = pSO
+		end if
+
+	end function
+
+	public function perform_remote(byval strDestClient,byval strUser,byval strPassword)
+		dim pSO : set pSO = prepare_export()
+
+		with Me
+			execute m_strVBCode
+		end with
+
+		m_pXMLExpManager.stop_export
+		if m_nLastError <> 0 then
+			perform_remote = m_nLastError
+			exit function
+		end if
+		set m_pXMLExpManager = nothing
+
+		'establish remote connection
+		dim pM60214 : set pM60214 = doc_.getmodule(60214)
+		dim pRemoteConn : set pRemoteConn = pM60214.new_remote_client(strDestClient)
+		if pRemoteConn is nothing then
+			perform_remote = -1
+			exit function
+		end if
+
+		dim pRM60211 : set pRM60211 = pRemoteConn.document.getmodule(60211)
+		
+		if not pRemoteConn.document.getmodule(60121).remote_system_init(strUser,strPassword) then
+			trans_.message 0,0, "Zalogowanie się do systemu na " + strDestClient +_
+			 " nieudane. Sprawdź nazwę użytkownika i hasło"
+			perform_remote = -2
+			exit function
+		end if
+
+		dim pPerforming : set pPerforming = doc_.performing("Trwa wczytywanie danych przez " + strDestClient)
+		m_nLastError = pRM60211.import_nxd_stream_2_EB(pSO)
+
+		perform_remote = m_nLastError
+	end function
+
+
+	'wersja exportuje obiekt po obiekcie - fajne, działa ale wolne
+	public function perform_remote_obj_by_obj(byval strDestClient)
+		init_all
+
+		'establish remote connection
+		dim pM60214 : set pM60214 = doc_.getmodule(60214)
+		dim pRemoteConn : set pRemoteConn = pM60214.new_remote_client(strDestClient)
+		if pRemoteConn is nothing then
+			perform_remote = -1
+			exit function
+		end if
+
+		'create exp manager
+		set m_pXMLExpManager = m_pModuleExport.new_export_handler()
+
+		dim pRM60211 : set pRM60211 = pRemoteConn.document.getmodule(60211)
+		dim pRImportHolder : set pRImportHolder = pRM60211.new_import_nxd_2_EB_holder()
+		'connect both		
+		m_pXMLExpManager.set_importer pRImportHolder.get_handler()
+		dim pDummySO : set pDummySO = pRemoteConn.document.createstreamobj()
+		m_pXMLExpManager.start_export pDummySO,0, m_strNazwa
+
+		m_pModuleEBHelper.init_for_EB5 m_pXMLExpManager
+
+		with Me
+			execute m_strVBCode
+		end with
+
+		m_pXMLExpManager.stop_export
+		
+		clean_all
+
+		perform_remote = m_nLastError
+	end function
+end class
+
+function new_exp_filter()
+	set new_exp_filter = new cexpfilter
+end function
+
+
+'------------------------------- load / save ------------------------
+
+function save_data(byref pNAVOArray,byref pDestStream)
+	dim pExporter : set pExporter = doc_.system.activex("navoexpimp.exportpackage")
+	pDestStream.write "<?xml version=""1.0"" encoding=""windows-1250""?>" + vbCrLf
+	pExporter.ostream pDestStream
+
+	dim pMsg : set pMsg = pExporter.newmsg
+	
+	pMsg.header.save
+	dim iter 
+	for iter = 0 to pNAVOArray.Count() - 1
+		if pNAVOArray.Value(iter).is_valid() then
+			dim pExpObj: set pExpObj = pMsg.newobj(1,1+iter)
+			pExpObj("nazwa")  = pNAVOArray.Value(iter).nazwa
+			pExpObj("vbcode") = pNAVOArray.Value(iter).vbcode
+			pExpObj.save
+		else
+			trans_.message 7000,0, "Nazwa jest wymagana"
+			save_data = false
+			exit function
+		end if
+	next
+
+	pMsg.save
+	pExporter.save
+	save_data = true
+end function
+
+class cimportparser
+	private m_pNAVOArray
+
+	public sub init(byref pNAVOArray)
+		set m_pNAVOArray = pNAVOArray
+	end sub
+
+	public sub OnMessageBegin(byref pMsgObj,byref bBreak)
+		m_pNAVOArray.RemoveAll
+	end sub
+
+	public sub OnMessageEnd(pMsgObj,byref bBreak)
+	end sub
+
+	public sub OnObject(pObject,byref bBreak)
+		dim pAFD : set pAFD = new_exp_filter()
+		pAFD.nazwa = pObject("nazwa")
+		pAFD.vbcode = pObject("vbcode") 
+		m_pNAVOArray.Add(pAFD)
+	end sub
+
+end class
+
+function load_data(byref pNAVOArray,byref pSrcStream)
+	dim pImporter : set pImporter = doc_.system.activex("navoexpimp.importpackage")
+	dim pImportParser : set pImportParser = new cimportparser
+	pImportParser.init pNAVOArray
+
+	pImporter.sink = pImportParser
+	pImporter.istream  pSrcStream
+	pImporter.go
+end function
+
+'------------- mainly for remote operations
+function perform_pull_export(byval strVBCode)
+	dim pEF : set pEF = new_exp_filter()
+	pEF.vbcode = strVBCode
+	set perform_pull_export = pEF.perform_to_stream()
+	if not perform_pull_export is nothing then
+		perform_pull_export.rewind
+	end if
+end function
+
+
+]]>
+</script>
+</config>
+<body></body>
+</page>

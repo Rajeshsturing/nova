@@ -1,0 +1,934 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+	Wybierz pole z bazy danych i zwróć fp_node_ path (NX)
+
+#include "h1000.h"
+#include "h1220.h"
+-->
+<page style = 'STYLE_PAGE'>
+<config>
+<script>
+<!--
+#define NX_BROWSER
+#define NX_RELT_COMPUTED	6
+--> 
+<![CDATA[ 
+
+'nx_fire
+#include "50560"
+
+#ifdef NX_BROWSER
+
+#comment '------------------------------------------
+#comment ' budowa tablicy z typami obiektow danych (elemtny typu BOWI)
+#comment '------------------------------------------
+
+function nx_create_obj_type_array(byval strTypeIdFilter)
+	dim oBOWIArray : set oBOWIArray = nx_.new_array()
+	dim oBOWI
+
+	if strTypeIdFilter <> "" then
+		dim oFilterArray : set oFilterArray = nx_.new_array()
+		oFilterArray.split_string strTypeIdFilter,";"
+		dim strItem
+		for each strItem in oFilterArray
+			dim iTypeId : iTypeId = clng(strItem)
+			set oBOWI = nx_.new_bowi(0,iTypeId, _
+				nx_.apprep.objects.get_object(iTypeId).human_name,nothing)
+			oBOWIArray.add oBOWI
+		next
+	else
+		dim oStdObjDef
+		for each oStdObjDef in doc_.stdobjdef		
+			if not oStdObjDef.hidden() then
+				set oBOWI = nx_.new_bowi(0,oStdObjDef.typeid, _
+					nx_.apprep.objects.get_object(oStdObjDef.typeid).human_name,nothing)
+				oBOWIArray.add oBOWI
+			end if
+		next
+	end if
+	set nx_create_obj_type_array = oBOWIArray
+end function
+
+#comment '------------------------------------------
+#comment ' wybor typu obiektu (np. do robienia raportu)
+#comment '------------------------------------------
+
+function nx_select_obj_type(byval strTypeIdFilter)
+	dim oBOWIArray : set oBOWIArray = nx_create_obj_type_array("")
+	if oBOWIArray.count = 1 then
+		nx_select_obj_type = oBOWIArray(0).m_iIdObj
+		exit function
+	end if
+	
+	oBOWIArray.sort
+	nx_select_obj_type = nx_fire_array_choice_list(0,"Wybór typu danych","Typ danych", _
+		oBOWIArray)		
+end function
+
+#comment '------------------------------------------
+#comment ' tworzenie ścieżki fp_node
+#comment '------------------------------------------
+dim g_nx_path : set g_nx_path = nothing
+
+#comment '------------------------------------------
+#comment 'zwraca na zewnatrz sciezke
+#comment '------------------------------------------
+function get_nx_path()
+	set get_nx_path = g_nx_path
+end function
+
+sub init_nx_path(byref oNXPath)
+	set g_nx_path = oNXPath
+end sub
+
+private sub append_to_path(byref oNewNode)
+	if not g_nx_path is nothing then
+		select case g_nx_path.nodetype
+#ifdef _DEBUG		
+		case 1	'nt_field
+			err.raise 1,"append_to_path: węzeł typu pole"
+#endif
+		case 2	'nt_ref
+			set g_nx_path.ref_node = oNewNode
+		case 3	'nt_wildref
+			'todo
+		case 4	'nt_list
+			set g_nx_path.child_node = oNewNode		
+		end select
+	end if
+	set g_nx_path = oNewNode
+end sub
+
+sub nx_build_field_row(byref oASP,byref oEval,byref oOI)
+	dim oField : set oField = nx_.apprep.objects.get_object(oOI.m_iTypeId). _
+		fields.get_field(oOI.m_iIdObj)
+	dim strText
+	select case oField.reltype
+		case RELT_EMBED,NX_RELT_COMPUTED
+			select case oField.sqltype
+				case SQLlong
+					strText = "liczba całkowita"
+				case SQLdate
+					strText = "data"
+				case SQLtime
+					strText = "godzina"
+				case SQLcurrency
+					strText= "kwota"
+				case SQLqty
+					strText = "ilość"
+				case else
+					strText = "tekst"
+			end select
+		case RELT_ENUM
+			strText = "wybór opcji"
+		case RELT_REF
+				strText = "wskazanie na " + oField.get_ref_object(0).human_name
+		case RELT_LIST
+				strText = "lista elementów typu " + oField.get_ref_object(0).human_name
+		case RELT_FILE
+			strText = "plik"
+		case RELT_WILDREF
+			strText = "wskazanie wariantowe "
+	end select
+	oASP.newcell().e_label strText
+end sub
+
+function on_choose_field_hli(byref pCallingPage,byref pHLI)
+	dim oField : set oField = nx_.apprep.objects.get_object(pHLI.prop(GVAR_TYPEID)). _
+		fields.get_field(pHLI.prop(GVAR_OBJECT))
+
+	dim iNextTypeId 
+	dim iNextResult
+
+	select case oField.reltype
+		case RELT_EMBED,RELT_ENUM,NX_RELT_COMPUTED
+			append_to_path nx_.new_path_field(oField.parent.typeid,oField.name)
+			pCallingPage.result = clng(1)
+			pCallingPage.goback		
+		case RELT_REF,RELT_LIST
+			if oField.reltype = RELT_REF then 
+				append_to_path nx_.new_path_ref(oField.parent.typeid,oField.name)
+			else
+				append_to_path nx_.new_path_list(oField.parent.typeid,oField.name)
+			end if
+			iNextTypeId = oField.get_reftypeid(0)
+			dim pPM: set pPM = doc_.getmodule(THIS_FILE)
+			pPM.init_nx_path get_nx_path()
+			iNextResult = pPM.nx_select_object_field(iNextTypeId)
+			if iNextResult > 0 then
+				pCallingPage.result = iNextResult
+				pCallingPage.goback
+			end if
+		case RELT_FILE
+		case RELT_WILDREF
+			'todo
+	end select
+end function
+
+#comment '------------------------------------------
+#comment ' tworzenie tablicy BOWI pol obiektu
+#comment '------------------------------------------
+function nx_create_obj_field_array(byval iTypeId)
+	dim oBOWIArray : set oBOWIArray = nx_.new_array()
+	dim oBOWI
+
+	dim oNXObjInfo : set oNXObjInfo = nx_.apprep.objects.get_object(iTypeId)
+	dim oFieldColl : set oFieldColl = oNXObjInfo.fields
+	dim iter 
+	for iter = 0 to oFieldColl.Count - 1
+		dim oField : set oField = oFieldColl.get_field(iter)
+		if not oField.hidden then
+			set oBOWI = nx_.new_bowi(iTypeId,iter,oField.human_name,nothing)
+			oBOWIArray.add oBOWI
+		end if
+	next
+	
+	'todo: referencje zwrotne
+
+	set nx_create_obj_field_array = oBOWIArray
+end function
+
+#comment '------------------------------------------
+#comment ' wybor pola obiektu (np. do robienia raportu)
+#comment ' -2 - zakonczono wybor pozytywnie
+#comment ' 0 - rezygnacja uzytkownika
+#comment ' > 0 - powrot z podwyboru
+#comment '------------------------------------------
+
+function nx_select_object_field(byval iTypeId)
+	dim oBOWIArray : set oBOWIArray = nx_create_obj_field_array(iTypeId)	
+	oBOWIArray.sort
+	nx_select_object_field = nx_fire_array_choice_list_ex(0, _
+	"Wybór pola z " + nx_.apprep.objects.get_object(iTypeId).human_name,"Pole", _
+		oBOWIArray,false,getref("nx_build_field_row"),getref("on_choose_field_hli"))
+end function
+#endif
+
+#comment '------------------------------------------------------------------
+#comment '------------------------------------------------------------------
+#comment do wywalenia po przerobieniu
+#comment '------------------------------------------------------------------
+#comment '------------------------------------------------------------------
+#define LVAR_STRNAME 1
+
+#include "50203"
+#include "50126"
+
+
+'czy ma pokazywac referencje do danego obiektu na liscie
+dim g_bShowSelfReference: g_bShowSelfReference = false
+
+'czy ma pokazywac pole do wprowadzania nazwy dla dzikiej referencji
+'tylko dla sekcji SELECT
+dim g_bShowNameForWildReference: g_bShowNameForWildReference = false
+
+'glebokosc dzikiej referencji np dla  (1)10334;wpPointer(2)10333;strNazwa(2)10336;strNazwa(2)(1)
+' to jest 2
+dim g_nDepthOfWildReference: g_nDepthOfWildReference = 0
+
+dim g_nTypeIdParent: g_nTypeIdParent = -1
+dim g_nFieldIdParent: g_nFieldIdParent = -1
+
+
+dim g_pPathBuilder: set g_pPathBuilder = nothing
+
+dim bShowPosList
+
+function fopen()
+	bShowPosList = false
+end function
+
+function fclose()
+	if not g_pPathBuilder is nothing then
+		g_pPathBuilder.GoBack
+	end if
+end function
+
+function ShowList()
+	bShowPosList = true
+end function
+
+function setParentInfo(byval nParentTypeId, byval nParentFieldId)
+	g_nTypeIdParent = clng(nParentTypeId)
+	g_nFieldIdParent = clng(nParentFieldId)
+end function
+
+'--------------------------------------------------------------------------
+' osobna analiza dzieci
+'--------------------------------------------------------------------------
+function child_points_to_parent(byref child_stdobjdef, byval nBackRefTypeid, byref strFiledName, byref strFieldHumanName): child_points_to_parent = false
+
+	strFiledName = ""
+	strFieldHumanName = ""
+	
+	dim child_field
+
+	for each child_field in child_stdobjdef
+		if child_field.type = RELT_REF then
+			if child_field.reftypeid = nBackRefTypeid then
+				strFiledName = child_field.name
+				strFieldHumanName = child_field.humanname
+				child_points_to_parent = true
+				exit function
+			end if
+		end if
+	next
+end function
+
+function back_ref_row(byref tab, byval strFieldHumanName, byval strObjectHumanName, _
+	byval strOpis, byval strFieldName, byval nBackRefTypeid, byval nParentTypeId, byval nFieldListId)
+
+	tab.newrow.newcell.addtext(strFieldHumanName).element.disable=true
+
+	dim hli: set hli = doc_.createhli()
+	hli.prop(GVAR_FUNCTIONHLI) = "add_backrefhli"	
+	'nazwa pola wkazujacego na nasz obiekt - zwrotna ref
+	hli.prop(LVAR_STRNAME) = cstr(strFieldName)
+	hli.prop(5001) = nBackRefTypeid
+
+	tab.newcell.addtexthli strOpis + strObjectHumanName , hli
+
+end function
+
+'--------------------------------------------------------------------------
+'metody prywatne
+'--------------------------------------------------------------------------
+function fill_table(byref pStdObjDef , byref tab)
+	dim pFieldDef
+	dim iter: iter = 1
+
+	dim body 
+	dim row
+
+	dim namectrl, typectrl
+
+	'dim tab : set tab = doc_.afc.new_tb(page_).attach(page_.ctrl(5000)).removeall
+	tab.section_body
+
+	dim namectrl_text
+	dim namectrl_hli
+
+	dim typectrl_text
+	dim typectrl_hli
+
+	for each pFieldDef in pStdObjDef
+		set namectrl_hli = nothing
+		set typectrl_hli = nothing
+
+		if pFieldDef.name <> "IdObj" and not pFieldDef.hidden then
+			
+
+			tab.newrow			
+			
+			namectrl_text = pFieldDef.humanname
+			
+			dim tekst: tekst = ""
+			dim hli: set hli = doc_.createhli()
+					
+			select case pFieldDef.type
+
+			case RELT_EMBED,RELT_ENUM	' embedded
+				select case pFieldDef.sqltype
+
+				case SQLlong
+					if pFieldDef.type = RELT_ENUM then
+						tekst = "wybór opcji"
+					else
+						tekst = "liczba całkowita"
+					end if
+
+				case SQLdate
+					tekst = "data"
+
+				case SQLtime
+					tekst = "godzina"
+
+				case SQLcurrency
+					tekst = "kwota"
+				case SQLqty
+					tekst = "ilość"
+				case else
+					tekst = "tekst"
+
+				end select
+
+				hli.prop(GVAR_FUNCTIONHLI) = "add_fieldhli"
+				hli.prop(LVAR_STRNAME) = cstr(pFieldDef.name)
+				set namectrl_hli = hli
+
+			case RELT_REF	' ref
+				tekst = "odwołanie do " + doc_.stdobjdef.getobjdef(pFieldDef.reftypeid).humanname
+				hli.prop(GVAR_FUNCTIONHLI) = "add_refhli"
+				hli.prop(LVAR_STRNAME) = cstr(pFieldDef.name)
+				set typectrl_hli = hli
+
+			case RELT_LIST	' list
+				tekst = "lista " + doc_.stdobjdef.getobjdef(pFieldDef.reftypeid).humanname
+				hli.prop(GVAR_FUNCTIONHLI) = "add_listhli"
+				hli.prop(LVAR_STRNAME) = cstr(pFieldDef.name)
+				set typectrl_hli = hli
+
+			case RELT_WILDREF
+				tekst = ""
+				dim li: li = 0
+				while (pFieldDef.wildreftypeid(li) <> 0) 
+					if tekst <> "" then tekst = tekst + ","
+					tekst = tekst + cstr(doc_.stdobjdef.getobjdef(pFieldDef.wildreftypeid(li)).humanname)
+					li = li + 1
+				wend
+
+				hli.prop(GVAR_FUNCTIONHLI) = "add_wildrefhli"
+				hli.prop(LVAR_STRNAME) = cstr(pFieldDef.name)
+				set typectrl_hli = hli
+			end select
+
+			typectrl_text = tekst
+			iter = iter + 1
+
+			tab.newcell.addtexthli namectrl_text , namectrl_hli
+			if namectrl_hli is nothing then
+				tab.element.disable = true
+			end if
+			tab.newcell.addtexthli typectrl_text , typectrl_hli
+			if typectrl_hli is nothing then
+				tab.element.disable = true
+			end if
+
+		end if
+	next
+
+	'if (bShowPosList) then
+
+'-- spiko -- LP listy
+
+
+	if (pStdObjDef.child) then
+		tab.newrow
+			
+		set hli = doc_.createhli()
+		hli.prop(GVAR_FUNCTIONHLI) = "add_fieldhli"
+		hli.prop(LVAR_STRNAME) = "#LP"
+		tab.newcell.addtexthli "Pozycja na liście" , hli
+
+		tab.newcell.addtext("liczba porządkowa").element.disable = true
+
+	end if
+
+	'end if
+
+'-- EOF spiko
+
+
+
+'---------Vtec
+'---------dopisanie pol z referencjami zwrotnymi
+
+
+	dim hdrtxt2
+	dim hdrcel2
+
+	tab.newrow.newcell
+	tab.cell.backcolor = rgb(R_FOR_TABLE_HDR,G_FOR_TABLE_HDR,B_FOR_TABLE_HDR)
+	tab.cell.colspan = 2
+
+
+	tab.addtext "Referencje zwrotne"	
+
+	dim pParentObjDef
+	dim nParentTypeId		'identyfikator ojca
+	dim nFieldListId		'licznik numeru pola
+	dim nBackRefTypeid		'obiekt referencji zwrotnej
+
+	dim bAccepted
+	dim strOpis
+
+	for each pParentObjDef in doc_.stdobjdef
+	
+		nFieldListId = clng(0)
+		nParentTypeId = clng(pParentObjDef.typeid)
+		nBackRefTypeid = clng(pParentObjDef.typeid)
+
+		'------szukamy
+
+		if not pParentObjDef.child then
+			
+			'dzieci nie sa rozpatrywane samodzielnie
+			'dzieci analizujemy przez obiekt ojca
+			
+			for each pFieldDef in pParentObjDef
+				bAccepted = false
+				strOpis = ""
+
+				'------zwykle zwrotne
+				if pFieldDef.type = RELT_REF  then
+					if pFieldDef.reftypeid = pStdObjDef.typeid then bAccepted = true
+
+					strOpis = "odwołanie z "
+				end if
+
+				'------dzikie zwrotne
+				if pFieldDef.type = RELT_WILDREF  then 
+					dim doc_li: doc_li = 0
+
+					while (pFieldDef.wildreftypeid(doc_li) <> 0) 
+						if pFieldDef.wildreftypeid(li) = pStdObjDef.typeid then bAccepted = true
+						doc_li = doc_li + 1
+					wend
+
+					strOpis = "dzikie odwołanie z "
+				end if
+
+				'------zwrotne przez liste
+				if pFieldDef.type = RELT_LIST  then 
+					if pFieldDef.reftypeid = pStdObjDef.typeid then bAccepted = true
+					strOpis = "odwołanie z listy "
+
+					'dodatkowo wykonaj analize dziecka poprzez
+					'parenta
+
+					dim child_stdobjdef
+					set child_stdobjdef = doc_.stdobjdef.getobjdef(pFieldDef.reftypeid)
+					dim strFldFormChild_Name, strFldFormChild_HumanName
+					if (child_points_to_parent(child_stdobjdef, pStdObjDef.typeid, strFldFormChild_Name, strFldFormChild_HumanName)) then
+						'dziecko ma referencje do naszego obiektu przez z ojca
+						'o typie nParentTypeId
+
+						back_ref_row tab, strFldFormChild_HumanName, child_stdobjdef.HumanName, _
+							"odwołanie przez " + pFieldDef.humanname + " z ", strFldFormChild_Name, pFieldDef.reftypeid, nParentTypeId, nFieldListId
+
+						iter = iter + 1
+
+					end if
+
+				end if
+
+				'-------narysowanie ich
+				'if not pStdObjDef.hidden() and bAccepted = true then
+				if bAccepted = true then
+
+					back_ref_row tab, pFieldDef.humanname, pParentObjDef.humanname, _
+						strOpis, pFieldDef.name, nBackRefTypeid, clng(-1), clng(-1)
+
+					iter = iter + 1
+				end if
+
+				nFieldListId = nFieldListId + 1
+
+			next 'pFieldDef
+
+		end if 'not is child
+	next
+
+
+'-----------referencja do obiektu
+	tab.newrow.newcell.addtext("Filtry dodatkowe")
+	tab.cell.backcolor = rgb(R_FOR_TABLE_HDR,G_FOR_TABLE_HDR,B_FOR_TABLE_HDR)
+	tab.cell.colspan = 2
+
+	if g_bShowSelfReference then
+
+		set hli = doc_.createhli()
+		hli.prop(GVAR_FUNCTIONHLI) = "add_fieldhli"
+		hli.prop(LVAR_STRNAME) = "IdObj"
+		
+		tab.newrow.newcell.addtexthli "Cały obiekt " + pStdObjDef.humanname , hli
+		tab.newcell.addtext("do listy wyboru")		
+
+	end if
+
+'------EO-Vtec
+end function
+
+
+function add_fieldhli(byref hli)
+	g_pPathBuilder.AddField(hli.prop(LVAR_STRNAME))
+	page_.result = clng(1)
+	page_.goback
+end function
+
+
+function add_listhli(byref hli)
+	dim pPM: set pPM = doc_.getmodule(THIS_FILE)
+	pPM.SetPathBuilder g_pPathBuilder.AddList(hli.prop(LVAR_STRNAME))
+
+	dim result: result = pPM.select_object_field()
+
+	if result > 0 then
+		page_.result = result 
+		page_.goback
+	end if
+end function
+
+
+function add_refhli(byref hli)
+	dim pPM: set pPM = doc_.getmodule(THIS_FILE)
+	pPM.SetPathBuilder g_pPathBuilder.AddRef(hli.prop(LVAR_STRNAME))
+
+	dim result: result = pPM.select_object_field()
+
+	if result > 0 then
+		page_.result = result 
+		page_.goback
+	end if
+end function
+
+
+function add_backrefhli(byref hli)
+	dim pPM: set pPM = doc_.getmodule(THIS_FILE)
+	pPM.SetPathBuilder g_pPathBuilder.AddBackRef(hli.prop(LVAR_STRNAME), hli.prop(5001))
+
+	dim result: result = pPM.select_object_field()
+
+	if result > 0 then
+		page_.result = result 
+		page_.goback
+	end if
+end function
+
+
+function add_wildrefhli(byref hli)
+	dim pPM: set pPM = doc_.getmodule(20308)
+	pPM.SetPathBuilder g_pPathBuilder.AddWildRef(hli.prop(LVAR_STRNAME)), g_pPathBuilder.current.typeId
+
+	dim result: result = pPM.select_object_field()
+
+	if result > 0 then
+		page_.result = result 
+		page_.goback
+	end if
+end function
+
+
+dim pArrTypeids
+
+
+'-----------------------------------------------------------------------
+'
+'	klasa pomocnicza dla NAVOArray.Operations
+'	realizuje funkcje OnSwap
+'
+'-----------------------------------------------------------------------
+
+Class CNavoArraySupport
+
+	Public mvarAnotherArray
+
+	'-----------------------------------------------------------------------
+	' Zamień dwa elementy ze sobą
+	'-----------------------------------------------------------------------
+	public function swapelements(byref pnavoarray, byref nindexelem1, byref nindexelem2)
+    
+		dim varelem
+    
+		if IsObject(pNavoArray.Value(nIndexElem1)) then
+			Set varElem = pNavoArray.Value(nIndexElem1)
+			Set pNavoArray.Value(nIndexElem1) = pNavoArray.Value(nIndexElem2)
+			Set pNavoArray.Value(nIndexElem2) = varElem
+		else
+			varElem = pNavoArray.Value(nIndexElem1)
+			pNavoArray.Value(nIndexElem1) = pNavoArray.Value(nIndexElem2)
+			pNavoArray.Value(nIndexElem2) = varElem
+		end if
+
+		Dim temp
+		temp = mvarAnotherArray.Value(nIndexElem1)
+		mvarAnotherArray.Value(nIndexElem1) = mvarAnotherArray.Value(nIndexElem2)
+		mvarAnotherArray.Value(nIndexElem2) = temp
+	end function
+
+	'-----------------------------------------------------------------------
+	'Czy element elem1 jest < elem2
+	'-----------------------------------------------------------------------
+	public function less(byval elem1, byval elem2)
+		Less = (elem1 < elem2)
+	end function
+
+	'-----------------------------------------------------------------------
+	'Czy element elem1 jest > elem2
+	'-----------------------------------------------------------------------
+	public function more(byval elem1, byval elem2)
+		More = (elem1 > elem2)
+	end function
+
+	'-----------------------------------------------------------------------
+	'Czy element elem1 jest = elem2
+	'-----------------------------------------------------------------------
+	public function equal(byval elem1, byval elem2)
+		Equal = (elem1 = elem2)
+	end function
+
+end class
+
+dim oNavoArraySupport
+
+function fill_obj_table (byval strGivenTypeIds , byref tab)
+
+	dim iter: iter = 1
+
+	'tablica nazw obiektow
+	dim pArrObjects
+	set pArrObjects = trans_.afc.new_navoarray()
+
+	dim pGivenObjects
+	set pGivenObjects = trans_.afc.new_navoarray()
+	if strGivenTypeIds <> "" then
+		pGivenObjects.separate strGivenTypeIds,";"
+	end if
+
+
+	'tablica typeid tych obiek
+	set pArrTypeids = trans_.afc.new_navoarray()
+
+	set oNavoArraySupport = new CNavoArraySupport
+	set oNavoArraySupport.mvarAnotherArray = pArrTypeids
+	set pArrObjects.Operations = oNavoArraySupport
+
+	dim pStdObjDef
+	if strGivenTypeIds = "" then
+		for each pStdObjDef in doc_.stdobjdef
+			if not pStdObjDef.hidden() then
+				pArrObjects.Add UCaseFirst(pStdObjDef.humanname)
+				pArrTypeids.Add clng(pStdObjDef.typeid)
+			end if
+		next
+	else
+		for each pStdObjDef in doc_.stdobjdef
+			if pGivenObjects.exists(cstr(pStdObjDef.typeid)) then
+				pArrObjects.Add UCaseFirst(pStdObjDef.humanname)
+				pArrTypeids.Add clng(pStdObjDef.typeid)
+			end if
+		next
+	end if
+
+	pArrObjects.Sort
+
+	dim i
+	for i = 0 to pArrObjects.Count()-1
+		dim namectrl
+
+		tab.newrow
+
+		if ((tab.rownr-1) mod 2) = 0 then
+			tab.row.styleitem = STYLE_ROW_EVEN
+		end if
+
+		dim hli
+		set hli = doc_.createhli()
+		hli.prop(GVAR_CMD) = clng(CMD_GOBACK)
+		hli.prop(GVAR_MODALRES) = pArrTypeids.Value(i)
+
+		tab.newcell.addtexthli pArrObjects.Value(i) , hli
+		tab.element.width = clng(MINIMIZE_SIZE)
+	next
+
+end function
+
+
+'--------------------------------------------------------------------------
+'
+'	select_object_field
+'
+'	nTypeId - typ obiektu do prezentacji
+'	strComposedPath - composed path dla wybranego pola
+'
+'	Pozwala użytkownikowi wybrać pole obiektu bazy danych i zwraca 
+'	composed path z wyborem
+'--------------------------------------------------------------------------
+'leszek function select_object_field(byval nTypeId,byref strComposedPath)
+
+function select_object_field()
+
+#ifdef _DEBUG
+	select_object_field = nx_select_object_field(g_pPathBuilder.current.typeId)
+	exit function
+#endif
+
+	dim pStdObjDef: set pStdObjDef = doc_.stdobjdef.getobjdef(g_pPathBuilder.current.typeId)
+	page_.topelement.title = "Wybór pola z " + pStdObjDef.humanname
+	
+	dim tab : set tab = doc_.afc.new_tb(page_).attach(page_.ctrl(5000)).removeall
+	tab.section_head.removeall
+	tab.newrow.newcell.addtext("Pole").newcell.addtext("Typ")
+	
+	fill_table pStdObjDef,tab
+
+	select_object_field = page_.domodalauto
+
+end function
+
+
+'--------------------------------------------------------------------------
+'
+'	select_object
+'
+'	Pozwala użytkownikowi wybrać obiekt bazy danych i zwraca jego typeid
+'
+'--------------------------------------------------------------------------
+
+function select_object
+#ifdef NX_BROWSER
+	select_object = nx_select_obj_type("")
+#else
+	dim trans
+	set trans = trans_.createsubtran()	'to powoduje że po wyjściu z tej strony zwalniana jest pamięć
+	page_.topelement.title = "Wybór obiektu"
+
+	dim tab : set tab = doc_.afc.new_tb(page_).attach(page_.ctrl(5000)).removeall
+	tab.section_head.removeall
+	tab.newrow.newcell.addtext("Obiekt")
+	tab.section_body.removeall
+	fill_obj_table "" , tab
+	select_object = page_.domodalauto
+#endif
+end function
+
+
+function select_object_ex(byval givenTypeIds)
+#ifdef NX_BROWSER
+	select_object_ex = nx_select_obj_type(givenTypeIds)
+#else	
+	'najpierw sprawdzamy, czy przyopadkiem nie mamy tylko jednego typu
+	'podajemy to w stringu, kolejne typeid podzielone srdnikiem
+	if givenTypeIds<> "" and instr(givenTypeIds,";")=0 then
+		select_object_ex = clng(givenTypeIds)
+		exit function
+	end if
+
+	dim trans
+	set trans = trans_.createsubtran()	'to powoduje że po wyjściu z tej strony zwalniana jest pamięć
+	page_.topelement.title = "Wybór obiektu"
+
+	dim tab : set tab = doc_.afc.new_tb(page_).attach(page_.ctrl(5000)).removeall
+	tab.section_head.removeall
+	tab.newrow.newcell.addtext("Obiekt")
+	tab.section_body.removeall
+
+	fill_obj_table givenTypeIds , tab
+	select_object_ex = page_.domodalauto
+#endif
+end function
+
+
+function SetPathBuilder(byref pPathBuilder)
+	set g_pPathBuilder = pPathBuilder
+end function 
+
+function GetPathBuilder()
+	set GetPathBuilder = g_pPathBuilder
+end function 
+
+'--------------------------------------------------------------------------
+'
+'	setShowSelfReference
+'
+'	ustawia czy w liscie ma byc pokazana referencja do samego obiektu
+'
+'--------------------------------------------------------------------------
+function setShowSelfReference(byVal val)
+	g_bShowSelfReference = val
+end function 
+
+'--------------------------------------------------------------------------
+'
+'	setShowNameForWildReference
+'
+'czy ma pokazywac pole do wprowadzania nazwy dla dzikiej referencji
+'tylko dla sekcji SELECT
+'
+'--------------------------------------------------------------------------
+function setShowNameForWildReference(byVal val)
+	g_bShowNameForWildReference = val
+end function 
+
+'--------------------------------------------------------------------------
+'
+'	setDepthOfWildReference
+'
+'	ustawia glebokosc dla dziekij referencji
+'
+'--------------------------------------------------------------------------
+function setDepthOfWildReference(byVal val)
+	g_nDepthOfWildReference = val
+end function 
+
+'--------------------------------------
+'tworzy listę adresów z wyborem jednego
+'--------------------------------------
+function select_object_address(byref oBSArr)
+	page_.topelement.title = "Wybór adresu"
+	
+	dim tab : set tab = doc_.afc.new_tb(page_).attach(page_.ctrl(5000)).removeall
+	tab.section_head.removeall
+	tab.newrow.newcell.addtext("Ulica").newcell.addtext("Miejscowość").newcell.addtext("Gmina").newcell.addtext("Powiat").newcell.addtext("Województwo")
+	
+	fill_table_addresses oBSArr,tab
+
+	select_object_address = page_.domodalauto
+end function
+
+'---------------------------------
+'tworzy kolejne rekordy z adresami
+'---------------------------------
+function fill_table_addresses(byref oBSArr, byref tab)
+	tab.section_body
+	if is_record(oBSArr) then
+		dim iter, strLine, strNazwa
+		dim hli, strUlica
+		for iter = 0 to UBound(oBSArr)
+			strUlica = Trim(oBSArr(iter).StreetName)
+			if strUlica = "" then
+				strUlica = "(brak ulicy)"
+			end if			
+			set hli = doc_.createhli()
+			hli.prop(GVAR_FUNCTIONHLI) = "select_address"
+			hli.prop(1) = clng(iter + 1)
+			'ulica
+			tab.newrow.newcell.addtexthli strUlica, hli
+			'miejscowość
+			tab.newcell.addtext(Trim(oBSArr(iter).LocalityName))
+			'gmina
+			tab.newcell.addtext(Trim(oBSArr(iter).BaseAdminUnitName))
+			'powiat
+			tab.newcell.addtext(Trim(oBSArr(iter).SubAdminUnitName))
+			'województwo
+			tab.newcell.addtext(Trim(oBSArr(iter).TopAdminUnitName))
+		next
+	else
+		tab.newrow.newcell.addtext("Brak adresów dla podanego kodu pocztowego")
+		tab.cell.colspan = 5
+	end if	
+end function
+
+function is_record(byref oBSArr): is_record = false
+	dim iter
+	for iter = 0 to UBound(oBSArr)
+		if Trim(oBSArr(iter).StreetName) <> "" then
+			is_record = true
+			exit function
+		end if
+	next
+end function
+
+function select_address(byref hli)
+	page_.result = clng(hli.prop(1))
+	page_.goback
+end function
+
+
+]]>
+</script>
+</config>
+
+<body>
+	<t/><br/>
+	<table name = 't5000'>
+		<thead style = 'STYLE_TABLE_HEADER'>
+			<tr>
+			</tr>
+		</thead>
+		<tbody style = 'STYLE_TABLE_BODY'>
+		</tbody>
+	</table>
+</body>
+</page>

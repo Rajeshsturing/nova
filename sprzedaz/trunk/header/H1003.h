@@ -1,0 +1,3 @@
+#define	WIZZARD_CMD_CANCEL		1001
+#define	WIZZARD_CMD_NEXT		1002
+

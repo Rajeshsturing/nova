@@ -1,0 +1,412 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+
+#include "h1000.h" 
+#include "h1200.h" 
+
+#include "h1201.h" 
+#include "h1203.h" 
+#include "h1231.h" 
+#include "h1232.h" 
+#include "h1240.h" 
+#include "h1229.h"
+
+#define MXT_RECALC_PAK		1
+#define MXT_RECEPTA_ID		2
+
+-->
+<class>
+	<identifier>TYPEID_N5POZREALPROD</identifier>
+	<table>n5pozrealprod</table>
+	<humanname>Pozycja realizacji produkcji</humanname>
+	<child/>
+	<hidden/>
+	<idobj/>
+	<ref>
+		<name>pProdukt</name>
+		<humanname>Surowiec</humanname>
+		<typeid>TYPEID_N5PRODUKT</typeid>
+	</ref>
+	<!--
+	REF->n5produkt
+	-->
+	<ref>
+		<name>pOpak</name>
+		<humanname>Opakowanie surowca</humanname>
+		<typeid>TYPEID_N5OPAKOWANIE_PRODUKTU</typeid>
+	</ref>
+	<!--
+	REF->n5opakowanie
+	-->
+	<ref>
+		<name>pMagazyn</name>
+		<humanname>Magazyn produkcyjny</humanname>
+		<typeid>TYPEID_N5MAGAZYN</typeid>
+		<optional/>
+	</ref>
+	<!--
+	REF->n5magazyn, automatycznie kopiowany z parenta
+	-->
+	<ref>
+		<name>pJednOpak</name>
+		<humanname>Jednostka opakowania</humanname>
+		<typeid>TYPEID_N5JEDNOSTKA</typeid>
+	</ref>
+	<embedded>
+		<name>curIloscOpak</name>
+		<sqltype>SQLqty</sqltype>
+		<humanname>Ilość opakowań</humanname>
+	</embedded>
+	<ref>
+		<name>pJednEwid</name>
+		<humanname>Jednostka ewidencji</humanname>
+		<typeid>TYPEID_N5JEDNOSTKA</typeid>
+	</ref>
+	<embedded>
+		<name>curIloscEwid</name>
+		<sqltype>SQLqty</sqltype>
+		<humanname>Ilość w jedn. ewid.</humanname>
+#ifndef _IOW    
+		<nonempty/>
+#endif    
+	</embedded>
+	<embedded>
+		<name>curCenaMag</name>
+		<sqltype>SQLprice</sqltype>
+		<humanname>Cena magazynowa</humanname>
+	</embedded>
+	<!--
+	Cena w walucie magazynu
+	-->
+	<embedded>
+		<name>curCenaEwid</name>
+		<sqltype>SQLprice</sqltype>
+		<humanname>Cena w walucie ewidencyjnej</humanname>
+	</embedded>
+	<!--
+	curCenaEwid= kurs(curCenaMag,magazyn
+	-->
+	<embedded>
+		<name>curWartMag</name>
+		<sqltype>SQLcurrency</sqltype>
+		<humanname>Wartość w walucie magazynu</humanname>
+	</embedded>
+	<!--
+	curWartMag = round2(curCenaMag* curIloscEwid)
+	-->
+	<embedded>
+		<name>curWartEwid</name>
+		<sqltype>SQLcurrency</sqltype>
+		<humanname>Wartość w walucie ewidencyjnej</humanname>
+	</embedded>
+
+	<embedded>
+		<name>nNumOpMagDost</name>
+		<sqltype>SQLlong</sqltype>
+		<humanname>nNumOpMagDost</humanname>
+		<default>0</default>
+	</embedded>
+
+	<embedded>
+		<name>nLpDost</name>
+		<sqltype>SQLlong</sqltype>
+		<humanname>nLpDost</humanname>
+		<default>0</default>
+	</embedded>
+
+
+	XDF_EXTRAS
+
+
+
+	<embedded>
+		<name>curWspolczynnik</name>
+		<sqltype>SQLcurrency</sqltype>
+		<humanname>Współczynnik</humanname>
+		<default>1.0</default>
+	</embedded>
+
+	<enum>
+		<name>eRodzajWyceny</name>
+		<humanname>Rodzaj wyceny</humanname>
+		<default>N5POZREALPROD_RODZAJWYCENY_WSPOLCZYNNIK</default>
+		<item>cena</item>
+		<item>współczynnik</item>
+	</enum>
+
+	<ref>
+		<name>pozreal_pRecepta</name>
+		<humanname>Recepta</humanname>
+		<typeid>TYPEID_N5RECEPTA</typeid>
+		<optional/>
+	</ref>
+	
+#ifdef ENABLE_DB17
+	<embedded>
+		<name>pozreal_dDataWazn</name>
+		<sqltype>SQLdate</sqltype>
+		<humanname>Data ważności</humanname>
+	</embedded>
+#endif
+
+	<cursors />
+
+<script>
+<![CDATA[
+
+
+
+'------------------------------------------------------------------------
+function n5pozrealprod_initnew()
+	set this_.pMagazyn = this_.parent.pMagazyn
+	n5pozrealprod_initnew = true
+end function
+
+
+'------------------------------------------------------------------------
+function n5pozrealprod_as_text(): n5pozrealprod_as_text=""
+	'TODO:LR: ustalic co ma zwracac
+    dim strText
+	if not this_.pProdukt is nothing then
+		strText = strText + this_.pProdukt.strNazwa + "-"
+	end if
+	if not this_.pOpak is nothing then
+		strText = strText + this_.pOpak.strNazwa
+	end if 
+	strText = strText + ";" + cstr(this_.curIloscOpak)
+	n5pozrealprod_as_text = strText
+end function
+
+
+'------------------------------------------------------------------------
+function n5pozrealprod_pProdukt_change(oldval)
+	n5pozrealprod_pProdukt_change = false
+
+	if not this_.pProdukt is nothing then
+
+		if this_.pProdukt.prod_cWyrob <> "1" and this_.pProdukt.prod_cSurowiec <> "1" then
+			exit function
+		end if
+
+
+		set this_.pJednEwid = this_.pProdukt.pJednostkaEwid
+
+		dim nRejDokTyp
+		nRejDokTyp = this_.parent.pRejestrDok.eTyp
+
+		'Dla pakowania/rozpakowywania nie ustawiaj z automatu opakowania i ilosci
+		if (nRejDokTyp <> N5REJESTRDOK_ROZPAKOWANIA and nRejDokTyp <> N5REJESTRDOK_ZAPAKOWANIA) then
+			set this_.pOpak = this_.pProdukt.listOpakowania.get(1)
+			this_.curIloscOpak = CCur(1)
+		end if
+
+
+		'tutaj ustawimy recpete
+		dim oMtxRecepta : set oMtxRecepta = trans_.holdmutex(this_.type,this_.idobj,MXT_RECEPTA_ID)
+		if not oMtxRecepta is nothing then
+			'szukaj pierwszej spełniającej recepty
+			if not this_.pProdukt is nothing and not this_.pOpak is nothing then		
+				dim pCursor : set pCursor = trans_.createadors( _
+					"select top 1 p_idobj from vlist_n5recepta_listwyrob where c_pprodukt=" +_
+					cstr(this_.pProdukt.idobj) + " and c_popak=" + cstr(this_.pOpak.idobj) +" order by p_idobj")
+				if not pCursor.EOF then
+					dim idReceptura : idReceptura = clng(pCursor("p_idobj"))
+					set this_.pozreal_pRecepta = trans_.getobj(TYPEID_N5RECEPTA,idReceptura)
+				end if
+			end if
+		end if
+
+	else
+		set this_.pJednEwid = nothing
+		set this_.pOpak = nothing
+		this_.curIloscOpak = CCur(0)
+	end if
+
+	n5pozrealprod_pProdukt_change = true
+end function
+
+
+
+
+
+
+
+
+function n5pozrealprod_pozreal_pRecepta_change(oldval)
+	dim oMtxRecepta : set oMtxRecepta = trans_.holdmutex(this_.type,this_.idobj,MXT_RECEPTA_ID)
+	if not oMtxRecepta is nothing then
+		if not this_.pozreal_pRecepta is nothing then
+			if not this_.pProdukt is nothing and not this_.pOpak is nothing then
+				dim nLP : nLP = this_.pozreal_pRecepta.n5recepta_scan_for_wyrob(this_.pProdukt.idObj,this_.pOpak.idobj)
+				if nLP > 0 then
+					n5pozrealprod_pozreal_pRecepta_change = true
+					exit function
+				end if
+			end if
+			if this_.pozreal_pRecepta.listWyrob.exists(1) then
+				set this_.pProdukt = this_.pozreal_pRecepta.listWyrob.get(1).pProdukt
+				set this_.pOpak = this_.pozreal_pRecepta.listWyrob.get(1).pOpak
+				n5pozrealprod_pozreal_pRecepta_change = true
+				exit function
+			end if
+		end if
+		set this_.pOpak = nothing
+		set this_.pProdukt = nothing
+	end if
+	n5pozrealprod_pozreal_pRecepta_change = true
+end function
+
+'------------------------------------------------------------------------
+' Dla pakowania/rozpakowywania przelicz ilosc z n5realprod na ilosc
+' w pozycji (czyli zapakuj albo rozpakuj)
+'------------------------------------------------------------------------
+function n5pozrealprod_curIloscOpak2IloscPos()
+	if (this_.parent.cAutoCalc = "1") then
+		
+		'Wykonaj przeliczenia ilosci w przypadku pakowania lub
+		'rozpakowywania czegos
+
+		dim oMtxRecalcPack
+
+		select case this_.parent.pRejestrDok.eTyp
+			
+			case N5REJESTRDOK_ZAPAKOWANIA
+				set oMtxRecalcPack = trans_.holdmutex(this_.parent.type,this_.parent.idobj,MXT_RECALC_PAK)
+				if not oMtxRecalcPack is nothing then
+		
+					'Przelicz ilosc jednostkowa na ilosc w opakowaniach
+					'zbiorczych (moze byc zaokraglone w gore)
+					dim curNowaIlosc
+					curNowaIlosc = this_.parent.n5realprod_calc2zbiorcze(this_.parent.n5realprod_getProdukt_wyrob(), this_.parent.n5realprod_getOpakowanie_surowiec(), this_.parent.n5realprod_getOpakowanie_wyrob(), this_.parent.n5realprod_getIlosc_surowiec())
+					
+					if (not this_.parent.n5realprod_getOpakowanie_wyrob() is nothing) then
+
+						dim nTheSameQuantity
+						nTheSameQuantity = this_.parent.n5realprod_isTheSameQuantity(this_.parent.n5realprod_getProdukt_wyrob(), this_.parent.n5realprod_getOpakowanie_surowiec(), this_.parent.n5realprod_getOpakowanie_wyrob(), this_.parent.n5realprod_getIlosc_surowiec(), curNowaIlosc)
+
+						if (not isEmpty(nTheSameQuantity)) then
+							if (nTheSameQuantity<>0) then
+								curNowaIlosc = trans_.afc.convert.roundnup(curNowaIlosc, this_.parent.n5realprod_getOpakowanie_wyrob().pJednOpak.nDokladnosc - 1)
+							end if
+						end if
+
+						this_.parent.n5realprod_setIlosc_wyrob trans_.afc.convert.roundn(curNowaIlosc, this_.parent.n5realprod_getOpakowanie_wyrob().pJednOpak.nDokladnosc - 1)
+					end if
+
+				   set oMtxRecalcPack = nothing
+				end if
+
+			case N5REJESTRDOK_ROZPAKOWANIA
+				set oMtxRecalcPack = trans_.holdmutex(this_.parent.type,this_.parent.idobj,MXT_RECALC_PAK)
+				if not oMtxRecalcPack is nothing then
+					
+					'Przelicz ilosc zbiorcza na ilosc jednostkowa
+					this_.parent.n5realprod_setIlosc_wyrob this_.parent.n5realprod_calc2jednostkowe(this_.parent.n5realprod_getProdukt_wyrob(), this_.parent.n5realprod_getOpakowanie_wyrob(), this_.parent.n5realprod_getOpakowanie_surowiec() , this_.parent.n5realprod_getIlosc_surowiec())
+					'this_.parent.curIloscOpak = this_.parent.n5realprod_calc2jednostkowe(this_.parent.pWyrob, this_.parent.pOpak, this_.pOpak, this_.curIloscOpak)
+
+				   set oMtxRecalcPack = nothing
+				end if
+
+		end select
+	end if
+end function
+
+'------------------------------------------------------------------------
+function n5pozrealprod_curIloscOpak_change(oldval): n5pozrealprod_curIloscOpak_change = false
+	if not this_.pOpak is nothing then
+		this_.curIloscEwid = trans_.afc.convert.roundn( this_.curIloscOpak * this_.pOpak.currKrotnosc, 4)
+		if this_.pOpak.currKrotnosc = ccur(0) then
+			trans_.message 1002 , 0 , "UWAGA! Krotność w opakowaniu " + cstr(this_.pOpak.text) + " produktu " + cstr(this_.pOpak.parent.text) + " jest równa 0"
+		end if
+	else
+		this_.curIloscEwid = ccur(0)
+	end if
+
+	'Przelicz ilosc przy pakowaniu / rozpakowaniu
+	n5pozrealprod_curIloscOpak2IloscPos
+
+	n5pozrealprod_curIloscOpak_change = true
+end function
+
+
+'------------------------------------------------------------------------
+function n5pozrealprod_pOpak_change(oldval): n5pozrealprod_pOpak_change = false
+	
+	if not this_.pOpak is nothing then
+		this_.curIloscEwid = trans_.afc.convert.roundn( this_.curIloscOpak * this_.pOpak.currKrotnosc, 4)
+		if this_.pOpak.currKrotnosc = ccur(0) then
+			trans_.message 1002 , 0 , "UWAGA! Krotność w opakowaniu " + cstr(this_.pOpak.text) + " produktu " + cstr(this_.pOpak.parent.text) + " jest równa 0"
+		end if
+		set this_.pJednOpak = this_.pOpak.pJednOpak
+
+		if this_.pOpak.parent.eRodzaj=N5PRODUKT_USLUGA then
+			'wtedy mamy do czynienia z listą czynności - możemy wstawić cene robocizny
+			this_.curCenaMag = this_.pOpak.curCenaNetto1
+		end if
+
+	else
+		set this_.pJednOpak = nothing
+	end if
+
+	'Sprawdzaj poprawnosc dobranych opakowan czy pakowaniu/rozpakowaniu
+	select case this_.parent.pRejestrDok.eTyp
+		case N5REJESTRDOK_ZAPAKOWANIA
+			' Sprawdzamy czy to co chcemy zapakowac mozna pakowac do n5realprod_getOpakowanie()
+			if (not this_.parent.n5realprod_getOpakowanie_wyrob() is nothing) and (not this_.parent.n5realprod_getOpakowanie_surowiec() is nothing) then
+				if (not this_.parent.n5realprod_pack_isValidDest(this_.pProdukt, this_.parent.n5realprod_getOpakowanie_surowiec(), this_.parent.n5realprod_getOpakowanie_wyrob())) then
+					this_.parent.n5realprod_setOpakowanie_wyrob nothing
+				end if
+			end if
+
+		case N5REJESTRDOK_ROZPAKOWANIA
+			if (not this_.parent.n5realprod_getOpakowanie_wyrob() is nothing) and (not this_.parent.n5realprod_getOpakowanie_surowiec() is nothing) then
+				if (not this_.parent.n5realprod_depack_isValidDest(this_.parent.n5realprod_getProdukt_surowiec(), this_.parent.n5realprod_getOpakowanie_surowiec() , this_.parent.n5realprod_getOpakowanie_wyrob())) then
+					this_.parent.n5realprod_setOpakowanie_wyrob nothing
+				end if
+			end if
+	end select
+
+	'Przelicz ilosc przy pakowaniu / rozpakowaniu
+	n5pozrealprod_curIloscOpak2IloscPos
+
+	this_.n5pozrealprod_insert_price()
+
+	n5pozrealprod_pOpak_change = true
+end function
+
+function n5pozrealprod_from_pozrecepta(byval pSrcPozRecepta,byval curSrcIloscOpak)
+	dim oMtxRecepta : set oMtxRecepta = trans_.holdmutex(this_.type,this_.idobj,MXT_RECEPTA_ID)
+	set this_.pozreal_pRecepta = pSrcPozRecepta.parent
+	set this_.pProdukt		= pSrcPozRecepta.pProdukt
+	set this_.pOpak			= pSrcPozRecepta.pOpak
+	this_.curIloscOpak		= ccur(curSrcIloscOpak) 
+	this_.curWspolczynnik	= pSrcPozRecepta.curWspolczynnik
+	this_.eRodzajWyceny		= pSrcPozRecepta.eRodzajWyceny
+end function
+
+
+
+function n5pozrealprod_insert_price()
+#ifdef APPCONFIG_INSERT_PRICE_FROM_PROD_ON_DOKMAG
+	'sprawdzamy czy jestesmy na liscie wyrobów
+	if this_.parent.listWyrob.findonid(this_.idobj) < 1 then
+		exit function
+	end if
+
+	if	this_.parent.pRejestrDok.eTyp <> N5REJESTRDOK_ZAPAKOWANIA and _
+		this_.parent.pRejestrDok.eTyp <> N5REJESTRDOK_ROZPAKOWANIA	then
+		if not this_.pOpak is nothing then
+			this_.curCenaMag = this_.pOpak.curCenaNetto6
+		end if
+	end if
+#endif
+end function
+
+
+]]>
+</script>
+	
+	
+	
+	
+</class>

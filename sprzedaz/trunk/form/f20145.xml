@@ -1,0 +1,941 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+REV2:KB:20030520
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1222.h"
+#include "h1228.h"
+#include "h1232.h"
+
+#define FORM_SPAN		 3
+#define RCELL_SPAN		 1
+
+#define SECID_1			1001
+#define SECID_2			1002
+#define SECID_3			1003
+#define CTRLID_TYPREJ	13
+#define CTRLID_DEFSCHEMAT 14
+
+#define CTRLID_CHECK_AUT_ZAMK_OKR 15
+#define CTRLID_CHECK_AUT_BLOK_KSI	16
+
+#define CTRLID_WART_ZAMK_OKR 17
+#define CTRLID_WART_BLOK_KSI 18
+
+#ifdef APPCONFIG_REGIST_NUMBER_DATE
+#define CTRLID_DATA_OPER  19
+#endif
+
+#ifdef APPCONFIG_PKPIR
+#define TXT_SCHEMATY_DEKRETCJI	Wzory zapisów
+#define TXT_EDYCJA_SCHEMATOW	Edycja wzorów
+#else
+#if appvar_rejestr_typ = N5REJESTRDOK_DZIENNIK_NORM || appvar_rejestr_typ = N5REJESTRDOK_DZIENNIK_BO || appvar_rejestr_typ = N5REJESTRDOK_DZIENNIK_BZ || appvar_rejestr_typ = N5REJESTRDOK_DZIENNIK_BZ_OSTAT
+#define TXT_SCHEMATY_DEKRETCJI	Automaty przeksięgowań
+#define TXT_EDYCJA_SCHEMATOW	Edycja automatów
+#endif
+
+#ifndef TXT_SCHEMATY_DEKRETCJI
+#define TXT_SCHEMATY_DEKRETCJI	Schematy dekretacji
+#endif
+
+#ifndef TXT_EDYCJA_SCHEMATOW
+#define TXT_EDYCJA_SCHEMATOW	Edycja schematów
+#endif
+#endif
+
+#ifdef _AVISTA
+#define CTRLID_DATA_WYST  20
+#endif
+
+#ifdef _HJORT
+#if appvar_rejestr_typ = N5REJESTRDOK__MM
+#define CTRLID_RODZAJ_MM  21
+#endif
+#endif
+
+#if appvar_rejestr_typ = N5REJESTRDOK_BANKOWY || appvar_rejestr_typ = N5REJESTRDOK_BANKOWY_VAT
+#define SPF_RACHUNEK_BANKOWY
+#define CTRLID_BANK1   22
+#define CTRLID_BANK2   23
+#define CTRLID_BANK3   24
+#define CTRLID_BANK4   25
+#define CTRLID_BANK5   26
+#define CTRLID_BANK6   27
+#define CTRLID_BANK7   28
+#define CTRLID_BANK8   29
+#define CTRLID_BANK9   30
+#define CTRLID_BANK10  31
+#endif
+
+#define CTRLID_RAPORT_FISKALNY		32
+#define CTRLID_ZNACZNIK_SPRZEDAZ	33
+
+#macro QXC_CTRLID_BANK(_ctrl_,_field_nr_)	\
+function c##_ctrl_##_ongetdata(ctrl):c##_ctrl_##_ongetdata = true	\
+	Ctrl.text = GetPrzeznRachunku(_field_nr_)	\
+end function
+
+#macro QXC_PRZEZNACZENIE_LINE(_field_nr_)	\
+if iNr = _field_nr_ and pFirma.strPrzeznaczenie##_field_nr_ <> "" then	\
+	GetPrzeznRachunku = pFirma.strPrzeznaczenie##_field_nr_	\
+	exit function	\
+end if
+
+-->
+
+<page style='STYLE_PAGE'>
+<config>
+	<title>
+Rejestr dokumentów 
+	#ifdef _DEBUG
+	[THIS_FILE	]
+	#endif
+	</title>
+<typeid>TYPEID_N5REJESTRDOK</typeid>
+<script>
+    <![CDATA[
+
+#include "50120"
+
+'messagebox
+#include "50122"
+'fire_choice_list
+#include "50200"
+'section
+#include "50222"
+#include "50517"
+#include "50610"
+
+'harui
+#include "50101"
+
+'nx_trace
+#include "50519"
+
+'class CProgressPage
+#include "50632"
+
+'getCurrentFirma
+#include "50203"
+
+function fsearch()
+	dim pSearchChoice : set pSearchChoice = doc_.getmodule(60115)
+	pSearchChoice.addAdditionalWhere "N5REJESTRDOK.eTyp=" + CStr(page_.root.eTyp)
+	fsearch = pSearchChoice.std_search(page_)
+	set pSearchChoice = nothing
+end function
+
+
+function c##CTRLID_TYPREJ##_ongetdata(byref oCtrl): c##CTRLID_TYPREJ##_ongetdata=true
+	dim strText
+	strText = eTypRejestru2Str(page_.root.eTyp)
+
+	if page_.root.dDataZamk = doc_.afc.globals.nulldate() then
+		strText = strText + "; Rejestr nie był zamykany"
+	else
+		strText = strText + "; Rejestr jest zamknięty do dnia " + doc_.afc.display.fulldate(page_.root.dDataZamk)
+	end if
+
+	oCtrl.text = strText
+end function
+
+function c##CTRLID_DEFSCHEMAT##_onsuggquery(byref pEditCtrl,byval strEnteredVal,byref strWhere,byref strOrder,byref strJoin)
+	if strWhere <> "" then
+		strWhere = strWhere + " and "
+	end if
+	strWhere = strWhere + "(pRejestrDok = " + cstr(page_.root.idobj) + ")"
+end function
+
+function konfiguracja_rejestru
+	'ponieważ otwieramy jako wizzard (wspólna transakcja)
+	'musimy ustawić zmienną
+	trans_.var(APPVAR_SETTINGS_TYPE) = clng(TYPEID_N5REJESTRDOK)
+	trans_.var(APPVAR_REJDOKCONF_KONFIGURACJA) = clng(1)
+	doc_.postcommand "varCmd=CMD_OPEN_WIZARD_PAGE varDestPage=DIALOG_KONFIG_DOK_WITH_REJESTR varObject=" +_
+		cstr(page_.root.idobj)
+end function
+'-----------------------------------------------------------------------------------
+
+function schemat_dekretacji
+
+	if not std_fsave() then
+		exit function
+	end if
+
+	trans_.var(APPVAR_REJESTR_DOKUMENTOW) = page_.root.idobj	
+
+	'TODO:AM  - blokowanie dodawania
+	dim choice:choice = fire_choice_list(TYPEID_N5SCHEMATDEKR,"TXT_SCHEMATY_DEKRETCJI","strNazwa","pRejestrDok="+cstr(page_.root.idobj),"","")
+	if choice <> 0 then
+		doc_.getmodule(60129).form_domodal TYPEID_N5SCHEMATDEKR , choice , USAGE_VIEW
+	end if
+
+end function
+
+function fopen()
+#ifdef _ABAKUS
+	if HARUI_FREE(UAR_OGRANICZONY_DOSTEP_DANE_KLIENTA) then
+    fopen = false
+    exit function
+  end if
+#endif 
+
+	if not std_fopen() then
+		fopen = false
+		exit function
+	end if
+
+
+	section_fopen THIS_FILE
+
+	if page_.root.eTyp = N5REJESTRDOK_DZIENNIK_NORM then
+		page_.topelement.title = "Dziennik"
+	end if
+	'ustawiamy sie na pierwszym rekordzie kursora
+	if not page_.cursoriter is nothing then
+		page_.root.ignore=true
+		silent_ffirst()		
+	end if
+	 
+	fopen = true
+end function
+
+function fsave()
+
+	if page_.ctrl(CTRLID_WART_ZAMK_OKR).value = clng(0) then
+		page_.root.ddatazamk = dateValue(page_.root.ddatazamk) + timevalue(trans_.afc.globals.nulldate())
+	else
+		page_.root.ddatazamk = dateValue(page_.root.ddatazamk) + timevalue(trans_.afc.globals.nulldate())
+		page_.root.ddatazamk = page_.root.ddatazamk + doc_.afc.convert.long2time(page_.ctrl(CTRLID_WART_ZAMK_OKR).value) 'ustaw minuty na taka wartosc ile miesiecy
+	end if
+	if page_.ctrl(CTRLID_WART_BLOK_KSI).value = clng(0) then
+		page_.root.rejdok_dDataBK = dateValue(page_.root.rejdok_dDataBK) + timevalue(trans_.afc.globals.nulldate())
+	else
+		page_.root.rejdok_dDataBK = dateValue(page_.root.rejdok_dDataBK) + timevalue(trans_.afc.globals.nulldate())
+		page_.root.rejdok_dDataBK = page_.root.rejdok_dDataBK + doc_.afc.convert.long2time(page_.ctrl(CTRLID_WART_BLOK_KSI).value) 'ustaw minuty na taka wartosc ile miesiecy
+	end if
+
+	dim bSave: bSave=std_fsave()
+
+	if (not bSave) then
+		section_fsave THIS_FILE
+	end if
+
+	fsave = bSave
+end function
+
+function fsearch()
+	dim pSearchChoice
+	set pSearchChoice = doc_.getmodule(60115)
+
+	pSearchChoice.addAdditionalWhere "n5rejestrdok.eTyp = " + CStr(page_.root.eTyp)
+	fsearch = pSearchChoice.std_search(page_)
+
+	set pSearchChoice = nothing
+end function
+
+function fclose()
+	section_fclose THIS_FILE
+	fclose = true
+end function
+
+function clean_rokksiegowy
+	set page_.root.pRokKsieg = nothing
+end function
+
+function zamknij_rejestr
+
+	if not HARUI(UAR_ZAMKNIJ_OKRES) then
+		exit function
+	end if
+	trans_.var(GVAR_NAZWA_KONTA) = page_.root.strNazwa
+	trans_.var(APPVAR_SETTINGS_TYPE) = clng(1)
+	dim pPage : set pPage = doc_.getpagehli("varCmd=CMD_OPEN_WIZARD_PAGE varDestPage=DIALOG_ZAMKNIJ_REJESTR_LUB_ROK")  
+    
+  pPage.external_init page_.root.dDataZamk
+  
+  if page_.ctrl(CTRLID_CHECK_AUT_ZAMK_OKR).value = "1" then
+    'zapamiętanie w bazie daty zamknięcia
+    page_.root.dDataZamk = trans_.afc.globals.nulldate()
+    dim dDataZam : dDataZam = dateAdd("d", -CLng(page_.ctrl(CTRLID_WART_ZAMK_OKR).value),now())
+    dDataZam = dateValue(dDataZam) + timevalue(trans_.afc.globals.nulldate())
+    dDataZam = dDataZam + doc_.afc.convert.long2time(page_.ctrl(CTRLID_WART_ZAMK_OKR).value)
+    page_.root.dDataZamk = dDataZam
+    pPage.external_init_ext page_.root.dDataZamk,true
+  end if  
+
+	if pPage.domodalauto() <> CMD_CHOICE then
+		exit function
+	end if
+
+	dim dDataZamk : dDataZamk = pPage.external_result()
+	if page_.root.eTyp = N5REJESTRDOK_DZIENNIK_NORM then
+		dim pSubTrans
+		set pSubTrans = trans_.createsubtran()
+
+			'zamknij wszystkie dowody księgowe z tego rejestru do daty
+			dim pCursorDK : set pCursorDK = trans_.createrawcursor(TYPEID_N5DOWODKSIEG, _
+			trans_.afc.convert.Formatter("eStatus <> N5_DEKRET_STATUS_ZAKS and pRejestrDok=%1 and dDataKsieg <= %2") _
+			.add(page_.rootidobj).add(trans_.afc.convert.date2SQL(dDataZamk)).done(),"","")
+			dim pDowod
+			for each pDowod in pCursorDK
+				pDowod.eStatus = clng(N5_DEKRET_STATUS_ZAKS)
+			next
+			
+			set pDowod = nothing
+			set pCursorDK = nothing
+
+		if not trans_.saveobjects() then
+			exit function
+		end if
+
+		set pSubTrans = nothing
+	end if
+	page_.root.dDataZamk = dDataZamk
+
+	if std_fsave() then
+		MessageBox "Okres został zamknięty w tym rejestrze", "Zamknięcie okresu", vbOkOnly, vbInformation	
+	end if
+end function
+
+
+
+
+
+function zamknij_rejestr_ksieg
+
+	if not HARUI(UAR_BLOKUJ_OKRES_KSIEG) then
+		exit function
+	end if
+	trans_.var(GVAR_NAZWA_KONTA) = page_.root.strNazwa
+	trans_.var(APPVAR_SETTINGS_TYPE) = clng(2)
+	dim pPage : set pPage = doc_.getpagehli("varCmd=CMD_OPEN_WIZARD_PAGE varDestPage=DIALOG_ZAMKNIJ_REJESTR_LUB_ROK")
+
+  pPage.external_init page_.root.rejdok_dDataBK
+
+  if page_.ctrl(CTRLID_CHECK_AUT_BLOK_KSI).value = "1" then
+    'zapamiętanie w bazie daty bufora księgowego
+    page_.root.rejdok_dDataBK = trans_.afc.globals.nulldate()    
+    dim dDataBK : dDataBK = dateAdd("d", -CLng(page_.ctrl(CTRLID_WART_BLOK_KSI).value),now())
+    dDataBK = dateValue(dDataBK) + timevalue(trans_.afc.globals.nulldate())
+    dDataBK = dDataBK + doc_.afc.convert.long2time(page_.ctrl(CTRLID_WART_BLOK_KSI).value)
+    page_.root.rejdok_dDataBK = dDataBK
+    pPage.external_init_ext page_.root.rejdok_dDataBK,true
+  end if  
+
+	if pPage.domodalauto() <> CMD_CHOICE then
+		exit function
+	end if
+
+	dim dDataZamk : dDataZamk = pPage.external_result()	
+	page_.root.rejdok_dDataBK = dDataZamk
+
+	if std_fsave() then
+		MessageBox "Okres został zamknięty do księgowania w tym rejestrze", "Zamknięcie okresu", vbOkOnly, vbInformation	
+	end if
+end function
+
+function renumber_rejestr
+	dim pM60270 : set pM60270 = doc_.getmodule(60270)
+
+  dim dPoDacie : dPoDacie = trans_.afc.globals.nulldate()
+#ifdef APPCONFIG_REGIST_NUMBER_DATE
+  dPoDacie = dDataOper
+#endif
+	if not pM60270.reorder_platnosc_all_new(page_.rootidobj,dPoDacie) then
+		exit function
+	end if
+	if not  std_fsave() then
+		exit function
+	end if
+	MessageBox "Wpisy zostały przenumerowane", "Przenumerowanie wpisów", vbOkOnly, vbInformation	
+end function
+
+function renumber_rejestr_kasa_bank
+	dim pM60270 : set pM60270 = doc_.getmodule(60270)
+
+	if not pM60270.reorder_platnosc_all_kasa_bank then
+		exit function
+	end if
+	MessageBox "Wpisy zostały przenumerowane", "Przenumerowanie wpisów", vbOkOnly, vbInformation	
+end function
+
+function choose_rejestr_list(hli)
+	dim iOpcja:iOpcja = hli.prop(10)
+	if not HARUI(120005) then
+		exit function
+	end if
+
+	dim strMsgPrefix
+	if iOpcja = 1 then
+		strMsgPrefix = "Zamknięcie okresu"
+		trans_.var(APPVAR_SETTINGS_TYPE) = clng(1)
+	else
+		strMsgPrefix = "Blokada księgowa"
+		trans_.var(APPVAR_SETTINGS_TYPE) = clng(2)
+	end if
+	
+	trans_.var(GVAR_NAZWA_KONTA) = strMsgPrefix + " dla wybranych rejestrów"
+	trans_.var(APPVAR_MODE) = 1
+	
+	dim pWhatData : set pWhatData = doc_.getpagehli("varCmd=CMD_OPEN_WIZARD_PAGE varDestPage=DIALOG_ZAMKNIJ_REJESTR_LUB_ROK") 
+	if pWhatData.domodalauto() <> CMD_CHOICE then
+		exit function
+	end if
+	
+	dim dDataBK : dDataBK = pWhatData.external_result()
+
+	dim pM43009 : set pM43009 = doc_.getmodule(43009)
+	pM43009.prepare_multi_selection TYPEID_N5REJESTRDOK, "Wybór rejestru",_
+		"(pRokKsieg=0 or pRokKsieg=" + cstr(getCurrentRKSId()) + ")", "strNazwa"
+
+	dim oNXArray : set oNXArray = pM43009.run_multi_browser()
+	dim pRejestr
+
+	if not oNXArray is nothing then
+		dim idRejestru
+		
+		if iOpcja = 2 then
+			if MessageBox("Jesteś pewien, że chcesz zastosować blokadę księgową dla wybranych rejestrów?",_
+				strMsgPrefix, vbYesNo, vbQuestion)<>vbYes then
+				exit function
+			end if
+			for each idRejestru in oNXArray
+				set pRejestr=trans_.getobj(TYPEID_N5REJESTRDOK, idRejestru)
+				pRejestr.rejdok_dDataBK=dDataBK
+			next
+			if not trans_.saveobjects() then
+				exit function
+			end if
+		else
+			if MessageBox("Jesteś pewien, że chcesz zamknąć okresy dla wybranych rejestrów?",_
+				strMsgPrefix, vbYesNo, vbQuestion) <> vbYes then
+				exit function
+			end if
+			dim pPP : set pPP = new CProgressPage
+			
+			pPP.init "Przetwarzanie danych"
+			
+			for each idRejestru in oNXArray
+				set pRejestr = trans_.getobj(TYPEID_N5REJESTRDOK, idRejestru)
+				pPP.update "Przetwarzanie rejestru " + pRejestr.text
+				
+				if pRejestr.eTyp = N5REJESTRDOK_DZIENNIK_NORM then
+					dim pSubTrans
+					set pSubTrans = trans_.createsubtran()
+
+					'zamknij wszystkie dowody księgowe z tego rejestru do daty
+					dim pCursorDK : set pCursorDK = trans_.createrawcursor(TYPEID_N5DOWODKSIEG, _
+					trans_.afc.convert.Formatter("eStatus <> N5_DEKRET_STATUS_ZAKS and pRejestrDok=%1 and dDataKsieg <= %2") _
+					.add(idRejestru).add(trans_.afc.convert.date2SQL(dDataBK)).done(),"nNumDow","")
+					dim pDowod
+					for each pDowod in pCursorDK
+						pPP.update "Księgowanie dowodu " + pDowod.text
+						pDowod.eStatus = clng(N5_DEKRET_STATUS_ZAKS)
+						if pPP.is_broken() then
+							exit function
+						end if
+					next
+
+					set pDowod = nothing
+					set pCursorDK = nothing
+
+					if not trans_.saveobjects() then
+						exit function
+					end if
+
+					set pSubTrans = nothing
+				end if
+				
+				pRejestr.dDataZamk = dDataBK
+				if pPP.is_broken() then
+					exit function
+				end if
+			next
+			if not trans_.saveobjects() then
+				exit function
+			end if
+			set pPP = nothing
+		end if
+		
+		set pRejestr = nothing
+		MessageBox "Operacja powiodła się", strMsgPrefix, vbOkOnly, vbInformation	
+	else
+		MessageBox "Nie wybrano żadnych rejestrów ", strMsgPrefix, vbOkOnly, vbInformation	
+	end if
+	
+end function
+
+function przen_nr_dziennika
+
+  dim rejestrID : rejestrID = page_.root.idobj
+  dim pCurrentRokKsieg, strWhere, pDowodKsieg, idDowKsieg
+  if trans_.isvar(GVAR_ROKKSIEG) then
+		 pCurrentRokKsieg = trans_.var(GVAR_ROKKSIEG)
+	else
+		 pCurrentRokKsieg = 0
+	end if		
+  
+  dim strQuery : strQuery = "select 'dziennik_id'=d.idobj from n5dowodksieg d inner join n5rejestrdok r on d.pRejestrDok = r.idobj " +_
+                            "where r.pRokKsieg = " + CStr(pCurrentRokKsieg) + " and r.eTyp = N5REJESTRDOK_DZIENNIK_NORM and r.idobj = " +_
+                            CStr(rejestrID) + " order by d.dDataKsieg, d.strNrDok"
+              
+  dim oRS : set oRS = trans_.createadors(strQuery)
+  if oRS.RecordCount <> 0 then
+    dim pPerf : set pPerf = doc_.performing("Trwa przenumerowywanie numerów w dzienniku ...")
+	  NX_TRACE_START_STREAM("Przenumerowywanie numerów w dzienniku",nothing)
+    'odwrócenie znaku numeracji dziennika
+    do while not oRS.EOF
+      set pDowodKsieg = trans_.getobj(TYPEID_N5DOWODKSIEG,clng(oRS("dziennik_id")))
+      pDowodKsieg.nNumDow = (-1) * pDowodKsieg.nNumDow
+      oRS.movenext
+    loop
+    if (not trans_.saveobjects()) then
+      trans_.message 7000, 0, "Przenumerowanie numerów w dzienniku nieudane"
+		  exit function
+	  end if
+    oRS.movefirst
+    'przenumerowywanie nr dziennika od 1
+    dim iNr : iNr = clng(1) 
+    do while not oRS.EOF
+      set pDowodKsieg = trans_.getobj(TYPEID_N5DOWODKSIEG,clng(oRS("dziennik_id")))
+      pDowodKsieg.nNumDow = iNr
+      iNr = iNr + 1
+      oRS.movenext
+    loop
+    'ustaw licznik dla kolejnego wpisu
+    dim nLicznik : nLicznik = page_.root.nLicznik
+    nLicznik = nLicznik - ((nLicznik mod 100000) - iNr)
+    page_.root.nLicznik = nLicznik
+	  if (not trans_.saveobjects()) then
+		  exit function
+	  end if
+    set pPerf = nothing
+	  NX_TRACE_SHOW_LOG(1)
+    MessageBox "Operacja zakończona powodzeniem", "Przenumerowanie numerów w dzienniku", vbOKOnly, vbInformation
+  else
+    trans_.message 7000, 0, "Brak wpisów w dzienniku '" + page_.root.strNazwa + "'"
+    exit function
+  end if
+  
+end function
+
+dim formId : formId = 0
+
+function czyNewForm : czyNewForm = true
+	if formId <> page_.root.idobj then
+		formId =  page_.root.idobj 
+		czyNewForm = false
+		exit function
+	end if
+end function
+'-----------------------------------------------------------------------------------------------------------
+'-----------------------------------------------------------------------------------------------------------
+'-----------------------------------------------------------------------------------------------------------
+'automatyczne blokady ksiegowe, i zmkniecie okresu , na razie nie ma pol w bazie
+function c##CTRLID_CHECK_AUT_ZAMK_OKR##_ongetdata(byref oCtrl)
+	 if not czyNewForm then
+				dim iIloscMies: iIloscMies = doc_.afc.convert.time2long(page_.root.dDataZamk)
+					if iIloscMies > 0 then
+						oCtrl.value = "1"
+						page_.ctrl(CTRLID_WART_ZAMK_OKR).value = clng(iIloscMies)
+					else
+						oCtrl.value = "0"
+						page_.ctrl(CTRLID_WART_ZAMK_OKR).value = clng(iIloscMies)					
+					end if
+					
+				iIloscMies = doc_.afc.convert.time2long(page_.root.rejdok_dDataBK)
+					if iIloscMies > 0 then
+						page_.ctrl(CTRLID_CHECK_AUT_BLOK_KSI).value = "1"
+						page_.ctrl(CTRLID_WART_BLOK_KSI).value = clng(iIloscMies)
+					else
+						page_.ctrl(CTRLID_CHECK_AUT_BLOK_KSI).value = "0"
+						page_.ctrl(CTRLID_WART_BLOK_KSI).value = clng(iIloscMies)
+				end if
+		end if
+end function
+
+			function c##CTRLID_CHECK_AUT_ZAMK_OKR##_ondataentered(oCtrl, iValue)
+				if iValue = "0" then
+					page_.ctrl(CTRLID_WART_ZAMK_OKR).value = clng(0)
+				end if
+			end function
+			
+			
+function c##CTRLID_WART_ZAMK_OKR##_ongetdata(byref oCtrl) : c##CTRLID_WART_ZAMK_OKR##_ongetdata = true
+end function
+
+					function c##CTRLID_WART_ZAMK_OKR##_ondataentered(oCtrl, iValue)
+								if iValue = clng(0) then
+									page_.ctrl(CTRLID_CHECK_AUT_ZAMK_OKR).value = "0"
+								else
+									page_.ctrl(CTRLID_CHECK_AUT_ZAMK_OKR).value = "1"
+								end if
+					end function
+
+'-----------------------------------------------------------------------------------------------------------
+'-----------------------------------------------------------------------------------------------------------
+'-----------------------------------------------------------------------------------------------------------
+
+function c##CTRLID_CHECK_AUT_BLOK_KSI##_ongetdata(byref oCtrl)
+end function
+
+				function c##CTRLID_CHECK_AUT_BLOK_KSI##_ondataentered(oCtrl, iValue)
+					if iValue = "0" then
+						page_.ctrl(CTRLID_WART_BLOK_KSI).value = clng(0)
+					end if
+				end function
+				
+function c##CTRLID_WART_BLOK_KSI##_ongetdata(byref oCtrl): c##CTRLID_WART_BLOK_KSI##_ongetdata = true
+
+end function
+
+						function c##CTRLID_WART_BLOK_KSI##_ondataentered(oCtrl, iValue)
+								if iValue = clng(0) then
+									page_.ctrl(CTRLID_CHECK_AUT_BLOK_KSI).value = "0"
+								else
+									page_.ctrl(CTRLID_CHECK_AUT_BLOK_KSI).value = "1"
+								end if
+						end function
+'-----------------------------------------------------------------------------------------------------------
+'-----------------------------------------------------------------------------------------------------------
+'-----------------------------------------------------------------------------------------------------------
+
+#ifdef APPCONFIG_REGIST_NUMBER_DATE
+dim dDataOper : dDataOper = trans_.afc.globals.nulldate()
+
+function c##CTRLID_DATA_OPER##_ongetdata(oCtrl) : c##CTRLID_DATA_OPER##_ongetdata = true
+  oCtrl.value = dDataOper
+end function
+
+function c##CTRLID_DATA_OPER##_ondataentered(oCtrl, value) : c##CTRLID_DATA_OPER##_ondataentered = true
+  dDataOper = value
+end function
+#endif
+
+#ifdef _AVISTA
+dim dDataWyst: dDataWyst = trans_.afc.globals.nulldate()
+
+function c##CTRLID_DATA_WYST##_ongetdata(oCtrl) : c##CTRLID_DATA_WYST##_ongetdata = true
+  oCtrl.value = dDataWyst
+end function
+
+function c##CTRLID_DATA_WYST##_ondataentered(oCtrl, value) : c##CTRLID_DATA_WYST##_ondataentered = true
+  dDataWyst = value
+end function
+
+function renumber_nr_dok
+  dim strNrDok: strNrDok = ""
+  if InStr(page_.root.strFormatNumeracji,"%m") > 0 then
+	  dim pM60270 : set pM60270 = doc_.getmodule(60270)
+	  if not pM60270.reorder_dok_zakupu(page_.root.idobj,dDataWyst,strNrDok) then
+      'gdy nie powiedzie się zapis któregoś z dokumentów => usuń gwiazdki z numeracji
+      trans_.execsql "update n5zakup set strNrDok = Replace(strNrDok,'*','') where pRejestrDok = " + CStr(page_.root.idobj)
+      if not trans_.saveobjects() then
+      end if
+      trans_.message 7000, 0, "Przenumerowanie dokumentów nie powiodło się. Nie można poprawić dokumentu: " + strNrDok
+      exit function
+	  end if
+  else
+    trans_.message 7000, 0, "Numerowanie dokumentów w bieżącym rejestrze niemożliwe. Brak symbolu miesiąca w formacie numeracji."
+  end if
+end function
+#endif
+
+#ifdef _HJORT
+#if appvar_rejestr_typ = N5REJESTRDOK__MM
+function c##CTRLID_RODZAJ_MM##_ongetdata(byref oCtrl): c##CTRLID_RODZAJ_MM##_ongetdata = true
+  if page_.root.rejdok_strSkrot = "2" then
+    oCtrl.value = clng(2)
+  else
+    oCtrl.value = clng(1)
+  end if  
+end function
+
+function c##CTRLID_RODZAJ_MM##_ondataentered(byref oCtrl, byval value): c##CTRLID_RODZAJ_MM##_ondataentered = true
+  if value = clng(2) then
+    page_.root.rejdok_strSkrot = CStr(value)
+  else
+    page_.root.rejdok_strSkrot = ""
+  end if  
+end function
+#endif
+#endif
+
+#ifdef SPF_RACHUNEK_BANKOWY
+QXC_CTRLID_BANK(CTRLID_BANK1,1)
+QXC_CTRLID_BANK(CTRLID_BANK2,2)
+QXC_CTRLID_BANK(CTRLID_BANK3,3)
+QXC_CTRLID_BANK(CTRLID_BANK4,4)
+QXC_CTRLID_BANK(CTRLID_BANK5,5)
+QXC_CTRLID_BANK(CTRLID_BANK6,6)
+QXC_CTRLID_BANK(CTRLID_BANK7,7)
+QXC_CTRLID_BANK(CTRLID_BANK8,8)
+QXC_CTRLID_BANK(CTRLID_BANK9,9)
+QXC_CTRLID_BANK(CTRLID_BANK10,10)
+
+function GetPrzeznRachunku(byval iNr)
+	GetPrzeznRachunku = "rachunek " + CStr(iNr)
+	dim pFirma: set pFirma = getCurrentFirma()
+	QXC_PRZEZNACZENIE_LINE(1)
+	QXC_PRZEZNACZENIE_LINE(2)
+	QXC_PRZEZNACZENIE_LINE(3)
+	QXC_PRZEZNACZENIE_LINE(4)
+	QXC_PRZEZNACZENIE_LINE(5)
+	QXC_PRZEZNACZENIE_LINE(6)
+	QXC_PRZEZNACZENIE_LINE(7)
+	QXC_PRZEZNACZENIE_LINE(8)
+	QXC_PRZEZNACZENIE_LINE(9)
+	QXC_PRZEZNACZENIE_LINE(10)
+end function
+#endif
+
+function c##CTRLID_RAPORT_FISKALNY##_ongetdata(byref oCtrl) : c##CTRLID_RAPORT_FISKALNY##_ongetdata = true
+  oCtrl.value = CStr(page_.root.nInternalID)
+end function
+
+function c##CTRLID_RAPORT_FISKALNY##_ondataentered(byref oCtrl, byval newValue) : c##CTRLID_RAPORT_FISKALNY##_ondataentered = true
+  page_.root.nInternalID = clng(newValue)
+end function
+
+function c##CTRLID_ZNACZNIK_SPRZEDAZ##_ongetdata(byref oCtrl) : c##CTRLID_ZNACZNIK_SPRZEDAZ##_ongetdata = true
+  oCtrl.value = page_.root.nInternalID + 1
+end function
+
+function c##CTRLID_ZNACZNIK_SPRZEDAZ##_ondataentered(byref oCtrl, byval newValue) : c##CTRLID_ZNACZNIK_SPRZEDAZ##_ondataentered = true
+  page_.root.nInternalID = newValue - 1
+end function
+
+]]></script>
+</config>
+<header>
+</header>
+<body>
+
+QXF_BEGIN
+	QXS_BEGIN_FLAT(SECID_1, Informacje podstawowe, FORM_SPAN)
+		QXR_INFO_CUSTOM(Typ rejestru:&nbsp;,CTRLID_TYPREJ,FORM_SPAN)
+
+		QXR_SEPARATOR(FORM_SPAN)
+
+		QXX_NAZWA(RCELL_SPAN)
+		<tr>
+			QXC_LABEL(Skrót,1)
+			QXC_EDIT_FIELD(-1,20,rejdok_strSkrot,1)
+		</tr>
+#ifdef SPF_RACHUNEK_BANKOWY
+		<tr>
+			QXC_LABEL(Rachunek bankowy,1)
+			<td colspan='FORM_SPAN'>
+				<radio>
+					<transfer mode='edit_field'>
+						<field>rejdok_iNrRachBank</field>
+					</transfer>
+					<t name='CTRLID_BANK1'><transfer mode='custom'/></t>
+					<t name='CTRLID_BANK2'><transfer mode='custom'/></t>
+					<t name='CTRLID_BANK3'><transfer mode='custom'/></t>
+					<t name='CTRLID_BANK4'><transfer mode='custom'/></t>
+					<t name='CTRLID_BANK5'><transfer mode='custom'/></t>
+					<t name='CTRLID_BANK6'><transfer mode='custom'/></t>
+					<t name='CTRLID_BANK7'><transfer mode='custom'/></t>
+					<t name='CTRLID_BANK8'><transfer mode='custom'/></t>
+					<t name='CTRLID_BANK9'><transfer mode='custom'/></t>
+					<t name='CTRLID_BANK10'><transfer mode='custom'/></t>
+				</radio>
+			</td>
+		</tr>		
+#endif
+		
+#if appvar_rejestr_typ = N5REJESTRDOK_DZIENNIK_NORM || appvar_rejestr_typ = N5REJESTRDOK_DZIENNIK_BO || appvar_rejestr_typ = N5REJESTRDOK_DZIENNIK_BZ || appvar_rejestr_typ = N5REJESTRDOK_DZIENNIK_BZ_OSTAT
+		QXR_EDIT_FIELD(Skrót,-1,10,rejdok_strSkrot,1)
+#endif
+#ifdef _HJORT
+#if appvar_rejestr_typ = N5REJESTRDOK__MM
+    <tr>
+      QXC_LABEL(Rodzaj rejestru MM,1)
+      <td keepline='true'>
+        <radio name='CTRLID_RODZAJ_MM' colspan='2' style='STYLE_TABLE_BODY'>
+          <transfer mode='custom'>
+          </transfer>
+          <t>Zwykły</t>
+          <t>Dla pracowników</t>
+        </radio>
+      </td>
+    </tr>    
+#endif
+#endif
+		QXX_STATUS_RADIO2(eAktywny,RCELL_SPAN)
+		
+#if appvar_rejestr_typ = N5REJESTRDOK_PARAGON || appvar_rejestr_typ = N5REJESTRDOK_KOR_PARAGON
+		<tr>
+			QXC_LABEL(Znacznik,1)
+			<td>
+				<checkbox name='CTRLID_RAPORT_FISKALNY' border='0' align='right'>
+					<t>Raporty okresowe fiskalne</t>
+					<transfer mode='custom' />
+				</checkbox>
+			</td>			
+		</tr>
+#endif
+
+#if appvar_rejestr_typ = N5REJESTRDOK_FAKT_SP || appvar_rejestr_typ = N5REJESTRDOK_KOR_FAKT_SP
+		<tr>
+			QXC_LABEL(Znacznik,1)
+			<td>
+				<radio name='CTRLID_ZNACZNIK_SPRZEDAZ' style='STYLE_TABLE_BODY'>
+				  <transfer mode='custom'>
+				  </transfer>
+				  <t>Brak</t>
+				  <t>Faktury wewnętrzne</t>
+				  <t>Faktury do paragonu</t>
+				</radio>			
+			</td>			
+		</tr>
+#endif
+
+		<tr>
+#if appvar_rejestr_typ = N5REJESTRDOK_DZIENNIK_NORM || appvar_rejestr_typ = N5REJESTRDOK_DZIENNIK_BO || appvar_rejestr_typ = N5REJESTRDOK_DZIENNIK_BZ || appvar_rejestr_typ = N5REJESTRDOK_DZIENNIK_BZ_OSTAT
+			QXC_LABEL_REQ(Rok księgowy,1)
+#else
+			QXC_LABEL(Rok księgowy,1)
+#endif
+			<td linealign='vcenter' keepline='true'>
+				QXE_TEXT_REF_ASTEXT(-1,30,pRokKsieg)
+				QXE_PICTURE_CHOICE(PICTURE_CHOICE_N5ROKKSIEG,pRokKsieg,dDataRozp,CRSR_N5ROKKSIEG_ROK_WG_DATY_ROZPOCZECIA)
+				QXE_PICTURE_ACTION(-1,PICTURE_REMOVE_FILE,varFunction="clean_rokksiegowy",Ustaw jako wieloletni)
+			</td>
+		</tr>
+		QXR_SEPARATOR(FORM_SPAN)
+		<tr>
+			<td width='min' />
+			QXC_BUTTON(-1,0,Konfiguracja dokumentów,varFunction="konfiguracja_rejestru",RCELL_SPAN)
+		</tr>
+
+		<tr>
+			<td colspan='2'><t>Automatycznie zamknij okres rejestrów, dokumentów sprzed:</t></td>
+		</tr>
+		<tr>
+					<td align='right'>
+						<checkbox name='CTRLID_CHECK_AUT_ZAMK_OKR' border='0' align='right'>
+							<t/>
+							<transfer mode='custom' />
+						</checkbox>
+					</td>
+					<td>
+						<int name='CTRLID_WART_ZAMK_OKR' size='4' align='right'>
+								<transfer mode='custom' />
+								</int><t>dni</t>
+					</td>
+		</tr>
+		<tr>
+			<td colspan='2'><t>Automatyczna "Blokada księgowa" w danym rejestrze, dokumentów sprzed:</t></td>
+		</tr>
+		<tr>
+					<td align='right'>
+						<checkbox name='CTRLID_CHECK_AUT_BLOK_KSI' border='0' align='right'>
+							<t/>
+							<transfer mode='custom' />
+						</checkbox>
+					</td>
+					<td>
+						<int name='CTRLID_WART_BLOK_KSI' size='4' align='right'>
+								<transfer mode='custom' />
+								</int><t>dni</t>
+					</td>
+		</tr>
+
+	QXS_END_FLAT(FORM_SPAN)
+
+	QXS_BEGIN_OPT(SECID_3, TXT_SCHEMATY_DEKRETCJI, FORM_SPAN)
+		QXR_EDIT_REF_CQ(Domyślny,CTRLID_DEFSCHEMAT,30,PICTURE_CHOICE_N5SCHEMATDEKR,pDefSchematdekr,strNazwa,RCELL_SPAN)
+		<tr style='STYLE_ROW_BTN'>
+			QXC_BUTTON(-1,0,TXT_EDYCJA_SCHEMATOW,varFunction="schemat_dekretacji",RCELL_SPAN)
+		</tr>
+  QXS_END_OPT(FORM_SPAN)
+
+  QXR_SEPARATOR(FORM_SPAN)
+
+  #ifdef ENABLE_DB14
+  #if appvar_rejestr_typ = N5REJESTRDOK_BANKOWY
+  QXR_EDIT_REF(Rachunek bankowy VAT, -1, 40, PICTURE_CHOICE_N5REJESTRDOK, rejdok_pRejestrDok, strNazwa, CRSR_N5REJESTRDOK_REJBANK, RCELL_SPAN)
+  #endif
+  #endif
+
+  #if appvar_rejestr_typ = N5REJESTRDOK_KASOWY || appvar_rejestr_typ = N5REJESTRDOK_BANKOWY
+  #ifdef APPCONFIG_REGIST_NUMBER_DATE
+  <tr>
+      QXC_BUTTON(-1,0,Przenumerowanie wpisów,varFunction="renumber_rejestr",1)
+      <td>
+        <t>Po dacie&nbsp;</t>
+        QXE_DATE_FIELD_CUSTOM(CTRLID_DATA_OPER)
+      </td>
+    </tr>
+  #endif  
+#endif
+
+#ifdef _AVISTA
+	#ifdef ENABLE_DB14_A
+		#if appvar_rejestr_typ = N5REJESTRDOK_FAKT_ZAK || appvar_rejestr_typ = N5REJESTRDOK_KOR_FAKT_ZAK || appvar_rejestr_typ = N5REJESTRDOK_WNT || appvar_rejestr_typ = N5REJESTRDOK_KOREKTA_WNT || appvar_rejestr_typ = N5REJESTRDOK_FAKT_IMP || appvar_rejestr_typ = N5REJESTRDOK_KOR_FAKT_IMP || appvar_rejestr_typ = N5REJESTRDOK_IMPORT_USLUG || appvar_rejestr_typ = N5REJESTRDOK_KOR_IMPORT_USLUG
+			<tr>
+				QXC_BUTTON(-1,0,Przenumerowanie dokumentów zakupu,varFunction="renumber_nr_dok",1)
+				<td>
+					<t>Rok i miesiąc&nbsp;</t>
+					QXE_DATE_FIELD_CUSTOM(CTRLID_DATA_WYST)      
+				</td>
+			</tr>
+		#endif	
+	#else
+		#if appvar_rejestr_typ = N5REJESTRDOK_FAKT_ZAK || appvar_rejestr_typ = N5REJESTRDOK_KOR_FAKT_ZAK || appvar_rejestr_typ = N5REJESTRDOK_WNT || appvar_rejestr_typ = N5REJESTRDOK_KOREKTA_WNT || appvar_rejestr_typ = N5REJESTRDOK_FAKT_IMP || appvar_rejestr_typ = N5REJESTRDOK_KOR_FAKT_IMP
+			<tr>
+				QXC_BUTTON(-1,0,Przenumerowanie dokumentów zakupu,varFunction="renumber_nr_dok",1)
+				<td>
+					<t>Rok i miesiąc&nbsp;</t>
+					QXE_DATE_FIELD_CUSTOM(CTRLID_DATA_WYST)      
+				</td>
+			</tr>
+		#endif
+	#endif
+#endif
+
+	<tr style='STYLE_ROW_BTN'>
+		QXC_BUTTON(-1,0,Zamknij okres,varFunction="zamknij_rejestr",1)
+		QXC_BUTTON(-1,0,Blokada księgowa,varFunction="zamknij_rejestr_ksieg",RCELL_SPAN)
+	</tr>
+#if appvar_rejestr_typ = N5REJESTRDOK_KASOWY || appvar_rejestr_typ = N5REJESTRDOK_BANKOWY
+	<tr style='STYLE_ROW_BTN'>
+  #ifdef ENABLE_DB11_PLATNOSCI_FIFO
+    QXC_BUTTON(-1,0,Przenumerowanie wpisów (FIFO),varFunction="renumber_rejestr_kasa_bank",FORM_SPAN)  
+  #else
+    #ifndef APPCONFIG_REGIST_NUMBER_DATE
+      QXC_BUTTON(-1,0,Przenumerowanie wpisów,varFunction="renumber_rejestr",FORM_SPAN)
+    #endif
+  #endif  
+  </tr>
+#endif
+	<tr style='STYLE_ROW_BTN'>
+		QXC_BUTTON(-1,0,Zamknij okres wybranych rejestrów,varFunctionHLI="choose_rejestr_list" vn10=1,2)
+	</tr>
+	<tr style='STYLE_ROW_BTN'>
+		QXC_BUTTON(-1,0,Blokada księg.wybranych rejestrów,varFunctionHLI="choose_rejestr_list" vn10=2,2)
+	</tr>
+#ifdef APPCONFIG_PRZENUM_DZIENNIK
+  #if appvar_rejestr_typ = N5REJESTRDOK_DZIENNIK_NORM
+		<tr style='STYLE_ROW_BTN'>  
+      QXC_BUTTON(-1,0,Przenumerowanie nr w dzienniku,varFunction="przen_nr_dziennika",2)
+    </tr>  
+  #endif
+#endif
+
+	QXF_END
+
+</body>
+<footer>
+</footer>
+</page>

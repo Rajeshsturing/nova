@@ -1,0 +1,1014 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!-- nx_choicelist 
+#comment NX_READY
+
+#include "h1000"
+#include "h1200"
+#include "h1203"
+#include "h1220"
+#include "h1222"
+#include "h1231"
+#include "h1240"
+
+#define CTRLID_RESULTS		101
+#define CTRLID_PATTERN		102
+#define CTRLID_MULTISEL_HDLR	103
+
+#define CTRLID_PREV_PAGE	201
+#define CTRLID_NEXT_PAGE	202
+#define CTRLID_GO_UP		203
+#define CTRLID_ADDNEW		204
+#define CTRLID_OK			205
+#define CTRLID_CANCEL		206
+#define CTRLID_MULTISEL_ROW	207
+#define CTRLID_MUTLICRITERIAL	208
+#define CTRLID_WILDREF_ROW  209
+#define CTRLID_WILDREF_TYPE 210
+
+#ifdef ENABLE_DB11
+#define CTRLID_STATUS_ROW     211
+#define CTRLID_STATUS_NAME    212
+#endif
+
+#ifdef _IOW
+#define CTRLID_STATUS_ROW_PRAC  213
+#define CTRLID_STATUS_NAME_PRAC 214
+#endif
+
+#define FORM_SPAN	2
+-->
+
+<page style='STYLE_PAGE'>
+<startfocus>CTRLID_PATTERN</startfocus>
+<startpos>topleft</startpos>
+<config>
+<script>
+<![CDATA[
+
+'------- nx support-------
+#include "50560"
+#include "50561"
+'-------------------------------------------------------
+' external interface
+'-------------------------------------------------------
+function prepare_single_selection(byval iTypeId,byval strTitle, byval strWhere,byval strSearchField)
+	prepare_automatic iTypeId,strTitle,strWhere,strSearchField
+	set_options true,false
+end function
+
+function prepare_multi_selection(byval iTypeId,byval strTitle, byval strWhere,byval strSearchField)
+	prepare_automatic iTypeId,strTitle,strWhere,strSearchField
+	set_options true,true
+end function
+
+
+function prepare_automatic(byval iTypeId,byval strTitle, byval strWhere,byval strSearchField)
+	'----------- create new context and make it current ----
+
+	g_oContextArray.add new cbrowsecontext
+	g_iCurrentContext = g_oContextArray.count - 1
+
+	if strTitle = "" then
+		dim pM60130LegacyInfo : set pM60130LegacyInfo = doc_.getmodule(60130)
+	
+		if strTitle = "" then
+			strTitle = pM60130LegacyInfo.TypeId2ChoiceObj(iTypeId)
+		end if
+	end if
+
+	page_.ctrl(CTRLID_WILDREF_TYPE).addnew(0,-1).text = strTitle
+
+#ifdef ENABLE_DB11
+	page_.ctrl(CTRLID_STATUS_NAME).removeall 
+	if trans_.isvar(GVAR_CURRENT_REJESTR_TYP) then
+		if trans_.var(GVAR_CURRENT_REJESTR_TYP) <> "0" then
+			page_.ctrl(CTRLID_STATUS_ROW).hide = hideRowStatus(iTypeId,trans_.var(GVAR_CURRENT_REJESTR_TYP))
+			createCheckBoxStatus trans_.var(GVAR_CURRENT_REJESTR_TYP)
+		end if
+	end if
+#endif
+
+#ifdef _IOW
+  page_.ctrl(CTRLID_STATUS_NAME_PRAC).removeall
+  page_.ctrl(CTRLID_STATUS_ROW_PRAC).hide = (iTypeId <> TYPEID_N5PRACOWNIK)
+  if iTypeId = TYPEID_N5PRACOWNIK then
+    createCheckBoxStatusPracownika
+  end if
+#endif
+
+	set_title strTitle
+	prepare_automatic = true
+
+
+	if prepare_searchtype_builder(iTypeId,strWhere,strSearchField) then
+		exit function
+	end if
+
+	if prepare_stock_builder(iTypeId,strSearchField,strWhere,strSearchField,"") then
+		exit function
+	end if
+	prepare_automatic = false
+end function
+
+function prepare_array_browser(byval iTypeId,byval strTitle,byval strHeader,_
+		byref oBOWIArray)
+	g_oContextArray.add new cbrowsecontext
+	g_iCurrentContext = g_oContextArray.count - 1
+	page_.ctrl(CTRLID_WILDREF_TYPE).addnew(0,-1).text = strTitle
+
+	set_title strTitle
+	
+	dim pRB : set pRB = nx_.new_array_rb()
+
+	pRB.init iTypeId,strHeader,oBOWIArray
+
+	set_result_builder pRB
+	prepare_array_browser = true
+end function
+
+function switch_current_context(byval iIndex)
+	g_iCurrentContext = iIndex
+end function
+
+function run_browser()
+	regenerate_body
+	run_browser = page_.domodalauto()
+end function
+
+function run_multi_browser()
+	set run_multi_browser = nothing
+	regenerate_body
+	dim iResult : iResult = page_.domodalauto()
+	if iResult = 0 then
+		exit function
+	end if
+	set run_multi_browser = get_current_context().m_oResultSelection_IdObj_Array
+end function
+
+function result_typeid_array()
+	set result_typeid_array = get_current_context().m_oResultSelection_TypeId_Array
+end function
+
+function result_typeid()
+	result_typeid = get_current_context().m_iResultTypeId
+end function
+'-------------------------------------------------------
+function set_options(byval bGrouping,byval bMultiSel)
+	get_current_context().m_pBrowserHelper.init bGrouping
+
+	page_.ctrl(CTRLID_GO_UP).hide = not bGrouping
+	page_.ctrl(CTRLID_MULTISEL_ROW).hide = not bMultiSel
+	page_.ctrl(CTRLID_WILDREF_ROW).hide = (g_oContextArray.count < 2)
+
+	if bMultiSel then
+		get_current_context().m_pResultBuilder.set_multi_selection_mode CTRLID_MULTISEL_HDLR
+		if not get_current_context().m_pLooseSearchRB is nothing then
+			get_current_context().m_pLooseSearchRB.set_multi_selection_mode CTRLID_MULTISEL_HDLR
+		end if
+		set_mode_open_object
+	else
+		set_mode_choose_and_return
+	end if
+	
+	'----
+	'---- domyslnie zablokuj dodawanie gdy nie mozna dodawac obiektow gdy nie ma typu
+	'----
+	
+	disable_addnew (get_current_context().m_pResultBuilder.typeid = 0)
+end function
+
+#ifdef _IOW
+'---------------------------------------
+'tworzy checkboxy dla statusu pracownika
+'---------------------------------------
+sub createCheckBoxStatusPracownika()
+  page_.ctrl(CTRLID_STATUS_NAME_PRAC).addnew(0,-1).text = "bez umowy zlecenia"
+  page_.ctrl(CTRLID_STATUS_NAME_PRAC).addnew(0,-1).text = "z umową zlecenia"
+  page_.ctrl(CTRLID_STATUS_NAME_PRAC).value = "10"
+end sub
+
+'---------------------------------------------
+'tworzy dodatkowy where dla statusu pracownika
+'---------------------------------------------
+function addStatusPracWhere(strQuery) : addStatusPracWhere = strQuery
+  'rozdzielenie zapytania w przypadku wystąpienia order by
+  dim strQueryPart1: strQueryPart1 = ""
+  dim strQueryPart2: strQueryPart2 = ""
+  dim iPos: iPos = InStr(strQuery,"order by")
+  if iPos > clng(0) then
+	  strQueryPart1 = Mid(strQuery,1,iPos-1)
+	  strQueryPart2 = Mid(strQuery,iPos)
+  else
+	  strQueryPart1 = strQuery
+  end if
+
+  dim strCheckValue: strCheckValue = page_.ctrl(CTRLID_STATUS_NAME_PRAC).value
+    
+  'bez umowy zlecenia
+  if strCheckValue = "10" then
+	  strQueryPart1 = strQueryPart1 + " and eAktywny <> 3 "
+  end if
+  'z umową zlecenia
+  if strCheckValue = "01" then
+	  strQueryPart1 = strQueryPart1 + " and eAktywny = 3 "
+  end if
+  'gdy odznaczone nic nie pokazuj
+  if strCheckValue = "00" then
+	  strQueryPart1 = strQueryPart1 + " and (1=0) "
+  end if  
+      
+  addStatusPracWhere = strQueryPart1 + " " + strQueryPart2
+end function
+
+'------------------------------------------
+'tworzy dodatkowy where dla indeksu klienta
+'------------------------------------------
+function addIndeksWhere(strQuery, strPattern) : addIndeksWhere = strQuery
+  'rozdzielenie zapytania w przypadku wystąpienia order by
+  dim strQueryPart1: strQueryPart1 = ""
+  dim strQueryPart2: strQueryPart2 = ""
+  dim iPos: iPos = InStr(strQuery,"order by")
+  if iPos > clng(0) then
+	  strQueryPart1 = Mid(strQuery,1,iPos-1)
+	  strQueryPart2 = Mid(strQuery,iPos)
+  else
+	  strQueryPart1 = strQuery
+  end if
+	
+  strQueryPart1 = strQueryPart1 + "  or ((n5klient.strIndeks like '" + strPattern + "%') and eAktywny=1) "
+      
+  addIndeksWhere = strQueryPart1 + " " + strQueryPart2
+  addIndeksWhere = Replace(addIndeksWhere,"like '","like '%")
+end function
+#endif
+
+#ifdef ENABLE_DB11
+'tworzy checkboxy dla statusów wyszukiwanych dokumentów
+sub createCheckBoxStatus(strRejestrType)
+	dim strWhere : strWhere = getWhereStatus(strRejestrType)
+	dim oCursor : set oCursor = trans_.createrawcursor(TYPEID_N5DOKSTATUS, strWhere, "dcs_strNazwa", "" )
+	dim oStatus, strIdStat: strIdStat = ""
+	for each oStatus in oCursor
+		page_.ctrl(CTRLID_STATUS_NAME).addnew(0,-1).text = oStatus.dcs_strNazwa	
+		strIdStat = strIdStat + cstr(oStatus.IdObj) + ","
+	next
+	page_.ctrl(CTRLID_STATUS_NAME).addnew(0,-1).text = "bez statusu"
+	'usunięcie przecinka na końcu
+	if Len(strIdStat) > clng(0) then
+		strIdStat = Left(strIdStat,Len(strIdStat) - 1)
+	end if
+	get_current_context().m_strIdStatus = strIdStat
+end sub
+
+'----------------------------------------------------------------
+'Ustala where dla statusu dokumentu w zależności od typu rejestru
+'----------------------------------------------------------------
+function getWhereStatus(strRejestrType) : getWhereStatus = ""
+  dim tab: tab = Split(strRejestrType,",")
+  dim iter
+  for iter = 0 to Ubound(tab)
+    dim idPos : idPos = 0
+    select case clng(tab(iter))
+      case N5REJESTRDOK_FAKT_SP,N5REJESTRDOK_RACH,N5REJESTRDOK_PARAGON,N5REJESTRDOK_WDT,N5REJESTRDOK_FAKT_EXP,N5REJESTRDOK_FAKTURA_ZALICZKOWA,N5REJESTRDOK_DOSTAWA  'sprzedaż
+        idPos = 1
+      case N5REJESTRDOK_KOR_FAKT_SP,N5REJESTRDOK_KOR_RACH,N5REJESTRDOK_KOR_PARAGON,N5REJESTRDOK_KOREKTA_WDT,N5REJESTRDOK_KOR_FAKT_EXP,N5REJESTRDOK_FAKTURA_ZALICZKOWA_KOR,N5REJESTRDOK_KOR_DOSTAWA  'korekta sprzedaży
+        idPos = 2
+      case N5REJESTRDOK_FAKT_ZAK,N5REJESTRDOK_FAKT_ZAK_RR,N5REJESTRDOK_WNT,N5REJESTRDOK_FAKT_IMP,N5REJESTRDOK_IMPORT_USLUG  'zakup		
+        idPos = 3
+      case N5REJESTRDOK_KOR_FAKT_ZAK,N5REJESTRDOK_KOR_FAKT_ZAK_RR,N5REJESTRDOK_KOREKTA_WNT,N5REJESTRDOK_KOR_FAKT_IMP,N5REJESTRDOK_KOR_IMPORT_USLUG  'korekta zakupu		
+        idPos = 4      
+      case N5REJESTRDOK_ZAP_OFERTOWE_OBCE
+        idPos = 5
+      case N5REJESTRDOK_ZAP_OFERTOWE_WLASNE
+        idPos = 6
+      case N5REJESTRDOK_OFERTY_OBCE
+        idPos = 7
+      case N5REJESTRDOK_OFERTY_WLASNE
+        idPos = 8
+      case N5REJESTRDOK__ZAM_OBCE
+        idPos = 9
+      case N5REJESTRDOK__ZAM_WLASNE
+        idPos = 10
+      case N5REJESTRDOK__PZ
+        idPos = 11
+      case N5REJESTRDOK__WZ
+        idPos = 12
+      case N5REJESTRDOK__MM
+        idPos = 13
+      case N5REJESTRDOK__MR  'MM-
+        idPos = 14
+      case N5REJESTRDOK__MP  'MM+
+        idPos = 15
+      case N5REJESTRDOK__RW
+        idPos = 16
+      case N5REJESTRDOK__PW
+        idPos = 17
+      case N5REJESTRDOK__IR
+        idPos = 18
+      case N5REJESTRDOK__IP
+        idPos = 19
+      case N5REJESTRDOK__RP
+        idPos = 20
+      case N5REJESTRDOK__PP
+        idPos = 21
+      case N5REJESTRDOK__REALPROD  
+        idPos = 22
+      case N5REJESTRDOK_KASOWY,N5REJESTRDOK_BANKOWY  
+        idPos = 23
+      case N5REJESTRDOK_KASOWY,N5REJESTRDOK_BANKOWY
+        idPos = 24
+      case N5REJESTRDOK_ZADANIA  'zadanie
+        idPos = 25        
+    end select
+    getWhereStatus = getWhereStatus + "substring(dcs_strTypDok," + CStr(idPos) + ",1) = '1' or "
+  next
+  getWhereStatus = Left(getWhereStatus,Len(getWhereStatus) - 4)
+end function
+
+'tworzy dodatkowy where dla statusów dokumentów
+function addStatusWhere(strQuery) : addStatusWhere = strQuery
+	if get_current_context().m_strIdStatus <> "" then
+		'rozdzielenie zapytania w przypadku wystąpienia order by
+		dim strQueryPart1: strQueryPart1 = ""
+		dim strQueryPart2: strQueryPart2 = ""
+		dim iPos: iPos = InStr(strQuery,"order by")
+		if iPos > clng(0) then
+			strQueryPart1 = Mid(strQuery,1,iPos-1)
+			strQueryPart2 = Mid(strQuery,iPos)
+		else
+			strQueryPart1 = strQuery
+		end if
+    
+		dim strWhereID: strWhereID = ""
+		dim tab: tab = Split(get_current_context().m_strIdStatus,",")
+		dim strCtrlVal: strCtrlVal = page_.ctrl(CTRLID_STATUS_NAME).value
+		dim iter
+		for iter = 0 to UBound(tab)
+			if Mid(strCtrlVal,iter+1,1) = "1" then
+				strWhereID = strWhereID + tab(iter) + ","
+			end if
+		next
+		if Len(strWhereID) > clng(0) then
+			strWhereID = Left(strWhereID,Len(strWhereID)-1)
+		end if
+    
+		'budowanie where
+		if strWhereID <> "" then
+			strQueryPart1 = strQueryPart1 + " and (pDokStatus in (select idobj from n5dokstatus where idobj in (" + strWhereID + ")) or [%1])"
+		else
+			strQueryPart1 = strQueryPart1 + " and [%1]"
+		end if  
+      
+		if Right(strCtrlVal,1) = "1" then
+			strQueryPart1 = Replace(strQueryPart1,"[%1]","pDokStatus = 0")
+		else
+			strQueryPart1 = Replace(strQueryPart1,"or [%1]","")
+			strQueryPart1 = Replace(strQueryPart1,"and [%1]","")
+		end if
+		if strQueryPart2 = "" then
+			addStatusWhere = strQueryPart1
+		else
+			addStatusWhere = strQueryPart1 + " " + strQueryPart2
+		end if
+	end if
+end function
+
+'pokazuje wiersz z checkboxami statusów tylko dla wybranych dokumentów
+function hideRowStatus(nTypeId,strRejestrType): hideRowStatus = true
+  dim tab: tab = Split(strRejestrType,",")
+	select case nTypeId
+		case TYPEID_N5SPRZEDAZ,TYPEID_N5ZAKUP,TYPEID_N5ZAMOWIENIE
+			hideRowStatus = false
+		case TYPEID_N5DOKMAG
+			select case clng(tab(0))
+				case N5REJESTRDOK__PZ,N5REJESTRDOK__WZ,N5REJESTRDOK__MM,N5REJESTRDOK__MR,N5REJESTRDOK__MP,N5REJESTRDOK__RW, _
+					N5REJESTRDOK__PW, N5REJESTRDOK__IR,N5REJESTRDOK__IP,N5REJESTRDOK__RP,N5REJESTRDOK__PP
+      			hideRowStatus = false
+			end select  
+		case TYPEID_N5REALPROD
+			hideRowStatus = false
+		case TYPEID_N5PLATNOSC
+			hideRowStatus = false
+		case TYPEID_N5ZADANIE
+			hideRowStatus = false
+	end select
+end function
+#endif
+
+function autorefresh(byval bEnable)
+	g_bAutoRefresh = bEnable
+end function
+
+function disable_addnew(byval bDisable)
+	page_.ctrl(CTRLID_ADDNEW).hide = bDisable
+end function
+
+function set_title(byval strTitle)
+	get_current_context().m_strTitle = strTitle
+end function
+
+function set_mode_choose_and_return()
+	set get_current_context().m_pOnChooseDelegate = getref("choose_and_return_delegate")
+end function
+
+function set_mode_open_object()
+	set get_current_context().m_pOnChooseDelegate = getref("open_object_delegate")
+end function
+
+function set_custom_choose_delegate(byref pDelegate)
+	set get_current_context().m_pOnChooseDelegate = pDelegate
+end function
+
+function set_result_builder(byref pResultBuilder)
+	set get_current_context().m_pResultBuilder = pResultBuilder
+end function
+
+function set_custom_rowbuilder_delegate(byref pCustomRowBuilderDelegate)
+	set get_current_context().m_pCustomRowBuilderDelegate = pCustomRowBuilderDelegate
+end function
+
+function set_loose_rb(byref oLooseRB)
+	set get_current_context().m_pLooseSearchRB = oLooseRB
+end function
+'-------------------------------------------------------
+' module internals
+'-------------------------------------------------------
+function fclose
+	kill_timer
+#ifdef ENABLE_DB11  
+	trans_.var(GVAR_CURRENT_REJESTR_TYP) = "0"
+#endif
+end function
+
+private function prepare_stock_builder(byval iTypeId, byval strSearchField, byval strWhere, byval strOrderBy, byval strJoin)
+	dim pRB : set pRB = nx_.new_stock_rb()
+	dim oNXObjDef : set oNXObjDef = nx_.apprep.objects.get_object(iTypeId)
+	if strSearchField = "" then
+	   strSearchField = oNXObjDef.default_search_field.name
+	end if
+	dim strTitle : strTitle = oNXObjDef.fields.get_field(strSearchField).human_name
+	pRB.init nx_.apprep,iTypeId,strTitle,oNXObjDef.table_name,strSearchField,strWhere,strOrderBy,strJoin
+	set_result_builder pRB
+	prepare_stock_builder = true
+end function
+
+private function prepare_searchtype_builder(byval iTypeId, byval strWhere,byval strSearchField)
+	prepare_searchtype_builder = false
+	dim pM60115 : set pM60115 = doc_.getmodule(60115)
+
+	dim oRapDef : set oRapDef = pM60115.nx_lookup_raport_definition(iTypeId,"@browser_")
+	if oRapDef is nothing then
+		exit function
+	end if
+
+	dim pRB : set pRB = nx_.new_searchtype_rb()
+	dim strRowBuildingCode : strRowBuildingCode = pRB.init(nx_.apprep,oRapDef,strWhere,strSearchField,1)
+	if len(strRowBuildingCode) <> 0 then
+	
+#ifdef _DEBUG
+	dim pRBCS : set pRBCS = doc_.createstreamobj()
+	pRBCS.write strRowBuildingCode
+	pRBCS.save "c:\temp\nx_row_building_code.vbs"
+#endif
+	
+	executeglobal strRowBuildingCode
+	set get_current_context().m_pCustomRowBuilderDelegate = _
+		getref("nx_dynamic_emit_body_row" + cstr(iTypeId))
+
+	end if
+
+	set_result_builder pRB
+
+	dim oLooseSearchRD : set oLooseSearchRD = pM60115.nx_lookup_raport_definition(iTypeId,"@fuzzy_")
+
+	if not (oLooseSearchRD is nothing) then
+		page_.ctrl(CTRLID_MUTLICRITERIAL).hide = false
+		'cm_column_left + cm_order_left + cm_filter_right
+		dim oComposedRD : set oComposedRD = nx_.compose_rapdef(oRapDef,oLooseSearchRD,2+4+16)
+		dim pLooseRB : set pLooseRB = nx_.new_searchtype_rb()
+		pLooseRB.init nx_.apprep,oComposedRD,strWhere,strSearchField,3
+		set_loose_rb pLooseRB
+
+	end if
+	prepare_searchtype_builder = true
+end function
+
+class cbrowsecontext
+	public m_strPattern
+	public m_pBrowserHelper
+	public m_pOnChooseDelegate
+	public m_pResultBuilder
+	public m_pCustomRowBuilderDelegate
+	public m_strTitle
+	public m_pLooseSearchRB
+	public m_oBDA
+#ifdef ENABLE_DB11
+	'zmienna do przechowywania idobj statusów
+	public m_strIdStatus
+#endif
+	'-------------------------------------------------------
+	' przechowywanie wynikow
+	'-------------------------------------------------------
+	public m_iResultTypeId
+	public m_iResultIdObj
+	public m_oResultSelection_IdObj_Array
+	public m_oResultSelection_TypeId_Array
+	'-------------------------------------------------------
+	private sub class_initialize()
+		m_strPattern = ""
+		set m_pBrowserHelper = nx_.new_browser()
+		set m_pOnChooseDelegate = nothing
+		set m_pResultBuilder = nothing
+		m_iResultTypeId = clng(0)
+		m_iResultIdObj = clng(0)
+		set m_oResultSelection_IdObj_Array = nothing
+		set m_oResultSelection_TypeId_Array = nothing
+		set m_pCustomRowBuilderDelegate = nothing
+		m_strTitle = "Wybór z listy"
+		set m_pLooseSearchRB = nothing
+		set m_oBDA = nothing
+#ifdef ENABLE_DB11
+		m_strIdStatus = ""
+#endif
+	end sub
+	private sub class_terminate()   'OK
+		set m_pBrowserHelper = nothing
+		set m_pOnChooseDelegate = nothing
+		set m_pResultBuilder = nothing
+		set m_oResultSelection_IdObj_Array = nothing
+		set m_oResultSelection_TypeId_Array = nothing
+		set m_pCustomRowBuilderDelegate = nothing
+		set m_pLooseSearchRB = nothing
+		set m_oBDA = nothing
+	end sub
+end class
+
+dim g_oContextArray : set g_oContextArray = nx_.new_array()
+dim g_iCurrentContext : g_iCurrentContext = -1
+dim g_pM60050 : set g_pM60050 = doc_.getmodule(60050)
+dim g_oEValuator : set g_oEValuator = g_pM60050.new_evaluator()
+dim g_bAutoRefresh : g_bAutoRefresh = true
+
+function get_current_context()
+	if g_iCurrentContext >= 0 then
+		set get_current_context = g_oContextArray(g_iCurrentContext)
+	else
+		set get_current_context = nothing
+	end if
+end function
+
+'-------------------------------------------------------
+
+function c##CTRLID_PATTERN##_ongetdata(byref oCtrl)
+	page_.ctrl(CTRLID_GO_UP).disable = get_current_context().m_pBrowserHelper.is_pattern_stack_empty()
+end function
+
+function c##CTRLID_PATTERN##_ondataentered(byref oCtrl, byval newValue)
+	get_current_context().m_strPattern = newValue
+
+	if g_bAutoRefresh then	
+		set_timer
+	end if
+
+	c##CTRLID_PATTERN##_ondataentered=true
+end function
+
+function c##CTRLID_MULTISEL_HDLR##_ongetdata(byref oCtrl)
+	dim bSelected: bSelected = get_current_context().m_pBrowserHelper. _
+		get_item_selection(oCtrl.userprop.prop(GVAR_TYPEID),oCtrl.userprop.prop(GVAR_OBJECT))
+	if bSelected then
+		oCtrl.value = "1"
+	else
+		oCtrl.value = "0"
+	end if
+end function
+
+function c##CTRLID_MULTISEL_HDLR##_ondataentered(byref oCtrl, byval newValue)
+	dim bSelected : bSelected = (newValue = "1")
+	get_current_context().m_pBrowserHelper.put_item_selection _
+		oCtrl.userprop.prop(GVAR_TYPEID),oCtrl.userprop.prop(GVAR_OBJECT),bSelected
+	c##CTRLID_MULTISEL_HDLR##_ondataentered=true
+end function
+
+function c##CTRLID_WILDREF_TYPE##_ongetdata(byref oCtrl)
+	oCtrl.value = clng(g_iCurrentContext + 1)
+end function
+
+function c##CTRLID_WILDREF_TYPE##_ondataentered(byref oCtrl, byval newValue) : c##CTRLID_WILDREF_TYPE##_ondataentered = true
+	if newValue <> g_iCurrentContext + 1 then
+		switch_current_context newValue - 1
+		page_.ctrl(CTRLID_PATTERN).value = get_current_context().m_strPattern
+		page_.ctrl(CTRLID_MUTLICRITERIAL).hide = (get_current_context().m_pLooseSearchRB is nothing)
+		regenerate_body
+	end if
+end function
+
+#ifdef ENABLE_DB11
+function c##CTRLID_STATUS_NAME##_ongetdata(byref oCtrl)
+end function
+
+function c##CTRLID_STATUS_NAME##_ondataentered(byref oCtrl, byval newValue): c##CTRLID_STATUS_NAME##_ondataentered = true
+	regenerate_body
+end function
+#endif
+
+#ifdef _IOW
+function c##CTRLID_STATUS_NAME_PRAC##_ongetdata(byref oCtrl)
+end function
+
+function c##CTRLID_STATUS_NAME_PRAC##_ondataentered(byref oCtrl, byval newValue): c##CTRLID_STATUS_NAME_PRAC##_ondataentered = true
+	regenerate_body
+end function
+#endif
+
+private function set_timer
+	doc_.timer 1213,"varFunctionHLI='regenerate_body_hli' gvar_page_iid='" + CStr(page_.iid) + "'",1
+end function
+
+private function kill_timer
+	doc_.timer 1213,"",0
+end function
+
+'-------------------------------------------------------
+' event handlers
+'-------------------------------------------------------
+function on_element_choose_hli(byref pHLI)
+	if not get_current_context().m_pOnChooseDelegate is nothing then
+		get_current_context().m_pOnChooseDelegate page_.get_this(),pHLI
+	end if
+end function
+
+'vs1 = new pattern
+function on_set_pattern_hli(byref pHLI)
+	get_current_context().m_pBrowserHelper.push_pattern get_current_context().m_strPattern
+
+	get_current_context().m_strPattern = nx_.convert.unescape_string(pHLI.prop(1))
+	page_.ctrl(CTRLID_PATTERN).value = get_current_context().m_strPattern
+	page_.ctrl(CTRLID_PATTERN).movecaretto len(get_current_context().m_strPattern),true
+	regenerate_body
+end function
+
+
+function on_go_up()
+	get_current_context().m_strPattern = get_current_context().m_pBrowserHelper.pop_pattern()
+	page_.ctrl(CTRLID_PATTERN).value = get_current_context().m_strPattern
+	regenerate_body
+end function
+
+function on_addrecord()
+	dim idNewObject : idNewObject = clng(0)
+	dim oSubTrans : set oSubTrans = trans_.createsubtran()
+		trans_.var(GVAR_CURSOR) = clng(0)
+		doc_.getmodule(60129).form_domodal get_current_context().m_pResultBuilder.typeid, idNewObject, USAGE_EDIT
+	set oSubTrans = nothing
+	
+	'check if exists 
+	dim pObject : set pObject = nothing
+	on error resume next
+	
+	set pObject = trans_.getobj(get_current_context().m_pResultBuilder.typeid,idNewObject)
+	if pObject is nothing then
+		exit function
+	end if
+
+	page_.result = idNewObject
+	get_current_context().m_iResultIdObj = idNewObject
+	get_current_context().m_iResultTypeId = pObject.type
+	page_.goback
+end function
+
+function on_prev_page()
+	dim oCurrCtxt : set oCurrCtxt = get_current_context()
+	oCurrCtxt.m_pBrowserHelper.move_page_up
+	page_.ctrl(CTRLID_RESULTS).removeall
+	page_.addxml CTRLID_RESULTS, nx_generate_body(oCurrCtxt.m_oBDA)
+end function
+
+function on_next_page()
+	dim oCurrCtxt : set oCurrCtxt = get_current_context()
+	oCurrCtxt.m_pBrowserHelper.move_page_down
+	page_.ctrl(CTRLID_RESULTS).removeall
+	page_.addxml CTRLID_RESULTS, nx_generate_body(oCurrCtxt.m_oBDA)
+end function
+
+function on_multicriteriasearch()	
+	update_title
+	kill_timer
+	
+	'first try with ready to use BDA
+	dim oBDA : set oBDA = get_current_context().m_pLooseSearchRB.create_actual_bda(get_current_context().m_strPattern)
+
+	'then with plain SQL
+	if oBDA is nothing then
+		dim strQuery : strQuery = get_current_context().m_pLooseSearchRB.build_actual_query(get_current_context().m_strPattern)
+		dim pCursor : set pCursor = trans_.createadors(strQuery)
+		set oBDA = nx_.new_recordset_bda(pCursor)
+	end if
+	set get_current_context().m_oBDA = oBDA
+
+	page_.ctrl(CTRLID_RESULTS).removeall
+	page_.addxml CTRLID_RESULTS, _
+			nx_generate_body_from_begin(oBDA,get_current_context().m_strPattern)
+end function
+
+function on_cancel()
+	page_.result = 0
+	get_current_context().m_iResultIdObj = 0
+	get_current_context().m_iResultTypeId = 0
+	page_.goback
+end function
+
+function on_ok()
+	page_.result = 1
+	with get_current_context()
+		set	.m_oResultSelection_IdObj_Array = _
+			.m_pBrowserHelper.get_selected_idobj_array()
+		set .m_oResultSelection_TypeId_Array = _
+			.m_pBrowserHelper.get_selected_typeid_array()
+		.m_iResultIdObj = 1
+		.m_iResultTypeId = .m_pResultBuilder.typeid
+	end with
+	page_.goback
+end function
+'-------------------------------------------------------
+'-------------------------------------------------------
+function update_title()
+	page_.topelement.title = get_current_context().m_strTitle
+end function
+
+function regenerate_body_hli(byref oHLI)
+	regenerate_body
+end function
+
+function regenerate_body()
+	update_title
+	kill_timer
+
+	'first try with ready to use BDA
+	dim oBDA : set oBDA = get_current_context().m_pResultBuilder.create_actual_bda(get_current_context().m_strPattern)
+	
+	'then with plain SQL
+	if oBDA is nothing then
+		dim strQuery : strQuery = get_current_context().m_pResultBuilder.build_actual_query(get_current_context().m_strPattern)
+#ifdef ENABLE_DB11
+		'dodanie do zapytania odpowiedniego where dla statusu dokumentu
+		if trans_.isvar(GVAR_CURRENT_REJESTR_TYP) then
+			if trans_.var(GVAR_CURRENT_REJESTR_TYP) <> "0" then
+				strQuery = addStatusWhere(strQuery)
+			end if
+		end if
+#endif
+#ifdef _IOW
+  if get_current_context().m_pResultBuilder.typeid = TYPEID_N5PRACOWNIK then
+    strQuery = addStatusPracWhere(strQuery)
+  end if
+  if get_current_context().m_pResultBuilder.typeid = TYPEID_N5KLIENT then
+    strQuery = addIndeksWhere(strQuery,get_current_context().m_strPattern)
+  end if  
+#endif
+#ifdef _ARTECH
+  if get_current_context().m_pResultBuilder.typeid = TYPEID_N5PRODUKT then
+    strQuery = ProdIndeksWhere(strQuery,get_current_context().m_strPattern)
+  end if  
+#endif
+		dim pCursor : set pCursor = trans_.createadors(strQuery)
+		set oBDA = nx_.new_recordset_bda(pCursor)
+	end if
+	set get_current_context().m_oBDA = oBDA
+
+	page_.ctrl(CTRLID_RESULTS).removeall
+	page_.addxml CTRLID_RESULTS, _
+			nx_generate_body_from_begin(oBDA,get_current_context().m_strPattern)
+end function
+
+'-------------------------------------------------------
+' delegates
+'-------------------------------------------------------
+function choose_and_return_delegate(byref pCallingPage,byref pHLI)
+	pCallingPage.result = clng(pHLI.prop(GVAR_OBJECT))
+	get_current_context().m_iResultIdObj = clng(pHLI.prop(GVAR_OBJECT))
+	get_current_context().m_iResultTypeId = clng(pHLI.prop(GVAR_TYPEID))
+	pCallingPage.goback
+end function
+
+function open_object_delegate(byref pCallingPage,byref pHLI)
+	nx_fire_open_form_usage clng(pHLI.prop(GVAR_TYPEID)),clng(pHLI.prop(GVAR_OBJECT)),USAGE_VIEW
+end function
+
+'-------------------------------------------------------
+function nx_generate_body_from_begin(byref oBDA, byval strCurrentPattern)
+	dim oCurrCtxt : set oCurrCtxt = get_current_context()
+	oCurrCtxt.m_pBrowserHelper.begin_requery oBDA,len(strCurrentPattern)
+	set nx_generate_body_from_begin = nx_generate_body(oBDA)
+end function
+
+function nx_generate_body(byref oBDA)
+
+	dim pStream : set pStream = doc_.createstreamobj()
+	dim pNXAspator : set pNXAspator = nx_.new_aspator()
+	with pNXAspator
+		.init pStream
+			.newtableex ""
+			.newsection "thead",1
+				.newgroup 1,""
+					get_current_context().m_pResultBuilder.emit_body_header pNXAspator
+
+			.newsectionex "tbody",1, "style='STYLE_TABLE_BODY'"
+				.newgroup 1,""
+					dim oCurrCtxt : set oCurrCtxt = get_current_context()
+
+					dim bEven : bEven = false
+					dim oInfoItem
+					dim iLP
+					dim iLimit : iLimit = 26
+					if get_current_context().m_pResultBuilder.is_multi_selection_mode() then
+						iLimit = 20
+					end if
+					for iLP = 1 to iLimit
+						set oInfoItem = oCurrCtxt.m_pBrowserHelper.get_next()
+						if oInfoItem is nothing then
+							exit for
+						end if
+
+						oCurrCtxt.m_pResultBuilder.emit_body_row pNXAspator,oInfoItem
+						if (not oCurrCtxt.m_pCustomRowBuilderDelegate is nothing) and oInfoItem.m_iCount = 0 then
+							oCurrCtxt.m_pCustomRowBuilderDelegate pNXAspator,g_oEValuator,oInfoItem
+						end if
+					next
+					page_.ctrl(CTRLID_NEXT_PAGE).disable = (oInfoItem is nothing)
+					page_.ctrl(CTRLID_PREV_PAGE).disable = (oCurrCtxt.m_pBrowserHelper.get_current_page() = 0)
+		.flush
+	end with
+#ifdef _DEBUG
+	pStream.save "c:\temp\nx_generate_body.txt"
+#endif
+	pStream.rewind
+	set nx_generate_body = pStream
+end function
+
+'-------------------------------------------------------
+' generowanie wynikow w postaci tabelki
+' eStyle
+'0 - bez kolorowania wierszy kolumn
+'1 - koloruj co 2-gi wiersz (typowo raporty)
+'2 - koloruj co 2-ga kolumna (typowo zakladki na kartach)
+'
+'-------------------------------------------------------
+function nx_generate_table_result(byref oRapDef,byval iTop,byval strWhere,byval eStyle)
+
+	dim pStream : set pStream = doc_.createstreamobj()
+	dim pNXAspator : set pNXAspator = nx_.new_aspator()
+	dim oTableRB : set oTableRB = nx_.new_table_rb()
+	
+	if eStyle = 2 then
+		oTableRB.attrib_for_even_col = "style='STYLE_OPTION_PAD' border='0'"
+		oTableRB.attrib_for_odd_col = ""
+		oTableRB.attrib_for_odd_row = "border='0'"
+		oTableRB.attrib_for_even_row = "border='0'"
+	else
+		if eStyle = 1 then
+			oTableRB.attrib_for_even_row = "backcolor='#E6E6FA' bordercolor='#006697' border='1'"
+			oTableRB.attrib_for_odd_row = "style='STYLE_TABLE_BODY'"
+		end if
+	end if
+
+	dim strRowBuildingCode : strRowBuildingCode = oTableRB.init(nx_.apprep,oRapDef,iTop,strWhere)
+	executeglobal strRowBuildingCode
+	dim pCustomRowBuilderDelegate
+	set pCustomRowBuilderDelegate = getref("nx_dynamic_emit_body_row" + cstr(oRapDef.typeid))
+	
+	with pNXAspator
+		.init pStream
+			.newtableex ""
+			.newsection "thead",1
+				.newgroup 1,""
+					oTableRB.emit_body_header pNXAspator
+
+			.newsectionex "tbody",1, ""
+				.newgroup 1,""
+					dim pCursor : set pCursor = trans_.createadors(oTableRB.get_query_text())
+					dim oRS_BDA : set oRS_BDA = nx_.new_recordset_bda(pCursor)
+					
+					dim iLP : iLP = 1
+					dim bEven : bEven = false
+					do while not oRS_BDA.EOF
+						dim oInfoItem : set oInfoItem = nx_.rs2oi(oRS_BDA,oRapDef.get_record_identification_column_count())
+#ifdef APPCONFIG_PROTOKOLY
+						if InStr(oTableRB.get_query_text(),"n5zadanie.nStatus = 0") > 0 then
+							if trans_.getobj(TYPEID_N5ZADANIE,clng(pCursor(0).value)).nStatus = N5ZADANIE_UTWORZONE then
+								pNXAspator.newrowex("backcolor='#FADC6E' bordercolor='#006697' border='1'")
+							else
+								oTableRB.emit_body_row pNXAspator,oInfoItem                
+							end if
+						else
+							oTableRB.emit_body_row pNXAspator,oInfoItem              
+						end if
+#else
+						oTableRB.emit_body_row pNXAspator,oInfoItem
+#endif						
+            				pCustomRowBuilderDelegate pNXAspator,g_oEValuator,oInfoItem
+						iLP = iLP + 1
+						oRS_BDA.MoveNext
+						bEven = not bEven
+					loop
+		.flush
+	end with
+#ifdef _DEBUG
+	pStream.save "c:\temp\nx_generate_table_result.txt"
+	pStream.rewind
+#endif
+	set nx_generate_table_result = pStream
+end function
+
+'----------------------------------------------------
+'tworzy dodatkowy where dla indeksu produktu (Artech)
+'----------------------------------------------------
+function ProdIndeksWhere(strQuery, strPattern) : ProdIndeksWhere = strQuery
+	if strPattern <> "" then
+		'rozdzielenie zapytania w przypadku wystąpienia order by
+		dim strQueryPart1: strQueryPart1 = ""
+		dim strQueryPart2: strQueryPart2 = ""
+		dim iPos: iPos = InStr(strQuery,"order by")
+		if iPos > clng(0) then
+			strQueryPart1 = Mid(strQuery,1,iPos-1)
+			strQueryPart2 = Mid(strQuery,iPos)
+		else
+			strQueryPart1 = strQuery
+		end if
+	
+		strQueryPart1 = strQueryPart1 + " or ((strIndeks like '" + Replace(Replace(strPattern,"-","")," ","") + "%') and eAktywny = 1) "
+		strQueryPart1 = strQueryPart1 + " or ((strCecha1 like '" + Replace(Replace(strPattern,"-","")," ","") + "%') and eAktywny = 1) "
+		strQueryPart1 = strQueryPart1 + " or ((strCecha2 like '" + Replace(Replace(strPattern,"-","")," ","") + "%') and eAktywny = 1) "
+		strQueryPart1 = strQueryPart1 + " or ((strCecha3 like '" + Replace(Replace(strPattern,"-","")," ","") + "%') and eAktywny = 1) "
+      
+		ProdIndeksWhere = strQueryPart1 + " " + strQueryPart2
+	end if
+end function
+
+]]>
+</script>
+</config>
+<body>
+<table border='0'>
+	<tbody>
+		<tr style='STYLE_ROW_BTN'>
+			<td  width='max' keepline='true' linealign='vcenter'>
+			</td>
+			<td align='right' keepline='true' linealign='vcenter'>
+				<button name='CTRLID_ADDNEW' skey='Ctrl+N' tip='Dodaj nowy' style='STYLE_BUTTON' href='varFunction="on_addrecord"' >Dodaj</button>
+				<t size='5'>&nbsp;</t>
+				<button skey='PgUp' name='CTRLID_PREV_PAGE' tip='Poprzednia strona' style='STYLE_BUTTON' href='varFunction="on_prev_page"' > &lt;&lt; </button>
+				<button skey='PgDn' name='CTRLID_NEXT_PAGE' tip='Następna strona' style='STYLE_BUTTON' href='varFunction="on_next_page"' > &gt;&gt; </button>
+				<t>&nbsp;</t>
+				<picture skey='Ctrl+Up' tip='Wstecz' name='CTRLID_GO_UP' image='PICTURE_ARROW_UP' href='varFunction="on_go_up"' />
+			</td>
+		</tr>
+		<tr name='CTRLID_WILDREF_ROW'>
+			<td colspan='FORM_SPAN' keepline='true'>
+				<radio name='CTRLID_WILDREF_TYPE' colspan='5'>
+					<transfer mode='custom' />
+				</radio>
+			</td>
+		</tr>
+#ifdef ENABLE_DB11
+		<tr name='CTRLID_STATUS_ROW' hide='true'>
+			<td colspan='FORM_SPAN' keepline='true'>
+				<checkbox name='CTRLID_STATUS_NAME' colspan='4'>
+					<transfer mode='custom' />
+				</checkbox>
+			</td>
+		</tr>
+#endif
+#ifdef _IOW
+		<tr name='CTRLID_STATUS_ROW_PRAC' hide='true'>
+			<td colspan='FORM_SPAN' keepline='true'>
+				<checkbox name='CTRLID_STATUS_NAME_PRAC' colspan='2'>
+					<transfer mode='custom' />
+				</checkbox>
+			</td>
+		</tr>
+#endif
+		<tr>
+			<td colspan='FORM_SPAN' keepline='true'>
+				<t>Wzorzec&nbsp;</t>
+				<edit name='CTRLID_PATTERN' size='40'>
+					<transfer mode='custom' />
+				</edit>
+				<t>&nbsp;</t>
+				<button hide='true' name='CTRLID_MUTLICRITERIAL' size='8' tip='Wyszukiwanie wielokryterialne' style='STYLE_BUTTON' 
+					href='varFunction="on_multicriteriasearch"' >Przeszukaj</button>
+			</td>
+		</tr>
+		<tr>
+			<td colspan='FORM_SPAN' name='CTRLID_RESULTS'></td>
+		</tr>
+		<tr name='CTRLID_MULTISEL_ROW' style='STYLE_ROW_BTN'>
+			<td colspan='FORM_SPAN'  align='right' keepline='true'>
+				<button name='CTRLID_OK' size='8' tip='Zatwierdź wybór' style='STYLE_BUTTON' href='varFunction="on_ok"' >OK</button>
+				<button name='CTRLID_CANCEL' size='8' tip='Anuluj' style='STYLE_BUTTON' href='varFunction="on_cancel"' >Anuluj</button>
+			</td>
+		</tr>
+	</tbody>
+</table>
+</body>
+</page>

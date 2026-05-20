@@ -1,0 +1,757 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1001.h"
+#include "h1004_cmdid.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1240.h"
+#include "h1250_raport_macros.h"
+#include "50519"
+
+#define CREATOR_TITLE	Wysyłka faktur w formie elektronicznej
+
+#define CTRLID_ROW_BUTTONS      101
+#define CTRLID_RESULT_TABLE		  102
+#define CTRLID_REDIRECT_CHKBOX	103
+#define CTRLID_CHOOSE_BUTTON    104
+#define CTRLID_ACTION_TABLE     105
+#define CTRLID_REALIZE_BUTTON   106
+#define CTRLID_ROW_CHECKBOX     107
+#define CTRLID_NOTSEND_BUTTON   108
+#define CTRLID_BUTTON_ROW_SENT  109
+
+#define PROP_ROW_IDENT           201
+#define PROP_REC_NUM             202
+#define PROP_DOK_SENT            203
+
+#define CELL_CHECKBOX    1
+#define ELEM_CHECKBOX    1
+
+#comment pierwsza kolumna
+#define KOL_FIRST              2
+#comment ostatnia kolumna
+#define KOL_LAST               7
+
+
+-->
+<page style='STYLE_PAGE'>
+	<config>
+		<title>
+	CREATOR_TITLE
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+		<script>
+<![CDATA[
+
+#include "50518"
+#include "50211" 
+#include "50200"
+#include "50122"
+#include "50101"
+#include "50226"
+
+'checkUserDirectory
+#include "50212"
+
+'cBuildQuery,cRepDict,cDrawReport
+#include "50526"
+
+dim strSQL, g_oRS
+'wiersz z nagłowkiem tabeli
+dim iRowTabHead
+'zaznacz/odznacz wszystko
+dim bChooseAll : bChooseAll = false
+'zaznacz/odznacz nie wysłane
+dim bChooseNotSent : bChooseNotSent = false
+dim pParamArray
+
+'-----------------------------------------------
+'standardowa funkcja wolana przy otwarciu strony
+'-----------------------------------------------
+function fopen : fopen = false
+
+  if not HARUI(UAR_CMDID(CMDID_KREATOR_FAKTUR_DO_WYSYLKI)) then
+    exit function
+  end if
+
+  'inicjalizacja obiektów
+  initialObjects 
+ 
+  fRefreshFilter
+
+  fopen = true
+end function
+
+'--------------------------------
+'odśwież raport z wyborem filtra
+'--------------------------------
+function fRefreshFilter
+  fRefresh true
+end function
+
+'------------------------------------------------
+'standardowa funkcja wolana na przycisk 'odswiez'
+'------------------------------------------------
+function fRefresh(byval bOption)
+	dim pModRapEngine : set pModRapEngine = doc_.getmodule(60108)
+
+  'odśwież z wyborem filtra
+  if bOption then
+	  set pParamArray = getDefaultParam()
+	  if pModRapEngine.show_raport_param_dialog(pParamArray,"CREATOR_TITLE") = 0 then
+		  exit function
+	  end if
+  end if
+	dim pPerforming : set pPerforming = doc_.performing("Trwa przygotowanie danych...")
+	
+  'wyczyść zaznaczone elementy
+  g_oRepDict.removeAll   
+  'przycisk zaznacz/odznacz wszystko
+  bChooseAll = false
+  'przycisk zaznacz/odznacz niewysłane
+  bChooseNotSent = false
+  
+  fillResults pModRapEngine,pParamArray
+  
+  set pPerforming = nothing
+end function
+
+'----------------------------------------
+'tworzenie tablicy parametrow dla raportu
+'----------------------------------------
+function getDefaultParam()
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+  
+  'filtr daty wystawienia dokumentu sprzedazy
+  pParamArray.add doc_.afc.rap.param.new_date_range("Data wystawienia").bindexpr("s.dDataWyst")
+  
+  'filtr nazwy/indeksu klienta
+  pParamArray.add doc_.afc.rap.param.new_text("Indeks klienta").bindexpr("k.strIndeks") 
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwa klienta").bindexpr("k.strNazwa")
+
+#ifdef _ABAKOSTEEL	
+  dim pParamFactory: set pParamFactory = doc_.afc.rap.param
+  dim pParamRej: set pParamRej = pParamFactory.new_choice("Rejestr dokumentów").bindexpr("r.IdObj")
+
+  doc_.afc.rap.param.init_on_query pParamRej, trans_ ,_
+	  "select strNazwa, idobj from n5rejestrdok where eTyp in (N5REJESTRDOK_FAKT_SP,N5REJESTRDOK_KOR_FAKT_SP, " +_
+	  "N5REJESTRDOK_RACH,N5REJESTRDOK_KOR_RACH,N5REJESTRDOK_PARAGON,N5REJESTRDOK_KOR_PARAGON, " +_
+	  "N5REJESTRDOK_FAKT_EXP,N5REJESTRDOK_KOR_FAKT_EXP,N5REJESTRDOK_KOREKTA_WDT, " +_
+	  "N5REJESTRDOK_WDT,N5REJESTRDOK_FAKTURA_ZALICZKOWA,N5REJESTRDOK_FAKTURA_ZALICZKOWA_KOR) order by strNazwa "
+  pParamArray.add pParamRej	
+#endif  
+   
+  'status
+  dim pParamStatus : set pParamStatus = doc_.afc.rap.param.new_choice("Status").bindexpr("s.sprzed_cZmianaEksport")
+  with pParamStatus
+	  .multiple = true
+    .names.add "Nie wysłane"
+    .values.add 0
+    .selected.add true
+    .names.add "Wysłane"
+    .values.add 1
+    .selected.add true   
+  end with  
+  pParamArray.add pParamStatus
+
+	set getDefaultParam = pParamArray
+end function
+
+'--------------------
+'wypelnianie wynikami
+'--------------------
+function fillResults(byref pModRapEngine, byref pParamArray)
+	strSQL = "select 'id_sprz'=s.IdObj,'data_wyst'=s.dDataWyst,'nr_dok'=s.strNrDok,'wyslana'=s.sprzed_cZmianaEksport, " + vbNewLine +_
+           "'id_klie'=k.IdObj,'nazwa_klie'=k.strNazwa " + vbNewLine +_ 
+           "from n5sprzedaz s " + vbNewLine +_
+           "inner join n5klient k on s.pKlient = k.IdObj " + vbNewLine +_
+           "inner join n5rejestrdok r on s.pRejestrDok = r.IdObj " + vbNewLine +_
+           "where r.eTyp not in (N5REJESTRDOK_DOSTAWA,N5REJESTRDOK_KOR_DOSTAWA) and k.kli_cDokumentyInfo = '1' " + vbNewLine +_
+		   "and s.IdObj not in (select pPopSprzed from n5sprzedaz) " + vbNewLine +_
+#ifdef _ABAKOSTEEL		   
+           "and %1 and %2 and %3 and %4 and %5 " + vbNewLine +_
+           "order by s.dDataWyst, s.strNrDok"		   
+#else
+           "and r.eTyp not in (N5REJESTRDOK_KOR_FAKT_SP,N5REJESTRDOK_FAKTURA_ZALICZKOWA_KOR,N5REJESTRDOK_KOR_RACH,N5REJESTRDOK_KOR_PARAGON,N5REJESTRDOK_KOR_FAKT_EXP,N5REJESTRDOK_KOREKTA_WDT) " + vbNewLine +_
+           "and %1 and %2 and %3 and %4 " + vbNewLine +_
+           "order by s.dDataWyst"		   
+#endif
+     
+  strSQL = pModRapEngine.query_apply_actual_param(strSQL,pParamArray)
+  dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(page_.ctrl(CTRLID_RESULT_TABLE)).removeall
+  
+  set g_oRS = trans_.createadors(strSQL)
+  if g_oRS.RecordCount > 0 then
+    'nagłówek strony
+    drawButtons
+    drawHeader pTB
+    
+    'numery kolejnych rekordów
+    dim iRecNr : iRecNr = 1
+    do while not g_oRS.EOF
+		  buildRekord pTB,iRecNr
+		  g_oRS.MoveNext
+      iRecNr = iRecNr + 1
+	  loop
+    
+    'przycisk
+    drawActionTable
+  else
+    pTB.newrow
+	  pTB.row.styleitem = STYLE_TABLE_HEADER
+	  pTB.row.fontsize = 4
+	  pTB.newcell.addtext "Brak danych spełniających podane kryteria"
+  end if
+           
+end function
+
+'---------------------------------
+'przycisk zaznacz/odznacz wszystko
+'---------------------------------
+sub drawButtons
+  dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(page_.ctrl(CTRLID_ROW_BUTTONS)).removeall
+  pTB.newrow.newcell
+  dim pNewHli
+
+  'button zaznacz/odznacz
+  set pNewHli = doc_.createhli()
+  pNewHli.prop(GVAR_FUNCTIONHLI) = "chooseAll"
+  pNewHli.prop(PROP_ROW_IDENT) = pTB.row.ident    
+  pTB.addctrl CTRL_TYPE_BUTTON, -1
+  with pTB.element
+    .customredirect = clng(CTRLID_CHOOSE_BUTTON)
+	  .transfer = page_.createtransfer("custom")
+    set .hli = pNewHli
+    .size = 12
+    .styleitem = STYLE_BUTTON
+  end with 
+  
+  'button zaznacz/odznacz nie wysłane
+  set pNewHli = doc_.createhli()
+  pNewHli.prop(GVAR_FUNCTIONHLI) = "chooseNotSent"
+  pNewHli.prop(PROP_ROW_IDENT) = pTB.row.ident    
+  pTB.addctrl CTRL_TYPE_BUTTON, -1
+  with pTB.element
+    .customredirect = clng(CTRLID_NOTSEND_BUTTON)
+	  .transfer = page_.createtransfer("custom")
+    set .hli = pNewHli
+    .size = 12
+    .styleitem = STYLE_BUTTON
+  end with   
+  
+  pTB.cell.align = ALIGN_LEFT
+
+end sub
+
+'------------------------
+'zaznacz/odznacz wszystko
+'------------------------
+function chooseAll(pHLI)
+  if bChooseAll then
+    bChooseAll = false
+  else
+    bChooseAll = true
+  end if
+  chooseAllPos bChooseAll
+end function
+
+'---------------------------
+'zaznacz/odznacz nie wysłane
+'---------------------------
+function chooseNotSent(pHLI)
+  if bChooseNotSent then
+    bChooseNotSent = false
+  else
+    bChooseNotSent = true
+  end if
+  chooseNotSentPos bChooseNotSent
+end function
+
+'-----------------------------------------------------------
+'zaznacza/odznacza wszystkie pozycje w zależności od bOption
+'-----------------------------------------------------------
+function chooseAllPos(byval bOption)
+  dim oRow : set oRow = page_.ctrl(clng(iRowTabHead))
+  set oRow = oRow.nextelement
+  dim nIdSprz, strValue
+  do while not oRow is nothing
+    if not oRow.userprop is nothing then
+      nIdSprz = oRow.userprop.prop(PROP_ROW_IDENT)
+      'dodaj/usuń ze słownika
+      strValue = oRow.cell(CELL_CHECKBOX).element(ELEM_CHECKBOX).value
+      if bOption then
+        if strValue = "0" then
+          g_oRepDict.add nIdSprz, nIdSprz
+          strValue = "1"
+        end if
+      else
+        if strValue = "1" then
+          g_oRepDict.removeDictObj nIdSprz
+          strValue = "0"
+        end if
+      end if
+      oRow.cell(CELL_CHECKBOX).element(ELEM_CHECKBOX).value = strValue
+      'kolorowanie
+      changeRowColor oRow, strValue
+    end if 
+    set oRow = oRow.nextelement
+	loop
+end function
+
+'-------------------------------------------------------------
+'zaznacza/odznacza nie wysłane pozycje w zależności od bOption
+'-------------------------------------------------------------
+function chooseNotSentPos(byval bOption)
+
+  dim oRow : set oRow = page_.ctrl(clng(iRowTabHead))
+  set oRow = oRow.nextelement
+  dim nIdSprz, strValue, cSent
+  do while not oRow is nothing
+    if not oRow.userprop is nothing then
+      nIdSprz = oRow.userprop.prop(PROP_ROW_IDENT)
+      cSent = oRow.userprop.prop(PROP_DOK_SENT)
+      'tylko nie wysłane
+      if cSent = "0" then
+        'dodaj/usuń ze słownika
+        strValue = oRow.cell(CELL_CHECKBOX).element(ELEM_CHECKBOX).value
+        if bOption then
+          if strValue = "0" then
+            g_oRepDict.add nIdSprz, nIdSprz
+            strValue = "1"
+          end if
+        else
+          if strValue = "1" then
+            g_oRepDict.removeDictObj nIdSprz
+            strValue = "0"
+          end if
+        end if
+        oRow.cell(CELL_CHECKBOX).element(ELEM_CHECKBOX).value = strValue
+        'kolorowanie
+        changeRowColor oRow, strValue
+      end if
+    end if 
+    set oRow = oRow.nextelement
+	loop
+end function
+
+'---------------
+'naglówek tabeli
+'---------------
+function drawHeader(byval pTB)
+	pTB.newrow
+	pTB.row.styleitem = STYLE_TABLE_HEADER
+	pTB.row.fontsize = 4
+  pTb.newcell
+	pTB.newcell.addtext "Lp"
+  pTB.newcell.addtext "Data"  
+  pTB.newcell.addtext("Nr faktury").cell.width = clng(4000)   
+  pTB.newcell.addtext("Klient").cell.width = clng(10000)
+  pTB.newcell.addtext("Wysłana").cell.width = clng(2000)
+  
+  'wiersz z nagłowkiem tabeli
+  iRowTabHead = pTB.row.ident  
+end function
+
+'-------------------------
+'wypisanie jednego rekordu
+'-------------------------
+function buildRekord(byref pTB, byval iRecNr)
+    
+  'idobj wyswietlanego dokumentu sprzedazy  
+  dim iIdObj : iIdObj = clng(g_oRS("id_sprz").value)
+  'znacznik czy faktury była wysyłana
+  dim cSent : cSent = cstr(g_oRS("wyslana").value)
+ 
+  pTB.newrow
+  'ustawienie właściwości dla wiersza
+  set pTB.row.userprop = doc_.createhli()
+  pTB.row.userprop.prop(PROP_ROW_IDENT) = iIdObj
+  pTB.row.userprop.prop(PROP_DOK_SENT) = cSent
+  pTB.row.userprop.prop(PROP_REC_NUM) = iRecNr
+  
+  'checkbox 
+  dim pCheckBox
+  pTB.newcell
+  pTB.addctrl CTRL_TYPE_CHECKBOX,-1
+  set pCheckBox = pTB.element
+  with pCheckBox
+    .customredirect = clng(CTRLID_ROW_CHECKBOX)
+    .transfer = page_.createtransfer("custom")
+    .border = 0
+  end with
+  pTB.element.addnew CTRL_TYPE_STATIC, -1
+  
+  pTB.row
+  pTB.newcell.addtext(cstr(iRecNr)).cell.align=ALIGN_RIGHT
+	pTB.newcell.addtext(doc_.afc.display.fulldate(g_oRS("data_wyst")))  
+  dim strHLI: strHLI = doc_.afc.convert.Formatter("OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5SPRZEDAZ," + cstr(iIdObj) + ",USAGE_VIEW)").done()
+  pTB.newcell.addtexthli cstr(g_oRS("nr_dok")),doc_.createhlistr(strHLI)  
+  dim strHLIKlient: strHLIKlient = doc_.afc.convert.Formatter("OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5KLIENT," + cstr(g_oRS("id_klie")) + ",USAGE_VIEW)").done()
+  pTB.newcell.addtexthli cstr(g_oRS("nazwa_klie")),doc_.createhlistr(strHLIKlient)
+  if cSent = "0" then
+    pTB.newcell.addtext("NIE").cell.align=ALIGN_CENTER
+    pTB.element.forecolor = rgb(255,0,0)
+  else
+    pTB.newcell.addtext("TAK").cell.align=ALIGN_CENTER
+    pTB.element.forecolor = rgb(0,150,0)
+  end if
+  
+  dim pNewHli : set pNewHli = doc_.createhli()
+	pNewHli.prop(GVAR_FUNCTIONHLI) = "buttonSent"
+  pNewHli.prop(PROP_ROW_IDENT) = iIdObj
+  pNewHli.prop(PROP_DOK_SENT) = cSent
+
+	pTB.newcell.addctrl CTRL_TYPE_BUTTON,-1
+  pTB.cell.align = ALIGN_CENTER
+	set pTB.element.hli = pNewHli
+	with pTB.element
+    .customredirect = clng(CTRLID_BUTTON_ROW_SENT)
+		.transfer = page_.createtransfer("custom")    
+    .size = 3
+	  .styleitem = STYLE_BUTTON
+  end with   
+  pTB.element.text = "Wyślij"
+
+  'właściwości całego wiersza
+  pTB.row.fontsize = 3
+  if iRecNr mod 2 = 0 then
+    pTB.row.backcolor = ROW_COLOR
+  end if
+end function
+
+'--------------------------------------------
+'ustawia kolor dla wiersza w zależności od LP
+'--------------------------------------------
+function setRowColor(iLP)
+  if iLP mod 2 = 0 then
+    setRowColor = ROW_COLOR
+  else
+    setRowColor = WHITE_COLOR
+  end if   
+end function
+
+'-------------------
+'kolorowanie wiersza
+'-------------------
+sub changeRowColor(byref oRow, byval newValue)
+  if newValue = "1" then
+    'wiersz na żółto
+    oRow.backcolor = YELLOW_COLOR
+  else
+    'usuń żółty kolor
+    if oRow.userprop.exists(PROP_REC_NUM) then
+      dim iLP : iLP = oRow.userprop.prop(PROP_REC_NUM)
+      oRow.backcolor = setRowColor(iLP)
+    end if
+  end if
+end sub
+
+'------------
+'tabela akcji
+'------------
+sub drawActionTable
+  dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(page_.ctrl(CTRLID_ACTION_TABLE)).removeall
+  'przyciski
+  pTB.newrow.newcell
+  dim giveButton : set giveButton = new cButton
+  giveButton.newButton pTB, CTRLID_REALIZE_BUTTON, "sentAllChecked", "Wyślij zaznaczone", 8, ALIGN_LEFT, false
+  pTB.cell.align = ALIGN_RIGHT
+  pTB.cell.colspan = 4
+end sub 
+
+'-----------------------------------------------------
+'sprawdza czy utworzono publikacje dla wydruków do pdf
+'-----------------------------------------------------
+function checkDPC(byref strDocType, byref idDPCpdf): checkDPC = false
+    if strDocType = "SPRZEDAZ" then
+        idDPCpdf = trans_.findobjid(TYPEID_N5DPC, "strNazwa = 'Faktura VAT - wydruk w pdf'")
+        if idDPCpdf <= clng(0) then
+            trans_.message 7000, 0, "Należy utworzyć publikację dla wydruku do pdf o nazwie: Faktura VAT - wydruk w pdf"
+			exit function
+        end if
+    end if
+	
+    if strDocType = "SPRZEDAZ_KOREKTA" then
+        idDPCpdf = trans_.findobjid(TYPEID_N5DPC, "strNazwa = 'Korekta faktury VAT - wydruk w pdf'")
+        if idDPCpdf <= clng(0) then
+            trans_.message 7000, 0, "Należy utworzyć publikację dla wydruku do pdf o nazwie: Korekta faktury VAT - wydruk w pdf"
+			exit function
+        end if
+    end if	
+	
+	checkDPC = true
+end function
+
+'------------------------------------------------------
+'akcja przycisku Wyślij wysyłająca pojedynczą wiadomość
+'------------------------------------------------------
+function buttonSent(pHLI)
+
+  dim IdSprz : IdSprz = clng(pHLI.prop(PROP_ROW_IDENT))
+  
+  'sprawdź czy utworzono publikacje
+  dim idDPCSprz, idDPCKor
+  if not checkDPC("SPRZEDAZ", idDPCSprz) then
+    exit function
+  end if
+#ifdef _ABAKOSTEEL  
+  if not checkDPC("SPRZEDAZ_KOREKTA", idDPCKor) then
+    exit function
+  end if
+#endif  
+    
+  'pobierz fakturę
+  dim pSprzedaz: set pSprzedaz = trans_.getobj(TYPEID_N5SPRZEDAZ,IdSprz)
+  
+  dim idDPCpdf, strDokType
+  if pSprzedaz.n5sprzedaz_isKorekta() then
+    idDPCpdf = idDPCKor
+	strDokType = "SPRZEDAZ_KOREKTA"
+  else
+    idDPCpdf = idDPCSprz
+	strDokType = "SPRZEDAZ"  
+  end if
+  
+  'pobierz adresy email
+  dim strEmail: strEmail = ""
+  dim strEmailAdd: strEmailAdd = ""
+    
+  if trim(pSprzedaz.pKlient.kli_strRodzajProd) = "" then
+    trans_.message 7000, 0, "Brak zdefiniowanych adresów e-mail w polu 'E-mail do faktur' w kartotece klienta."
+    exit function  
+  else
+    strEmail = trim(pSprzedaz.pKlient.kli_strRodzajProd)
+  end if
+  strEmailAdd = getglobprofile(GLOBPROF_ADD_EMAIL_ABAKUS)
+  if strEmailAdd = "" then
+    if MessageBox("Brak zdefiniowanego wewnętrzego adresu e-mail w celu wysłania kopii wiadomości. Czy mimo tego kontynuować?", "Wysyłanie wiadomości e-mail", vbYesNo, vbQuestion) <> vbYes then
+	    exit function
+    end if    
+  end if
+    
+  'wyślij email
+  dim strTo: strTo = strEmail
+  if strEmailAdd <> "" then
+    strTo = strTo + ";" + strEmailAdd
+  end if
+  if MessageBox("Operacja spowoduje wysłanie e-maila z załącznikiem faktury na adres: " + Replace(strTo,";",", ") + ". Czy kontynuować?", "Wysyłanie wiadomości e-mail", vbYesNo, vbQuestion) = vbYes then
+    dim pM60153: set pM60153 = doc_.getmodule(60153)
+    dim strSubject: strSubject = pM60153.get_email_subject(pSprzedaz, strDokType)
+    dim strBody: strBody = pM60153.get_email_body(pSprzedaz, strDokType)      
+    dim pPerf : set pPerf = doc_.performing("Trwa wysyłanie wiadomości...")
+    if pM60153.send_email_adres(idDPCpdf, pSprzedaz, strTo, "PDF", strSubject, strBody) then
+      'zapisz znacznik na fakturze
+      if not trans_.saveobjects() then
+      end if
+    end if
+    set pPerf = nothing
+      
+    'odśwież
+    fRefresh false
+  end if
+end function   
+
+'--------------------------------------
+'funkcja wysyłąjąca mail z załącznikiem
+'--------------------------------------
+function sentAllChecked
+
+  if MessageBox("Operacja spowoduje wysłanie wiadomości e-maili z załącznikiem faktury. Czy kontynuować?", "Wysyłanie wiadomości e-mail", vbYesNo, vbQuestion) <> vbYes then
+    exit function
+  end if
+  
+  'sprawdź czy utworzono publikacje
+  dim idDPCSprz, idDPCKor
+  if not checkDPC("SPRZEDAZ", idDPCSprz) then
+    exit function
+  end if
+#ifdef _ABAKOSTEEL  
+  if not checkDPC("SPRZEDAZ_KOREKTA", idDPCKor) then
+    exit function
+  end if
+#endif  
+
+  'sprawdź adres dodatkowy
+  dim strEmailAdd: strEmailAdd = ""
+  strEmailAdd = getglobprofile(GLOBPROF_ADD_EMAIL_ABAKUS)
+  if strEmailAdd = "" then
+    if MessageBox("Brak zdefiniowanego wewnętrzego adresu e-mail w celu wysłania kopii wiadomości. Czy mimo tego kontynuować?", "Wysyłanie wiadomości e-mail", vbYesNo, vbQuestion) <> vbYes then
+	    exit function
+    end if    
+  end if    
+    
+  dim pM60153: set pM60153 = doc_.getmodule(60153)
+  dim bPomin: bPomin = false
+    
+  g_oRS.movefirst  
+  dim pPerf : set pPerf = doc_.performing("Trwa wysyłanie wiadomości...")
+    
+  do while not g_oRS.EOF
+    dim nIdObj : nIdObj = clng(g_oRS("id_sprz"))
+    if g_oRepDict.exists(nIdObj) then
+      if nIdObj > clng(0) then
+        dim pSprzedaz: set pSprzedaz = trans_.getobj(TYPEID_N5SPRZEDAZ,nIdObj)
+		
+        dim idDPCpdf, strDokType
+        if pSprzedaz.n5sprzedaz_isKorekta() then
+          idDPCpdf = idDPCKor
+	      strDokType = "SPRZEDAZ_KOREKTA"
+        else
+          idDPCpdf = idDPCSprz
+	      strDokType = "SPRZEDAZ"  
+        end if		
+          
+        'pobierz adresy email
+        dim strEmail: strEmail = ""
+        'pobierz treści
+        dim strSubject: strSubject = pM60153.get_email_subject(pSprzedaz, strDokType)
+        dim strBody: strBody = pM60153.get_email_body(pSprzedaz, strDokType)
+    
+        if trim(pSprzedaz.pKlient.kli_strRodzajProd) = "" then
+          if MessageBox("Brak zdefiniowanych adresów e-mail w polu 'E-mail do faktur' w kartotece klienta: " + pSprzedaz.pKlient.strNazwa + ". Czy mimo to kontynuować wysyłanie dla innych klientów?", "Wysyłanie wiadomości e-mail", vbYesNo, vbQuestion) = vbYes then
+            bPomin = true
+          else
+            exit function
+          end if
+        else
+          strEmail = trim(pSprzedaz.pKlient.kli_strRodzajProd)
+        end if
+    
+        if not bPomin then
+          'wyślij email
+          dim strTo: strTo = strEmail
+          if strEmailAdd <> "" then
+            strTo = strTo + ";" + strEmailAdd
+          end if
+            
+          pPerf.text = "Trwa wysyłanie wiadomości dla faktury: " + pSprzedaz.strNrDok
+          if pM60153.send_email_adres(idDPCpdf, pSprzedaz, strTo, "PDF", strSubject, strBody) then
+            'zapisz znacznik na fakturze
+            if not trans_.saveobjects() then
+            end if
+          end if
+        end if
+        bPomin = false
+        
+      end if
+    end if  
+		g_oRS.MoveNext
+	loop
+  set pPerf = nothing
+  MessageBox "Działanie kreatora zakończone powodzeniem." , "Wysyłka faktur w formie elektronicznej", vbOKOnly, vbInformation
+    
+  'odśwież
+  fRefresh false
+end function
+
+'------------------------
+'kontrolka dla przycisku
+'------------------------
+function c##CTRLID_BUTTON_ROW_SENT##_ongetdata(byref oCtrl)
+	c##CTRLID_BUTTON_ROW_SENT##_ongetdata = true
+end function
+
+function c##CTRLID_BUTTON_ROW_SENT##_ondataentered(byref oCtrl, byval newValue)
+	c##CTRLID_BUTTON_ROW_SENT##_ondataentered = true  
+end function
+
+'-------------------------
+'kontrolki dla checkbox'ów
+'-------------------------
+function c##CTRLID_ROW_CHECKBOX##_ongetdata(byref oCtrl) : c##CTRLID_ROW_CHECKBOX##_ongetdata = true
+end function
+
+function c##CTRLID_ROW_CHECKBOX##_ondataentered(byref oCtrl, byval newValue) : c##CTRLID_ROW_CHECKBOX##_ondataentered = false
+  dim nIdSprz
+  dim bAddRem : bAddRem = true
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+    nIdSprz = oRow.userprop.prop(PROP_ROW_IDENT)
+    'dodaj/usuń ze słownika
+    if newValue = "1" then
+      g_oRepDict.add nIdSprz, nIdSprz
+    else
+      g_oRepDict.removeDictObj nIdSprz
+    end if
+    if g_oRepDict.getDictionary.Count = g_oRS.RecordCount then
+      bChooseAll = true
+    else
+      bChooseAll = false
+    end if 
+    oCtrl.value = newValue
+    'kolorowanie
+    changeRowColor oRow, newValue
+  end if
+  c##CTRLID_ROW_CHECKBOX##_ondataentered = true
+end function
+
+'------------------------
+'kontrolki dla przycisków
+'------------------------
+function c##CTRLID_REALIZE_BUTTON##_ongetdata(byref oCtrl) : c##CTRLID_REALIZE_BUTTON##_ongetdata = true
+  oCtrl.disable = (g_oRepDict.getDictionary().count = 0)
+end function
+
+function c##CTRLID_CHOOSE_BUTTON##_ongetdata(byref oCtrl) : c##CTRLID_CHOOSE_BUTTON##_ongetdata = true
+  if bChooseAll then
+    oCtrl.text = "Odznacz wszystko"
+  else
+    oCtrl.text = "Zaznacz wszystko"
+  end if  
+end function
+
+function c##CTRLID_NOTSEND_BUTTON##_ongetdata(byref oCtrl) : c##CTRLID_NOTSEND_BUTTON##_ongetdata = true
+  if bChooseNotSent then
+    oCtrl.text = "Odznacz nie wysłane"
+  else
+    oCtrl.text = "Zaznacz nie wysłane"
+  end if  
+end function
+
+
+]]>
+</script>
+	</config>
+	<body>
+    <table>
+      <tbody>
+        <tr>
+          <td>
+            <picture image='80139' tip='Wypełnij raport' width='1000' height='1000' href='varFunction="fRefreshFilter"' />
+          </td>
+          <td>
+            <t fontsize='5' bold='true'>Wysyłka faktur w formie elektronicznej</t>
+          </td>
+				</tr>
+        <tr>
+          <td colspan='2'>
+            <table name='CTRLID_ROW_BUTTONS'>
+              <tbody />
+            </table>
+          </td>
+        </tr>        
+				<tr>
+					<td colspan='2'>
+            <table border='1' name='CTRLID_RESULT_TABLE'>
+              <tbody backcolor='white' bordercolor='#006697' />
+            </table>
+					</td>
+				</tr>
+        <tr>
+          <td align='right' colspan='2'>
+            <table name='CTRLID_ACTION_TABLE'>
+              <tbody />
+            </table>
+          </td>
+        </tr> 
+			</tbody>
+		</table>
+	</body>
+</page>

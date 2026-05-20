@@ -1,0 +1,252 @@
+
+#define FIRMA_NAZWA						util_.Platnik_Nazwa(root_)
+#define FIRMA_NIP						util_.Platnik_NIP(root_)
+#define DOKUMENT_US						util_.Dokument_US(root_)
+#define FIRMA_KRAJ						util_.Platnik_Kraj(root_)
+#define FIRMA_WOJEWODZTWO				util_.Platnik_Woj(root_)
+#define FIRMA_ULICA						util_.Platnik_Ulica(root_)
+#define FIRMA_NR_DOMU					util_.Platnik_NrDomu(root_)
+#define FIRMA_NR_LOKALU					util_.Platnik_NrLokalu(root_)
+#define FIRMA_MIEJSCOWOSC				util_.Platnik_Miasto(root_)
+#define FIRMA_KOD_POCZTOWY				util_.Platnik_Kod(root_)
+#define FIRMA_POCZTA					util_.Platnik_Poczta(root_)
+#define FIRMA_POWIAT					util_.Platnik_Powiat(root_)
+#define FIRMA_GMINA						util_.Platnik_Gmina(root_)
+#define DOKUMENT_REJESTRACJA_IMIE		util_.Dokument_Rejestracja_Imie(root_)
+#define DOKUMENT_REJESTRACJA_NAZWISKO	util_.Dokument_Rejestracja_Nazwisko(root_)
+
+
+
+'' kwota z przecinkiem
+function ToVAT7KwotaZlGr(byval kwota) 
+
+	ToVAT7KwotaZlGr = doc_.afc.display.money(kwota,"")
+
+end function
+
+
+
+'' kwota ze spacj¹ zamiast przecinka
+function Kwota(byval curKwota) 
+	Kwota = replace(doc_.afc.display.money(curKwota,"") , "," , " ")
+end function
+
+
+
+function Liczba(byval n) 
+	Liczba = doc_.afc.display.quantity(n,"",0)
+end function
+
+
+' Oddziela ka¿dy znak napisu spacj¹, np:
+' "xxx" -> "x  x  x"
+function StretchDoKratki(byval what)
+	
+	dim ret
+	dim replacement: replacement = " "
+
+	if len(what) <> 0 then 
+		ret = mid(what,1,1) 
+	end if
+
+	dim i
+	for i = 2 to len(what)
+			ret = ret + replacement + mid(what,i,1)
+	next
+
+	StretchDoKratki = ret
+end function
+
+' odziela od siebie poszczególne sk³adowe stringa o parametr dist(ance)
+' u¿ywane w wydrukach formularzy
+function StretchDoKratkiDistance(textq, fonts, pozx, pozy, dist, revers)
+	dim k, l
+	dim i, a
+	StretchDoKratkiDistance = ""
+	if len(textq) = 0 then exit function
+	a = len(cstr(textq))
+	For i = 1 to a
+		if revers = "r" then
+			l = mid(strreverse(textq),i,1)
+		else
+			l = mid(textq,i,1)
+		end if	
+			k = k + "<t font='Courier New' fontsize='" + CStr(fonts) + "' position='" + revers + CStr(pozx + ((i-1) * clng(dist))) + "," + CStr(pozy) + "'> " + cstr(l) + "</t>"
+	Next
+	StretchDoKratkiDistance = k
+end function
+
+
+''' Powiêksz napis do "width" znaków, uzupe³niaj¹c znakami "fillchar" z lewej
+''' np. AlignRightPadd(aaa,10,X) daje XXXXXXXaaa
+function AlignRightPadd(byval number,byval width,byval fillchar)
+
+	AlignRightPadd = CStr(number)
+
+	dim tofill : tofill = width - len(CStr(number))
+
+	if tofill <= 0 then
+		exit function	
+	end if
+
+	dim i
+	for i = 1 to tofill
+		AlignRightPadd = mid(cstr(fillchar),1,1) + AlignRightPadd
+	next
+
+end function
+
+
+#comment ' -----------------------------------------------------------------------------------------
+#comment ' Funkcje pomocnicze przy wyliczaniu podsumowania przy u¿yciu checkbox'ów
+#comment ' -----------------------------------------------------------------------------------------
+
+'---------------------------------------------------------------------------------------------------
+'przelicza podsumowanie sekcji w zale¿noœci od bSimpRow (true = tylko 1 wiersz, false = ca³a sekcja)
+'---------------------------------------------------------------------------------------------------
+sub recalcSumSec(byref oRow, byref oRowPodsum, byval bSimpRow)
+  dim oRowSec : set oRowSec = oRow
+  dim pSecProp : pSecProp = oRowSec.userprop.prop(1234)
+  dim oRowSum, oRowParent, nNumSumat, oRowElement, oSecElement
+  if bSimpRow then
+    'gdy pojedynczy wiersz 
+    set oRowSum = page_.ctrl(clng(pSecProp))          'wiersz z podsum¹ sekcji
+    'liczba sumatorów
+    nNumSumat = oRowSum.userprop.prop(5678)
+    'wyszukuje checkbox w wierszu (prop 9999)
+    set oRowElement = findElem(oRow,9999)
+    if oRowElement.value = "0" then
+      'sekcja i ca³y raport
+      recalcKol oRowSum, oRow, nNumSumat, "-"
+      recalcKol oRowPodsum, oRow, nNumSumat, "-"
+    else
+      'sekcja i ca³y raport
+      recalcKol oRowSum, oRow, nNumSumat, "+"
+      recalcKol oRowPodsum, oRow, nNumSumat, "+"      
+    end if
+    'gdy wszystkie dzieci odznaczone => odznacz rodzica
+    set oRowParent = page_.ctrl(clng(pSecProp - 1)).parent.parent
+    checkChild oRowParent, pSecProp
+  else
+    'gdy ca³a sekcja
+    set oRowSum = page_.ctrl(clng(pSecProp + 1))      'wiersz z podsum¹ sekcji
+    'liczba sumatorów
+    nNumSumat = oRowSum.userprop.prop(5678)    
+    'ustaw siê na pierwszym dziecku
+    set oRow = findFirstChild(oRow)    
+    'wyszukuje checkbox dla rodzica
+    set oSecElement = findElem(oRowSec,9999)    
+    do while (pSecProp + 1 = oRow.userprop.prop(1234))
+      set oRowElement = findElem(oRow,9999)
+      if not oRowElement is nothing then
+        if oSecElement.value = "0" then
+          if oRowElement.value = "1" then
+            recalcKol oRowSum, oRow, nNumSumat, "-"
+            recalcKol oRowPodsum, oRow, nNumSumat, "-"
+            oRowElement.value = "0"
+          end if
+        else
+          if oRowElement.value = "0" then
+            recalcKol oRowSum, oRow, nNumSumat, "+"
+            recalcKol oRowPodsum, oRow, nNumSumat, "+"
+            oRowElement.value = "1"
+          end if
+        end if
+      end if
+      set oRow = oRow.nextelement
+    loop
+  end if  
+end sub
+
+'-------------------------------------
+'przelicza wartoœæ pojedynczej komórki
+'-------------------------------------
+sub recalcKol(byref oRowSum, byref oRow, byval nNumSumat, byval strZnak)
+  dim iter, curKwota, oElem
+  for iter = 1 to nNumSumat
+    set oElem = findElem(oRowSum,7000 + iter)
+    curKwota = strToCur(oElem.value)
+    if strZnak = "-" then
+      oElem.value = trans_.afc.display.money(curKwota - oRow.userprop.prop(7000 + iter),"")
+    else
+      oElem.value = trans_.afc.display.money(curKwota + oRow.userprop.prop(7000 + iter),"") 
+    end if
+  next
+end sub      
+
+'---------------------------------------------------
+'gdy wszystkie dzieci odznaczone => odznacza rodzica
+'---------------------------------------------------
+sub checkChild(byref oRowParent, byval pSecProp)
+  dim bCheckParent : bCheckParent = true
+  dim oParentElem, oChildElem
+  dim oRowChild : set oRowChild = oRowParent
+  set oRowChild = findFirstChild(oRowChild)
+  do while (pSecProp = oRowChild.userprop.prop(1234))
+    set oChildElem = findElem(oRowChild,9999)
+    if not oChildElem is nothing then
+      if oChildElem.value = "1" then
+        bCheckParent = false
+        exit do
+      end if  
+    end if
+    set oRowChild = oRowChild.nextelement
+  loop
+  set oParentElem = findElem(oRowParent,9999)
+  if not oParentElem is nothing then
+    if bCheckParent then
+      oParentElem.value = "0"
+    else
+      oParentElem.value = "1"
+    end if
+  end if
+end sub
+
+'----------------------------------------
+'wyszukuje element w wierszu o danym prop
+'----------------------------------------
+function findElem(byref oRow, byval iProp) : set findElem = nothing 
+  dim oCell, oElement
+  for each oCell in oRow
+    for each oElement in oCell
+      if not oElement.userprop is nothing then
+        if oElement.userprop.exists(iProp) then
+          set findElem = oElement
+          exit function
+        end if
+      end if
+    next
+  next
+end function
+
+'-----------------------------------------
+'ustawia siê na pierwszym dziecku w sekcji
+'-----------------------------------------
+function findFirstChild(oRow) : set findFirstChild = nothing
+  set oRow = oRow.nextelement
+  dim iter : iter = 0
+  do while iter < 10
+    if not oRow.userprop is nothing then
+      if oRow.userprop.exists(1234) then
+        set findFirstChild = oRow
+        exit function
+      end if
+    else
+      set oRow = oRow.nextelement
+      iter = iter + 1
+    end if
+  loop
+end function
+
+'-------------------------------------------------------------------------------------------
+'zamienia kwotê z trans_.afc.display.money na ccur zale¿noœci od ustawieñ separatora windows
+'-------------------------------------------------------------------------------------------
+function strToCur(byval strKwota) : strToCur = ccur(0.0)
+  'separator dziesiêtyny windows
+  dim strSep : strSep = mid(cstr(ccur(1/2)),2,1)
+  if strSep = "." then
+    strToCur = ccur(replace(replace(strKwota,",",".")," ",""))
+  else
+    strToCur = ccur(replace(strKwota," ",""))
+  end if 
+end function

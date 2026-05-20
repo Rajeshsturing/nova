@@ -1,0 +1,197 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+prefix: grp_
+
+#define _RECALC_TABLENAME_	n5grupaproduktow
+
+#include "h1000.h" 
+#include "h1200.h" 
+-->
+<class>
+	<identifier>TYPEID_N5GRUPAPRODUKTOW</identifier>
+	<table>n5grupaproduktow</table>
+	<humanname>Grupa produktów</humanname>
+	<idobj/>
+	<embedded>
+		<name>strNazwa</name>
+		<sqltype>SQLvc128</sqltype>
+		<humanname>Nazwa grupy produktów</humanname>
+		<unique/>
+	</embedded>
+	<ref>
+		<name>pGrupaNadrzedna</name>
+		<humanname>Nadrzędna grupa produktów</humanname>
+		<typeid>TYPEID_N5GRUPAPRODUKTOW</typeid>
+		<optional/>
+	</ref>
+
+	<!-- db8 -->
+
+	<embedded>
+		<name>grp_strRZC</name>
+		<sqltype>SQLvc256</sqltype>
+		<humanname>Reguly zmian cen</humanname>
+	</embedded>
+
+	<embedded>
+		<name>grp_strRZSM</name>
+		<sqltype>SQLvc256</sqltype>
+		<humanname>Reguly zmian stanow min.max</humanname>
+	</embedded>
+	<ref>
+		<name>grp_pJednostkaEwid</name>
+		<humanname>Domyslna jednostka ewidencyjna</humanname>
+		<typeid>TYPEID_N5JEDNOSTKA</typeid>
+		<optional/>
+	</ref>
+	<ref>
+		<name>grp_pDostawca</name>
+		<humanname>Domyslny dostawca</humanname>
+		<typeid>TYPEID_N5KLIENT</typeid>
+		<optional/>
+	</ref>
+#ifdef ENABLE_DB11_B
+  <embedded>
+    <name>grp_iDataWaznosci</name>
+    <sqltype>SQLlong</sqltype>
+    <humanname>Data ważności</humanname>
+  </embedded>
+#endif
+#ifdef ENABLE_DB11_C
+	<embedded>
+		<name>grp_strIndeks</name>
+		<sqltype>SQLvc128</sqltype>
+		<humanname>Indeks grupy produktów</humanname>
+	</embedded>
+	<ref>
+		<name>grp_pPracownik</name>
+		<humanname>Pracownik dedykowany</humanname>
+		<typeid>TYPEID_N5PRACOWNIK</typeid>
+		<optional/>
+	</ref>  
+#endif
+#ifdef ENABLE_DB11_D
+  <embedded>
+    <name>grp_strUwagi</name>
+    <sqltype>SQLvc512</sqltype>
+    <humanname>Uwagi</humanname>
+  </embedded>
+#endif
+
+#ifdef ENABLE_DB13
+  <embedded>
+    <name>grp_cPublic</name>
+    <sqltype>SQLc1</sqltype>
+    <humanname>Widoczna dla klientów</humanname>
+    <default>1</default>
+  </embedded>
+  <embedded>
+    <name>grp_strPublicName</name>
+    <sqltype>SQLvc512</sqltype>
+    <humanname>Nazwa widoczna dla klientów</humanname>
+  </embedded>
+#endif
+
+
+  <cursors>
+	DEFAULT_CURSOR(wg nazwy,strNazwa)
+</cursors>
+
+<script>
+<![CDATA[
+function n5grupaproduktow_as_text()
+    n5grupaproduktow_as_text=this_.strNazwa
+end function
+
+BEGIN_RECALC(pGrupaNadrzedna)
+	if not this_.pGrupaNadrzedna is nothing then
+		if not this_.pGrupaNadrzedna.grp_pJednostkaEwid is nothing then
+			set this_.grp_pJednostkaEwid = this_.pGrupaNadrzedna.grp_pJednostkaEwid
+		end if
+		if not this_.pGrupaNadrzedna.grp_pDostawca is nothing then
+			set this_.grp_pDostawca = this_.pGrupaNadrzedna.grp_pDostawca
+		end if
+	end if
+END_RECALC
+
+function n5grupaproduktow_sprawdzCykl():n5grupaproduktow_sprawdzCykl = false
+
+dim oGrNad: set oGrNad = this_.pGrupaNadrzedna
+	do while not ( oGrNad is nothing ) and not (oGrNad is this_.get_this())
+		set oGrNad = oGrNad.pGrupaNadrzedna
+	loop
+  n5grupaproduktow_sprawdzCykl = (oGrNad is this_.get_this())
+end function
+
+#comment '----------------------------------------------------- 
+function n5grupaproduktow_befins():n5grupaproduktow_befins = false
+	if this_.n5grupaproduktow_sprawdzCykl() then
+			nx_.trace.fatal "FSP004", " Nie można zapisać grupy - wystepuje cykliczne odwołanie"
+		exit function
+	end if
+	n5grupaproduktow_befins =  true
+end function
+
+function n5grupaproduktow_befupd():n5grupaproduktow_befupd = false
+	if this_.n5grupaproduktow_sprawdzCykl() then
+			nx_.trace.fatal "FSP004", " Nie można zapisać grupy - wystepuje cykliczne odwołanie"
+		exit function
+	end if
+  n5grupaproduktow_update_public
+	n5grupaproduktow_befupd =  true
+end function
+#comment '-----------------------------------------------------
+function n5grupaproduktow_get_rzc_mode()
+	dim cMode : cMode = left(this_.grp_strRZC,1)
+	select case cMode
+	case "2"
+		n5grupaproduktow_get_rzc_mode = 2
+	case "1"
+		n5grupaproduktow_get_rzc_mode = 1
+	case else
+		n5grupaproduktow_get_rzc_mode = 0
+	end select
+end function
+
+#comment '-----------------------------------------------------
+#comment 'zwraca grupe z ktorej nalezy pobrac RZC
+#comment '-----------------------------------------------------
+function n5grupaproduktow_get_derived_rzc_group()
+	set n5grupaproduktow_get_derived_rzc_group = nothing
+	dim iRZCMode : iRZCMode = this_.n5grupaproduktow_get_rzc_mode()
+	select case iRZCMode
+	case 1
+		set n5grupaproduktow_get_derived_rzc_group = this_.get_this()
+	case 2
+		if not this_.pGrupaNadrzedna is nothing then
+			set n5grupaproduktow_get_derived_rzc_group = _
+				this_.pGrupaNadrzedna.n5grupaproduktow_get_derived_rzc_group()
+		end if
+	end select
+end function
+
+sub n5grupaproduktow_update_public()
+#ifdef ENABLE_DB13
+
+	if (this_.grp_cPublic <> this_.old_grp_cPublic) then
+		dim cursor, pSubKonto
+		set cursor = trans_.createrawcursor(TYPEID_N5GRUPAPRODUKTOW, "pGrupaNadrzedna=" + cstr(this_.idobj), "" , "")		
+		for each pSubKonto in cursor
+			pSubKonto.grp_cPublic = this_.grp_cPublic
+		next	
+    set cursor = trans_.createrawcursor(TYPEID_N5PRODUKT, "pGrupaProd=" + cstr(this_.idobj), "" , "")		
+		for each pSubKonto in cursor
+			pSubKonto.prod_cPublic = this_.grp_cPublic
+		next	
+
+	end if
+  
+#endif
+end sub
+]]>
+</script>
+	
+	
+	
+	
+</class>

@@ -1,0 +1,282 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200.h"
+#include "h1201.h"
+#include "h1220.h"
+#include "h1222.h"
+#include "h1240.h"
+#include "h1231.h"
+
+#define CTRLID_REDIRECT_CHKBOX	101
+#define CTRLID_DOK_TYPE         102
+
+#define PROP_LP		              201
+
+#define ID_TITLE                301
+#define ID_TAB_POS              302
+#define ID_TAB_BUTTONS          303
+
+-->
+<page width='9000' style='STYLE_PAGE'>
+<config>
+<script>
+<!--
+	Wybór pozycji z protokołu serwisowego
+-->
+<![CDATA[
+
+'tablica do zapamiętania wybranych pozycji
+dim pTabCheckCopy : set pTabCheckCopy = doc_.afc.new_navoarray()
+
+'typ dokumentu rozchodowego
+dim nTypDok: nTypDok = N5REJESTRDOK__WZ
+
+'-----------------------------------
+'-----  otwórz/zamknij stronę  -----
+'-----------------------------------
+function fopen()
+	fopen=true
+end function
+
+function fback()
+	page_.result = vbCancel
+	page_.goback()
+	fback = true
+end function
+
+'------------------------------------------
+'-----  ustawia tytul strony raportu  -----
+'------------------------------------------
+sub page_title()
+	dim pTitle
+	set pTitle = page_.ctrl(ID_TITLE)
+	pTitle.text = ""
+  pTitle.fontsize = 5
+	page_.topelement.title = "Wybór pozycji dla dokumentu rozchodowego"
+end sub
+
+'----------------------------------------------------
+'-----  dodaje odpowiednie przyciski na strone  -----
+'----------------------------------------------------
+sub page_buttons
+	dim tab : set tab = doc_.afc.new_tb(page_).attach(page_.ctrl(ID_TAB_BUTTONS)).removeall
+	tab.newrow
+	page_add_button tab, "OK", vbOK
+	page_add_button tab, "Anuluj", vbCancel
+end sub
+
+sub page_add_button(byref tab, byval strName, byval nOption)
+	dim pNewHli
+	set pNewHli = doc_.createhli()
+	pNewHli.prop(GVAR_FUNCTIONHLI) = "page_click"
+	pNewHli.prop(GVAR_MODALRES) = CLng(nOption)
+
+	tab.newcell.addctrl CTRL_TYPE_BUTTON,-1
+	tab.cell.keepline = true
+  tab.cell.align = ALIGN_CENTER
+	set tab.element.hli = pNewHli
+	with tab.element
+    .text = strName
+	  .size = 12
+	  .styleitem = STYLE_BUTTON
+  end with
+end sub
+
+'------------------------------------
+'-----  naciśnięcie na klawisz  -----
+'------------------------------------
+sub page_click(byref pHli)
+	page_.result=pHli.prop(GVAR_MODALRES)
+	page_.goback
+end sub
+
+'---------------------------------
+'-----  buduj potwierdzenie  -----
+'---------------------------------
+function buildPotw(byref pTabProdukt, byref pTabOpak, byref pTabIlosc, byref pTabCheck, byref nDokType)
+  'nagłówek potwierdzenia
+  page_title
+  
+  'ustaw domyślnie zaznaczone
+  dim iter
+  for iter = 0 to pTabCheck.upperIndex
+    pTabCheckCopy.add pTabCheck.value(iter)
+  next
+  
+  'buduj raport
+  page_pozycje pTabProdukt, pTabOpak, pTabIlosc, pTabCheck
+  
+  'przyciski
+  page_buttons
+
+  buildPotw = page_.domodalauto()
+
+  'gdy potwierdzenie wykonania OK => modyfikuj oryginalne tablice
+  if buildPotw = 1 then
+    set pTabCheck = pTabCheckCopy
+    nDokType = nTypDok
+  end if
+  
+end function
+
+'----------------------------
+'-----  wypisz pozycje  -----
+'----------------------------
+sub page_pozycje(byref pTabProdukt, byref pTabOpak, byref pTabIlosc, byref pTabCheck)
+  dim tab : set tab = doc_.afc.new_tb(page_).attach(page_.ctrl(ID_TAB_POS)).removeall
+    
+  tab.newrow
+  tab.row.styleitem = STYLE_TABLE_HEADER
+  tab.newcell
+  tab.cell.rowspan = 2
+  tab.newcell.addtext "Lp"
+  tab.cell.rowspan = 2
+  tab.cell.width = clng(600)
+  tab.newcell.addtext "Produkt"
+  tab.cell.rowspan = 1
+  tab.cell.colspan = 2
+  tab.cell.align = ALIGN_CENTER
+  tab.newcell.addtext "Ilość"  
+  tab.cell.width = CLng(3000)  
+  tab.cell.rowspan = 2
+  tab.newrow
+  tab.row.styleitem = STYLE_TABLE_HEADER
+  tab.newcell.addtext "Nazwa"
+  tab.cell.width = CLng(7000)
+  tab.cell.rowspan = 1 
+  tab.newcell.addtext "Indeks"
+  tab.cell.width = CLng(3000)
+  tab.cell.rowspan = 1
+
+  'wypisz pozycje
+  dim iter, pCheckBox
+  for iter = 0 to pTabProdukt.upperIndex      
+    tab.newrow
+    if (iter + 1) mod 2 = 0 then
+    tab.row.styleitem = STYLE_ROW_EVEN
+    end if   
+         
+    'checkbox
+    tab.newcell
+    tab.addctrl CTRL_TYPE_CHECKBOX,-1
+    set pCheckBox = tab.element
+    with pCheckBox
+      .customredirect = clng(CTRLID_REDIRECT_CHKBOX)
+      .transfer = page_.createtransfer("custom")          
+      .border = 0
+    end with
+    tab.element.addnew CTRL_TYPE_STATIC,-1
+    pCheckBox.value = "1"
+    set tab.row.userprop = doc_.createhli()
+    tab.row.userprop.prop(PROP_LP) = CLng(iter)
+    
+    'lp
+    tab.newcell.addtext cstr(iter + 1)   
+    tab.element.fontsize = 3
+    tab.element.fontname = "Verdana"
+    tab.element.forecolor = RGB(0,0,0)      
+          
+    tab.newcell.addtext " " + pTabProdukt.value(iter).strNazwa
+    tab.element.fontsize = 3
+    tab.element.fontname = "Verdana"
+    tab.element.forecolor = RGB(0,0,0)  
+        
+    tab.newcell.addtext " " + pTabProdukt.value(iter).strIndeks
+    tab.element.fontsize = 3
+    tab.element.fontname = "Verdana"
+    tab.element.forecolor = RGB(0,0,0)
+        
+    tab.newcell.addtext(doc_.afc.display.quantity(pTabIlosc.value(iter),pTabOpak.value(iter).pJednOpak.strSkrot,pTabOpak.value(iter).pJednOpak.nDokladnosc - 1)).cell.align=ALIGN_RIGHT
+    tab.element.fontsize = 3
+    tab.element.fontname = "Verdana"
+    tab.element.forecolor = RGB(0,0,0)
+  next
+end sub
+
+'------------------------------------
+'-----  kontrolki dla checkbox  -----
+'------------------------------------
+function c##CTRLID_REDIRECT_CHKBOX##_ongetdata(byref oCtrl)
+	c##CTRLID_REDIRECT_CHKBOX##_ongetdata = true
+end function
+
+function c##CTRLID_REDIRECT_CHKBOX##_ondataentered(byref oCtrl, byval newValue)
+	c##CTRLID_REDIRECT_CHKBOX##_ondataentered = true
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+    if oRow.userprop.exists(PROP_LP) then
+       pTabCheckCopy.value(oRow.userprop(PROP_LP)) = newValue
+    end if
+  end if    
+end function
+
+function c##CTRLID_DOK_TYPE##_ongetdata(byref oCtrl) : c##CTRLID_DOK_TYPE##_ongetdata = true
+  select case nTypDok
+    case N5REJESTRDOK__WZ
+      oCtrl.value = clng(1)
+    case N5REJESTRDOK__RW
+      oCtrl.value = clng(2)
+    case N5REJESTRDOK_REZERWACJE
+      oCtrl.value = clng(3)
+  end select    
+end function
+
+function c##CTRLID_DOK_TYPE##_ondataentered(byref oCtrl, byval newValue) : c##CTRLID_DOK_TYPE##_ondataentered = true
+  select case newValue
+    case clng(1)
+      nTypDok = N5REJESTRDOK__WZ
+    case clng(2)
+      nTypDok = N5REJESTRDOK__RW
+    case clng(3)
+      nTypDok = N5REJESTRDOK_REZERWACJE 
+  end select
+end function
+
+]]>
+</script>
+
+</config>
+	<body>
+		<text width='max' name='t##ID_TITLE'></text>
+    <br/><br/>
+    
+    <table><tbody><tr><td><t></t></td></tr></tbody></table>     
+
+    <table name='t##ID_TAB_POS' border='1' style='STYLE_TABLE_BODY_RAPORT'>
+			<tbody>
+			</tbody>      
+		</table> 
+    
+    <table><tbody><tr><td><t></t></td></tr></tbody></table>
+
+    <table>
+      <tbody>
+        <tr>
+          XFOPTHUMANNAMECELL(Rodzaj dokumentu)
+          <td width='100'></td>
+          <td align='left'>
+            <radio name='CTRLID_DOK_TYPE' style='STYLE_TABLE_BODY' colspan='3'>
+              <transfer mode='custom'>
+              </transfer>
+              <t>WZ</t>
+              <t>RW</t>
+              <t>Rezerwacje</t>
+            </radio>            
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    
+    <table><tbody><tr><td><t></t></td></tr></tbody></table>
+    
+    <table name='t##ID_TAB_BUTTONS' style='STYLE_ROW_BTN'>
+			<tbody>
+			</tbody>
+		</table>
+
+	</body>
+</page>
+

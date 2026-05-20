@@ -1,0 +1,516 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+
+Wybór dostawy
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1240.h"
+#include "h1222.h"
+
+#define CTRLID_TABLE_RESULT			1000
+#define CTRLID_TABLE_NORESULT		1001
+#define CTRLID_TABLE_RESULT_HEAD	1002
+#define CTRLID_TABLE_INFO			1003
+#define CTRLID_TABLE_OPERATIONS		1004
+
+#define PROP_NUMOP	100
+#define PROP_LPOP	101
+
+-->
+<page style='STYLE_PAGE' width='min'>
+<config>
+	<title>	
+	Lista dostaw
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+<script>
+<![CDATA[
+
+'view_message
+#include "50516"
+
+'std_openform_object_hli
+#include "50200"
+
+'choose_opakowanie_lp
+#include "50606"
+
+'HARUI_PRICE
+#include "50101"
+
+dim g_nLPOp: g_nLPOp = CLng(0)
+dim g_nNumOp: g_nNumOp = CLng(0)
+
+dim g_pPosition:set g_pPosition = nothing
+
+'---------------------------------------------------------------------------
+' choose_supply
+'
+' Dokonuje wyboru dostawy
+'
+' pPozDokMag        - obiekt pozycji dokumentu magazynowego
+' bDisplayNoResults - czy gdy brak rezultatów to otwierać okienko z 
+'					  komunikatem (true) czy pokazywać w oknie 
+'					  komunikatów standardowym (false)
+'
+' RESULT: true gdy wybrano dostawe inaczej false
+'---------------------------------------------------------------------------
+function choose_supply(byref pPozDokMag, byval bDisplayNoResults): choose_supply = false
+	
+	dim pNaprawaMod
+	set pNaprawaMod = doc_.getmodule( PAGE_UTIL_NAPRAWA_BAZY )
+
+	if (not pNaprawaMod.gm_ensure_accuracy_ui(false)) then
+		view_message 6312, 0
+		exit function
+	end if
+
+	set g_pPosition = pPozDokMag
+
+	dim pSupplyCursor
+	set pSupplyCursor = g_pPosition.n5pozdokmag_dostawy_cursor_dis(true,"")
+
+	if (pSupplyCursor is nothing) then
+		view_message 6310, 0
+		exit function
+	end if
+
+	fill_table pSupplyCursor , bDisplayNoResults
+
+	choose_supply = (page_.domodalauto() = CMD_CHOICE)
+
+end function
+
+
+function choose_supply_manual(byref pProdukt): choose_supply_manual = false
+  if not doc_.getmodule(60253).gm_ensure_accuracy_ui(false) then
+    view_message 6312, 0
+    exit function
+  end if
+  
+  'wybór opakowania
+  dim pOpak
+  dim lp: lp = clng(1)
+  if pProdukt.listOpakowania.count > clng(1) then
+    lp = choose_opakowanie_lp(pProdukt)
+  end if
+  if lp > clng(0) then
+    set pOpak = pProdukt.listOpakowania.get(lp)
+  else
+    exit function
+  end if
+
+  dim pSupplyCursor
+	set pSupplyCursor = trans_.createadors(doc_.getmodule(60300).bqry_gm_aktywne_dostawy(pProdukt.idObj,pOpak.idObj,0))  
+
+	if (pSupplyCursor is nothing) then
+		view_message 6310, 0
+		exit function
+	end if
+
+	fill_table_manual pSupplyCursor
+
+	choose_supply_manual = (page_.domodalauto() = CMD_CHOICE)
+
+end function
+
+
+
+function fill_table(pSupplyCursor , byval bDisplayNoResults)
+
+	dim pTab
+	set pTab = doc_.afc.new_tb(page_).attach(page_.ctrl(CTRLID_TABLE_RESULT)).section_body.removeall
+
+
+	if (pSupplyCursor.EOF) then
+		if (bDisplayNoResults) then
+			page_.ctrl(CTRLID_TABLE_RESULT_HEAD).hide = true
+			'page_.ctrl(CTRLID_TABLE_INFO).hide = true
+			page_.ctrl(CTRLID_TABLE_OPERATIONS).hide = true
+		else
+			view_message 6311, 0
+			exit function
+		end if
+	else
+	
+		page_.ctrl(CTRLID_TABLE_NORESULT).hide = true
+		
+		while (not pSupplyCursor.EOF)
+
+			dim nNumOpMag
+			nNumOpMag = CLng(pSupplyCursor.fields("gms_nNumOp").value)
+			
+			dim nLP
+			nLP = CLng(pSupplyCursor.fields("gms_nLP").value)
+
+			dim curCena
+			curCena = CCur(pSupplyCursor.fields("gms_curCena").value)
+			
+			dim curIloscOpak
+			curIloscOpak = CCur(pSupplyCursor.fields("gms_curIlosc").value)
+
+			dim dDataWazn
+			dDataWazn = cdate(pSupplyCursor.fields("gms_dDataWazn").value)
+
+			pTab.newrow
+
+			if ((pTab.rownr-1) mod 2) = 0 then
+				pTab.row.styleitem = STYLE_ROW_EVEN
+			end if
+
+			dim pHli
+			set pHli = doc_.createhlistr("varFunctionHLI='supply_on_choice' vn##PROP_NUMOP='" + CStr(nNumOpMag) + "' vn##PROP_LPOP='" + CStr(nLP) + "'")
+
+			pTab.newcell.addtexthli CStr(nNumOpMag) + " / " + CStr(nLP) , pHli
+			pTab.cell.align = 1
+			pTab.element.tip = "Kliknij aby wskazać dostawę"
+
+
+			dim idDokMag:idDokMag = trans_.findobjid(TYPEID_N5DOKMAG, "nNumOper="+ cstr(nNumOpMag))
+			dim pDokMag
+			if idDokMag>0 then
+				set pDokMag = trans_.getobj(TYPEID_N5DOKMAG,idDokMag)
+				pTab.newcell.addtexthli pDokMag.strNrDok , doc_.createhlistr("varFunctionHLI='std_openform_object_hli' vn1='TYPEID_N5DOKMAG' vn2='"+cstr(pDokMag.idobj)+"'")
+				pTab.cell.align = 1
+				pTab.element.tip = "Kliknij aby obejrzeć dostawę"
+			else
+				pTab.newcell
+			end if						
+
+
+			pTab.newcell.addtext trans_.afc.display.money(curCena, "")
+			pTab.cell.align = 1
+
+			pTab.newcell.addtext trans_.afc.display.quantity(curIloscOpak, "", 0)
+			pTab.cell.align = 1
+
+			pTab.newcell.addtext trans_.afc.display.fulldate(dDataWazn)
+			pTab.cell.align = 1
+
+			pSupplyCursor.MoveNext
+
+		wend
+	end if 'not EOF
+
+
+end function
+
+function fill_table_manual(pSupplyCursor)
+	dim pTab
+	set pTab = doc_.afc.new_tb(page_).attach(page_.ctrl(CTRLID_TABLE_RESULT)).section_body.removeall
+
+  page_.ctrl(CTRLID_TABLE_RESULT_HEAD).hide = true
+  page_.ctrl(CTRLID_TABLE_OPERATIONS).hide = true
+	if pSupplyCursor.EOF then
+			view_message 6311, 0
+			exit function
+	else
+	
+		page_.ctrl(CTRLID_TABLE_NORESULT).hide = true
+    
+    'nagłowek
+    pTab.newrow
+    pTab.row.styleitem = STYLE_TABLE_HEADER
+	  pTab.newcell.addtext "Numer / LP"
+    pTab.newcell.addtext "Numer dokumentu"
+    if not HARUI_PRICE(UAR_DOSTEP_CENA_KARTOTEKOWA_1) then    
+      pTab.newcell.addtext "Cena"
+    end if
+    pTab.newcell.addtext "Ilość"
+    pTab.newcell.addtext "Data ważności"
+    pTab.newcell.addtext "Magazyn"   
+		
+		while (not pSupplyCursor.EOF)
+
+			dim nNumOpMag
+			nNumOpMag = CLng(pSupplyCursor.fields("gms_nNumOp").value)
+			
+			dim nLP
+			nLP = CLng(pSupplyCursor.fields("gms_nLP").value)
+
+			dim curCena
+			curCena = CCur(pSupplyCursor.fields("gms_curCena").value)
+			
+			dim curIloscOpak
+			curIloscOpak = CCur(pSupplyCursor.fields("gms_curIlosc").value)
+
+			dim dDataWazn
+			dDataWazn = cdate(pSupplyCursor.fields("gms_dDataWazn").value)
+      
+      dim idMag, strMagazyn
+      idMag = CLng(pSupplyCursor.fields("gms_pMag").value)
+      if idMag > clng(0) then
+        strMagazyn = trans_.getobj(TYPEID_N5MAGAZYN,idMag).strNazwa
+      end if
+
+			pTab.newrow
+
+			if ((pTab.rownr-1) mod 2) = 0 then
+				pTab.row.styleitem = STYLE_ROW_EVEN
+			end if
+      
+			pTab.newcell.addtext CStr(nNumOpMag) + "/" + CStr(nLP)
+			pTab.cell.align = 1
+
+			dim idDokMag:idDokMag = trans_.findobjid(TYPEID_N5DOKMAG, "nNumOper="+ cstr(nNumOpMag))
+			dim pDokMag
+			if idDokMag>0 then
+				set pDokMag = trans_.getobj(TYPEID_N5DOKMAG,idDokMag)
+				pTab.newcell.addtexthli pDokMag.strNrDok , doc_.createhlistr("varFunctionHLI='std_openform_object_hli' vn1='TYPEID_N5DOKMAG' vn2='"+cstr(pDokMag.idobj)+"'")
+				pTab.cell.align = 1
+				pTab.element.tip = "Kliknij aby obejrzeć dostawę"
+			else
+				pTab.newcell
+			end if						
+      
+			if not HARUI_PRICE(UAR_DOSTEP_CENA_KARTOTEKOWA_1) then
+				pTab.newcell.addtext trans_.afc.display.money(curCena, "")
+				pTab.cell.align = 1
+			end if
+
+			pTab.newcell.addtext trans_.afc.display.quantity(curIloscOpak, "", 0)
+			pTab.cell.align = 1
+
+			pTab.newcell.addtext trans_.afc.display.fulldate(dDataWazn)
+			pTab.cell.align = 1
+      
+			pTab.newcell.addtext strMagazyn
+			pTab.cell.align = 1      
+
+			pSupplyCursor.MoveNext
+		wend
+	end if
+
+
+end function
+
+
+'---------------------------------------------------------------------------
+' Reakcja na wybranie dostawy
+'---------------------------------------------------------------------------
+function supply_on_choice(byref pHli)
+	g_nLPOp = pHli.prop(PROP_LPOP)
+	g_nNumOp = pHli.prop(PROP_NUMOP)
+
+	page_.result = CMD_CHOICE
+	page_.goback
+end function
+
+'---------------------------------------------------------------------------
+' Zwraca rezultaty
+'---------------------------------------------------------------------------
+function getLP()
+	getLP = g_nLPOp
+end function
+
+function getNumOp()
+	getNumOp = g_nNumOp
+end function
+
+
+dim g_bSortCenaASC:g_bSortCenaASC = true
+dim g_bSortDataASC:g_bSortDataASC = true
+dim g_bSortQtyASC:g_bSortQtyASC = true
+dim g_bSortNrASC:g_bSortNrASC = false
+
+function sort_nr
+
+	dim pSupplyCursor
+
+	if g_bSortNrASC then 
+		set pSupplyCursor = g_pPosition.n5pozdokmag_dostawy_cursor_dis(true,"")
+		g_bSortNrASC = false
+	else
+		set pSupplyCursor = g_pPosition.n5pozdokmag_dostawy_cursor_dis(true," gms_nNumOp desc, gms_nLP desc ")
+		g_bSortNrASC = true
+	end if
+
+	if (pSupplyCursor is nothing) then
+		view_message 6310, 0
+		exit function
+	end if
+
+	fill_table pSupplyCursor , false
+
+end function
+
+function sort_qty
+
+	dim pSupplyCursor
+
+	if g_bSortQtyASC then 
+		set pSupplyCursor = g_pPosition.n5pozdokmag_dostawy_cursor_dis(true," gms_curIlosc asc ")
+		g_bSortQtyASC = false
+	else
+		set pSupplyCursor = g_pPosition.n5pozdokmag_dostawy_cursor_dis(true," gms_curIlosc desc ")
+		g_bSortQtyASC = true
+	end if
+
+
+	if (pSupplyCursor is nothing) then
+		view_message 6310, 0
+		exit function
+	end if
+
+	fill_table pSupplyCursor , false
+
+end function
+
+function sort_price
+
+	dim pSupplyCursor
+
+	if g_bSortCenaASC then 
+		set pSupplyCursor = g_pPosition.n5pozdokmag_dostawy_cursor_dis(true," gms_curCena asc ")
+		g_bSortCenaASC = false
+	else
+		set pSupplyCursor = g_pPosition.n5pozdokmag_dostawy_cursor_dis(true," gms_curCena desc ")
+		g_bSortCenaASC = true
+	end if
+
+	if (pSupplyCursor is nothing) then
+		view_message 6310, 0
+		exit function
+	end if
+
+	fill_table pSupplyCursor , false
+
+end function
+
+function sort_date
+
+	dim pSupplyCursor
+
+	if g_bSortDataASC then 
+		set pSupplyCursor = g_pPosition.n5pozdokmag_dostawy_cursor_dis(true," gms_dDataWazn asc ")
+		g_bSortDataASC = false
+	else
+		set pSupplyCursor = g_pPosition.n5pozdokmag_dostawy_cursor_dis(true," gms_dDataWazn desc ")
+		g_bSortDataASC = true
+	end if
+
+	if (pSupplyCursor is nothing) then
+		view_message 6310, 0
+		exit function
+	end if
+
+	fill_table pSupplyCursor , false
+
+end function
+
+
+function get_quick(byval strOrder)
+
+	dim pSupplyCursor
+	set pSupplyCursor = g_pPosition.n5pozdokmag_dostawy_cursor_dis(true,strOrder)
+
+	if not (pSupplyCursor.EOF) then
+		dim hli:set hli = doc_.createhli()
+		hli.prop(PROP_LPOP) = CLng(pSupplyCursor.fields("gms_nLP").value)
+		hli.prop(PROP_NUMOP) = 	CLng(pSupplyCursor.fields("gms_nNumOp").value)
+
+		supply_on_choice hli
+
+	end if
+
+end function
+
+
+function get_by_price_min
+	get_quick " gms_curCena asc "
+end function
+
+function get_by_data_wazn
+	get_quick " gms_dDataWazn asc "
+end function
+
+function get_by_price_max
+	get_quick " gms_curCena desc "
+end function
+
+
+
+]]></script>
+</config>
+
+<body>
+
+<!--
+<table name='CTRLID_TABLE_INFO'>
+
+	<thead>
+		<tr>
+			<td  style='STYLE_TABLE_INFO'>
+				<text>Kliknij na wartości w kolumnie "Numer / LP" aby wybrać odpowiednią dostawę. Jeśli chcesz zmienić sposób sortowania dostaw w tabelce kliknij na nagłówek odpowiedniej kolumny</text>
+			</td>
+		</tr>
+
+		<tr>
+			<td>
+				<t size='2'></t>
+			</td>
+		</tr>
+	</thead>
+
+
+</table>
+-->
+
+
+<table style='STYLE_TABLE' name='CTRLID_TABLE_RESULT'>
+
+	<thead style='STYLE_TABLE_HEADER' name='t##CTRLID_TABLE_RESULT_HEAD'>
+		<tr>
+			<td><t href='varFunction=sort_nr' tip='Kliknij aby posortować po numerze operacji'>Numer / LP</t></td>
+			<td><t>Numer dokumentu</t></td>
+			<td><t href='varFunction=sort_price' tip='Kliknij aby posortować po cenie dostawy'>Cena</t></td>
+			<td><t href='varFunction=sort_qty' tip='Kliknij aby posortować po ilości w dostawie'>Ilość</t></td>
+			<td><t href='varFunction=sort_date' tip='Kliknij aby posortować po dacie ważności'>Data ważności</t></td>
+		</tr>
+	</thead>
+
+	<tbody style='STYLE_TABLE_BODY'>
+	</tbody>
+
+</table>
+
+<t>&nbsp;</t><br/>
+
+<table name='t##CTRLID_TABLE_NORESULT'>
+	<tbody>
+
+		<tr>
+			<td width='max'>
+				<t bold='true' width='max' align='center'>Brak dostępnych dostaw.</t>
+			</td>
+		</tr>
+
+	</tbody>
+</table>
+
+<br/>
+
+
+<table name='CTRLID_TABLE_OPERATIONS'>
+
+	<tbody>
+		<tr style='STYLE_ROW_BTN'>
+			<td width='max' keepline='true'>										
+				QXE_BUTTON(-1,10,Najkrótszy termin ważności,varFunction=get_by_data_wazn)
+				QXE_BUTTON(-1,5,Najtańsza,varFunction=get_by_price_min)
+				QXE_BUTTON(-1,5,Najdroższa,varFunction=get_by_price_max)
+			</td>
+		</tr>
+	</tbody>
+
+</table>
+
+
+</body>
+</page>

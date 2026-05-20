@@ -1,0 +1,789 @@
+#ifndef LIBRARY_50614
+#define LIBRARY_50614
+
+#include "h1240.h"
+
+'////////////////////////////////////////////////////////////////////////////
+'// (c) Navo 2002 Ltd.
+'// CImportManager
+'//
+'// Spikowski Piotr
+'////////////////////////////////////////////////////////////////////////////
+
+#include "50122"
+#include "50126"
+#include "50203"
+#include "50306"
+#include "50516"
+
+#ifdef _DEBUG
+	#ifndef MACRO_IMPTRACE
+	TRACE2FILE_NAME(imptrace2)
+	#macro IMPTRACE(message) TRACE2FILE("ImportManager_Description.log", message, imptrace2)
+	#define MACRO_IMPTRACE
+	#endif
+
+	#ifndef MACRO_VB_IMPTRACE
+	TRACE2FILE_NAME(vbtrace)
+	#macro VBTRACE(message) TRACE2FILENOTIME("ImportManager_VB.log", message, vbtrace)
+	#define MACRO_VB_IMPTRACE
+	#endif
+
+#else
+	#ifndef IMPTRACE
+	#define IMPTRACE '
+	#endif
+
+	#ifndef VBTRACE
+	#define VBTRACE '
+	#endif
+#endif
+
+#define EVENT_BEFORE_IMPORT "_BefImport"
+#define EVENT_AFTER_IMPORT "_AftImport"
+
+#define EVENT_IMPCREATE_PERFORMING	"Import_CreatePerforming"
+#define EVENT_IMPDESTROY_PERFORMING	"Import_DestroyPerforming"
+
+'-----------------------------------------------------------------------
+' Klasa jest odpowiedzialna za caly proces importu - wola odpowiednie
+' zdarzenia, zapisuje dane
+'-----------------------------------------------------------------------
+class CImportManager
+
+	private m_bCancel		'czy przerwac import
+	private m_idMap			'mapa zaimportowanych obiektów
+	private m_idUniqueMap	'mapa stringow wyznaczjacych unikalnosc
+	private m_idNotUpgrade	'mapa obiektów ktore zostaly juz zaimportowane do bazy
+							'a ktorych NIE wykonuje sie upgrade. Takim obiektom
+							'nie nalezy importowaæ dzieci! Uzywane tylko bez
+							'bezposredniego polaczenia z baza Ÿród³ow¹
+	public  m_pImportStream 'aktualnie importowany stream
+	private m_nCounter		'licznik
+	private m_nWaitForChildren 'czy robic zapis czy czekac
+	private m_strLastPerforming
+	public  m_bSaved
+
+	public m_pfnCreatePerforming
+	public m_pfnDestroyPerforming
+
+	private sub class_initialize()
+		m_bCancel = false
+		m_bSaved = false
+		set m_idMap = CreateObject("Scripting.Dictionary")
+		set m_idNotUpgrade = CreateObject("Scripting.Dictionary")
+		set m_idUniqueMap = CreateObject("Scripting.Dictionary")
+		m_nCounter = 0
+		m_nWaitForChildren = 0
+		m_strLastPerforming = ""
+
+		set m_pfnCreatePerforming = getFunctionPointer(EVENT_IMPCREATE_PERFORMING)
+		set m_pfnDestroyPerforming = getFunctionPointer(EVENT_IMPDESTROY_PERFORMING)
+
+		VBTRACE("'Don't forget to add add2map, idFromMap, and CImportObjectMap class")
+		VBTRACE("'trans_.var(APPVAR_IS_IMPORT)=CLng(1)")
+		VBTRACE("dim pImportingObject")
+		VBTRACE("dim pParent")
+		VBTRACE("dim m_idMap")
+		VBTRACE("set m_idMap = CreateObject(""Scripting.Dictionary"")")
+	end sub
+
+	
+	private sub class_terminate()   'OK
+		set m_idMap = nothing
+		set m_pImportStream = nothing
+		set m_idNotUpgrade = nothing
+		performing_destroy
+	end sub	
+
+
+	public function performing_show(byval strText)
+		if (m_pfnCreatePerforming is nothing) then
+			exit function
+		end if
+
+		m_strLastPerforming = strText
+		m_pfnCreatePerforming me, strText
+	end function
+
+	public function KindOf()
+		KindOf = "CImportManager"
+	end function
+
+	public function performing_destroy()
+		if (m_pfnDestroyPerforming is nothing) then
+			exit function
+		end if
+
+		m_pfnDestroyPerforming me
+	end function
+
+	public function performing_restore()
+		performing_show m_strLastPerforming
+	end function
+
+
+	'----------------------------------------------------------------
+	' Pobiera wskaznik na funkcje o podanej nazwie
+	'----------------------------------------------------------------
+	public function getFunctionPointer(byval strFunctionName): set getFunctionPointer = nothing
+		on error resume next
+		set getFunctionPointer = GetRef( strFunctionName )
+	end function
+
+
+	'----------------------------------------------------------------
+	' Zawolaj event bef import. Zwrocenie < 0 oznacza przerwanie importu
+	' danego obiektu natomiast 0 lub > 0 importowanie obiektu
+	'----------------------------------------------------------------
+	public function call_befImport(byref pImportStream): call_befImport = -1
+		dim pfnBefImport
+		set pfnBefImport = getFunctionPointer(pImportStream.name + EVENT_BEFORE_IMPORT)
+
+		if (pfnBefImport is nothing) then
+			#ifdef _DEBUG
+			MsgBox "DEBUG: Nie zdefiniowano funkcji importu " + CStr(pImportStream.name + EVENT_BEFORE_IMPORT) + ". Obiekt bêdzie pominiêty"
+			#endif
+			view_message1 6300, 0, pImportStream.name + EVENT_BEFORE_IMPORT
+			cancelImport
+			exit function
+		end if
+
+		call_befImport = pfnBefImport(me, pImportStream)
+	end function
+
+
+	'----------------------------------------------------------------
+	' Wolaj event'a po wypelnieniu obiektu na podstawie strumienia
+	'----------------------------------------------------------------
+	private function call_aftImport(byref pImportStream, byref pImportedObject): call_aftImport = false
+		dim pfnAftImport
+		set pfnAftImport = getFunctionPointer(pImportStream.name + EVENT_AFTER_IMPORT)
+
+		if (pfnAftImport is nothing) then
+			exit function
+		end if
+
+		call_aftImport = pfnAftImport(me, pImportStream, pImportedObject)
+	end function
+
+
+	private function getUniqueStr(byval nTypeId, byval strUniqueFromFields)
+		getUniqueStr = CStr(nTypeId) + "=" + CStr(strUniqueFromFields) 
+	end function
+
+	'----------------------------------------------------------------
+	'Mapa obiektów ktorym nie zrobiono upgrade ale sa juz
+	'zaimportowane i takim nie importujemy dzieci (sprawdzenie przy dziecku)
+	'bo juz nie ma potrzeby - tylko bez bezposredniego polaczenia z baz¹
+	'Ÿród³ow¹!!
+	'----------------------------------------------------------------
+	public function add2notUpgradedMap(byval nTypeId, byval nSourceId, byval nDestId)
+		dim pObjectMap
+		
+		if (m_idNotUpgrade.exists( CStr(nTypeId) )) then
+			set pObjectMap = m_idNotUpgrade.item( CStr(nTypeId) )
+		else
+			set pObjectMap = new CImportObjectMap
+			m_idNotUpgrade.add CStr(nTypeId), pObjectMap
+		end if
+
+		if (not pObjectMap.isImported(nSourceId)) then
+			pObjectMap.add nSourceId, nDestId
+			IMPTRACE("IMPORT: Add2NotUpgradeMap: typeid=" + CStr(nTypeId) + " srcid=" + CStr(nSourceId) + " destid=" + CStr(nDestId))
+		end if
+
+	end function
+
+	'----------------------------------------------------------------
+	' Sprawdzamy czy obiekt nalezy do do mapy obiektów ktorym nie 
+	' zrobiono upgrade ale sa juz zaimportowane
+	'----------------------------------------------------------------
+	public function isNotUpgraded(byval nTypeId, byval nSourceId): isNotUpgraded = false
+		dim pObjectMap
+		set pObjectMap = nothing
+
+		if (m_idNotUpgrade.exists( CStr(nTypeId) )) then
+			'Jeszcze nie dodane tz. jeszcze nie zaimportowano
+			set pObjectMap = m_idNotUpgrade.item( CStr(nTypeId) )
+		end if
+
+		if (pObjectMap is nothing) then
+			exit function
+		end if
+
+		isNotUpgraded = pObjectMap.isImported( nSourceId )
+		IMPTRACE("IMPORT: isNotUpgraded: typeid=" + CStr(nTypeId) + " srcid=" + CStr(nSourceId) + " result=" + CStr(isNotUpgraded))
+	end function
+
+
+	'----------------------------------------------------------------
+	' Dodaje do mapy id rekordow dany obiekt
+	'----------------------------------------------------------------
+	public function add2map(byval nTypeId, byval nSourceId, byval nDestId, byval strUniqueFromFields)
+
+		#ifdef _DEBUG
+			dim strSourceId
+			if (vartype(nSourceId)=vbString) then
+				strSourceId = """" + nSourceId + """"
+			else
+				strSourceId = CStr(nSourceId)
+			end if
+			VBTRACE("add2map " + CStr(nTypeId) + "," + strSourceId + "," + CStr(nDestId) + ", """ + CStr(strUniqueFromFields) + """")
+		#endif
+
+		dim pObjectMap
+		
+		if (m_idMap.exists( CStr(nTypeId) )) then
+			set pObjectMap = m_idMap.item( CStr(nTypeId) )
+		else
+			set pObjectMap = new CImportObjectMap
+			m_idMap.add CStr(nTypeId), pObjectMap
+		end if
+
+		if (not pObjectMap.isImported(nSourceId)) then
+			pObjectMap.add nSourceId, nDestId
+			IMPTRACE("IMPORT: Add2Map: typeid=" + CStr(nTypeId) + " srcid=" + CStr(nSourceId) + " destid=" + CStr(nDestId))
+		end if
+
+		dim strUnique
+		strUnique = getUniqueStr(nTypeId, strUniqueFromFields)
+
+		if (not m_idUniqueMap.exists( strUnique )) then
+			m_idUniqueMap.add strUnique, nDestId
+		end if
+
+	end function
+
+
+	'----------------------------------------------------------------
+	' Pobiera nowy id rekordu na podstawie starego
+	'----------------------------------------------------------------
+	public function idFromMap(byval nTypeId, byval nSourceId)
+		dim pObjectMap
+		set pObjectMap = nothing
+
+		if (m_idMap.exists( CStr(nTypeId) )) then
+			'Jeszcze nie dodane tz. jeszcze nie zaimportowano
+			set pObjectMap = m_idMap.item( CStr(nTypeId) )
+		end if
+
+		if (pObjectMap is nothing) then
+			exit function
+		end if
+
+		idFromMap = pObjectMap.getid( nSourceId )
+		IMPTRACE("IMPORT: idFromMap: typeid=" + CStr(nTypeId) + " srcid=" + CStr(nSourceId) + " result=" + CStr(idFromMap))
+	end function
+
+
+	'----------------------------------------------------------------
+	' Zatrzymuje caly proces importu danych
+	'----------------------------------------------------------------
+	public function cancelImport()
+		IMPTRACE("IMPORT: cancelImport: canceled")
+		trans_.var(GVAR_OPERATION_MODE) = clng(OPERATION_MODE_NORMAL)
+		m_bCancel = true
+	end function
+
+
+	'----------------------------------------------------------------
+	' True jezeli import zostral anulowany
+	'----------------------------------------------------------------
+	public function isCanceled()
+		isCanceled = m_bCancel
+	end function
+
+
+	'----------------------------------------------------------------
+	' Zaimportuj obiekt na podstawie dostarczonych danych
+	'----------------------------------------------------------------
+	public function import(byref pImportStream): import = false
+
+	
+
+		trans_.var(GVAR_OPERATION_MODE) = clng(OPERATION_MODE_IMPORT)
+		
+		if (isCanceled()) then
+			exit function
+		end if
+
+		m_bSaved = false
+
+		set m_pImportStream = pImportStream
+
+		dim pObjectInfo
+		set pObjectInfo = pImportStream.getInfo()
+
+		'Czy mamy bezpoœrednie po³¹czenie z baz¹ Ÿród³ow¹
+		dim bDirectImport
+		bDirectImport = false
+
+		if (pImportStream.typeid < 0) then
+
+			'Przyszedl specjalny obiekt systemowy
+			select case pImportStream.typeid
+				case SYSTEM_EVENT_START_WAITING
+					m_nWaitForChildren = m_nWaitForChildren + 1
+					IMPTRACE("IMPORT: start waiting for children: level=" + CStr(m_nWaitForChildren))
+				
+				case SYSTEM_EVENT_STOP_WAITING
+					m_nWaitForChildren = m_nWaitForChildren - 1
+					IMPTRACE("IMPORT: stop waiting for children: level=" + CStr(m_nWaitForChildren))
+
+				case SYSTEM_EVENT_SAVE_DATA_NOW
+					IMPTRACE("IMPORT: IMMEDIATE SAVEOBJECTS")
+					'wymuszenie zapisu danych w danym momencie
+					if (not trans_.saveobjects()) then
+						IMPTRACE("IMPORT: unable to save data")
+						view_message 6238, 0
+						cancelImport
+						exit function
+					end if
+					IMPTRACE("IMPORT: changes are saved")
+					VBTRACE("if (not trans_.saveobjects()) then MsgBox ""saveobjects=false""")
+					m_idUniqueMap.RemoveAll
+					m_bSaved = true
+					m_nCounter = 0
+
+			end select
+
+		else
+
+			dim nImportIdObj
+						
+			if (pObjectInfo is nothing) then
+				nImportIdObj = call_befImport(pImportStream)
+				IMPTRACE("IMPORT: BefImport result: idobj=" + CStr(nImportIdObj))
+			else
+				if (pObjectInfo.direct_db_checking) then
+					nImportIdObj = pObjectInfo.direct_db_result
+					IMPTRACE("IMPORT: direct db result: idobj=" + CStr(nImportIdObj))
+					bDirectImport = true
+				else
+					nImportIdObj = call_befImport(pImportStream)
+					IMPTRACE("IMPORT: BefImport result: idobj=" + CStr(nImportIdObj))
+				end if
+			end if
+
+			if (isCanceled()) then
+				exit function
+			end if
+
+			if (nImportIdObj >= 0 and bDirectImport) then
+				'Sprawdzamy dodatkowo na podstawien unikalnosci
+				'wyznaczonej z wartosci pol. Sprawdzenie ma sens tylko przy
+				'bezpoœrednim po³¹czeni z baz¹ Ÿród³ow¹. W innym przypadku
+				'nie mo¿e przyjsæ dwa razy ten sam obiekt - pilnowane jest
+				'to przy eksporcie. Obiekt jest eksportowany tylko raz!!
+				dim strQuniqueId
+				strQuniqueId = getUniqueStr(pImportStream.typeid, pImportStream.unique_str)
+
+				if (m_idUniqueMap.exists(strQuniqueId)) then
+					nImportIdObj = CLng(m_idUniqueMap.item( strQuniqueId ))
+				end if
+			end if
+				
+			
+			if (nImportIdObj >= 0) then
+				'wartosc >= 0 oznacza kontynuowanie importu danych
+
+				dim pImportingObject
+				
+				'..................................................
+				'Pobieramy lub robimy odpowiedni obiekt
+				'..................................................
+
+				dim bChild
+				bChild = false
+
+				if (pObjectInfo.child) then
+
+					IMPTRACE("IMPORT: starting child object")
+					IMPTRACE("IMPORT: parent typeid=" + CStr(pObjectInfo.parenttypeid))
+					IMPTRACE("IMPORT: parent idobj=" + CStr(pObjectInfo.parentidobj))
+					IMPTRACE("IMPORT: Trying to getobj")
+
+					if (not bDirectImport) then
+						if (isNotUpgraded(pObjectInfo.parenttypeid, pObjectInfo.parentidobj)) then
+							'Chcemy importowaæ dziecko, ktorego ojciec nie byl na nowo
+							'importowany (upgrade'owany)
+							import = true
+							exit function
+						end if
+					end if
+					
+					dim pParent
+
+					set pParent = trans_.getobj(pObjectInfo.parenttypeid, _
+						idFromMap(pObjectInfo.parenttypeid, pObjectInfo.parentidobj) )
+
+					#ifdef _DEBUG
+
+						dim strId1
+						if (vartype(pObjectInfo.parentidobj)=vbString) then
+							strId1 = """" + pObjectInfo.parentidobj + """"
+						else
+							strId1 = CStr(pObjectInfo.parentidobj)
+						end if
+
+						VBTRACE("set pParent = trans_.getobj(" + CStr(pObjectInfo.parenttypeid) + ", idFromMap(" + CStr(pObjectInfo.parenttypeid) + "," + strId1 + "))")
+					#endif
+
+					if (pParent is nothing) then
+						view_message1 6333, 0, CStr(pObjectInfo.parenttypeid)
+						cancelImport
+						exit function
+					end if
+
+					if (pParent.isnew) then
+						if (pParent.ignore) then
+							IMPTRACE("IMPORT: Ignoring this parent object (ignore=true)")
+							VBTRACE("'Ignoring the parent")
+							import = true
+							exit function
+						end if
+					else
+						if (pParent.markdel) then
+							IMPTRACE("IMPORT: Ignoring this parent object (markedel=true)")
+							VBTRACE("'Ignoring the parent")
+							import = true
+							exit function
+						end if
+					end if
+
+					IMPTRACE("IMPORT: creating new child from fldid=" + CStr(pObjectInfo.parent_list_fld))
+					set pImportingObject = pParent.field( pObjectInfo.parent_list_fld ).AddNew()
+					
+					VBTRACE("set pImportingObject = pParent.field( " + CStr(pObjectInfo.parent_list_fld) + " ).AddNew()")
+					bChild = true
+
+				else
+					if (nImportIdObj > 0) then
+						IMPTRACE("IMPORT: getobj: typeid=" + CStr(pImportStream.typeid) + " idobj=" + CStr(nImportIdObj))
+						set pImportingObject = trans_.getobj( pImportStream.typeid, nImportIdObj )
+						VBTRACE("set pImportingObject = trans_.getobj( " + CStr(pImportStream.typeid) + "," + CStr(nImportIdObj) + " )")
+					else
+						IMPTRACE("IMPORT: newobj: typeid=" + CStr(pImportStream.typeid))
+						set pImportingObject = trans_.newobj( pImportStream.typeid )
+						VBTRACE("set pImportingObject = trans_.newobj( " + CStr(pImportStream.typeid) + " )")
+						IMPTRACE("IMPORT: newobj: idobj=" + CStr(pImportingObject.IdObj))
+					end if
+				end if
+
+				if (pImportingObject is nothing) then
+					view_message1 6332, 0, CStr(pImportStream.name)
+					cancelImport
+					exit function
+				end if
+
+				if (pImportingObject.isnew) then
+					if (pImportingObject.ignore) then
+						IMPTRACE("IMPORT: ignoring this object (ignore=true)")
+						VBTRACE("'Ignoring new object")
+						import = true
+						exit function
+					end if
+				else
+					if (pImportingObject.markdel) then
+						IMPTRACE("IMPORT: ignoring this object (markdel=true)")
+						VBTRACE("'Ignoring new object")
+						import = true
+						exit function
+					end if
+				end if
+
+
+				'..................................................
+				'Ustawiamy wszystkie mo¿liwe pola tego obiektu
+				'..................................................
+				IMPTRACE("----------------------------------")
+				IMPTRACE("IMPORT: setting fields for object " + CStr(pImportStream.name) + " (" + CStr(pImportStream.typeid) + ", " + CStr(pImportingObject.IdObj) + ")")
+				dim i
+				for i = 0 to (pImportStream.pSetFields.count() - 1)
+
+					dim strFieldName
+					strFieldName = pImportStream.pSetFields.value(i)
+
+					dim pObjectField
+					set pObjectField = pImportStream.infoByName( strFieldName )
+
+					dim pObjectFldValue
+					set pObjectFldValue = pImportStream.fieldByName( strFieldName )
+
+					select case pObjectField.fldtype
+						case RELT_EMBED, RELT_ENUM
+							pImportingObject.field( pObjectField.nIndex ) = pObjectFldValue.varValue
+							IMPTRACE("IMPORT: " + strFieldName + "=" + CStr(pObjectFldValue.varValue))
+
+							#ifdef _DEBUG
+								select case pObjectField.sqltype
+									case SQLlong, SQLtime
+										VBTRACE("pImportingObject." + strFieldName + " = CLng(" + CStr(pObjectFldValue.varValue) + ")")
+									case SQLdate
+										VBTRACE("pImportingObject." + strFieldName + " = DateSerial(" + CStr(Year(pObjectFldValue.varValue)) + "," + CStr(month(pObjectFldValue.varValue)) + "," + CStr(day(pObjectFldValue.varValue)) + ")")
+									case SQLcurrency, SQLqty
+										VBTRACE("pImportingObject." + strFieldName + " = CCur(" + CStr(pObjectFldValue.varValue) + ")")
+									case else
+										'text
+										VBTRACE("pImportingObject." + strFieldName + " = """ + CStr(pObjectFldValue.varValue) + """")
+									end select
+							#endif
+
+						case RELT_REF, RELT_WILDREF
+
+							dim nMappedValue
+							dim pObjectFromRef: set pObjectFromRef=nothing
+
+							if (not pObjectField.virtual) then
+								if (pObjectFldValue.varValue <> 0) then
+
+									IMPTRACE("IMPORT: reference " + strFieldName + "typeid=" + CStr(pObjectField.reftypeid) + " srcid=" + CStr(pObjectFldValue.varValue))
+
+									nMappedValue = idFromMap(pObjectField.reftypeid, pObjectFldValue.varValue)
+									if (nMappedValue = Empty) then
+										view_message2 6240, 0, pObjectField.reftypeid, pObjectFldValue.varValue
+										IMPTRACE("IMPORT: UNABLE TO GET reference " + strFieldName + "typeid=" + CStr(pObjectField.reftypeid) + " srcid=" + CStr(pObjectFldValue.varValue))
+										cancelImport
+										exit function
+									end if
+
+									set pObjectFromRef = trans_.getobj(pObjectField.reftypeid,  nMappedValue)
+
+									#ifdef _DEBUG
+										dim strDebug2: strDebug2=""
+										if (pObjectFromRef is nothing) then strDebug2=" (NOTHING!!)"
+										IMPTRACE("IMPORT: " + strFieldName + "=(" + CStr(pObjectField.reftypeid) + ", " + CStr(pObjectFldValue.varValue) + ", " + CStr(nMappedValue) + ")" + strDebug2)
+									#endif
+
+									set pImportingObject.field( pObjectField.nIndex ) = pObjectFromRef
+
+									#ifdef _DEBUG
+										dim strId2
+										if (vartype(pObjectFldValue.varValue)=vbString) then
+											strId2 = """" + pObjectFldValue.varValue + """"
+										else
+											strId2 = CStr(pObjectFldValue.varValue)
+										end if
+									#endif
+
+									VBTRACE("set pImportingObject." + strFieldName + " = trans_.getobj(" + CStr(pObjectField.reftypeid) + ", idFromMap(" + CStr(pObjectField.reftypeid) + "," + strId2 + "))")
+										
+								end if
+							else
+								if (pObjectFldValue.varValue <> "") then
+
+									IMPTRACE("IMPORT: reference " + strFieldName + "typeid=" + CStr(pObjectField.reftypeid) + " srcid=" + CStr(pObjectFldValue.varValue))
+
+									nMappedValue = idFromMap(pObjectField.reftypeid, pObjectFldValue.varValue)
+									if (nMappedValue = Empty) then
+										view_message2 6240, 0, pObjectField.reftypeid, pObjectFldValue.varValue
+										IMPTRACE("IMPORT: UNABLE TO GET reference " + strFieldName + "typeid=" + CStr(pObjectField.reftypeid) + " srcid=" + CStr(pObjectFldValue.varValue))
+										cancelImport
+										exit function
+									end if
+
+									set pObjectFromRef = trans_.getobj(pObjectField.reftypeid, nMappedValue)
+
+									#ifdef _DEBUG
+										dim strDebug1: strDebug1=""
+										if (pObjectFromRef is nothing) then strDebug1=" (NOTHING!!)"
+										IMPTRACE("IMPORT: " + strFieldName + "=(" + CStr(pObjectField.reftypeid) + ", " + CStr(pObjectFldValue.varValue) + ", " + CStr(nMappedValue) + ")" + strDebug1)
+									#endif
+
+									set pImportingObject.field( pObjectField.nIndex ) = pObjectFromRef
+
+									#ifdef _DEBUG
+										if (vartype(pObjectFldValue.varValue)=vbString) then
+											strId2 = """" + pObjectFldValue.varValue + """"
+										else
+											strId2 = CStr(pObjectFldValue.varValue)
+										end if
+									#endif
+
+									VBTRACE("set pImportingObject." + strFieldName + " = trans_.getobj(" + CStr(pObjectField.reftypeid) + ", idFromMap(" + CStr(pObjectField.reftypeid) + "," + strId2 + "))")
+										
+								end if
+							end if
+
+							set pObjectFromRef = nothing
+						
+						case RELT_LIST
+							'listy s¹ importowane po
+							'zaimportowaniu obiektu g³ównego
+							IMPTRACE("IMPORT: " + strFieldName + "=0")
+							pImportingObject.field( pObjectField.nIndex ).deleteall
+							VBTRACE("pImportingObject.field( " + CStr(pObjectField.nIndex) + ").deleteall")
+
+						case RELT_FILE
+							'Importujemy pliki
+							IMPTRACE("IMPORT: " + strFieldName + "= STREAM(" + pImportStream.extra(strFieldName + "_extension") + ")")
+
+							if (isObject(pObjectFldValue.varValue)) then
+								pImportingObject.field( pObjectField.nIndex ).Attach pObjectFldValue.varValue
+								pImportingObject.field( pObjectField.nIndex ).ext = pImportStream.extra(strFieldName + "_extension")
+							end if
+
+
+					end select
+
+				next
+
+				IMPTRACE("IMPORT: fields are filled")
+				IMPTRACE("----------------------------------")
+
+				if (not bChild) then
+					'Dodajemy obiekt do mapy tlumaczacej identyfikatory
+					'z bazy Ÿród³owej do bazy docelowej
+					add2map pImportStream.typeid, pImportStream.idobj, pImportingObject.idobj, pImportStream.unique_str
+				end if
+
+				if (m_bCancel) then
+					exit function
+				end if
+
+				'Zawolaj zdarzenie na wypelniony juz obiekt
+				call_aftImport pImportStream, pImportingObject
+
+			else 'idobj >= 0
+
+				'dodajemy do mapy jako zaimportowany ale bez robienia
+				'upgarde'u tego obiektu
+				add2map pImportStream.typeid, pImportStream.idobj, (nImportIdObj * (-1)), pImportStream.unique_str
+
+				'Dodajemy do obiektów ktorym nie zrobiono upgrade ale sa juz
+				'zaimportowane i takim nie importujemy dzieci (sprawdzenie przy dziecku)
+				'bo juz nie ma potrzeby - tylko bez bezposredniego polaczenia z baz¹
+				if (not bDirectImport) then
+					add2notUpgradedMap pImportStream.typeid, pImportStream.idobj, (nImportIdObj * (-1))
+				end if
+
+			end if
+
+		end if 'typeid >= 0
+
+		m_nCounter = m_nCounter + 1
+
+		if ((m_nCounter mod 10) = 0) then
+			page_.updateview
+			VBTRACE("page_.updateview")
+		end if
+
+		if (m_nCounter > 250) then
+
+			if (m_nWaitForChildren=0) then
+				IMPTRACE("IMPORT: SAVEOBJECTS after 250 records:")
+				VBTRACE("if (not trans_.saveobjects()) then MsgBox ""saveobjects=false""")
+				if (not trans_.saveobjects()) then
+					IMPTRACE("IMPORT: unable to save data")
+					view_message 6238, 0
+					cancelImport
+					exit function
+				end if
+
+				IMPTRACE("IMPORT: all changes are saved")
+				m_idUniqueMap.RemoveAll
+				m_bSaved = true
+				m_nCounter = 0
+
+				page_.updateview
+			end if
+
+		end if
+
+		import = true
+	end function
+
+
+	'----------------------------------------------------------------
+	' Nalezy wolac po zakonczeniu calego importu - wykonuje ostani 
+	' save itd.
+	'----------------------------------------------------------------
+	public function end_import(): end_import = false
+		if (m_bCancel) then
+			exit function
+		end if
+
+		end_import = trans_.saveobjects()
+		trans_.var(GVAR_OPERATION_MODE) = clng(OPERATION_MODE_NORMAL)
+		IMPTRACE("IMPORT: end import: result=" + CStr(end_import))
+	end function
+
+	
+	'----------------------------------------------------------------
+	' Pobierz identyfikator do importu danych na podstawie where
+	' wyznaczaj¹cego unikalnoœæ rekordu
+	'----------------------------------------------------------------
+	public function getUniqueID(byval strWhere)
+		getUniqueID = trans_.findobjid(m_pImportStream.typeid, strWhere)
+
+		if (getUniqueID < 0) then
+			view_message1 6239, 0, m_pImportStream.typeid
+			cancelImport
+		end if
+	end function
+
+	public function findobjid(byval strWhere)
+		findobjid = trans_.findobjid(m_pImportStream.typeid, strWhere)
+	end function
+
+	'----------------------------------------------------------------
+	' Pobiera ID rekordu jednak jezeli jest wiele wynikow
+	' to zwraca id pierwszego rekordu jako liczbe ujemna
+	'----------------------------------------------------------------
+	public function getMultiID(byval strWhere)
+		dim pCursor
+		set pCursor = trans_.createrawcursor(m_pImportStream.typeid, strWhere, "", "")
+
+		if (not pCursor.exists(1)) then
+			getMultiID = CLng(0)
+		else
+			if (not pCursor.exists(2)) then
+				getMultiID = pCursor.get(1).idobj
+			else
+				getMultiID = pCursor.get(1).idobj * (-1)
+			end if
+		end if
+	end function
+
+end class
+
+
+'-----------------------------------------------------------------------
+' Klasa dla obiektu danego typu trzyma mape id rekordów z bazy
+' Ÿród³owej i bazy docelowej
+'
+' VOID add(byval nSourceIdObj, byval nDestIdObj)
+' LONG getid(byval nSourceIdObj)
+'-----------------------------------------------------------------------
+class CImportObjectMap
+
+	private m_pIdMap		'dictionary idobj'tow
+
+	private sub class_initialize()
+		set m_pIdMap = CreateObject("Scripting.Dictionary")
+	end sub
+
+	private sub class_terminate()   'OK
+		set m_pIdMap = nothing
+	end sub
+
+	public function add(byval nSourceIdObj, byval nDestIdObj)
+		m_pIdMap.add lcase(CStr(nSourceIdObj)), nDestIdObj
+	end function
+
+	public function getid(byval nSourceIdObj)
+		getid = m_pIdMap.item(lcase(CStr(nSourceIdObj)))
+	end function
+
+	public function isImported(byval nSourceIdObj)
+		isImported = m_pIdMap.exists( lcase(CStr(nSourceIdObj)) )
+	end function
+
+	public function KindOf()
+		KindOf = "CImportObjectMap"
+	end function
+
+end class
+
+#endif

@@ -1,0 +1,856 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+interfejs modułu
+	create_config_object(pRejestr)
+
+interfejs obiektu "config"
+	
+	void load_from_string(byref strConfig)
+	function save_to_string
+	[property] string operation_name(nOperNr)
+	show_config_page(nOperNr)
+	perform_operation(nOperNr,byref pObject)
+	void init_with_defaults(nTypRej)
+
+moduł operacji dla obiektu : n5zamowienie
+
+ZAMÓWIENIE OBCE
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1222.h"
+#include "h1224.h"
+
+#define SECID_ALL	1
+
+#define FORM_SPAN	2
+#define RCELL_SPAN	1
+
+#define CTRLID_DPC_1		101
+#define CTRLID_DPC_2		102
+#define CTRLID_CREATE_TASK	103
+
+#define CTRLID_PIC_DPC_1	104
+#define CTRLID_PIC_DPC_2	105
+
+#define CTRLID_REALIZUJ		106
+
+#define CTRLID_WZ_MODE		107
+#define CTRLID_REZERWUJ		108
+#define CTRLID_ZLEC			109
+
+#define CTRLID_FROM_FF		110
+
+#define CTRLID_ZALICZKA		111
+
+
+#define CTRLID_DPC_1_PREVIEW	112
+#define CTRLID_DPC_2_PREVIEW	113
+
+
+#define CTRLID_NEWDOK		114
+
+#ifdef ENABLE_DB13
+#define COUNT_OPERATIONS	13
+#define COUNT_OPERATIONS_INX	14
+#else
+#define COUNT_OPERATIONS	7
+#define COUNT_OPERATIONS_INX	8
+#endif
+
+-->
+<page style='STYLE_PAGE' width='10000'>
+<config>
+<startpos>center</startpos>
+<script>
+<![CDATA[
+#include "50200"
+'qxx_publication
+#include "50217"
+'realize publication
+#include "50518"
+
+
+class cn5dokmag_oper_config
+	public m_strName
+	public m_cCreateTask
+	public m_cRealize
+	public m_cZaliczka
+	public m_cNewDok
+	public m_cFromEDI
+	
+	public m_idObjDPC_1
+	public m_idObjDPC_2
+
+	public m_eWZMode
+	public m_eRezerwujMode
+	public m_eZlec
+	
+
+	public m_eTypRej
+
+
+
+	
+	public property get is_empty()			
+		is_empty =	(m_cCreateTask = "0") and _
+					(m_cRealize = "0") and _
+					(m_cZaliczka = "0") and _
+					(m_cNewDok = "0") and _
+					(m_cFromEDI = "0") and _
+					(m_eWZMode = "0") and _
+					(m_eRezerwujMode = "0") and _
+					(m_eZlec = "0") and _
+					(m_idObjDPC_1 = clng(0)) and _
+					(m_idObjDPC_2 = clng(0))
+	end property
+
+
+	
+	public sub class_initialize()
+		m_strName = ""
+		m_cCreateTask = "0"
+		m_cRealize = "0"
+		m_cZaliczka = "0"
+		m_cNewdok = "0"
+		m_cFromEDI = "0"
+		m_idObjDPC_1 = 0	'no DP to perform
+		m_idObjDPC_2 = 0	'no DP to perform
+		m_eWZMode = "0"	'no operation
+		m_eZlec = "0"	'no operation
+		m_eRezerwujMode = "0"	'no operation
+	end sub
+
+
+	public sub load_from_string(byref strConfig)
+		dim aItems : aItems = split(strConfig, vbTab)
+		if ubound(aItems) > 6  then
+			m_strName		= aItems(0)
+			m_cCreateTask	= left(aItems(1),1)
+			m_idObjDPC_1	= clng(aItems(2))
+			m_idObjDPC_2	= clng(aItems(3))
+			m_cRealize		= left(aItems(4),1)
+			m_eWZMode		= clng(aItems(5))
+			m_eRezerwujMode		= clng(aItems(6))
+			m_eZlec		= clng(aItems(7))
+		end if
+
+		'dla potrzeb db4
+		if ubound(aItems) > 7  then
+			m_cFromEDI	= left(aItems(8),1)
+		end if
+
+		'dla potrzeb db5
+		if ubound(aItems) > 8  then
+			m_cZaliczka	= left(aItems(9),1)
+		end if
+
+		'dla potrzeb db5
+		if ubound(aItems) > 9  then
+
+			m_cNewDok	= left(aItems(10),1)
+		end if
+
+	end sub
+	
+	public function save_to_string
+		save_to_string = doc_.afc.convert.formatter("%1"+vbTab+"%2"+vbTab+"%3"+vbTab+"%4"+vbTab+"%5"+vbTab+"%6"+vbTab+"%7"+vbTab+"%8"+vbTab+"%9"+vbTab) _
+			(m_strName)(cstr(m_cCreateTask))(cstr(m_idObjDPC_1))(cstr(m_idObjDPC_2))(cstr(m_cRealize))(cstr(m_eWZMode))(cstr(m_eRezerwujMode))(cstr(m_eZlec))(cstr(m_cFromEdi)).done()
+
+		save_to_string = save_to_string + doc_.afc.convert.formatter( _
+		"%1"+vbTab+"%2")(cstr(m_cZaliczka))(cstr(m_cNewDok)).done()
+
+	end function
+
+	public sub show_config_page
+		dim pPage : set pPage = doc_.getpagehli("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=THIS_FILE")
+
+		pPage.topelement.title = "Konfiguracja operacji """ + m_strName + """"
+
+
+		pPage.ctrl(CTRLID_WZ_MODE).value = cstr(m_eWZMode)
+		pPage.ctrl(CTRLID_REZERWUJ).value = cstr(m_eRezerwujMode)
+		pPage.ctrl(CTRLID_ZLEC).value = cstr(m_eZlec)
+		pPage.ctrl(CTRLID_CREATE_TASK).value = m_cCreateTask
+		pPage.ctrl(CTRLID_REALIZUJ).value = m_cRealize
+		pPage.ctrl(CTRLID_FROM_FF).value = m_cFromEdi
+		pPage.ctrl(CTRLID_ZALICZKA).value = m_cZaliczka
+		pPage.ctrl(CTRLID_NEWDOK).value = m_cNewdok
+		'todo: otwieranie i wybór
+
+
+		dim strPubType : strPubType = get_where_for_pub_by_rejtyp(m_eTypRej)
+		
+		setup_choose_dpc_pic pPage,CTRLID_PIC_DPC_1,CTRLID_DPC_1_PREVIEW,CTRLID_DPC_1,m_idObjDPC_1,strPubType
+		setup_choose_dpc_pic pPage,CTRLID_PIC_DPC_2,CTRLID_DPC_2_PREVIEW,CTRLID_DPC_2,m_idObjDPC_2,strPubType
+		setup_choose_dpc_label pPage,CTRLID_DPC_1,abs(m_idObjDPC_1)
+		setup_choose_dpc_label pPage,CTRLID_DPC_2,abs(m_idObjDPC_2)
+		setup_choose_dpc_preview pPage , CTRLID_DPC_1_PREVIEW , m_idObjDPC_1 
+		setup_choose_dpc_preview pPage , CTRLID_DPC_2_PREVIEW , m_idObjDPC_2 
+
+		if pPage.domodalauto() = CMD_CHOICE then
+			m_cCreateTask = pPage.ctrl(CTRLID_CREATE_TASK).value
+			m_idObjDPC_1 = get_choosen_dpc(pPage,CTRLID_PIC_DPC_1,CTRLID_DPC_1_PREVIEW)
+			m_idObjDPC_2 = get_choosen_dpc(pPage,CTRLID_PIC_DPC_2,CTRLID_DPC_2_PREVIEW)
+			m_cRealize = pPage.ctrl(CTRLID_REALIZUJ).value
+			m_cZaliczka = pPage.ctrl(CTRLID_ZALICZKA).value
+			m_cNewDok = pPage.ctrl(CTRLID_NEWDOK).value
+			m_cFromEdi = pPage.ctrl(CTRLID_FROM_FF).value
+			m_eWZMode = pPage.ctrl(CTRLID_WZ_MODE).value
+			m_eRezerwujMode = pPage.ctrl(CTRLID_REZERWUJ).value
+			m_eZlec = pPage.ctrl(CTRLID_ZLEC).value
+		end if
+	end sub
+	public sub perform_operation(byref pObject , byref pPage)
+		perform_operation_on_config	Me, pObject , pPage
+	end sub
+end class
+
+class cn5dokmag_dok_config
+private m_aOperations(COUNT_OPERATIONS_INX)
+	public m_eTypRej
+
+	public function is_empty(byval nNumOper)		
+		dim pOperConf:set pOperConf = m_aOperations(nNumOper)
+		is_empty =	pOperConf.is_empty
+	end function
+	
+	public sub class_initialize()
+		dim i
+		for i = 0 to COUNT_OPERATIONS
+			set m_aOperations(i) = new cn5dokmag_oper_config
+		next
+	end sub
+
+	public sub setTypeRej(eTypRej)
+		m_eTypRej = eTypRej
+		dim i
+		for i = 0 to COUNT_OPERATIONS
+			m_aOperations(i).m_eTypRej = m_eTypRej
+		next
+	end sub
+
+	public sub init_with_defaults(nTypRej)
+		dim i
+		for i = 0 to COUNT_OPERATIONS
+			set m_aOperations(i) = new cn5dokmag_oper_config
+		next
+
+		setTypeRej nTypRej
+
+		m_aOperations(1).m_strName = "Wydruk zamówienia obcego"
+		'todo: wyszukanie publikacji: m_aOperations(1).m_idObjDPC_1
+
+	end sub
+
+	public sub load_from_string(byref strConfig)
+		dim aItems : aItems = split(strConfig, REJDOK_CONG_SEPARATOR)
+		dim i 
+		dim last : last = ubound(aItems)
+		if last > COUNT_OPERATIONS then
+			last = COUNT_OPERATIONS
+		end if
+		for i = 0 to last
+			m_aOperations(i).load_from_string aItems(i)
+		next
+	end sub
+	
+	public function save_to_string
+		dim strTotal : strTotal = ""
+		dim i
+		for i = 0 to COUNT_OPERATIONS
+			strTotal = strTotal + m_aOperations(i).save_to_string() + REJDOK_CONG_SEPARATOR
+		next
+		save_to_string = strTotal
+	end function
+
+	public property get operation_name(byval nOperNr)
+		operation_name = m_aOperations(nOperNr).m_strName
+	end property
+	public property let operation_name(byval nOperNr,byref strName)
+		m_aOperations(nOperNr).m_strName = strName
+	end property
+
+	public sub show_config_page(byval nOperNr)
+		m_aOperations(nOperNr).show_config_page
+	end sub
+	public sub perform_operation(nOperNr,byref pObject,byref pPage)
+#ifdef _DEBUG
+		trans_.message 1002 , 0 , "DEBUG: " + cstr(operation_name(nOperNr))
+#endif
+		m_aOperations(nOperNr).perform_operation pObject , pPage
+	end sub
+end class
+
+function create_config_object(byref pRejestr)
+	dim pNewConfig : set pNewConfig = new cn5dokmag_dok_config
+	'ustawia tez typ rejestru w operacjach
+	pNewConfig.setTypeRej pRejestr.eTyp
+	set create_config_object = pNewConfig
+end function
+
+
+'--------------------------- config page ------------------
+function fok
+	page_.result = CMD_CHOICE
+	page_.goback
+end function
+
+
+function fcancel
+	page_.goback
+end function
+
+'--------------------------- perform operation ------------------
+private sub perform_operation_on_config(byref pConfig,byref pZamowienie , byref pPage)
+	if not make_task_on_zam(pConfig.m_cCreateTask,pZamowienie) then
+		exit sub
+	end if
+	
+	if not make_publication_on_zam(pConfig.m_idObjDPC_1,pZamowienie,pPage) then
+		exit sub
+	end if
+
+	if not make_publication_on_zam(pConfig.m_idObjDPC_2,pZamowienie,pPage) then
+		exit sub
+	end if
+
+	if not realizuj_zamowienie(pConfig.m_cRealize,pZamowienie , pPage)  then
+		exit sub
+	end if
+
+	if not faktura_zaliczkowa(pConfig.m_cZaliczka,pZamowienie , pPage)  then
+		exit sub
+	end if
+
+
+	if not make_wz_on_zamowienie(pConfig.m_eWZMode,pZamowienie , pPage) then
+		exit sub
+	end if
+
+
+	if not make_rezerw_on_zamowienie(pConfig.m_eRezerwujMode,pZamowienie , pPage) then
+		exit sub
+	end if
+
+	if not make_zlec_on_zamowienie(pConfig.m_eZlec,pZamowienie , pPage) then
+		exit sub
+	end if
+
+	if not from_EDI(pConfig.m_cFromEDI,pZamowienie , pPage)  then
+		exit sub
+	end if
+
+
+	if not new_dok(pConfig.m_cNewDok , pZamowienie , pPage )  then
+		exit sub
+	end if
+
+ 
+end sub
+
+
+function new_dok(byval cNewDok , byref pZamowienie , byref pPage)
+	new_dok = doc_.getmodule(60243).new_dok(cNewDok , pZamowienie , pPage , N5REJESTRDOK__ZAM_WLASNE , 1 , false , true)
+end function
+
+function faktura_zaliczkowa(byval cZaliczka , byref pZamowienie , byref pPage):faktura_zaliczkowa = true
+  faktura_zaliczkowa = faktura_zaliczkowa_ext(cZaliczka, pZamowienie, pPage, 0)
+end function
+
+
+function faktura_zaliczkowa_ext (byval cZaliczka , byref pZamowienie , byref pPage, byval nRejType):faktura_zaliczkowa_ext = true
+	if cZaliczka = "0" then 
+		exit function
+	end if
+
+	faktura_zaliczkowa_ext = false
+
+	'patrz funkcje f_zal i f_kon na 60240 - tam sa ustawiane rezultaty strony
+	dim idZaliczka
+	dim result
+	result = tworz_fakture_zaliczkowa(pZamowienie , idZaliczka , true, nRejType)
+
+	if result then
+		pPage.enableedit = false
+		doc_.postcommand doc_.afc.convert.formatter(" OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5SPRZEDAZ,%1,USAGE_VIEW) ") _
+						.add(idZaliczka).done()
+
+
+		dim id_zadania:id_zadania = pZamowienie.pZadanie.idobj
+		dim pSubTrans: set pSubTrans = trans_.createsubtran()
+
+			
+			dim pZadanie: set pZadanie =  trans_.getobj(TYPEID_N5ZADANIE , id_zadania)
+			
+			dim strText : strText = "Wykonywane przez Ciebie zadanie " + pZadanie.strTemat + " zostało zamknięte."
+			zadanie_common pZadanie , N5ZADANIE_ZAMKNIETE,strText,pZadanie.pWykonawca
+
+			pZadanie.nStatus = clng(N5ZADANIE_ZAMKNIETE)
+
+			trans_.saveobjects()
+
+		set pSubTrans = nothing
+
+
+
+	end if
+
+end function
+
+
+#include "50517"
+
+
+function tworz_fakture_zaliczkowa (byref pZamowienie , byref idZaliczka , byval bCopyPos, byval nRejType):tworz_fakture_zaliczkowa = false
+
+
+	dim iPoz2Real : iPoz2Real = pZamowienie.n5zamowienie_get_niezreal_pozcount()
+	if iPoz2Real = 0 and pZamowienie.strExtra1 = "0" then
+		trans_.message 1002 , 0 , "Protokół jest już zamknięty"
+		exit function
+	end if
+
+  'zabezpieczenie przed brakiem typu ptorokołu
+  if pZamowienie.curExtra4 = CCur(0) then
+    trans_.message 7000, 0, "Brak typu protokołu"
+    exit function
+  end if
+
+  'zabezpieczenie przed brakiem płatności
+  if pZamowienie.pSposobPlatnosci is nothing then
+    trans_.message 7000, 0, "Pole 'Sposób płatności' musi być wypełnione."
+    exit function
+  end if
+
+  dim strRejType
+  if nRejType = 0 then
+    strRejType = CStr(N5REJESTRDOK_FAKT_SP)
+  else
+    strRejType = CStr(nRejType)
+  end if
+
+	'tworzenie i wypełnianie samej faktury
+	dim idRejestr : idRejestr = choose_rejestr_dok(strRejType, true, "Wybór rejestru")
+	if idRejestr <= 0 then
+		exit function
+	end if
+
+	trans_.var(APPVAR_REJESTR_DOKUMENTOW) = clng(idRejestr)
+	dim new_dok
+	set new_dok = trans_.newobj(TYPEID_N5SPRZEDAZ)
+	idZaliczka = new_dok.idobj
+
+	with new_dok
+
+		set .pKlient = pZamowienie.pKlient
+		set .pZadanie = pZamowienie.pZadanie
+		set .pSposobPlatnosci = pZamowienie.pSposobPlatnosci
+#ifdef _KES
+		if nRejType = N5REJESTRDOK_PARAGON or nRejType = N5REJESTRDOK_FAKT_SP then
+			.eNettoBrutto = clng(N5SPRZEDAZ_BRUTTO)
+		else
+		  .eNettoBrutto = clng(N5SPRZEDAZ_NETTO)    
+		end if
+#else
+		.eNettoBrutto = clng(N5SPRZEDAZ_NETTO)
+#endif
+		.eSposVAT = clng(N5SPRZEDAZ_VAT_STAWKI)
+		set .pZamowienie = pZamowienie	
+		
+		'wyliczenie sumy w danej stawce z zamowienia
+		dim pozycja_zam
+		dim pozycja_zal
+		dim create:create = false
+		for each pozycja_zam in pZamowienie.listPozycje
+			'if bCopyPos then
+				set pozycja_zal = .listPozycje.addnew()
+				set pozycja_zal.pProdukt = pozycja_zam.pProdukt
+				set pozycja_zal.pOpak = pozycja_zam.pOpak
+				pozycja_zal.curIloscOpak = pozycja_zam.curIloscOpakPoz
+#ifdef _KES
+				if nRejType = N5REJESTRDOK_PARAGON or nRejType = N5REJESTRDOK_FAKT_SP then
+					pozycja_zal.curIloscOpak = pozycja_zam.curIloscOpak
+					pozycja_zal.curCenaBazowaBruttoWal = pozycja_zam.curCenaBrutto
+				else
+					pozycja_zal.curCenaBazowaBruttoWal = pozycja_zam.curCenaBrutto
+					pozycja_zal.curWartNetto = pozycja_zam.curWartNetto
+					pozycja_zal.curCenaNettoWal = pozycja_zam.curCenaNettoWal        
+				end if
+#else
+				pozycja_zal.curCenaBazowaBruttoWal = pozycja_zam.curCenaBrutto
+				pozycja_zal.curWartNetto = pozycja_zam.curWartNetto
+				pozycja_zal.curCenaNettoWal = pozycja_zam.curCenaNettoWal
+#endif        
+				pozycja_zam.curIloscOpakPoz = ccur(0)
+				if pozycja_zam.curIloscOpakPoz > 0 then
+					create = true
+				end if
+				set pozycja_zal.psprzed_pZadanie = pozycja_zam.pzam_pZadanie
+				if not pozycja_zam.pzam_pZadanie is nothing then
+					set pozycja_zal.psprzed_pKLOB = pozycja_zam.pzam_pZadanie.zad_pKLOB
+				end if
+
+			'end if 
+		next
+    
+	end with
+
+  if not pZamowienie.pZadanie is nothing then
+	  pZamowienie.pZadanie.tCzasZamk = trans_.var(GVAR_SYSTIME)
+	  pZamowienie.pZadanie.dDataZamk = trans_.var(GVAR_SYSDATE)
+	  'data wykonania aktualizaowana w momwencie wystawienia faktury
+	  pZamowienie.pZadanie.tCzasTerminZak = trans_.var(GVAR_SYSTIME)
+	  pZamowienie.pZadanie.dDataTerminZak = trans_.var(GVAR_SYSDATE) 
+  else
+    trans_.message 7000, 0, "Brak powiązanego zadania."
+    exit function
+  end if
+  
+  'gdy protokół zamknięty ustaw strExtra1 na 0
+  pZamowienie.strExtra1 = "0"
+
+	pZamowienie.dDataReal = trans_.var(GVAR_SYSDATE)
+
+	tworz_fakture_zaliczkowa = trans_.saveobjects()	
+
+	if tworz_fakture_zaliczkowa then
+		
+
+
+	dim id_zadania:id_zadania = pZamowienie.pZadanie.idobj
+	dim pSubTrans: set pSubTrans = trans_.createsubtran()
+
+		
+		dim pZadanie: set pZadanie =  trans_.getobj(TYPEID_N5ZADANIE , id_zadania)
+		
+		dim strText : strText = "Wykonywane przez Ciebie zadanie " + pZadanie.strTemat + " zostało zamknięte."
+		zadanie_common pZadanie , N5ZADANIE_ZAMKNIETE,strText,pZadanie.pWykonawca
+
+		pZadanie.nStatus = clng(N5ZADANIE_ZAMKNIETE)
+
+		trans_.saveobjects()
+
+	set pSubTrans = nothing
+
+	end if
+	
+end function
+
+
+
+private function make_task_on_zam(cCreateTask,byref pZamowienie) : make_task_on_zam = true
+	if cCreateTask = "0" then
+		exit function
+	end if
+	UnderConstruction
+end function
+
+public function make_publication_on_zam(idObjDPC,byref pZamowienie,byref pPage) : make_publication_on_zam = true
+	if idObjDPC = 0 then
+		exit function
+	end if
+
+	'uzupelnimy daty - wystawienia w momencie wysdruku pusttego zamowienia
+	pPage.root.dDataWyst = trans_.var(GVAR_SYSDATE)
+
+
+	if not pPage.std_fsave_external_with_saveobjects() then
+		make_publication_on_zam = false
+		exit function
+	end if
+	if is_email_publication(idObjDPC) then
+		make_publication_on_zam = (realize_email_publication(abs(idObjDPC),pZamowienie,pZamowienie.pKlient.strEmail,pZamowienie.text,nothing) = 0)
+	else
+		make_publication_on_zam = (realize_publication(abs(idObjDPC),pZamowienie,idObjDPC>0,nothing) = 0)
+	end if
+end function
+
+
+
+
+function wydruk (byref pZamowienie,byref pPage) : wydruk = true
+
+	'uzupelnimy daty - wystawienia w momencie wysdruku pusttego zamowienia
+	pPage.root.dDataWyst = trans_.var(GVAR_SYSDATE)
+
+
+	if not pPage.std_fsave_external_with_saveobjects() then
+		wydruk = false
+		exit function
+	end if
+
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+	dim pResultHLI : set pResultHLI =  asp_appfile_object_hli( 95290, pZamowienie)
+	dim pRapPage : set pRapPage = doc_.getpagehli(pResultHLI)
+	pRapPage.domodalauto()
+
+end function
+
+
+
+
+function realizuj_zamowienie(cRealize,byref pZamowienie , byref pPage) : realizuj_zamowienie = true
+	if cRealize="0" then
+		exit function		
+	end if
+	
+
+	dim iPoz2Real : iPoz2Real = pZamowienie.n5zamowienie_get_niezreal_pozcount()
+	if iPoz2Real = 0 and pZamowienie.strExtra1 = "0" then
+		trans_.message 1002 , 0 , "Protokół jest już zamknięty"
+		exit function
+	end if	
+
+
+	dim pozycja_zam
+	for each pozycja_zam in pZamowienie.listPozycje
+		pozycja_zam.curIloscOpakPoz = ccur(0)
+	next
+  
+  if not pZamowienie.pZadanie is nothing then
+	  pZamowienie.pZadanie.tCzasZamk = trans_.var(GVAR_SYSTIME)
+	  pZamowienie.pZadanie.dDataZamk = trans_.var(GVAR_SYSDATE)
+  end if  
+  
+  'gdy protokół zamknięty ustaw strExtra1 na 0
+  pZamowienie.strExtra1 = "0"
+
+
+	if trans_.saveobjects()	 then
+		trans_.message 1002 , 0 , "Protokół zamknięto"
+		realizuj_zamowienie = true
+	end if
+
+  if not pZamowienie.pZadanie is nothing then
+	  dim id_zadania:id_zadania = pZamowienie.pZadanie.idobj
+    
+	  dim pSubTrans: set pSubTrans = trans_.createsubtran()
+
+		
+		dim pZadanie: set pZadanie =  trans_.getobj(TYPEID_N5ZADANIE , id_zadania)
+		
+		dim strText : strText = "Wykonywane przez Ciebie zadanie " + pZadanie.strTemat + " zostało zamknięte."
+		zadanie_common pZadanie , N5ZADANIE_ZAMKNIETE,strText,pZadanie.pWykonawca
+
+		pZadanie.nStatus = clng(N5ZADANIE_ZAMKNIETE)
+  end if
+		trans_.saveobjects()
+
+	set pSubTrans = nothing
+
+
+end function
+
+function make_dok_rozchod_on_zamowienie(pPage, nDokType, pDictPos)
+	if not pPage.std_fsave_external_with_saveobjects then
+		make_dok_rozchod_on_zamowienie = false
+		exit function
+	end if
+	
+	make_dok_rozchod_on_zamowienie = doc_.getmodule(60226).create_dh2dm(pPage,nDokType,pDictPos)
+	trans_.var(APPVAR_REJESTR_TYP) = pPage.root.pRejestrDok.eTyp
+	trans_.var(APPVAR_REJESTR_DOKUMENTOW) = pPage.root.pRejestrDok.idobj  
+end function
+
+function make_wz_on_zamowienie(eWZMode,pZamowienie , pPage):make_wz_on_zamowienie = true
+
+	if eWZMode = "1" then
+		eWZMode = clng(2)
+	else
+		exit function
+	end if
+	if not pPage.std_fsave_external_with_saveobjects then
+		make_wz_on_zamowienie = false
+		exit function
+	end if
+	
+	make_wz_on_zamowienie = doc_.getmodule(60226).dh2dm_exchange(eWZMode,pPage,N5REJESTRDOK__WZ)'make_wz_on_dokhandl(eWZMode,pZamowienie,pPage)
+	trans_.var(APPVAR_REJESTR_TYP) = pZamowienie.pRejestrDok.eTyp
+	trans_.var(APPVAR_REJESTR_DOKUMENTOW) = pZamowienie.pRejestrDok.idobj
+
+end function
+
+
+function make_rw_on_zamowienie(byval idZam, pZam)
+  trans_.var(APPVAR_REJESTR_TYP) = clng(N5REJESTRDOK__RW)
+  dim pOpenFormRW : set pOpenFormRW = doc_.getmodule(60129).prepare_form_open_command(TYPEID_N5DOKMAG,0,0)
+  if pOpenFormRW is nothing then
+    exit function
+  end if
+  dim pFormRW : set pFormRW = doc_.getpagehli(pOpenFormRW)
+  if pFormRW is nothing then
+    exit function
+  end if
+  
+  'magazyn źródłowy
+  dim idMagZrod: idMagZrod = fire_choice_list_disable_add(TYPEID_N5MAGAZYN,"Wybierz magazyn wydania","","eTyp=N5TYPMAG_PODSTAWOWY","","")
+  if idMagZrod = 0 then
+    exit function
+  end if
+  set pFormRW.root.pMagZrod = trans_.getobj(TYPEID_N5MAGAZYN,idMagZrod)
+  
+  'protoków serwisowy
+  dim oZam: set oZam = trans_.getobj(TYPEID_N5ZAMOWIENIE,idZam)
+  
+  'pozycje RW
+  dim oPozZam, oPozRW
+  for each oPozZam in oZam.listPozycje
+    if oPozZam.pProdukt.eRodzaj = N5PRODUKT_TOWAR then
+      set oPozRW = pFormRW.root.listPozycje.addnew()
+      set oPozRW.pProdukt = oPozZam.pProdukt
+      set oPozRW.pOpak = oPozZam.pOpak
+      oPozRW.curIloscOpak = ccur(oPozZam.curIloscOpak)
+    end if
+  next
+  
+  'powiązanie z protokołem
+   set pFormRW.root.wrefDokHandl = oZam
+
+  pFormRW.domodalauto()    
+end function
+
+
+function make_rezerw_on_zamowienie(eRezerwMode,pZamowienie , pPage):make_rezerw_on_zamowienie = true
+
+	if eRezerwMode = "1" then
+		eRezerwMode = clng(2)
+	else
+		exit function
+	end if
+
+	make_rezerw_on_zamowienie = doc_.getmodule(60226).dh2dm_exchange(eRezerwMode,pPage,N5REJESTRDOK_REZERWACJE)
+	trans_.var(APPVAR_REJESTR_TYP) = pZamowienie.pRejestrDok.eTyp
+	trans_.var(APPVAR_REJESTR_DOKUMENTOW) = pZamowienie.pRejestrDok.idobj
+
+end function
+
+
+
+
+function make_zlec_on_zamowienie(eZlec,pZamowienie , pPage):make_zlec_on_zamowienie = true
+
+	if eZlec = "1" then
+		eZlec = clng(2)
+	else
+		exit function
+	end if
+	
+	make_zlec_on_zamowienie = doc_.getmodule(60226).make_zlecprod_on_dokhandl(eZlec,pZamowienie,pPage)
+
+end function
+
+
+'select file
+#include "50123"
+'messagebox
+#include "50122"
+
+
+
+function from_EDI(cFromEDI , pZamowienie , pPage):from_EDI = true
+
+	if cFromEDI = "0" then		
+		exit function
+	end if
+
+
+	dim answer,ext_flag
+	answer = MessageBoxCustom("Wybierz format dokumentu, z jakiego chcesz importowac", "Import z postaci elektronicznej", vbYesNoCancel, vbQuestion, "EDI;Hjord Knudsen;Anuluj")
+	select case answer
+		case vbYes	
+			ext_flag = "*.*"		
+		case vbNo
+			ext_flag = "*.txt"		
+		case else
+			exit function
+	end select
+
+
+
+	dim strPath
+	strPath=SelectFile("c:\", ext_flag, "")
+
+	if (len(strPath)=0) then
+		from_EDI = false
+		exit function		
+	end if
+
+
+	dim pInputStream:set pInputStream = doc_.createstreamobj()
+	pInputStream.attach strPath
+
+
+	select case answer
+		case vbYes			
+			from_EDI = doc_.getmodule(60277).zamowienie_from_EDI(pZamowienie , pPage , pInputStream)
+		case vbNo
+			from_EDI = doc_.getmodule(60245).zamowienie_from_knudsen_file(pZamowienie , pPage , pInputStream, strPath)
+	end select
+
+end function
+
+
+
+
+function zadanie_common(byval pZadanie , byval nNewStatus,byval strNotifyText,byref pNotifyWho)		
+	pZadanie.nStatus=clng(nNewStatus)												
+	pZadanie.n5zadanie_auto_change_status()										
+	if not trans_.saveobjects() then																
+		exit function																
+	end if																			
+										
+		dim pModule : set pModule = doc_.getmodule(60158)							
+		pModule.notify_wykonawca_about_zadanie strNotifyText,pNotifyWho,pZadanie	
+																		
+end function
+
+
+
+'---------------------------------------------------------------------------------
+
+]]>
+</script>
+</config>
+<body>
+	
+
+QXF_BEGIN
+	QXS_BEGIN_FLAT(SECID_ALL,Konfiguracja,FORM_SPAN)
+		<tr>
+			QXX_CHOOSE_PUBLICATION(CTRLID_DPC_1,CTRLID_PIC_DPC_1,CTRLID_DPC_1_PREVIEW,1)
+		</tr>		
+
+		<tr>
+			QXX_CHOOSE_PUBLICATION(CTRLID_DPC_2,CTRLID_PIC_DPC_2,CTRLID_DPC_2_PREVIEW,1)
+		</tr>
+		
+		QXR_SEPARATOR(2)
+
+		QXR_LABELED_CHECK_HIDE(CTRLID_WZ_MODE,Operacje,Utwórz dokument WZ,true)
+		QXR_LABELED_CHECK_HIDE(CTRLID_REZERWUJ,,Zarezerwuj towar,true)		
+		QXR_LABELED_CHECK_HIDE(CTRLID_ZLEC,,Utwórz zlecenie produkcyjne,true)
+		QXR_LABELED_CHECK(CTRLID_REALIZUJ,,Realizuj zamówienie)
+		QXR_LABELED_CHECK(CTRLID_ZALICZKA,,Faktura)
+		QXR_LABELED_CHECK_HIDE(CTRLID_FROM_FF,,Import w postaci elektronicznej,true)
+		QXR_LABELED_CHECK_HIDE(CTRLID_NEWDOK,,Utwórz "Zamówienie własne (do dostawcy)",true)
+
+		#comment - na razie ukryty
+		QXR_LABELED_CHECK_HIDE(CTRLID_CREATE_TASK,,Zapamiętaj zdarzenie,true)
+
+				
+		QXR_SEPARATOR(FORM_SPAN)
+
+
+	QXS_END_FLAT(FORM_SPAN)
+QXF_END
+
+XFDIALOGBUTTONS
+
+</body>
+</page>

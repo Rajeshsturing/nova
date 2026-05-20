@@ -1,0 +1,379 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+
+<!-- 18.07.2004 dodanie kolumny index, APPCONFIG_RAPORT_BY_PROD_INX -->
+<!-- 13.01.2005 podgrupy produktow -->
+<!-- 22.01.2008 APPCONFIG_GM_RAPORT_BY_DATE -->
+
+<!--
+RAPTEMPLATE_OPERACJE_MAGAZYNOWE
+#include "h1000.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1250.h"
+
+#define RAPORT_TITLE Operacje magazynowe wg kolejności
+#define PICTURE_LEFT		80930
+#define PICTURE_RIGHT		80931
+
+
+#ifdef APPCONFIG_RAPORT_BY_PROD_INX
+#define C_FIELD_FIRST_EXPR		prod.strIndeks
+#define C_FIELD_SECOND_EXPR		prod.strNazwa
+#define C_FIELD_FIRST_HUMANNAME 	Indeks
+#define C_FIELD_SECOND_HUMANNAME 	Nazwa
+#else
+#define C_FIELD_FIRST_EXPR		prod.strNazwa
+#define C_FIELD_SECOND_EXPR		prod.strIndeks
+#define C_FIELD_FIRST_HUMANNAME		Nazwa
+#define C_FIELD_SECOND_HUMANNAME	Indeks
+#endif
+
+#ifdef APPCONFIG_GM_RAPORT_BY_DATE
+#define OKRES_NROPMAG_WHERE			%6
+#endif
+
+
+-->
+<page style='36'>
+<config>
+<title>RAPORT_TITLE</title>
+<script>
+<![CDATA[
+
+<%
+function query()
+
+query = "select 'c_nrdok'=om.strNrDok,'c_typeid'=om.typeid,'c_idobj'=om.idobjdok,'c_ddataOper'=om.dDataOp, " +_
+"'c_numop'=om.gmo_nNumOp,'c_lp'=om.gmo_nLP,'c_numopdost'=om.gmo_idDost, " +_
+"'c_mag'=mag.strNazwa, " +_
+"'c_field_second' = (C_FIELD_SECOND_EXPR),'c_field_first'= (C_FIELD_FIRST_EXPR), 'c_oznprod' = prod.strCecha1 , " +_
+"'c_opakz'=opak.strNazwa, " +_
+"'c_iloscp'=isnull((select gmo_curIlosc from view_operacje_magazynowe v  " +_
+"where gmo_curIlosc>0 and v.idobj=om.idobj),0), " +_
+"'c_iloscw'=isnull((select -gmo_curIlosc from view_operacje_magazynowe v "+_
+"where gmo_curIlosc<0 and v.idobj=om.idobj),0),  " +_
+"'c_cena'=om.gmo_curCena, " +_
+"'c_jedn'=jedn.strSkrot,'c_prec'=jedn.nDokladnosc,'c_towusl'=prod.eRodzaj " +_
+"from view_operacje_magazynowe as om  " +_
+"left outer join n5magazyn as mag on om.gmo_pMag = mag.IdObj  " +_
+"inner join n5produkt as prod on om.gmo_pProd = prod.IdObj  " +_
+"inner join n5opakowanie_produktu as opak on om.gmo_pOpak = opak.IdObj  " +_
+"inner join n5jednostka as jedn on opak.pJednOpak = jedn.idobj " +_
+"where prod.pGrupaProd in (select tmp_group_idobj from #tmp_prod_hierarchy) "+_
+"and %1 and %2 and %3 and %5 and OKRES_NROPMAG_WHERE " +_
+"order by c_numop,c_lp "
+
+end function
+%>
+<%
+'' jest używane poza default_param()
+dim RaportOkresParam
+
+dim utilProdHierarchy : set utilProdHierarchy = doc_.getmodule(60246)
+dim pProdHierarchy : set pProdHierarchy = utilProdHierarchy.new_prod_hierarchy()
+
+dim pParamArray
+dim pGrupaParam
+
+
+function default_param()
+
+	set pParamArray = doc_.afc.new_navoarray()
+	pParamArray.add doc_.getmodule(43025).new_filtr_magazyn("mag.idobj","N5TYPMAG_PODSTAWOWY,N5TYPMAG_ZWROTY,N5TYPMAG_PRODUKCJAWTOKU,N5TYPMAG_REZERWACJE")
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwa produktu").bindexpr("prod.strNazwa")
+	pParamArray.add doc_.afc.rap.param.new_text("Indeks produktu").bindexpr("prod.strIndeks")
+	set pGrupaParam = doc_.afc.rap.param.new_text("Grupa produktów").bindexpr("strNazwa")
+	pParamArray.add pGrupaParam
+
+
+	'pParamArray.add doc_.afc.rap.param.new_text("Nazwa grupy").bindexpr("t_grupy.strNazwa")
+	'pParamArray.add doc_.getmodule(43025).new_filtr_grupa_prod("prod.pGrupaProd")
+
+	dim pExtraParam : set pExtraParam = doc_.afc.rap.param.new_filter("Extra")
+	pExtraParam.set_where_part "(1=1)"
+	pParamArray.add pExtraParam
+
+
+	'set RaportOkresParam = doc_.afc.rap.param.new_date_range("Analizowany okres").bindexpr("")
+	'pParamArray.add RaportOkresParam
+
+	set RaportOkresParam = doc_.afc.rap.param.new_date_range("Analizowany okres"). _
+#ifdef APPCONFIG_GM_RAPORT_BY_DATE
+		bindexpr("om.dDataOp")
+#else
+		bindexpr("")
+#endif
+	pParamArray.add RaportOkresParam
+	
+	
+	
+	
+	set default_param = pParamArray
+end function
+%>
+<%
+function write_actual_param(byref pActualParam)
+	write_actual_param = "0=1" 
+
+	dim iter
+	dim bAnyWritten : bAnyWritten = false
+
+	if not pActualParam is nothing then
+			
+		dim nDummy1,nDummy2	
+		write_actual_param = "om.gmo_nNumOp " + doc_.getmodule(43025).rap_param_date_range_2_gm_num_oper_where(RaportOkresParam,nDummy1,nDummy2)
+			
+		for iter = 0 to pActualParam.upperIndex
+			if pActualParam.value(iter).get_desc() <> "" then 
+				bAnyWritten = true
+				so.write "<t size='5' /><text fontsize='4'><![CD"+"ATA[" + pActualParam.value(iter).get_desc() + "]"+"]></text><br/>"
+			end if
+		next
+	end if
+
+	if not bAnyWritten then 
+		so.write "<t fontsize='4'>brak</t><br/>"
+	end if
+
+	so.write "<br/>"
+end function
+%>
+<%
+function body_row(byref pSection,byref pRec)
+%>
+<tr bordercolor='white'
+<%
+if pRapExec.RecNr mod 2 <> 0 then
+	so.write " style='37' "
+end if
+if clng(pRec("c_towusl")) = 2 then
+	so.write " italic='true' "
+end if 
+%>
+>
+	<td align='right'>RXE_LP</td>
+	<td align='right'>
+		RXE_T(c_numop)
+	</td>
+	<td align='right'>
+		<t><%so.write cstr(clng(pRec("c_lp")) mod 10000)%></t>
+	</td>
+	<td>
+	<%if clng(pRec("c_typeid")) = 0 then%>
+		<t>Podsumowanie archiwum</t>
+	<%else%>
+		RXE_T_LINK_FORM_CCC(c_typeid,c_idobj,c_nrdok)
+	<%end if%>
+	</td>
+	<td>
+	RXE_DATE(c_ddataOper)<t size='1'/> 
+	</td>
+
+	<td>
+		<t><![CDATA[<%so.write cstr(pRec("c_mag"))%>]]></t>
+	</td>
+	<td>
+		<text ><![CDATA[<%so.write cstr(pRec("c_field_first"))%>]]></text>
+	</td>
+
+	#ifdef _IOW
+	<td>
+		<text ><![CDATA[<%so.write cstr(pRec("c_oznprod"))%>]]></text>
+	</td>
+	#endif
+	<%
+	dim strPZ : strPZ = pRec("c_field_second")
+	%>
+	<td>
+		<text><![CDATA[<%so.write strPZ%>]]></text>
+	</td>
+	<%
+	dim strOZ : strOZ = pRec("c_opakz")
+	%>
+	<td>
+		<text><![CDATA[<%so.write strOZ%>]]></text>
+	</td>
+	<td align='right'>
+	<%
+		if ccur(pRec("c_iloscp")) > 0.0 then
+	%>
+		RXE_QUANTITY_CCC(c_iloscp,c_jedn,c_prec)
+	<%
+	end if
+	%>
+	</td>
+	<td align='right'>
+	<%
+		if ccur(pRec("c_iloscw")) > 0.0 then
+	%>
+		RXE_QUANTITY_CCC(c_iloscw,c_jedn,c_prec)
+	<%
+	end if
+	%>
+	</td>
+	<td align='right'>
+		RXE_QUANTITY_CVV(c_cena,"",#*gvar_price_prec)
+	</td>
+	<td>
+		<picture image='PICTURE_LEFT' width='SIZE_FOR_LIST' height='SIZE_FOR_LIST'
+			tip='Pokaż dostawy z których korzysta ta operacja'
+			href="varFunctionHLI='prev_oper_hli' vn1='<%so.write cstr(pRec("c_numopdost"))%>'" 
+		/>
+		<picture image='PICTURE_RIGHT' width='SIZE_FOR_LIST' height='SIZE_FOR_LIST'
+			tip='Pokaż wykorzystanie tej operacji'
+			href="varFunctionHLI='next_oper_hli' vn1='<%so.write cstr(pRec("c_numopdost"))%>'"/>
+	</td>
+</tr><%
+end function
+%>
+<%
+function body_header(byref pSection,byref pRec)
+'so.write "<p backcolor='yellow'><text><![CD"+"ATA["+pRapExec.get_final_query() + "]"+"]></text></p><br/>" 
+%>
+<table border='1'>
+<thead>
+<tr style='21'>
+	<td width='min'><t>LP</t></td>
+	<td width='min'>
+		<text><![CDATA[Nr operacji]]></text>
+	</td>
+	<td width='min' >
+		<t><![CDATA[LP]]></t>
+	</td>
+	<td width='min' >
+		<text><![CDATA[Nr dokumentu]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Data]]></text>
+	</td>
+
+	<td width='min'>
+		<text><![CDATA[Magazyn]]></text>
+	</td>
+	<td width='max' >
+		<text><![CDATA[C_FIELD_FIRST_HUMANNAME]]></text>
+	</td>
+
+#ifdef _IOW
+	<td width='max'>
+		<text><![CDATA[Oznaczenie producenta]]></text>
+	</td>
+#endif
+
+	<td width='max' >
+		<text><![CDATA[C_FIELD_SECOND_HUMANNAME]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Opakowanie]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Ilość przyjęta]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Ilość wydana]]></text>
+	</td>
+	<td width='min' >
+		<text><![CDATA[Cena wydania]]></text>
+	</td>
+	<td width='min' >
+		<text><![CDATA[Poprz. / Nast.]]></text>
+	</td>
+</tr>
+</thead>
+<tbody>
+<%
+end function
+%>
+<%
+function body_footer(byref pSection)
+%>
+</tbody>
+<tfoot>
+<tr style='21'>
+	<td></td>
+	<td style='27' colspan='8' />
+	<td style='27' align='right'>
+		<t><%so.write pRapExec.body.counter(0).result%></t>
+	</td>
+	<td style='27' align='right'>
+	<%if pRapExec.body.counter(1).result>0 then%>
+		<t><%so.write pRapExec.body.counter(1).result%></t>
+	<%else%>
+		<t></t>
+	<%end if%>
+	</td>
+</tr>
+</tfoot>
+
+</table>
+<%
+end function
+%>
+function next_oper_hli(byref pHLI)
+	dim pModule : set pModule = doc_.getmodule(60136)
+	pModule.make_raport_opmag_kolejno_next_prev pHLI.prop(1),true
+end function
+
+function prev_oper_hli(byref pHLI)
+	dim pModule : set pModule = doc_.getmodule(60136)
+	pModule.make_raport_opmag_kolejno_next_prev pHLI.prop(1),false
+end function
+]]>
+</script>
+</config>
+<header>
+</header>
+<body>
+<p>
+RAPORT_HEADER(3,0)
+</p>
+
+<p>
+<t size='2'/>
+</p>
+
+<p><text fontsize='7'><![CDATA[RAPORT_TITLE]]></text></p><br/><br/>
+<%
+if not doc_.getmodule(60253).gm_ensure_accuracy_ui(true) then
+%>
+<p border='1' fontsize='5' forecolor='red' bold='true'><t>Uwaga! Niepoprawny stan magazynu</t></p><br/><br/>
+<%
+end if
+%>
+<t fontsize='5' bold='true'>Kryteria selekcji:</t><br/>
+<%
+dim pRapExec : set pRapExec = rapeng_.new_engine()
+with pRapExec
+	.add_body_ex (getref("body_header"),getref("body_footer"),getref("body_row")).add_sumator("c_iloscp").add_sumator("c_iloscw")
+	if .prepare("RAPORT_TITLE",default_param(),rapeng_.get_raport_param(),query()) then
+
+		dim pPerf : set pPerf = doc_.performing("Trwa przygotowywanie wyników...")
+			pProdHierarchy.fill_on_prodgrupa_param pGrupaParam
+		set pPerf = nothing
+
+
+		dim nropmag_str : nropmag_str = write_actual_param(rapeng_.get_raport_param())
+#ifndef APPCONFIG_GM_RAPORT_BY_DATE
+	'' drobna modyfikacja zapytania - parametr nropmag
+	.ReplaceQueryParam "OKRES_NROPMAG_WHERE",nropmag_str
+#endif
+
+		'' drobna modyfikacja zapytania - parametr nropmag
+		'.ReplaceQueryParam "OKRES_NROPMAG_WHERE",nropmag_str
+
+		if not .perform then
+			so.write "<p style='21'><t>Brak danych spełniających podane kryteria</t></p>"
+		end if
+	end if
+end with
+
+pProdHierarchy.manual_done() : set pProdHierarchy = nothing
+set utilProdHierarchy = nothing
+
+%>
+</body>
+<footer>
+</footer>
+</page>

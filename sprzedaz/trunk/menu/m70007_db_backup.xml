@@ -1,0 +1,417 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1004.h"
+#include "h1203.h"
+#include "h1222.h"
+#include "h1200.h"
+#include "h1220.h"
+#include "h1224.h"
+#include "h1223.h"
+#include "h1219.h"
+#include "h1240.h"
+#include "h1231.h"
+
+
+#define FORM_SPAN	2
+#define EDIT_SIZE	15
+
+#define CTRLID_SQLSERVER_USER	1
+#define CTRLID_SQLSERVER_PASS	2
+#define CTRLID_ARCHIVE_PASS		3
+#define CTRLID_ARCHIVE_PATH		4
+
+#if appvar_mode = 0
+	#define ARCHIVE_TITLE			Archiwizacja bazy danych
+	#define ARCHIVE_ACTION			on_create_backup
+	#define ARCHIVE_ACTION_NAME		Archiwizuj
+	#define ARCHIVE_FILE_FUN		select_new_file
+#endif
+
+#if appvar_mode = 1
+	#define ARCHIVE_TITLE			Odzyskiwanie bazy danych
+	#define ARCHIVE_ACTION			on_create_restore
+	#define ARCHIVE_ACTION_NAME		Odzyskaj
+	#define ARCHIVE_FILE_FUN		select_file		
+#endif
+
+#comment ------------------------------------------------------------------------------
+#comment obsługa automatycznej archiwizacji
+#comment 
+#comment vn1001=1030 vn1002=70007 vs8003='EuroBusiness 5.0' vs1012='SERVER' vs8111=’sa’ vs8112='HASLO' vn3038=1 vn1016=0 vs8113='c:\temp\testbackup'
+#comment 
+#comment VAR_SQL_USER - SA or simillar user, defaults to 'SA'
+#comment VAR_SQL_PWD - SQL_USER password, defaults to blank
+#comment VAR_BACKUP_DIRECTORY - backup directory, when not specified standard file name is generated
+#comment VAR_WINRAR_PATH - WinRAR path - when missing - no compression
+#comment ------------------------------------------------------------------------------
+
+#define VAR_SQL_USER			8111
+#define VAR_SQL_PWD				8112
+#define VAR_BACKUP_DIRECTORY	8113
+#define VAR_WINRAR_PATH			8114
+
+#comment VAR_EKSPORT_KLIENT_AMPLUS - eksport danych z tabeli n5klient (Amplus)
+#comment
+#comment vn1001=1030 vn1002=70007 vs8003='EuroBusiness 5.0' vs1012='SERVER' vn3038=1 vn1016=0 vs8115='c:\temp'
+#comment
+#ifdef _AMPLUS
+#define VAR_EKSPORT_KLIENT_AMPLUS  8115
+#endif
+-->
+
+
+
+<page style='STYLE_PAGE'>
+	<config>
+		<title>ARCHIVE_TITLE</title>
+		#if appvar_mode = 0
+		<secidread>CMDID_DB_BACKUP##STDR_READ</secidread>
+		#endif
+		<script>
+			<![CDATA[
+
+'CFileDrive
+#include "50211"
+
+'select file
+#include "50123"
+
+'log event
+#include "50611"
+
+'exportset_n5klient      
+#include "50638"
+
+class CArchiveContaier
+
+	public m_strSQLUser
+	public m_strSQLPass
+	public m_strArchivePass
+	public m_strArchivePath
+
+	private sub class_initialize()		
+		m_strSQLUser = "sa"
+		m_strSQLPass = ""
+		m_strArchivePass = ""
+		m_strArchivePath = init_std_path()
+	end sub
+
+	private function init_std_path
+		'init_std_path = "ala ma kota"
+		dim strArchiveRoot: strArchiveRoot = doc_.system.registry(hKey_LocalMachine,"SOFTWARE\NAVO\NAVO2002\Setup","InstallationRoot") +  "Archive\"
+
+		dim pFD, bOK
+		set pFD = CFileDrive(bOK)
+		if (not bOK) then
+			view_message 6161, 0
+		end if
+
+#ifdef _AMPLUS
+		dim strYear
+		if trans_.var(GVAR_DBNAME) = "navo2002" then
+			strYear = "2009_"
+		else
+			strYear = "2010_"
+		end if
+		dim strStartFile : strStartFile = pFD.GetPath ( strArchiveRoot + strYear + trans_.var(GVAR_APPLICATION) + "\ " ) +_
+				"_z_" + CStr(Year(Now)) + "_" + CStr(Month(Now)) + "_" + CStr(Day(Now)) + "_" + CStr(Hour(Now)) + "_" + CStr(Minute(Now)) + ".bak"   
+#else  
+		dim strStartFile : strStartFile = pFD.GetPath ( strArchiveRoot + trans_.var(GVAR_APPLICATION) + "\ " ) +_
+				"_z_" + CStr(Year(Now)) + "_" + CStr(Month(Now)) + "_" + CStr(Day(Now)) + "_" + CStr(Hour(Now)) + "_" + CStr(Minute(Now)) + ".bak"  
+#endif
+
+		init_std_path = strStartFile
+
+	end function
+end class
+
+function fopen()
+	if trans_.isvar(VAR_BACKUP_DIRECTORY) then
+		perform_auto_backup
+    doc_.postcommand "varCmd=CMD_QUIT"
+		fopen = false
+	else
+#ifdef _AMPLUS
+  if trans_.isvar(VAR_EKSPORT_KLIENT_AMPLUS) then
+    export_klient
+    doc_.postcommand "varCmd=CMD_QUIT"
+		fopen = false    
+  else
+    fopen = std_fopen()
+  end if
+#else
+		fopen = std_fopen()
+#endif    
+	end if
+	
+	set g_pArchiveContainer = new CArchiveContaier
+
+	page_.ctrl(CTRLID_SQLSERVER_USER).value = g_pArchiveContainer.m_strSQLUser
+	page_.ctrl(CTRLID_SQLSERVER_PASS).value = g_pArchiveContainer.m_strSQLPass
+
+#if appvar_mode = 0	
+	page_.ctrl(CTRLID_ARCHIVE_PASS).value =	g_pArchiveContainer.m_strArchivePass
+	page_.ctrl(CTRLID_ARCHIVE_PATH).value = g_pArchiveContainer.m_strArchivePath
+#endif
+end function
+
+function perform_auto_backup()	
+	dim pFD, bOK
+	set pFD = CFileDrive(bOK)
+
+	dim strSQLUser : strSQLUser = "sa"
+	if trans_.isvar(VAR_SQL_USER) then
+		strSQLUser = cstr(trans_.var(VAR_SQL_USER))
+	end if
+	
+	dim strSQLPwd : strSQLPwd = ""
+	if trans_.isvar(VAR_SQL_PWD) then
+		strSQLPwd = cstr(trans_.var(VAR_SQL_PWD))
+	end if
+	
+	dim strBackupDestFile : strBackupDestFile = ""
+	if trans_.isvar(VAR_BACKUP_DIRECTORY) then
+		dim strBackupDir : strBackupDir = cstr(trans_.var(VAR_BACKUP_DIRECTORY))
+		if right(strBackupDir,1) <> "\" then
+			strBackupDir = strBackupDir + "\"
+		end if
+#ifdef _AMPLUS
+		dim strYear
+		if trans_.var(GVAR_DBNAME) = "navo2002" then
+			strYear = "2009_"
+		else
+			strYear = "2010_"
+		end if   
+		strBackupDestFile = pFD.GetPath (strBackupDir + strYear + trans_.var(GVAR_APPLICATION) + "\ " ) +_
+				"_z_" + CStr(Year(Now)) + "_" + CStr(Month(Now)) + "_" + CStr(Day(Now)) + "_" + CStr(Hour(Now)) + "_" + CStr(Minute(Now)) + ".ebbak"        
+#else     
+		strBackupDestFile = pFD.GetPath (strBackupDir + trans_.var(GVAR_APPLICATION) + "\ " ) +_
+				"_z_" + CStr(Year(Now)) + "_" + CStr(Month(Now)) + "_" + CStr(Day(Now)) + "_" + CStr(Hour(Now)) + "_" + CStr(Minute(Now)) + ".ebbak"
+#endif        
+	else
+		dim oArchiveContainer : set oArchiveContainer = new CArchiveContaier
+		strBackupDestFile = oArchiveContainer.m_strArchivePath
+	end if
+	
+	trans_.message 1340,0,"Rozpoczęcie automatycznej archiwizacji do pliku: " + strBackupDestFile + ", konto użytkownika SQL: " + strSQLUser
+	
+	err.clear
+	on error resume next
+		dim bResult : bResult = doc_.backup(strSQLUser,strSQLPwd,"",strBackupDestFile)
+		if not bResult or (err.number <> 0) then
+			trans_.message 1343,0,"Wystąpił błąd w czasie automatycznej archiwizacji" + vbNewLine + err.description + vbNewLine
+		else
+			trans_.message 1341,0,"Zakończono bez błędów automatyczną archiwizację do pliku: " + strBackupDestFile
+			log_event N5EVENTLOG_ARCHIWIZACJA, "Scieżka: " + strBackupDestFile		
+			if not trans_.saveobjects() then
+				trans_.message 1342,0,"Nieudany zapis do rejestru zdarzeń systemowych"
+			end if
+		end if
+	on error goto 0
+	
+	trans_.message 1344,0,"Zakończenie automatycznej archiwizacji"
+	
+	if trans_.isvar(VAR_WINRAR_PATH) then	
+		trans_.message 1345,0,"Rozpoczęcie pakowania archiwum"
+		
+		dim strWinRARFullPath : strWinRARFullPath = cstr(trans_.var(VAR_WINRAR_PATH))
+		dim strWinRARCmd : strWinRARCmd = " a -o+ -y -ibck -afzip """ + strBackupDestFile + ".zip"" """ + strBackupDestFile + """"
+		
+		trans_.message 1345,0,"Polecenie pakowania: " + strWinRARFullPath + " " + strWinRARCmd		
+		
+		doc_.system.execute strWinRARFullPath,".",strWinRARCmd,true,true
+		
+		trans_.message 1347,0,"Zakończenie pakowania archiwum"
+
+		trans_.message 1348,0,"Usuwanie niespakowanego archiwum"
+
+		if (pFD.DeleteFile(strBackupDestFile)) then
+			trans_.message 1349,0,"Niespakowane archiwum usunięte"
+		else
+			trans_.message 1350,0,"Nie udało się usunąć niespakowanego archiwum"
+		end if	
+	end if	
+		
+end function
+'------------------------------------------------------------------------------
+
+dim g_pArchiveContainer
+
+function select_new_file()
+	dim pFD, bOK
+	set pFD = CFileDrive(bOK)
+
+	if (not bOK) then
+		view_message 6161, 0
+		exit function
+	end if
+
+	dim strStartPath : strStartPath = g_pArchiveContainer.m_strArchivePath
+
+	dim strStartFile : strStartFile = pFD.GetFileName( strStartPath )
+	strStartPath = pFD.GetPath( strStartPath )
+
+	dim strFolderName
+	strFolderName = SelectFolderNewFile(strStartPath, strStartFile)
+
+	dim strFileName
+	strFileName=pFD.GetFileName( strFolderName )
+		
+	if (pFD.GetFileExtension( strFileName )="" and strFileName<>"") then
+		strFolderName=strFolderName+".bak"
+	end if
+
+	page_.ctrl(CTRLID_ARCHIVE_PATH).text = strFolderName
+	g_pArchiveContainer.m_strArchivePath = strFolderName
+end function
+
+
+'messagebox
+#include "50122"
+
+
+function select_file()
+	dim strFilePath
+	strFilePath = SelectFile(doc_.system.registry(hKey_LocalMachine,"SOFTWARE\NAVO\NAVO2002\Setup","InstallationRoot") +  "Archive\", "*.*", "")
+	g_pArchiveContainer.m_strArchivePath = strFilePath
+	page_.ctrl(CTRLID_ARCHIVE_PATH).text = strFilePath
+end function
+
+
+
+function on_create_restore
+
+	dim result
+	dim perf
+	with g_pArchiveContainer
+		.m_strSQLUser = page_.ctrl(CTRLID_SQLSERVER_USER).value
+		.m_strSQLPass = page_.ctrl(CTRLID_SQLSERVER_PASS).value
+
+		.m_strArchivePass = page_.ctrl(CTRLID_ARCHIVE_PASS).value
+		.m_strArchivePath = page_.ctrl(CTRLID_ARCHIVE_PATH).value
+				
+		set perf = doc_.performing("Trwa odtwarzanie archiwum")
+		err.clear
+		on error resume next
+		result = doc_.restore ( g_pArchiveContainer.m_strSQLUser , g_pArchiveContainer.m_strSQLPass , g_pArchiveContainer.m_strArchivePass , g_pArchiveContainer.m_strArchivePath )
+		if err.number <> 0 then
+			set perf = nothing
+			MessageBox "Wystąpił nieznany błąd w czasie odzyskiwania bazy: " + vbNewLine + err.description + vbNewLine, "Archiwizacja", vbOkOnly, vbInformation	
+			result = false
+		end if
+		on error goto 0
+		set perf = nothing
+	end with
+
+	if result then
+		MessageBox "Odzyskiwanie bazy danych zakonczone powodzeniem", "Archiwizacja", vbOkOnly, vbInformation	
+		page_.goback()
+	else
+		MessageBox "Odzyskiwanie bazy danych zakonczone niepowodzeniem", "Archiwizacja", vbOkOnly, vbInformation	
+	end if
+end function
+
+
+
+
+
+
+
+function on_create_backup
+
+	dim result
+	dim perf
+	with g_pArchiveContainer
+
+		.m_strSQLUser = page_.ctrl(CTRLID_SQLSERVER_USER).value
+		.m_strSQLPass = page_.ctrl(CTRLID_SQLSERVER_PASS).value
+
+		.m_strArchivePass = page_.ctrl(CTRLID_ARCHIVE_PASS).value
+		.m_strArchivePath = page_.ctrl(CTRLID_ARCHIVE_PATH).value
+		
+		set perf = doc_.performing("Trwa tworzenie archiwum")
+
+		err.clear
+		on error resume next
+		result = doc_.backup ( g_pArchiveContainer.m_strSQLUser , g_pArchiveContainer.m_strSQLPass , g_pArchiveContainer.m_strArchivePass , g_pArchiveContainer.m_strArchivePath )
+		if err.number <> 0 then
+			set perf = nothing
+			MessageBox "Wystąpił nieznany błąd w czasie archiwizacji bazy: " + vbNewLine + err.description + vbNewLine, "Archiwizacja", vbOkOnly, vbInformation	
+			result = false
+		end if
+		on error goto 0
+		set perf = nothing
+	end with
+
+	if result then
+
+		log_event N5EVENTLOG_ARCHIWIZACJA, "Scieżka: " + g_pArchiveContainer.m_strArchivePath
+		if not trans_.saveobjects() then
+			trans_.message 1002,0 , "Nie udał się zapis do rejestru zdarzeń systemowych"
+		end if
+
+		MessageBox "Archwizacja bazy danych zakonczona powodzeniem", "Archiwizacja", vbOkOnly, vbInformation	
+		page_.goback()
+	else
+		MessageBox "Archwizacja bazy danych zakonczona niepowodzeniem", "Archiwizacja", vbOkOnly, vbInformation	
+	end if
+end function
+
+function export_klient
+  'ściezka do pliku
+  dim strDestPath : strDestPath = ""
+  strDestPath = trans_.var(VAR_EKSPORT_KLIENT_AMPLUS)
+	if right(strDestPath,1) <> "\" then
+		strDestPath = strDestPath + "\"
+	end if
+  'rozpocznij ekport klientów
+	exportset_n5klient strDestPath
+end function
+
+
+]]>
+		</script>
+	</config>
+	<body>
+
+		QXW_BEGIN(PICTURE_KONFIGURACJA)
+		<table>
+			<tbody>
+				XF_HEADER(Logowanie do serwera SQL)
+				<tr>
+					QXC_LABEL_REQ(Użytkownik&nbsp;,1)
+					<td>
+						<edit name='CTRLID_SQLSERVER_USER' size='EDIT_SIZE' style='STYLE_CTRL'/>
+					</td>
+				</tr>
+				<tr>
+					QXC_LABEL_REQ(Hasło,1)
+					<td>
+						<edit name='CTRLID_SQLSERVER_PASS' size='EDIT_SIZE' style='STYLE_CTRL' password='true'/>
+					</td>
+				</tr>
+				XF_HEADER(Archiwum)
+				<tr>
+					QXC_LABEL_REQ(Hasło,1)
+					<td>
+						<edit name='CTRLID_ARCHIVE_PASS' size='EDIT_SIZE' style='STYLE_CTRL' password='true'/>
+					</td>
+				</tr>
+				<tr>
+					QXC_LABEL_REQ(Plik,1)
+					<td keepline='true'>
+						<edit name='CTRLID_ARCHIVE_PATH' size='60' style='STYLE_CTRL'/>
+						QXE_PICTURE_ACTION(-1,80828,varFunction=ARCHIVE_FILE_FUN,)
+					</td>
+				</tr>
+			</tbody>
+		</table>
+		QXW_END
+
+		XFCLOSEBUTTON_HNAME(ARCHIVE_ACTION,ARCHIVE_ACTION_NAME)
+
+	</body>
+</page>

@@ -1,0 +1,250 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203_appconfig.h"
+#include "h1220.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1250.h"
+
+#define RAPORT_TITLE Monitoring kontaktów
+
+-->
+<page style='36'>
+<config>
+<title>RAPORT_TITLE</title>
+<script>
+<![CDATA[
+<%
+function query()
+  dim strWhere: strWhere = ""
+  dim pHARPage: set pHARPage = doc_.getmodule(60106)
+  if pHARPage.FindRightFree(1) then  '1 = UAR_OGRANICZONY_DOSTEP_DANE_KLIENTA
+    strWhere = _
+      "and k.IdObj in " + _
+      "(select IdObj from n5klient where pPracownik in " + _
+      "(select n5pracownik.idobj from n5uzytkownik " + _
+      "inner join n5wykonawca on n5uzytkownik.pWykonawca = n5wykonawca.idobj " + _
+      "inner join n5pracownik on n5wykonawca.wrefObiekt = n5pracownik.idobj and n5wykonawca.wrefObiekt_wrt = TYPEID_N5PRACOWNIK " + _
+      "where n5uzytkownik.idobj = " + CStr(CLng(trans_.var(GVAR_USER))) + ")) "
+  end if
+  
+query = "select tmp.obroty,tmp.k_nazwa,tmp.k_idobj,tmp.gk_nazwa,tmp.p_nazwa,tmp.zadanie_idobj,tmp.zadanie_wykonawca,tmp.zamowienie_idobj from " + vbNewLine +_
+        "(select 'obroty'=sum(s.curSumaNetto) - sum(isnull(t_orgsprz.curSumaNetto,0)),'k_nazwa'=max(k.strNazwa),'k_idobj'=k.IdObj, " + vbNewLine +_
+        "'gk_nazwa'=max(gk.strNazwa),'p_nazwa'=max(p.strImie) + ' ' + max(p.strNazwisko),'p_idobj'=max(p.IdObj), " + vbNewLine +_
+        "'zadanie_idobj'=isnull((select top 1 c.idobj from n5zadanie as c where c.pKlient = k.IdObj and pNadZadanie = 0 order by c.idobj desc),0), " + vbNewLine +_
+        "'zadanie_wykonawca'=isnull((select top 1 c.pWykonawca from n5zadanie as c where c.pKlient = k.IdObj and pNadZadanie = 0 order by c.idobj desc),0), " + vbNewLine +_
+        "'zamowienie_idobj'=isnull((select top 1 IdObj from n5zamowienie where pKlient = k.IdObj and pRejestrDok in (select IdObj from n5rejestrdok where eTyp = 33) order by IdObj desc),0) " + vbNewLine +_
+        "from n5sprzedaz as s " + vbNewLine +_  
+        "left outer join n5sprzedaz t_orgsprz on s.ppopsprzed = t_orgsprz.idobj " + vbNewLine +_ 
+        "inner join n5klient as k on s.pKlient = k.IdObj " + vbNewLine +_ 
+        "left join n5pracownik as p on  k.pPracownik = p.Idobj " + vbNewLine +_  
+        "inner join n5grupaklient as gk on k.pGrupaKlient = gk.IdObj " + vbNewLine +_
+        "where k.eAktywny = N5KLIENT_AKTYWNY and s.pRozlVAT <> 0 " + strWhere + vbNewLine +_
+        "group by k.IdObj) as tmp " + vbNewLine +_
+        "where %1 and %2 and %3 and %4 " + vbNewLine +_
+        "order by obroty desc"
+end function
+%>
+<%
+function default_param()
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+  
+	dim pParamFactory1: set pParamFactory1= doc_.afc.rap.param
+	dim pParam1: Set pParam1= pParamFactory1.new_choice("Pracownik dedykowany").bindexpr("tmp.p_idobj")
+	doc_.afc.rap.param.init_on_query pParam1, trans_ ,_
+		"select top 1'strNazwisko'='<bez pracownika>',0 from n5pracownik where eAktywny = 1 union select strNazwisko + ' ' + strImie,idobj from n5pracownik where eAktywny = 1 order by strNazwisko"
+	pParamArray.add pParam1  
+  
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwa klienta").bindexpr("tmp.k_nazwa")
+  
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwa grupy klientów").bindexpr("tmp.gk_nazwa")
+	
+	dim pParamFactory2: set pParamFactory2= doc_.afc.rap.param
+	dim pParam2: Set pParam2= pParamFactory2.new_choice("Wykonawca").bindexpr("tmp.zadanie_wykonawca")
+	doc_.afc.rap.param.init_on_query pParam2, trans_ ,_
+		"select top 1 'strIndeks'='<bez wykonawcy>',0 from n5wykonawca where eAktywny = 1 union select strIndeks,IdObj from n5wykonawca where eAktywny = 1 order by strIndeks"
+	pParamArray.add pParam2   
+
+	set default_param = pParamArray
+end function
+%>
+<%
+function write_actual_param(byref pActualParam)
+dim iter
+dim bAnyWritten : bAnyWritten = false
+if not pActualParam is nothing then
+for iter = 0 to pActualParam.upperIndex
+if pActualParam.value(iter).get_desc() <> "" then 
+bAnyWritten = true
+	so.write "<t size='5' /><text fontsize='4'><![CD"+"ATA[" + pActualParam.value(iter).get_desc() + "]"+"]></text><br/>"
+end if
+next
+end if
+if not bAnyWritten then 
+	so.write "<t fontsize='4'>brak</t><br/>"
+end if
+	so.write "<br/>"
+end function
+%>
+<%
+function body_row(byref pSection,byref pRec)
+if pRapExec.RecNr mod 2 = 0 then
+%>
+<tr bordercolor='white'>
+<%
+else
+%>
+<tr bordercolor='white' style='37'>
+<%
+end if
+%>
+<td align='right'>RXE_LP</td>
+	<td>
+		RXE_TEXT_LINK_FORM_VCC(TYPEID_N5KLIENT,k_idobj,k_nazwa)
+	</td>
+	<td align='right'>
+		RXE_QUANTITY_CVV(obroty,"",2)
+	</td>
+	<td>
+		RXE_TEXT(gk_nazwa)
+	</td>
+	<td>
+		RXE_TEXT(p_nazwa)
+	</td> 
+  <%
+  dim pZadanie: set pZadanie = nothing
+  if clng(pRec("zadanie_idobj").value) > 0 then
+    set pZadanie = trans_.getobj(TYPEID_N5ZADANIE,clng(pRec("zadanie_idobj").value))
+    
+    dim strWykonawca: strWykonawca = ""
+    if clng(pRec("zadanie_wykonawca").value) > 0 then
+      dim pWykon: set pWykon = trans_.getobj(TYPEID_N5WYKONAWCA,clng(pRec("zadanie_wykonawca").value))
+      strWykonawca = pWykon.strIndeks
+    end if
+    
+  %>
+	  <td>
+		  <t><%so.write doc_.afc.display.fulldate(pZadanie.dDataZlec)%></t>
+	  </td>
+	  <td>
+		  <text href='<%so.write rapeng_.href_open_form_proxy(TYPEID_N5ZADANIE,pZadanie.IdObj)%>'><![CDATA[<%so.write pZadanie.strTemat %>]]></text>
+	  </td>
+	  <td>
+		  <text><![CDATA[<% so.write strWykonawca %>]]></text>
+	  </td>  
+  <% else %>
+	  <td></td>  
+	  <td></td>
+	  <td></td>
+  <% end if %>
+  <%
+  if clng(pRec("zamowienie_idobj").value) > 0 then
+    dim pZam: set pZam = trans_.getobj(TYPEID_N5ZAMOWIENIE,clng(pRec("zamowienie_idobj").value))
+    dim strZnak: strZnak = "X"
+    if not pZadanie is nothing then
+      if DateDiff("d", pZadanie.dDataZlec, trans_.var(GVAR_TODAY)) < 30 then
+        strZnak = ""
+      end if
+    end if
+  %>
+    <td>
+      <text href='<%so.write rapeng_.href_open_form_proxy(TYPEID_N5ZAMOWIENIE,pZam.IdObj)%>'><![CDATA[<%so.write pZam.dDataWyst %>]]></text>
+    </td>
+    <td align="center">
+      <t><% so.write strZnak %></t>
+    </td>  
+  <% else %>
+	  <td></td>  
+    <td></td>    
+  <% end if %>
+</tr><%
+end function
+%>
+<%
+function body_header(byref pSection,byref pRec)
+'so.write "<p backcolor='yellow'><text><![CD"+"ATA["+pRapExec.get_final_query() + "]"+"]></text></p><br/>" 
+%>
+<table border='1'>
+<thead>
+<tr style='21'>
+	<td width='min'><t>LP</t></td>
+	<td width='max'>
+		<text><![CDATA[Nazwa klienta]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Obrót ogółem]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Grupa klientów]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Pracownik dedykowany]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Data ostatniego kontaktu]]></text>
+	</td>  
+	<td width='min'>
+		<text><![CDATA[Nazwa ostatniego kontaktu]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Wykonawca kontaktu]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Data ostatniego zamówienia]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Warunek]]></text>
+	</td>  
+</tr>
+</thead>
+<tbody>
+<%
+end function
+%>
+<%
+function body_footer(byref pSection)
+%>
+</tbody>
+</table>
+<%
+end function
+%>
+]]>
+</script>
+</config>
+<header>
+</header>
+<body>
+<p>
+
+</p>
+RAPORT_HEADER(3,0)
+<p>
+<t size='2'/>
+</p>
+
+<p><text fontsize='7'><![CDATA[RAPORT_TITLE]]></text></p><br/><br/>
+<t fontsize='5' bold='true'>Kryteria selekcji:</t><br/>
+<%
+dim pRapExec : set pRapExec = rapeng_.new_engine()
+with pRapExec
+	.add_body_ex getref("body_header"),getref("body_footer"),getref("body_row")
+if .prepare("RAPORT_TITLE",default_param(),rapeng_.get_raport_param(),query()) then
+%>
+<%
+
+	write_actual_param rapeng_.get_raport_param()
+	if not .perform then
+	so.write "<p style='21'><t>Brak danych spełniających podane kryteria</t></p>"
+	end if
+%>
+<%
+end if
+end with
+%>
+</body>
+<footer>
+</footer>
+</page>

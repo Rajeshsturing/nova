@@ -1,0 +1,466 @@
+#ifndef _L50600_GRID_ON_CURSOR_
+#define _L50600_GRID_ON_CURSOR_
+#comment -- grid on cursor support --
+
+
+#define DISPLAY_ROWS_COUNT	10
+
+#define PRIV_PROP_SUGG_TYPEID		1
+#define PRIV_PROP_SUGG_IDOBJ		2
+#define PRIV_PROP_SUGG_TEXT			3
+#define PRIV_PROP_SUGG_STARTROWNR	4
+
+class CRefSugHelper
+	private m_poDestObj
+
+	private m_idSubPage
+	private m_idBreakLine
+	private	m_idEditedCtrl
+
+	private m_nStartRow
+	private m_idMoreButton
+	private m_idLessButton
+	private m_pCursorForMore
+	private m_nRefField
+	private m_nRefTypeId
+	private m_nSrchMatchField
+
+	private m_strTitle
+
+	public sub class_initialize()
+		set m_poDestObj = nothing
+		m_idSubPage		  = -1
+		m_idBreakLine	  = -1
+		m_idEditedCtrl    = -1
+		m_nRefField       = -1
+		m_nRefTypeId	  = -1
+		m_nSrchMatchField = -1
+		m_strTitle	  = "PodpowiedŸ"
+		m_nStartRow	  = 0
+		m_idMoreButton = -1
+		m_idLessButton = -1
+		set m_pCursorForMore = nothing
+	end sub
+	
+	public sub class_terminate()   'OK
+		set m_poDestObj = nothing
+	end sub
+
+	public sub apply_choice(byref pChoosenObject,byval varCtrlValue)
+		with page_.ctrl(m_idEditedCtrl)
+			.value = varCtrlValue
+			.valid = true
+			.focus = true
+			.selecttoend
+		end with
+
+		if not get_dest_obj() is nothing then
+			set get_dest_obj().field(m_nRefField) = pChoosenObject
+		end if
+	end sub
+
+	public sub reset_choice_object
+		if not get_dest_obj() is nothing then
+			set get_dest_obj().field(m_nRefField) = nothing
+		end if
+	end sub
+
+	public function get_choice_object()
+		set get_choice_object = nothing
+		if not get_dest_obj() is nothing then
+			set get_choice_object = get_dest_obj().field(m_nRefField)
+		end if
+	end function
+
+	private sub clear_more
+		m_nStartRow	  = 0
+		set m_pCursorForMore = nothing
+		m_idMoreButton = -1
+		m_idLessButton = -1
+	end sub
+
+	private function beginui()
+		dim pSubPage 
+		if m_idSubPage = -1 then
+			dim pContainer : set pContainer = page_.ctrl(m_idEditedCtrl).parent
+			m_idBreakLine = pContainer.addnew(11, -1).ident
+			set pSubPage = pContainer.addnew(20,-1)
+			m_idSubPage = pSubPage.ident
+
+			pSubPage.title = m_strTitle
+			if m_strTitle = "" then
+				pSubPage.caption = false
+			end if
+			pSubPage.styleitem = 4	'STYLE_SUGGESTION
+			pSubPage.width = clng(4000)
+		
+			'set close pic info
+			dim pClosePicHLI : set pClosePicHLI = doc_.createhli()
+			pClosePicHLI.prop(GVAR_FUNCTIONHLI) = "cust_rs_on_suggestion_close"
+			pClosePicHLI.prop(PROPC_IDENT) = m_idEditedCtrl
+
+			set pSubPage.widgets.closepicture.hli = pClosePicHLI
+		else
+			set pSubPage = page_.ctrl(m_idSubPage)
+		end if
+		set beginui = pSubPage
+	end function
+
+	private sub fill_item(byref pBody,byref pObj,byval nDisplayFieldNr)
+		'dodaj element
+		dim pTableCell
+		set pTableCell = pBody.addnew(22,-1).addnew(21,-1)
+		dim pItemHLI : set pItemHLI = doc_.createhli()
+		
+		pItemHLI.prop(GVAR_FUNCTIONHLI) = "cust_rs_choose"
+		pItemHLI.prop(PROPC_IDENT) = m_idEditedCtrl
+		pItemHLI.prop(PRIV_PROP_SUGG_TYPEID) = pObj.type
+		pItemHLI.prop(PRIV_PROP_SUGG_IDOBJ) = pObj.idobj
+		
+		dim pStatic
+		dim strSuggText : strSuggText = cstr(pObj.field(nDisplayFieldNr))
+		if len(strSuggText) >= 80 then
+			set pStatic = pTableCell.addnew(26,-1)
+		else
+			set pStatic = pTableCell.addnew(0,-1)
+		end if
+		pStatic.text = strSuggText
+		
+		pItemHLI.prop(PRIV_PROP_SUGG_TEXT) = strSuggText		'tekst do wstawienia do kontrolki
+
+		set pStatic.href = pItemHLI
+	end sub
+
+	private sub fill_moreless(byval bMore,byref pTableCell4Buttons,byval bSetFocus)
+		'dodaj element
+		dim pItemHLI : set pItemHLI = doc_.createhli()
+		
+		if bMore then
+			pItemHLI.prop(PRIV_PROP_SUGG_STARTROWNR) = clng(0)
+		else
+			pItemHLI.prop(PRIV_PROP_SUGG_STARTROWNR) = clng(- DISPLAY_ROWS_COUNT - DISPLAY_ROWS_COUNT)
+		end if
+
+		pItemHLI.prop(GVAR_FUNCTIONHLI) = "cust_rs_moreless"
+		pItemHLI.prop(PROPC_IDENT) = m_idEditedCtrl
+
+		with pTableCell4Buttons.addnew(1,-1)
+			.backcolor = rgb(&HFF,&HFF,&HFF)
+			.backcolor2= rgb(&HE0,&HE0,&HE0)
+			if bMore then
+				.text = "Nastêpne..."
+				.shortkey = "PGDN"
+				m_idMoreButton = .ident
+			else
+				.text = "Poprzednie..."
+				.shortkey = "PGUP"
+				m_idLessButton = .ident
+			end if
+			'.bold = true
+			set .href = pItemHLI
+			if bSetFocus then
+				.focus = true
+			end if
+		end with
+	end sub
+
+	public sub create_suggestion_page(byref pCursor,byval nDisplayFieldNr)
+		dim pSubPage : set pSubPage = beginui()
+		if nDisplayFieldNr = -1 then
+			nDisplayFieldNr = m_nSrchMatchField
+		end if
+
+		'znajdŸ 1-sz¹ tabelkê - jeœli nie ma to utwórz
+		dim pSugPageChild
+		dim pTable : set pTable = nothing
+		for each pSugPageChild in pSubPage
+			if pSugPageChild.type = 24 then
+				set pTable = pSugPageChild 
+				exit for
+			end if
+		next
+		if pTable is nothing then
+			set pTable = pSubPage.addnew(24,-1)
+		end if
+		'wyczyœæ body
+		dim pBody : set pBody = pTable.body
+		
+		'to jest potrzebne gdy¿ remove all usuwa
+		dim bMoreButonFocus : bMoreButonFocus = false
+		dim bLessButonFocus : bLessButonFocus = false
+		if m_idMoreButton <> -1 then
+			bMoreButonFocus = page_.ctrl(m_idMoreButton).focus
+		end if
+		if m_idLessButton <> -1 then
+			bLessButonFocus = page_.ctrl(m_idLessButton).focus
+		end if
+
+		pBody.removeall
+		m_idMoreButton = -1
+		m_idLessButton = -1
+
+		pSubPage.applyattributes
+
+		'wype³niaj elementy
+		if m_nStartRow < 0 then
+			m_nStartRow = 0
+		end if
+		dim bFillLess : bFillLess = (m_nStartRow > 0)
+
+		dim pFoundObj
+		dim iter
+		for iter = m_nStartRow + 1 to m_nStartRow + DISPLAY_ROWS_COUNT
+			if not pCursor.exists(iter) then
+				exit for
+			end if
+
+			set pFoundObj = pCursor.get(iter)
+			fill_item pBody,pFoundObj,nDisplayFieldNr
+		next
+		
+		dim bFillMore : bFillMore = pCursor.exists(m_nStartRow + DISPLAY_ROWS_COUNT + 1)
+
+		if bFillMore then
+			m_nStartRow = iter - 1
+			set m_pCursorForMore = pCursor
+		else
+			if m_nStartRow <= 0 then
+				clear_more
+			else
+				m_nStartRow = iter -1 
+			end if
+		end if
+
+		if bFillLess or bFillMore then
+			dim pTableCell4Buttons
+			set pTableCell4Buttons = pBody.addnew(22,-1).addnew(21,-1)
+			pTableCell4Buttons.keepline = true
+			if bFillLess then
+				fill_moreless false,pTableCell4Buttons,bLessButonFocus
+			end if
+			if bFillMore then
+				fill_moreless true,pTableCell4Buttons,bMoreButonFocus
+			end if
+		end if
+	end sub
+
+	public function get_dest_obj()
+		set get_dest_obj = m_poDestObj
+	end function
+	
+	public sub attach(byval idCtrl,byref pDestObj,byval strSearchAndMatchFld,byval strRefFld)
+		m_idEditedCtrl = idCtrl
+		set m_poDestObj = pDestObj
+		if not pDestObj is nothing then
+			m_nRefField = pDestObj.getobjdef.getfieldindex(strRefFld)
+			m_nRefTypeId = pDestObj.getobjdef.field(m_nRefField).reftypeid
+			m_nSrchMatchField = doc_.stdobjdef.getobjdef(m_nRefTypeId).getfieldindex(strSearchAndMatchFld)
+		end if
+		set page_.ctrl(m_idEditedCtrl).suggestion = Me
+	end sub
+
+	public sub remove
+		if m_idSubPage <> -1 then
+			with page_.ctrl(m_idSubPage).parent
+				.remove m_idSubPage
+				.remove m_idBreakLine
+			end with
+			m_idSubPage   = -1
+			m_idBreakLine = -1
+		end if
+		set page_.ctrl(m_idEditedCtrl).suggestion = nothing
+	end sub
+
+	'otwarcie kursora
+	public function opencursor(byval strEntered,byval strWhere,byval strJoin)
+		
+		'retrieve info
+		dim pStdObjDef : set pStdObjDef = doc_.stdobjdef.getobjdef(m_nRefTypeId)
+		dim strTable :  strTable  = pStdObjDef.tablename
+		dim strMatchField : strMatchField = pStdObjDef.field(m_nSrchMatchField).name
+		
+		'compose query elements
+		dim strSuggWhere : strSuggWhere = "(" + strTable + "." + strMatchField + " like'" + doc_.afc.convert.str2sql(cstr(strEntered)) + "%')"
+		dim strOrderBy : strOrderBy = strTable + "." + strMatchField
+
+		if strWhere <> "" then
+			strWhere = strWhere + " and (" + strSuggWhere + ")"
+		else
+			strWhere = strSuggWhere
+		end if
+
+		dim pCursor : set pCursor = trans_.createrawcursor(m_nRefTypeId,strWhere,strOrderBy,strJoin)
+		pCursor.top = 10 * DISPLAY_ROWS_COUNT + 1 
+		pCursor.forwardonly = false
+		
+		set opencursor = pCursor
+		
+		'reset old 
+		clear_more
+	end function
+
+	'----------------------- redirected event handlers ----------------------------------
+
+	public sub on_lostfocus(byval idGotFocus)
+		if idGotFocus <> -1 then
+			dim pContainer : set pContainer = page_.ctrl(idGotFocus).parent
+			do while not pContainer is nothing
+				if pContainer.ident = m_idSubPage then
+					exit sub	'potomek naszej podpowiedzi - zostawiamy podpowiedŸ
+				end if
+				set pContainer = pContainer.parent
+			loop
+		end if
+		'usuñ podpowiedŸ
+		remove
+	end sub
+
+	public sub on_choose_hli(byref pHLI)
+		apply_choice trans_.getobj(pHLI.prop(PRIV_PROP_SUGG_TYPEID),pHLI.prop(PRIV_PROP_SUGG_IDOBJ)),pHLI.prop(PRIV_PROP_SUGG_TEXT)		
+		remove
+	end sub
+
+	public sub on_moreless_hli(byref pHLI)
+		m_nStartRow = m_nStartRow + clng(pHLI(PRIV_PROP_SUGG_STARTROWNR))
+		fill m_pCursorForMore,nothing,m_nMatchField
+	end sub
+end class
+
+'----------------- global event handlers ---------------
+sub cust_rs_choose(byref pHLI)
+	dim pCtrl : set pCtrl = page_.ctrl(pHLI.prop(PROPC_IDENT))
+	pCtrl.suggestion.on_choose_hli pHLI
+end sub
+
+sub cust_rs_moreless(byref pHLI)
+	dim pCtrl : set pCtrl = page_.ctrl(pHLI.prop(PROPC_IDENT))
+	pCtrl.suggestion.on_moreless_hli pHLI
+end sub
+
+'standardowa obs³uga zdarzenia 'dataentered' z numerami pól
+function cust_rs_dataentered_obj(byref pCtrl,byval strEntered,byref pDestObject,byval strMatchFld,byval strRefFld,byval strWhere)
+	cust_rs_dataentered_obj = true
+
+	strEntered = trim(cstr(strEntered))
+	
+	dim pRSWorker : set pRSWorker = pCtrl.suggestion
+
+	if pRSWorker is nothing then
+		set pRSWorker = new CRefSugHelper
+		pRSWorker.attach pCtrl.ident,pDestObject,strMatchFld,strRefFld
+	end if
+
+	if strEntered = "" then
+		pRSWorker.remove
+		pRSWorker.reset_choice_object 
+		exit function
+	end if
+	
+	dim strJoin : strJoin = ""
+	dim pCursor : set pCursor = pRSWorker.opencursor(strEntered,strWhere,strJoin)
+
+	if pCursor.exists(2) then	'niejednoznacznoœæ
+		pRSWorker.create_suggestion_page pCursor,-1
+		pRSWorker.reset_choice_object 
+	else
+		if pCursor.exists(1) then	'dok³adnie jeden - wstaw
+			if not (pRSWorker.get_choice_object() is pCursor.get(1)) then
+				pRSWorker.apply_choice pCursor.get(1),pCursor.get(1).field(strMatchFld)
+			end if
+		else	'¿aden 
+			pRSWorker.reset_choice_object 
+		end if
+		pRSWorker.remove	'usuñ podpowiedŸ
+	end if
+end function
+
+'standardowa obs³uga zdarzenia 'getdata' z numerami pól
+function cust_rs_getdata_obj(byref pCtrl,byref pRefObj,byval strMatchField,byval bValid)
+	if not pCtrl.focus then
+		if pRefObj is nothing then
+			pCtrl.value = ""
+		else
+			pCtrl.value = cstr(pRefObj.field(strMatchField))
+		end if
+	end if
+	select case pCtrl.type
+	case 2,3,4,5,8,35		'ctrl_type's from h1001.h
+		pCtrl.valid = bValid
+	end select
+	cust_rs_getdata_obj = true
+end function
+
+private function can_have_suggestion(byref pCtrl)
+	select case pCtrl.type
+	case 2,3,4,5,8,35		'ctrl_type's from h1001.h
+		can_have_suggestion = true
+	case else
+		can_have_suggestion = false
+	end select
+end function
+
+function cust_rs_lostfocus(byref pCtrl,byval idGotFocus)
+	if can_have_suggestion(pCtrl) then
+		if not pCtrl.suggestion is nothing then
+			pCtrl.suggestion.on_lostfocus idGotFocus
+		end if
+	end if
+	cust_rs_lostfocus = true
+end function
+
+function cust_rs_on_suggestion_close(byref pHLI)
+	dim pCtrl : set pCtrl = page_.ctrl(pHLI.prop(PROPC_IDENT))
+	if can_have_suggestion(pCtrl) then
+		if not pCtrl.suggestion is nothing then
+			pCtrl.suggestion.remove
+		end if
+	end if
+	cust_rs_on_suggestion_close = true
+end function
+
+#macro VB_GRID_FOR_CURSOR(_idgrid_,_cursor_)		\
+function c##_idgrid_##_ongetdata(pCtrl)				\
+        pCtrl.body.datarowcount = (_cursor_).count	\
+end function										\
+function c##_idgrid_##_ondataentered(ctrl,value)	\
+        c##_idgrid_##_ondataentered = true			\
+end function
+
+#macro VB_CUST_SUGG_GRID_FOR_CURSOR(_cursor_,_idctrl_,_matchfld_,_reffld_,_where_)		\
+function c##_idctrl_##_ondataentered(pCtrl,nRow,value)				\
+	c##_idctrl_##_ondataentered = (_cursor_).exists(nRow)			\
+	pCtrl.disable = not c##_idctrl_##_ondataentered					\
+    if c##_idctrl_##_ondataentered then								\
+		cust_rs_dataentered_obj pCtrl,value,(_cursor_).get(nRow),_matchfld_,_reffld_,_where_	\
+    end if										\
+end function									\
+function c##_idctrl_##_ongetdata(pCtrl,nRow)	\
+	if (_cursor_).exists(nRow) then				\
+		pCtrl.disable=false						\
+		cust_rs_getdata_obj pCtrl,(_cursor_).get(nRow).field(_reffld_),_matchfld_,true		\
+	else										\
+		pCtrl.disable=true						\
+		pCtrl.value = ""						\
+	end if										\
+end function									\
+function c##_idctrl_##_onlostfocus(byref pCtrl,nRow,idGotFocus)	\
+	cust_rs_lostfocus pCtrl,idGotFocus							\
+end function
+
+#macro VB_CUST_EDIT_GRID_FOR_CURSOR(_cursor_,_idctrl_,_getexpr_,_letexpr_,_empty_expr_)		\
+function c##_idctrl_##_ondataentered(pCtrl,nRow,value)		\
+	if (_cursor_).exists(nRow) then							\
+		_cursor_.get(nRow)._letexpr_ = value				\
+	end if													\
+end function												\
+function c##_idctrl_##_ongetdata(pCtrl,nRow)				\
+	if (_cursor_).exists(nRow) then							\
+		pCtrl.disable=false									\
+		pCtrl.value = (_cursor_).get(nRow)._getexpr_		\
+	else													\
+		pCtrl.disable=true									\
+		pCtrl.value = _empty_expr_							\
+	end if													\
+end function
+
+#endif

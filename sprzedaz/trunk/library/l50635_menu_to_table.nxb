@@ -1,0 +1,155 @@
+'--------------------------------------------------------------------------
+' (c) Navo 2003 Ltd.
+' Dodaje pozycke menu do tabelki
+'
+' Spikowski Piotr
+'--------------------------------------------------------------------------
+
+'--------------------------------------------------------------------------
+' Kopiuj odpowiednie pozycje menu na nasza strone tzn. wstawiaj pozycje
+' menu na strone
+'--------------------------------------------------------------------------
+private function menu_insert2table(byval nTableID, byval strUnable2Add, byval strClic2Add)
+	dim pTable
+	set pTable = doc_.afc.new_tb(page_).attach(page_.ctrl(nTableID)).section_body.removeall
+
+	dim nLevel: nLevel = 0
+
+	dim pMenuNode
+	for each pMenuNode in doc_.getmenuobj().node(0)
+		menunode_insert2table pMenuNode, pTable, nLevel, strUnable2Add, strClic2Add
+	next
+end function
+
+'--------------------------------------------------------------------------
+' Wstaw jeden poziom menu do tabelki pTable i rozpocznij to samo
+' dla dzieci tego menu w podtabelce itd. rekursywnie
+' 
+' menu_addchangeitem jest szukane i wo³ane na wybranie pozycji
+'--------------------------------------------------------------------------
+private function menunode_insert2table(byref pMenuNode, byref pTable, byref nLevel, byval strUnable2Add, byval strClic2Add)
+
+	'Wstawiamy nasza pozycje menu
+	dim strMenuName
+	strMenuName = pMenuNode.hli.prop(PROPC_LABEL)
+	
+	'Dodaj wiersz i komórke z nasz¹ pozycj¹
+	pTable.NewRow
+	pTable.NewCell
+
+	dim pCell
+	set pCell = pTable.cell
+
+	nLevel = nLevel + 1
+
+	'Wstawiamy wszystkie dzieci naszego menu
+	dim pSubTable: set pSubTable = nothing
+	dim pSubMenuNode, iChildren: iChildren = 0
+	for each pSubMenuNode in pMenuNode
+		iChildren = iChildren + 1
+
+		if (iChildren=1) then
+			'Dodaj wiersz i komórke reprezentuj¹c¹ dzieci
+			'w podtabelce
+			pTable.NewRow
+			pTable.NewCell.AddCtrl CTRL_TYPE_TABLE, -1
+			pTable.element.hide = true
+			set pSubTable = doc_.afc.new_tb(page_).attach(pTable.element).section_body.removeall
+		end if
+
+		menunode_insert2table pSubMenuNode, pSubTable, nLevel, strUnable2Add, strClic2Add
+	next
+
+	nLevel = nLevel - 1
+
+	if (nLevel>0) then
+		dim pSpaces
+		set pSpaces = pCell.addnew(CTRL_TYPE_PICTURE, -1)
+		pSpaces.image = CLng(80213)
+		pSpaces.height = CLng(10)
+		pSpaces.width = CLng(350 * nLevel)
+	end if
+
+	if (iChildren>0) then
+		'Wstawienie plusa i ukrycie tabelki z menu podrzednym
+		dim pPicture
+		set pPicture = pCell.addnew(CTRL_TYPE_PICTURE, -1)
+		pPicture.image = CLng(PICTURE_SMALL_PLUS)
+		set pPicture.hli = doc_.createhlistr("varFunctionHLI='menu_showhide' vn100='" + CStr(pSubTable.getTable().ident) + "' vn101='" + CStr(pPicture.ident) + "'")
+	end if
+
+	strMenuName = Replace(strMenuName, "&", "")
+
+	dim pStatic
+	set pStatic = pCell.addnew(CTRL_TYPE_STATICEX, -1)
+	pStatic.text = strMenuName
+
+	if (iChildren=0) then
+
+		'Brak dzieci. Skrot ten ma byæ z mo¿liwoœci¹ dodania
+		'do menu "szybki dostêp" je¿eli CmdIID > 0
+
+		dim nCmdIID
+		nCmdIID = CLng(pMenuNode.hli.prop(PROPC_CMD_IID))
+
+		if (nCmdIID=0) then
+			'Je¿eli nie ustawiono CMD_IID oznacza to, i¿ dana opcja nie
+			'mo¿e byæ wstawiana na pasek szybkiego dostêpu - brak takiej 
+			'mo¿liwoœci Robimy opcje nieaktywn¹
+			pStatic.tip = strUnable2Add
+			pStatic.disable = true
+		else
+			dim pNewHli
+			set pNewHli = doc_.createhlistr("varFunctionHLI='menu_addchangeitem'")
+
+			pNewHli.prop(100) = CStr(strMenuName)
+			if (pMenuNode.hli.exists(PROPC_ICON)) then
+				pNewHli.prop(101) = CLng(pMenuNode.hli.prop(PROPC_ICON))
+			else
+				pNewHli.prop(101) = CLng(0)
+			end if
+
+			pNewHli.prop(102) = nCmdIID
+			pNewHli.prop(103) = pStatic.ident
+			
+			set pStatic.hli = pNewHli
+			set pStatic.userprop = pMenuNode.hli
+			pStatic.tip = strClic2Add
+		end if
+
+	else
+		'Mamy dzieci. Oznacza to ze taki skrot nie moze byc
+		'dodany do szybkiego dostepu ma byc natomiast z mozliwoscia
+		'rozwiniecia podmenu w podtabelce (skrotow dzieci)
+		pStatic.bold = true
+	end if
+
+end function
+
+'--------------------------------------------------------------------------
+' Pokazuj lub ukrywaj podmenu (tabelke). Reakcja na nacisniecie na
+' + lub -
+'--------------------------------------------------------------------------
+function menu_showhide(byref pHli)
+	dim nIdTable
+	nIdTable = CLng(pHli.prop(100))
+
+	dim pTable
+	set pTable = page_.ctrl(nIdTable)
+
+	dim nPictureID
+	nPictureID = CLNg(pHli.prop(101))
+
+	dim pPicture
+	set pPicture = page_.ctrl(nPictureID)
+
+	if (pPicture.image = PICTURE_SMALL_MINUS) then
+		'Ukrycie menu podrzêdnego i pokazanie plusa
+		pPicture.image = CLng(PICTURE_SMALL_PLUS)
+		pTable.hide = true
+	else
+		'Pokazanie menu podrzêdnego i pokazanie minusa
+		pPicture.image = CLng(PICTURE_SMALL_MINUS)
+		pTable.hide = false
+	end if
+end function

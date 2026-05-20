@@ -1,0 +1,666 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1001.h"
+#include "h1004_cmdid.h"
+#include "h1200.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1240.h"
+#include "h1250_raport_macros.h"
+#include "50519"
+
+#define CREATOR_TITLE	Drukowanie faktur do PDF
+
+#define CTRLID_ROW_BUTTONS      101
+#define CTRLID_RESULT_TABLE		  102
+#define CTRLID_REDIRECT_CHKBOX	103
+#define CTRLID_CHOOSE_BUTTON    104
+#define CTRLID_ACTION_TABLE     105
+#define CTRLID_REALIZE_BUTTON   106
+#define CTRLID_ROW_CHECKBOX     107
+
+#define PROP_ROW_IDENT           201
+#define PROP_REC_NUM             202
+
+#define CELL_CHECKBOX    1
+#define ELEM_CHECKBOX    1
+
+#comment pierwsza kolumna
+#define KOL_FIRST              2
+#comment ostatnia kolumna
+#define KOL_LAST               7
+
+
+-->
+<page style='STYLE_PAGE'>
+	<config>
+		<title>
+	CREATOR_TITLE
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+		<script>
+<![CDATA[
+
+#include "50518"
+#include "50211" 
+#include "50200"
+#include "50122"
+#include "50101"
+#include "50226"
+
+'checkUserDirectory
+#include "50212"
+
+'cBuildQuery,cRepDict,cDrawReport
+#include "50526"
+
+dim strSQL, g_oRS
+'wiersz z nagłowkiem tabeli
+dim iRowTabHead
+'zaznacz/odznacz
+dim bChooseAll : bChooseAll = false
+
+'-----------------------------------------------
+'standardowa funkcja wolana przy otwarciu strony
+'-----------------------------------------------
+function fopen : fopen = false
+
+  if not HARUI(UAR_CMDID(CMDID_WIZZARD_FVAT_TO_PDF)) then
+    trans_.message 7000, 0, "Nie posiadasz uprawnień do kreatora wydruków faktur do PDF."
+    exit function
+  end if
+
+  'inicjalizacja obiektów
+  initialObjects 
+ 
+	fRefresh
+
+	fopen = true
+end function
+
+'------------------------------------------------
+'standardowa funkcja wolana na przycisk 'odswiez'
+'------------------------------------------------
+function fRefresh
+	dim pModRapEngine : set pModRapEngine = doc_.getmodule(60108)
+
+	dim pParamArray : set pParamArray = getDefaultParam()
+	if pModRapEngine.show_raport_param_dialog(pParamArray,"CREATOR_TITLE") = 0 then
+		exit function
+	end if
+	dim pPerforming : set pPerforming = doc_.performing("Trwa przygotowanie danych...")
+	
+  'wyczyść zaznaczone elementy
+  g_oRepDict.removeAll   
+  'przycisk zaznacz/odznacz wszystko
+  bChooseAll = false
+  
+	fillResults pModRapEngine,pParamArray
+end function
+
+'----------------------------------------
+'tworzenie tablicy parametrow dla raportu
+'----------------------------------------
+function getDefaultParam()
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+  
+  'filtr daty wystawienia dokumentu sprzedazy
+  pParamArray.add doc_.afc.rap.param.new_date_range("Data wystawienia").bindexpr("s.dDataWyst")  
+  
+  'filtr rejestru dokumentów sprzedaży
+	dim pParam: Set pParam= doc_.afc.rap.param.new_choice("Rejestr").bindexpr("s.pRejestrDok")
+	doc_.afc.rap.param.init_on_query pParam, trans_ ,_
+		"select strNazwa , idobj from n5rejestrdok where eTyp in (N5REJESTRDOK_FAKT_SP,N5REJESTRDOK_FAKT_EXP, " +_
+		"N5REJESTRDOK_PARAGON,N5REJESTRDOK_WDT,N5REJESTRDOK_WNT,N5REJESTRDOK_FAKTURA_ZALICZKOWA,N5REJESTRDOK_IMPORT_USLUG) order by strNazwa "		
+	pParamArray.add pParam  
+  
+  'filtr nazwy/indeksu klienta
+  pParamArray.add doc_.afc.rap.param.new_text("Indeks klienta").bindexpr("k.strIndeks") 
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwa klienta").bindexpr("k.strNazwa")   
+  'grupa klientów
+	pParamArray.add doc_.afc.rap.param.new_text("Grupa klientów").bindexpr("g.strNazwa")
+  
+  'handlowiec
+  pParamArray.add doc_.afc.rap.param.new_text("Handlowiec").bindexpr("isnull(p.strNazwisko,'')")
+  
+#ifdef APPCONFIG_SPRZEDAZ_EMAIL_PDF_ZNACZNIK  
+  'rodzaj amortyzacji
+  dim pParamZnacznik : set pParamZnacznik = doc_.afc.rap.param.new_choice("Klient do wysyłki").bindexpr("znacznik")
+  with pParamZnacznik
+	  .multiple = false
+    .names.add "Tak"
+    .values.add 1
+    .selected.add false
+    .names.add "Nie"
+    .values.add 2
+    .selected.add true   
+  end with  
+  pParamArray.add pParamZnacznik  
+#endif  
+
+	set getDefaultParam = pParamArray
+end function
+
+'--------------------
+'wypelnianie wynikami
+'--------------------
+function fillResults(byref pModRapEngine, byref pParamArray)
+	strSQL = "select 'k_nazwa'=k.strNazwa,'k_idobj'=k.IdObj,'s_idobj'=s.IdObj,'s_nr_dok'=s.strNrDok,'s_data_wyst'=s.dDataWyst, " + vbNewLine +_
+           "'s_suma_brutto'=s.curSumaBrutto,'s_handlowiec'=s.sprzed_pHandlowiec,'k_email'=k.strEmail " + vbNewLine +_
+           "from n5sprzedaz s " + vbNewLine +_
+           "inner join n5rejestrdok r on s.pRejestrDok = r.IdObj " + vbNewLine +_
+           "inner join n5klient k on s.pKlient = k.IdObj " + vbNewLine +_
+           "inner join n5grupaklient g on k.pGrupaKlient = g.IdObj " + vbNewLine +_
+           "left join n5pracownik p on s.sprzed_pHandlowiec = p.IdObj " + vbNewLine +_
+           "where ltrim(rtrim(k.strEmail)) <> '' and %1 and %2 and %3 and %4 and %5 and %6 " + vbNewLine +_
+#ifdef APPCONFIG_SPRZEDAZ_EMAIL_PDF_ZNACZNIK 
+           "and %7 " + vbNewLine +_
+#endif
+#ifdef _SECURITY
+           "and s.dExtra3 = " + trans_.afc.convert.date2SQL(trans_.afc.globals.nulldate()) + vbNewLine +_
+#endif
+           "order by k.strNazwa,s.strNrDok"
+     
+  strSQL = pModRapEngine.query_apply_actual_param(strSQL,pParamArray)
+  dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(page_.ctrl(CTRLID_RESULT_TABLE)).removeall
+  
+#ifdef APPCONFIG_SPRZEDAZ_EMAIL_PDF_ZNACZNIK
+  strSQL = Replace(strSQL,"(znacznik = '1')","(k.strTel4 = '1')") 
+  strSQL = Replace(strSQL,"(znacznik = '2')","(1=1)")
+#endif
+  
+  set g_oRS = trans_.createadors(strSQL)
+  if g_oRS.RecordCount > 0 then
+    'nagłówek strony
+    drawButtons
+    drawHeader pTB
+    
+    'numery kolejnych rekordów
+    dim iRecNr : iRecNr = 1
+    do while not g_oRS.EOF
+		  buildRekord pTB,iRecNr
+		  g_oRS.MoveNext
+      iRecNr = iRecNr + 1
+	  loop
+    
+    'przycisk
+    drawActionTable
+  else
+    pTB.newrow
+	  pTB.row.styleitem = STYLE_TABLE_HEADER
+	  pTB.row.fontsize = 4
+	  pTB.newcell.addtext "Brak danych spełniających podane kryteria"
+  end if
+           
+end function
+
+'---------------------------------
+'przycisk zaznacz/odznacz wszystko
+'---------------------------------
+sub drawButtons
+  dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(page_.ctrl(CTRLID_ROW_BUTTONS)).removeall
+  pTB.newrow.newcell
+  dim pNewHli
+
+  'button zaznacz/odznacz
+  set pNewHli = doc_.createhli()
+  pNewHli.prop(GVAR_FUNCTIONHLI) = "chooseAll"
+  pNewHli.prop(PROP_ROW_IDENT) = pTB.row.ident    
+  pTB.addctrl CTRL_TYPE_BUTTON, -1
+  with pTB.element
+    .customredirect = clng(CTRLID_CHOOSE_BUTTON)
+	  .transfer = page_.createtransfer("custom")
+    set .hli = pNewHli
+    .size = 12
+    .styleitem = STYLE_BUTTON
+  end with  
+  pTB.cell.align = ALIGN_LEFT
+
+end sub
+
+'------------------------
+'zaznacz/odznacz wszystko
+'------------------------
+function chooseAll(pHLI)
+  if bChooseAll then
+    bChooseAll = false
+  else
+    bChooseAll = true
+  end if
+  chooseAllPos bChooseAll
+end function
+
+'-----------------------------------------------------------
+'zaznacza/odznacza wszystkie pozycje w zależności od bOption
+'-----------------------------------------------------------
+function chooseAllPos(byval bOption)
+  dim oRow : set oRow = page_.ctrl(clng(iRowTabHead))
+  set oRow = oRow.nextelement
+  dim nIdSprz, strValue
+  do while not oRow is nothing
+    if not oRow.userprop is nothing then
+      nIdSprz = oRow.userprop.prop(PROP_ROW_IDENT)
+      'dodaj/usuń ze słownika
+      strValue = oRow.cell(CELL_CHECKBOX).element(ELEM_CHECKBOX).value
+      if bOption then
+        if strValue = "0" then
+          g_oRepDict.add nIdSprz, nIdSprz
+          strValue = "1"
+        end if
+      else
+        if strValue = "1" then
+          g_oRepDict.removeDictObj nIdSprz
+          strValue = "0"
+        end if
+      end if
+      oRow.cell(CELL_CHECKBOX).element(ELEM_CHECKBOX).value = strValue
+      'kolorowanie
+      changeRowColor oRow, strValue
+    end if 
+    set oRow = oRow.nextelement
+	loop
+end function
+
+'---------------
+'naglówek tabeli
+'---------------
+function drawHeader(byval pTB)
+	pTB.newrow
+	pTB.row.styleitem = STYLE_TABLE_HEADER
+	pTB.row.fontsize = 4
+  pTb.newcell
+	pTB.newcell.addtext "Lp"
+  pTB.newcell.addtext("Klient").cell.width = clng(8000)  
+  pTB.newcell.addtext "Data wystawienia"
+  pTB.newcell.addtext("Numer dokumentu").cell.width = clng(4000) 
+  pTB.newcell.addtext("Kwota brutto").cell.width = clng(3000) 
+  
+  'wiersz z nagłowkiem tabeli
+  iRowTabHead = pTB.row.ident  
+end function
+
+'-------------------------
+'wypisanie jednego rekordu
+'-------------------------
+function buildRekord(byref pTB, byval iRecNr)
+    
+  'idobj wyswietlanego dokumentu sprzedazy  
+  dim iIdObj : iIdObj = clng(g_oRS("s_idobj"))
+ 
+  pTB.newrow
+  'ustawienie właściwości dla wiersza
+  set pTB.row.userprop = doc_.createhli()
+  pTB.row.userprop.prop(PROP_ROW_IDENT) = iIdObj
+  pTB.row.userprop.prop(PROP_REC_NUM) = iRecNr
+  
+  'checkbox 
+  dim pCheckBox
+  pTB.newcell
+  pTB.addctrl CTRL_TYPE_CHECKBOX,-1
+  set pCheckBox = pTB.element
+  with pCheckBox
+    .customredirect = clng(CTRLID_ROW_CHECKBOX)
+    .transfer = page_.createtransfer("custom")
+    .border = 0
+  end with
+  pTB.element.addnew CTRL_TYPE_STATIC, -1
+  
+  pTB.row
+  pTB.newcell.addtext(cstr(iRecNr)).cell.align=ALIGN_RIGHT
+  dim strHLIKlient: strHLIKlient = doc_.afc.convert.Formatter("OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5KLIENT," + cstr(g_oRS("k_idobj")) + ",USAGE_VIEW)").done()
+  pTB.newcell.addtexthli cstr(g_oRS("k_nazwa")),doc_.createhlistr(strHLIKlient)
+	pTB.newcell.addtext(doc_.afc.display.fulldate(g_oRS("s_data_wyst")))
+  dim strHLI: strHLI = doc_.afc.convert.Formatter("OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5SPRZEDAZ," + cstr(iIdObj) + ",USAGE_VIEW)").done()
+  pTB.newcell.addtexthli cstr(g_oRS("s_nr_dok")),doc_.createhlistr(strHLI)
+  pTB.newcell.addtext(doc_.afc.display.money(g_oRS("s_suma_brutto"),"")).cell.align=ALIGN_RIGHT
+
+  'właściwości całego wiersza
+  pTB.row.fontsize = 3
+  if iRecNr mod 2 = 0 then
+    pTB.row.backcolor = ROW_COLOR
+  end if
+end function
+
+'--------------------------------------------
+'ustawia kolor dla wiersza w zależności od LP
+'--------------------------------------------
+function setRowColor(iLP)
+  if iLP mod 2 = 0 then
+    setRowColor = ROW_COLOR
+  else
+    setRowColor = WHITE_COLOR
+  end if   
+end function
+
+'-------------------
+'kolorowanie wiersza
+'-------------------
+sub changeRowColor(byref oRow, byval newValue)
+  if newValue = "1" then
+    'wiersz na żółto
+    oRow.backcolor = YELLOW_COLOR
+  else
+    'usuń żółty kolor
+    if oRow.userprop.exists(PROP_REC_NUM) then
+      dim iLP : iLP = oRow.userprop.prop(PROP_REC_NUM)
+      oRow.backcolor = setRowColor(iLP)
+    end if
+  end if
+end sub
+
+'------------
+'tabela akcji
+'------------
+sub drawActionTable
+  dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(page_.ctrl(CTRLID_ACTION_TABLE)).removeall
+  'przyciski
+  pTB.newrow.newcell
+  dim giveButton : set giveButton = new cButton
+  giveButton.newButton pTB, CTRLID_REALIZE_BUTTON, "printToPDF", "Generuj", 8, ALIGN_LEFT, false
+  pTB.cell.align = ALIGN_RIGHT
+  pTB.cell.colspan = 4
+end sub 
+
+'--------------------------------
+'funkcja tworząca wydruki do pdf
+'--------------------------------
+function printToPDF: printToPDF = false
+  dim pMsgPage: set pMsgPage = doc_.getmodule(PAGE_MODULE_CHECK_FVAT_TO_PDF)
+  dim iResultPotw : iResultPotw = pMsgPage.buildPotw(g_oRS, g_oRepDict)
+
+  if iResultPotw = 1 then
+    'wybór publikacji
+    dim idObjDPC: idObjDPC = fire_choice_list(TYPEID_N5DPC, "Wybierz publikację","","ePubType in (N5DPC_PUBTYPE_FAKTURAVAT)","","")
+	  if idObjDPC = clng(0) then
+      trans_.message 7000, 0, "Należy wybrać publikację, która będzie drukowana do pdf"
+		  exit function
+	  end if   
+  
+    'utwórz pdf i wyślij e-mailem
+    g_oRS.movefirst
+    do while not g_oRS.EOF
+      dim nIdObj : nIdObj = clng(g_oRS("s_idobj"))
+      if g_oRepDict.exists(nIdObj) then
+        if nIdObj > clng(0) then
+          dim pSprzed: set pSprzed = trans_.getobj(TYPEID_N5SPRZEDAZ,nIdObj)
+          if (not send_email(pSprzed,idObjDPC)) then
+            if MessageBox("Nie udało się wysłać dokumentu " + pSprzed.strNrDok + ". Zobacz okno komunikatów. Czy mimo to kontynuować wysyłanie wiadomości e-mail?", "Wysłanie wiadomości nieudane", vbYesNo, vbQuestion ) <> vbYes then
+              exit function
+            end if
+          else
+#ifdef _SECURITY
+            pSprzed.dExtra3 = trans_.var(GVAR_TODAY)
+            if not trans_.saveobjects() then
+            end if
+#endif
+          end if
+        end if
+      end if  
+		  g_oRS.MoveNext
+	  loop
+    MessageBox "Działanie kreatora zakończone powodzeniem." , "Kreator drukowania faktur do PDF", vbOKOnly, vbInformation
+  end if
+end function
+
+
+'-------------------------------------------------------------------------
+'tworzy plik pdf z podpiętej publikacji, generuje załącznik i wysyła maila
+'-------------------------------------------------------------------------
+function send_email(byref pSprzedaz, byref idObjDPC): send_email = false
+
+  'utwórz plik pdf o nazwie zdefiniowanej w sekcji <title></title> wydruku
+  if not (realize_publication(idObjDPC,pSprzedaz,false,nothing) = 0) then
+    trans_.message 7000, 0, "Nie udało się utworzyć załącznika w postaci pdf"
+		exit function    
+  end if
+  
+  'pobierz ścieżkę z utworzonego dokumentu pdf (katalog TempFiles)
+  dim strTempFilePath: strTempFilePath = pdf_file_path(pSprzedaz)
+  if strTempFilePath = "" then
+    exit function
+  end if
+  
+  'utwórz i zwróć ścieżkę docelową w katalogu usera: UserDirectory\PDF\rok_miesiac\
+  dim strUserFilePath: strUserFilePath = user_path(pSprzedaz)
+  if strUserFilePath = "" then
+    exit function
+  end if
+
+  dim pFD, bOK
+  set pFD = CFileDrive(bOK)
+  if (not bOK) then
+	  view_message 6186, 0
+	  exit function
+  end if  
+  
+  'kopiuj plik załącznika z TempFiles do katalogu user'a
+  dim strFileName: strFileName = pFD.GetFileName(strTempFilePath)
+  if (not pFD.CopyFile(strTempFilePath, strUserFilePath + "\" + strFileName)) then
+    trans_.message 7000, 0, "Nie udało się skopiować pliku do katalogu użytkownika."
+		exit function      
+  end if
+  
+  'usuń plik z katalogu TempFiles
+  if (not pFD.DeleteFile(strTempFilePath)) then  
+  end if  
+
+  'wyslij e-mail
+  if (pFD.isFile(strUserFilePath + "\" + strFileName)) then
+    if (not send_email_attach(pSprzedaz,strUserFilePath + "\" + strFileName, strFileName)) then
+      trans_.message 7000, 0, "Wystąpił błąd podczas wysyłania wiadomości e-mail."
+		  exit function      
+    end if
+  else
+    trans_.message 7000, 0, "Wysłanie wiadomości e-mail niemożliwe. Brak pliku załącznika pdf."
+		exit function     
+  end if
+  
+  send_email = true
+end function
+
+'------------------------------------------------------------------------------
+'sprawdza czy plik pdf został utworzony, jeśli tak zwraca sciężkę do tego pliku
+'------------------------------------------------------------------------------
+function pdf_file_path(byref pSprzedaz): pdf_file_path = ""
+  'sprawdzanie czy istnieje plik
+  dim pFD, bOK
+  set pFD = CFileDrive(bOK)
+
+  if (not bOK) then
+	  view_message 6186, 0
+	  exit function
+  end if
+
+  dim strFileName: strFileName = "Wydruk dokumentu " + FormatStringToFileName_Custom(pSprzedaz.text,"_") + ".pdf"
+  dim strFilePath: strFilePath = pFD.GetTempPath() + "\" + strFileName
+		
+  'Szukanie pliku w określonej lokalizacji
+  dim iter
+  for iter = 1 to 10
+    if (not pFD.isFile(strFilePath)) then  
+      doc_.system.sleep 1000
+    else
+      exit for
+    end if    
+  next
+  
+  if (not pFD.isFile(strFilePath)) then  
+    trans_.message 7000, 0, "Nie udało się pobrać załącznika w postaci pdf"
+		exit function     
+  end if
+  
+  dim strNewFileName: strNewFileName = FormatStringToFileName_Custom(pSprzedaz.pKlient.strIndeks,"_") + "_" + Replace(strFileName,"Wydruk dokumentu ","")
+  for iter = 1 to 10
+    if (not pFD.RenameFile(strFilePath, strNewFileName)) then  
+      doc_.system.sleep 1000
+    else
+      strFileName = strNewFileName
+      exit for
+    end if    
+  next
+  
+  pdf_file_path = pFD.GetTempPath() + "\" + strFileName
+end function
+
+'---------------------------------------------------
+'zwraca pełną ścieżkę to pliku pdf w katalogu user'a
+'---------------------------------------------------
+function user_path(byref pSprzedaz): user_path = ""
+	'tworzymy katalog user'a jezeli go nie ma
+	if (not checkUserDirectory()) then
+		view_message1 6078, 0, getUserDirectory()
+		exit function
+	end if
+
+	dim strPDFFolder
+	strPDFFolder = getUserDirectory() + "\" + "PDF"
+
+	if (not pFD.IsFolder(strPDFFolder)) then
+		if (not pFD.CreatePath( strPDFFolder )) then
+			view_message1 6079, 0, strPDFFolder
+			exit function
+		end if
+	end if
+  
+  strPDFFolder = strPDFFolder + "\" + CStr(Year(pSprzedaz.dDataWyst)) + "_" + Right(CStr(100 + Month(pSprzedaz.dDataWyst)),2)
+	if (not pFD.IsFolder(strPDFFolder)) then
+		if (not pFD.CreatePath( strPDFFolder )) then
+			view_message1 6079, 0, strPDFFolder
+			exit function
+		end if
+	end if  
+  
+  user_path = strPDFFolder
+end function
+
+'-----------------------------
+'wysyła e-maila z załącznikiem
+'-----------------------------
+function send_email_attach(byref pSprzedaz, byref strAttachment, byref strFileName): send_email_attach = false
+
+  'pobierz plik załącznika
+  dim pSO: set pSO = doc_.createstreamobj()
+  pSO.attach strAttachment 
+  
+  'utwórz załącznik z utorzonego pliku pdf
+	dim pAttachment
+	set pAttachment = new CMailAttachment
+	set pAttachment.pSO = pSO				
+	
+  'nazwa pliku załącznika
+	pAttachment.strName = strFileName
+  
+  'tytuł wiadomości
+	dim strSub  
+	strSub = "Faktura VAT nr " + pSprzedaz.text
+
+	dim arrZalaczniki
+	set arrZalaczniki=trans_.afc.new_navoarray()
+	arrZalaczniki.Add pAttachment
+
+	dim pEmailModule
+	set pEmailModule=doc_.getmodule(PAGE_FORM_EMAIL)
+
+	dim pNavoMapi
+	set pNavoMapi=new CNavoMAPI
+
+	if (not pNavoMapi.connect()) then
+		exit function
+	end if
+
+	dim pMail: set pMail = pNavoMapi.getMAIL()
+
+	send_email_attach = pEmailModule.send_email(pMail, pSprzedaz.pKlient.strEmail, strSub, "", arrZalaczniki)
+end function
+
+
+'-------------------------
+'kontrolki dla checkbox'ów
+'-------------------------
+function c##CTRLID_ROW_CHECKBOX##_ongetdata(byref oCtrl) : c##CTRLID_ROW_CHECKBOX##_ongetdata = true
+end function
+
+function c##CTRLID_ROW_CHECKBOX##_ondataentered(byref oCtrl, byval newValue) : c##CTRLID_ROW_CHECKBOX##_ondataentered = false
+  dim nIdSprz
+  dim bAddRem : bAddRem = true
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+    nIdSprz = oRow.userprop.prop(PROP_ROW_IDENT)
+    'dodaj/usuń ze słownika
+    if newValue = "1" then
+      g_oRepDict.add nIdSprz, nIdSprz
+    else
+      g_oRepDict.removeDictObj nIdSprz
+    end if
+    if g_oRepDict.getDictionary.Count = g_oRS.RecordCount then
+      bChooseAll = true
+    else
+      bChooseAll = false
+    end if 
+    oCtrl.value = newValue
+    'kolorowanie
+    changeRowColor oRow, newValue
+  end if
+  c##CTRLID_ROW_CHECKBOX##_ondataentered = true
+end function
+
+'------------------------
+'kontrolki dla przycisków
+'------------------------
+function c##CTRLID_REALIZE_BUTTON##_ongetdata(byref oCtrl) : c##CTRLID_REALIZE_BUTTON##_ongetdata = true
+  oCtrl.disable = (g_oRepDict.getDictionary().count = 0)
+end function
+
+function c##CTRLID_CHOOSE_BUTTON##_ongetdata(byref oCtrl) : c##CTRLID_CHOOSE_BUTTON##_ongetdata = true
+  if bChooseAll then
+    oCtrl.text = "Odznacz wszystko"
+  else
+    oCtrl.text = "Zaznacz wszystko"
+  end if  
+end function
+
+
+]]>
+</script>
+	</config>
+	<body>
+    <table>
+      <tbody>
+        <tr>
+          <td>
+            <picture image='80139' tip='Wypełnij raport' width='1000' height='1000' href='varFunction="fRefresh"' />
+          </td>
+          <td>
+            <t fontsize='5' bold='true'>Drukowanie faktur do PDF</t>
+          </td>
+				</tr>
+        <tr>
+          <td colspan='2'>
+            <table name='CTRLID_ROW_BUTTONS'>
+              <tbody />
+            </table>
+          </td>
+        </tr>        
+				<tr>
+					<td colspan='2'>
+            <table border='1' name='CTRLID_RESULT_TABLE'>
+              <tbody backcolor='white' bordercolor='#006697' />
+            </table>
+					</td>
+				</tr>
+        <tr>
+          <td align='right' colspan='2'>
+            <table name='CTRLID_ACTION_TABLE'>
+              <tbody />
+            </table>
+          </td>
+        </tr> 
+			</tbody>
+		</table>
+	</body>
+</page>

@@ -1,0 +1,468 @@
+
+#ifndef _L50206_
+#define _L50206_
+
+'---------------------------------------------------------
+'
+'	CMailContext
+'	
+'	obiekt "kontekstu" podczas importu z maila
+'---------------------------------------------------------
+#include "50517"
+
+class CNavoFile
+	public filename
+	public so
+	public pDokument		'wskaŸnik na dokument
+							'domyœlnie nothing - jednak gdy bedzie
+							'wskazywa³ na dokument to nie bêdziemy
+							'przy dodawaniu zadania robiæ ju¿
+							'nowego dokumentu tylko damy wsk. na
+							'dokument istniejacy
+
+	private sub Class_Initialize()
+		set pDokument=nothing
+	end sub
+
+end class
+
+class CMailContext
+
+	public pWykonawca	'Obiekt wykonawcy
+	public pNadawca		'Obiekt nadawcy
+	public pZlecajacy	'Obiekt N5WYKONAWCA skojarzony z nadawc¹
+	public pKlient		'Jeœli nadawca jest typu n5klient lub n5klient_pracownik to w³aœciwy klient
+	public strSubiect	'Temat wiadomoœci (subject zadania)
+	public strBody		'Treœæ wiadomoœci (zadania)
+	'public idProcedura  'pKrokProcedury	(Roboczo) pierwszy z brzegu obiekt (bêdzie pochodzi³ z preloadu)
+	public arrAttachment'tabela odnoœników - wskaznikow na obiekt CNavoFile!
+	public dDate		'data otrzymania maila (zadania)
+	public tTime		'czas otrzymania	(czas zadania)
+	public nStatus
+	public pDokument	'wskaŸnik na n5dokument gdy nie jest nothing
+						'ignorowane jest arrAttachment default:nothing
+
+	public bAutoSave	'auto zapisywanie przez AddZadanie - domyslnie
+						'TAK
+	public idZadanie	'id obiektu zadania
+
+	public bPrzyp
+	public dDataPrzyp
+	public tCzasPrzyp
+
+	private sub Class_Initialize()
+		nStatus=clng(010) 'zlecone
+		set pDokument=nothing
+		set pKlient=nothing
+		bAutoSave=true
+		idZadanie=clng(0)
+	end sub
+	
+    Private Sub Class_Terminate()   'OK
+	end sub
+
+end class
+
+
+private function AddZadanie (byref context)
+	AddZadanie = false
+	
+	'wybor rejestru
+	dim idRejestr : idRejestr = choose_rejestr_dok("N5REJESTRDOK_ZADANIA", true, "Wybór rejestru zadañ")
+	if idRejestr <= 0 then
+		exit function
+	end if
+
+	trans_.var(APPVAR_REJESTR_DOKUMENTOW) = clng(idRejestr)
+
+	Dim pObjZadanie:set pObjZadanie = trans_.newobj(TYPEID_N5ZADANIE)
+	context.idZadanie=pObjZadanie.IdObj
+
+	if context.bPrzyp="1" then
+		pObjZadanie.dDataPrzyp = cdate(context.dDataPrzyp)
+		pObjZadanie.tCZasPrzyp = context.tCZasPrzyp
+	end if
+
+	pObjZadanie.nStatus	= context.nStatus		'zlecone
+	pObjZadanie.DDataZlec = context.dDate
+	pObjZadanie.tCzasZlec = context.tTime
+
+	set pObjZadanie.pZlecajacy = nothing	
+	set pObjZadanie.pZlecajacy = context.pZlecajacy
+	
+	pObjZadanie.ePriorytet = clng(2)					'1-niski2-normalny3-wysoki4-krytyczny
+	pObjZadanie.eTypTerminRozp = clng(5)				'1-najszybciej jak mo¿na (ASAP)2-nie wczeœniej ni¿3-w momencie4-nie póŸniej ni¿5-obojêtne
+	pObjZadanie.eTypTerminZak = clng(5)					'Termin zakoñczenia (typ)	ENUM		1-najszybciej jak mo¿na (ASAP)2-nie wczeœniej ni¿3-w momencie4-nie póŸniej ni¿5-obojêtne 	010
+	'set pObjZadanie.pKlient = context.pKlient			'Klient	*** Ustawia siê atomatycznie **
+
+	if pObjZadanie.pKlient is nothing then
+		set pObjZadanie.pKlient = context.pKlient			'Klient	*** Ustawia siê atomatycznie **
+	end if
+
+	pObjZadanie.strTemat = context.strSubiect			'Temat zadania
+	pObjZadanie.strOpis = left(context.strBody, 1024)	'Opis zadania
+	
+	'set pObjZadanie.pProcedura = trans_.getobj(TYPEID_N5PROCEDURA,1) 				'todo: domyœlna procedura
+	'set pObjZadanie.pKrok = trans_.getobj(TYPEID_N5KROKPROC,1) 
+	dim id:id = trans_.findobjid(TYPEID_N5TYPDZIALANIA,"strNazwa='Komunikacja z klientem'")
+	if id=0 then		
+
+		if MessageBox("Domyœlnym typem dzia³ania jest ""Komunikacja z klientem""  - "+_
+			"w Twojej bazie nie ma takiego. Naciœnij OK aby wybraæ inne. "+_
+			"Jeœli wybierzesz Anuluj nie uda siê zapisaæ dzia³ania " + context.strSubiect +_ 
+			". Okno nie bêdzie siê wiêcej pokazywaæ jeœli stworzysz taki w³aœnie "+_
+			"typ dzia³ania.", "Brak domyœlnego typu dzia³ania", vbOKCancel, vbInformation) = vbOK then
+			
+			'REV:KB:TODO: Arek: lepiej u¿yæ std_choice_list_s
+			dim choice : choice = fire_choice_list( TYPEID_N5TYPDZIALANIA, "", "","","","")
+			if choice <> 0 then
+				set pObjZadanie.pTypDzialania = trans_.getobj(TYPEID_N5TYPDZIALANIA,choice)
+			else
+				set pObjZadanie.pTypDzialania = nothing	
+			end if
+		else
+			set pObjZadanie.pTypDzialania = nothing
+		end if
+	else
+		set pObjZadanie.pTypDzialania = trans_.getobj(TYPEID_N5TYPDZIALANIA,id)
+	end if
+
+'	set pObjZadanie.pTypDzialania = trans_.getobj(TYPEID_N5TYPDZIALANIA,1) 
+	
+	dim CurrUser:set CurrUser = GetCurrentUser() 'todo: sprawdzanie do którego wykonawcy
+	set pObjZadanie.pWykonawca = getCurrentWykonawca()
+	
+	dim pZadanieZalObj
+
+	if (context.pDokument is nothing) then
+		if context.arrAttachment.Count() > 0 then
+			dim pFD,bOK
+			set pFD=CFileDrive(bOK)
+				
+			dim index
+			'trans_.var(APPVAR_IS_IMPORT)=CLng(1)
+			
+			for index = clng(0) to context.arrAttachment.Count()-1
+				
+				if (index = clng(0)) and (context.arrAttachment.Value(0).so is nothing) then 
+					index = clng(1)
+				end if
+							
+				
+				dim pAttachmentObj	
+				set pAttachmentObj = nothing
+
+				
+				if (not context.arrAttachment.Value(index).pDokument is nothing) then
+					set pAttachmentObj =context.arrAttachment.Value(index).pDokument
+				else
+					set pAttachmentObj = trans_.newobj(TYPEID_N5DOKUMENT)
+					
+					'Todo: zmieniæ sposób numerowania
+					pAttachmentObj.strNumDok = "DOK " + cstr(pAttachmentObj.IdObj)
+
+					dim pSO					
+					set pSO = context.arrAttachment.Value(index).so
+					pAttachmentObj.fPlik.attach pSO 
+
+					
+					dim strSubjectTemp
+					dim nLen
+					
+					if index = clng(0) then
+						nLen = clng( clng(256) - len("Treœæ wiadomoœci email ()") )
+						
+						if len(context.strSubiect) > nLen then 
+							strSubjectTemp = left(context.strSubiect, nLen-clng(3))+ "..."
+						else
+							strSubjectTemp = context.strSubiect
+						end if
+						
+						pAttachmentObj.strStreszczenie = "Treœæ wiadomoœci email (" + strSubjectTemp + ")"
+					else
+						nLen = clng( clng(256) - len("Za³¹cznik do wiadomoœci email ()") )
+						
+						if len(context.strSubiect) > nLen then 
+							strSubjectTemp = left(context.strSubiect, nLen-clng(3))+ "..."
+						else
+							strSubjectTemp = context.strSubiect
+						end if
+						
+						pAttachmentObj.strStreszczenie = "Za³¹cznik do wiadomoœci email (" + strSubjectTemp +")"
+
+					end if
+
+					pAttachmentObj.strFileName=AddComputerName(context.arrAttachment.Value(index).filename)
+
+					pAttachmentObj.strTematDokum = pFD.GetFileName(context.arrAttachment.Value(index).filename)
+					
+					dim IdTyp:IdTyp= trans_.findobjid(TYPEID_N5TYPDOKUMENTU, "strNazwa= 'Odebrana korespondencja'")
+					set pAttachmentObj.pTypDokumentu = trans_.getobj(TYPEID_N5TYPDOKUMENTU,IdTyp) 				'todo: musi byæ w preloadzie
+					
+					pAttachmentObj.dDataWeWy = context.dDate			'Data wp³yniêcia/wys³ania dokumentu	Data	NE	
+					pAttachmentObj.dDataRejestracji	= context.dDate		'Data rejestracji dokumentu	Data	NE	Kiedy informacja o dokumencie trafi³a do systemu
+
+					set pAttachmentObj.wpNadawca  = context.pNadawca	'Nadawca dokumentu	Wref	OPT	wr -> pracownik_klientawr -> pracownikwr -> klient
+
+					if not getCurrentWykonawca() is nothing then
+						set pAttachmentObj.wpAdresat  = getCurrentWykonawca().wrefObiekt	'TODO: Adresat
+					else
+					end if
+						'TODO: Adresat
+					pAttachmentObj.nForma = clng(1)						'1-	tylko forma elektroniczna
+
+				end if
+
+				'dodaj na liste w zadaniu
+				set pZadanieZalObj = pObjZadanie.listZalaczniki.AddNew()
+				set pZadanieZalObj.wrefZal = pAttachmentObj
+	
+			next
+			'trans_.var(APPVAR_IS_IMPORT)=CLng(0)
+		end if
+
+	else 'not pDokument is nothing
+
+		set pZadanieZalObj = pObjZadanie.listZalaczniki.AddNew()
+		set pZadanieZalObj.wrefZal=context.pDokument
+
+	end if 'pDokument is nothing
+
+	if (context.bAutoSave) then
+		if not trans_.saveobjects then
+			AddZadanie = false
+		else
+			AddZadanie = true
+		end if
+	else
+		AddZadanie = true
+	end if
+
+end function
+
+'Je¿eli nie znajdzie zwraca 0,
+'Je¿eli znajdzie wiele zwraca -1
+'Je¿eli znajdzie jednego zwraca idobj oraz pObjNadawca
+private function FindNadawca(byref pObjNadawca, byval mail, byval NadawcaDict):FindNadawca=clng(0)
+	dim id
+	dim typeid
+
+	'Sprawdzanie, czy mail by³ ju¿ znaleziony
+'--------------------------------------
+'Zakomentowane korzystanie z Dictionary
+'--------------------------------------
+
+
+'	dim DictItem
+'	if NadawcaDict.Exists(mail) then
+'		DictItem = NadawcaDict.item(mail) 
+'		if(DictItem = cstr(0) or DictItem = cstr(-1)) then
+'			set pObjNadawca = nothing
+'			FindNadawca  = clng(DictItem)
+'			exit function
+'		else
+'			dim nPos : nPos = instr(1,DictItem,";")
+'			if nPos > 0 then
+'				typeid = clng(left(DictItem,nPos-1))
+'				id = clng(mid(DictItem,nPos+1))
+'				set pObjNadawca = trans_.getobj(typeid,id) 
+'				FindNadawca  = id
+'				exit function
+'			end if	
+'		end if
+'	end if
+
+
+	dim count:count=clng(0)
+	dim strSQL:strSQL = "strEMail = '" + trim(mail) + "'"
+
+	id = trans_.findobjid(TYPEID_N5KLIENT,strSQL)			
+	if(id >0) then
+		FindNadawca = id
+		set pObjNadawca = trans_.getobj(TYPEID_N5KLIENT,id) 
+		count = count + clng(1)
+	end if
+	if(id = clng(-1)) then
+		FindNadawca = clng(-1)
+		set pObjNadawca = nothing
+'		NadawcaDict.Add cstr(mail), cstr(-1)
+		exit function
+	end if
+
+	id = trans_.findobjid(TYPEID_N5KLIENT_PRACOWNIK,strSQL)			
+	if(id >0) then
+		FindNadawca = id
+		set pObjNadawca = trans_.getobj(TYPEID_N5KLIENT_PRACOWNIK,id) 
+		count = count + clng(1)
+	end if
+	if(id = clng(-1) or count>1) then
+		FindNadawca = clng(-1)
+		set pObjNadawca = nothing
+'		NadawcaDict.Add cstr(mail), cstr(-1)
+		exit function
+	end if
+
+	id = trans_.findobjid(TYPEID_N5PRACOWNIK,strSQL)			
+	if(id >0) then
+		FindNadawca = id
+		set pObjNadawca = trans_.getobj(TYPEID_N5PRACOWNIK,id) 
+		count = count + clng(1)
+	end if
+	if(id = clng(-1) or count>1) then
+		FindNadawca = clng(-1)
+		set pObjNadawca = nothing
+'		NadawcaDict.Add cstr(mail), cstr(-1)
+		exit function
+	end if
+	
+'	if id = clng(0) then
+		'NadawcaDict.Add cstr(mail), clng(0)
+'	else
+'		NadawcaDict.Add cstr(mail), cstr(pObjNadawca.type)+ ";" + cstr(pObjNadawca.idobj)
+'	end if
+
+end function
+
+'--------------------------------------------------------------------------------
+'Wysy³a dokument poczta elektroniczna
+'--------------------------------------------------------------------------------
+private function SendDokument(byref pObj,byval strFldName,byval strEmail, byref pDoks, byval strSubject, byval strText, byref pMAPIP, byref pAttachments):SendDokument=false
+
+	dim pEmailModule
+	set pEmailModule=doc_.getmodule(PAGE_FORM_EMAIL)
+
+	dim strTo:strTo=""
+	dim strMsg:strMsg=strText
+
+	if strFldName="" then
+		strFldName = "strEmail"
+	end if
+
+	if pObj is nothing then
+		strTo = strEmail
+	else
+		strTo=pObj.field(strFldName)	
+	end if
+
+	if ( len(strTo)=0 ) then
+		nx_.trace.error "EMA001","Brak adresu e-mail adresata"
+		exit function
+	end if
+
+	dim arrZalaczniki
+	set arrZalaczniki=trans_.afc.new_navoarray()
+
+	if (not pDoks is nothing) then
+
+		dim i
+		for i=0 to pDoks.Count()-1
+			dim pDok
+			set pDok=pDoks.Value(i)
+			
+			if (not pDok.fPlik.isEmpty()) then
+				dim pAttachment
+				set pAttachment=new CMailAttachment
+
+				dim pFD, bOK
+				set pFD=CFileDrive(bOK)
+
+				set pAttachment.pSO=pDok.fPlik
+
+				if (bOk) then
+					pAttachment.strName=pFD.GetFileName(RemoveComputerName(pDok.strFileName))
+				else
+					pAttachment.strName=RemoveComputerName(pDok.strFileName)
+				end if
+
+				arrZalaczniki.Add pAttachment
+			end if
+
+		next
+
+	end if
+
+	if (not pAttachments is nothing) then
+		dim n
+		for n=0 to pAttachments.Count()-1
+			arrZalaczniki.Add pAttachments.Value(n)
+		next
+	end if
+	
+	if ( len(strTo)>0 ) then
+		SendDokument=pEmailModule.send_email(pMAPIP, strTo, strSubject, strMsg, arrZalaczniki)
+		exit function
+	end if
+
+end function
+
+dim g_AutoSaveTask:g_AutoSaveTask=true
+dim g_TaskID:g_TaskID=clng(0)
+
+'--------------------------------------------------------------------------------
+'Zapisuje wysy³ke jako zadanie 
+'pObj wref (klient, prac..) pDok - dokument
+'--------------------------------------------------------------------------------
+private function SaveDokumentZadanie(byref pObj, byref pDoks, byval strSubject, byval strText, byval pOptions):SaveDokumentZadanie=false
+	dim pContext
+	set pContext=new CMailContext
+
+	set pContext.pZlecajacy=getCurrentWykonawca()
+	set pContext.pNadawca=pObj		'OPT	wr -> pracownik_klientawr -> pracownikwr -> klient
+	pContext.strSubiect=strSubject
+	pContext.strBody=strText
+
+	dim pTaskAttachment
+	set pTaskAttachment=trans_.afc.new_navoarray()
+
+	dim i
+	for i=0 to pDoks.Count()-1
+		if (not pDoks.Value(i).fPlik.isEmpty() ) then
+			dim pNavoFile
+			set pNavoFile=new CNavoFile
+
+			set pNavoFile.so=pDoks.Value(i).fPlik
+			pNavoFile.filename=pDoks.Value(i).strFileName
+			set pNavoFile.pDokument=pDoks.Value(i)
+
+			pTaskAttachment.Add pNavoFile
+		end if
+	next
+
+	set pContext.arrAttachment=pTaskAttachment
+
+	select case pObj.type
+		case TYPEID_N5KLIENT
+			set pContext.pKlient=pObj
+
+		case TYPEID_N5KLIENT_PRACOWNIK
+			set pContext.pKlient=pObj.pKlient
+
+		case TYPEID_N5PRACOWNIK
+			set pContext.pKlient=nothing
+
+	end select
+
+	'ustaw czas i datê
+	pContext.dDate=CDate(trans_.var(GVAR_SYSDATE))
+	pContext.tTime=trans_.var(GVAR_SYSTIME)
+	if (not getCurrentWykonawca() is nothing) then
+		set pContext.pNadawca=getCurrentWykonawca().wrefObiekt
+	end if
+
+	'ustaw status zadania
+	pContext.nStatus=clng( N5ZADANIE_ZLECONE )
+
+	'czy automatycznie zapisywaæ zadanie 
+	pContext.bAutoSave=g_AutoSaveTask
+
+	if not pOptions is nothing then
+		pContext.bPrzyp = pOptions.m_bPrzyp
+		pContext.dDataPrzyp = cdate(pOptions.m_dDataPrzyp)
+		pContext.tCzasPrzyp = pOptions.m_tCzasPrzyp
+	end if
+
+	SaveDokumentZadanie=AddZadanie( pContext )
+	g_TaskID=pContext.idZadanie
+end function
+
+#endif

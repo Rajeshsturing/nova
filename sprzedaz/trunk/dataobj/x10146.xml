@@ -1,0 +1,279 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+REV:KB:20030128
+
+#include "h1000.h" 
+#include "h1200.h" 
+#include "h1231.h" 
+#include "h1240.h" 
+-->
+<class>
+	<identifier>TYPEID_N5KONTO</identifier>
+	<table>n5konto</table>
+	<humanname>Konto księgowe</humanname>
+	<idobj/>
+	<embedded>
+		<name>strSymbol</name>
+		<sqltype>SQLc64</sqltype>
+		<humanname>Symbol</humanname>
+		<unique/>
+	</embedded>
+	<embedded>
+		<name>strNazwa</name>
+		<sqltype>SQLvc128</sqltype>
+		<humanname>Nazwa konta</humanname>
+		<nonempty/>
+	</embedded>
+	<embedded>
+		<name>strOpis</name>
+		<sqltype>SQLvc1024</sqltype>
+		<humanname>Opis</humanname>
+	</embedded>
+	<ref>
+		<name>pJednostka</name>
+		<humanname>Jednostka</humanname>
+		<typeid>TYPEID_N5JEDNOSTKA</typeid>
+	</ref>
+	<wildref>
+		<name>wrefPodmiotRozrach</name>
+		<humanname>Podmiot rozrachunków</humanname>
+		<typeid>TYPEID_N5KLIENT</typeid>
+		<typeid>TYPEID_N5PRACOWNIK</typeid>
+		<typeid>TYPEID_N5INSTYTUCJA</typeid>
+		<typeid>TYPEID_N5SRTRW</typeid>
+		<optional/>
+	</wildref>
+	<ref>
+		<name>pKontoNadrz</name>
+		<humanname>Konto nadrzędne</humanname>
+		<typeid>TYPEID_N5KONTO</typeid>
+		<optional/>
+	</ref>
+	<enum>
+		<name>eAnalit</name>
+		<humanname>Analityczne</humanname>
+		<default>N5KONTO_ANALITYCZNE</default>
+		<item>Analityczne</item>
+		<item>Syntetyczne</item>
+	</enum>
+	<!--
+	Analityczne;Syntetyczne
+	-->
+	<enum>
+		<name>eBilans</name>
+		<humanname>Bilansowe</humanname>
+		<default>N5KONTO_BILANSOWE</default>
+		<item>Bilansowe</item>
+		<item>Pozabilansowe</item>
+	</enum>
+	<enum>
+		<name>eAktywne</name>
+		<humanname>Aktywne</humanname>
+		<default>N5KONTO_AKTYWNE</default>
+		<item>Aktywne</item>
+		<item>Nieaktywne</item>
+	</enum>
+	<embedded>
+		<name>nSubLen</name>
+		<sqltype>SQLlong</sqltype>
+		<humanname>Długość subsyntetyki</humanname>
+	</embedded>
+<cursors>
+	<cursor>
+		<identifier>CRSR_N5KONTO_WEDLUG_SYMBOLU</identifier>
+		<humanname>wg symbolu</humanname>
+		<join></join>
+		<where></where>
+		<orderby>dbo.ks_lex_order(strSymbol)</orderby>
+	</cursor>
+</cursors>
+
+<cursors>
+	<cursor>
+		<identifier>CRSR_N5KONTO_ANALIT_AKTYW</identifier>
+		<humanname>analityczne i aktywne</humanname>
+		<join></join>
+		<where>eAnalit=N5KONTO_ANALITYCZNE and eAktywne=N5KONTO_AKTYWNE</where>
+		<orderby>dbo.ks_lex_order(strSymbol)</orderby>
+	</cursor>
+</cursors>
+
+<cursors>
+	<cursor>
+		<identifier>CRSR_N5KONTO_ANALIT_AKTYW_SYM</identifier>
+		<humanname>analityczne i aktywne</humanname>
+		<join></join>
+		<where>eAnalit=N5KONTO_ANALITYCZNE and eAktywne=N5KONTO_AKTYWNE and strSymbol like 'appvar_konto_symbol%'</where>
+		<orderby>dbo.ks_lex_order(strSymbol)</orderby>
+	</cursor>
+</cursors>
+
+
+<script>
+<![CDATA[
+'getCurrentFirma
+#include "50203"
+
+
+'remove_dependent_objects_save
+#include "50626"
+
+function n5konto_initnew()
+	dim pFirma : set pFirma = getCurrentFirma()
+	if (not pFirma is nothing) then
+		set this_.pJednostka = pFirma.pWaluta
+	end if
+	n5konto_initnew = true
+end function
+
+function n5konto_checkKontoNadrz()
+	n5konto_checkKontoNadrz = false
+
+	if not this_.pKontoNadrz is nothing then
+		if this_.pKontoNadrz.eAnalit<> N5KONTO_SYNTETYCZNE then
+			trans_.message 6517, 0, "Konto nadrzędne " + this_.pKontoNadrz.strSymbol + " musi być syntetyczne"
+			exit function
+		end if
+
+		if this_.pKontoNadrz.strSymbol <> Left(this_.strSymbol, Len(this_.pKontoNadrz.strSymbol)) then
+			trans_.message 6518, 0, "Symbol konta " + this_.strSymbol +_
+			" musi rozpoczynać się od symbolu konta nadrzędnego tj." + this_.pKontoNadrz.strSymbol
+			exit function
+		end if
+		
+		if this_.pKontoNadrz.nSubLen <> 0 then
+			if len(this_.pKontoNadrz.strSymbol) + this_.pKontoNadrz.nSubLen + 1 <> len(this_.strSymbol) then
+				trans_.message 6518, 0, "Symbol konta " + this_.strSymbol +_
+				" ma postać inną niż określona przez jego konto nadrzędne. Prawidłowa postać:" +_
+				this_.pKontoNadrz.strSymbol + "-" + string(this_.pKontoNadrz.nSubLen,"X")
+				exit function
+			end if
+		end if
+	end if	
+	n5konto_checkKontoNadrz = true
+end function
+
+function n5konto_checkwaluta
+	if this_.eBilans <> N5KONTO_BILANSOWE then	'tu może być dowolna
+		n5konto_checkwaluta = true
+		exit function
+	end if
+		
+	if getCurrentFirma().pWaluta is this_.pJednostka then	'zgadza się
+		n5konto_checkwaluta = true
+		exit function
+	end if
+	
+	n5konto_checkwaluta = false
+	trans_.message 7000 , 0 , "Waluta konta nie jest zgodna z walutą firmy"
+end function
+
+sub n5konto_changeBilansInPod()	'call only while updating
+	if this_.eBilans <> this_.old_eBilans then
+		dim cursor,pSubKonto
+		set cursor = trans_.createrawcursor(TYPEID_N5KONTO, "pKontoNadrz=" + cstr(this_.idobj), "" , "")	
+		for each pSubKonto in cursor
+			pSubKonto.eBilans = this_.eBilans
+		next	
+	end if
+end sub
+
+sub n5konto_changeActiveInPod()	'call only while updating
+	if (this_.eAktywne = N5KONTO_NIEAKTYWNE) and (this_.eAktywne <> this_.old_eAktywne) then
+		dim cursor,pSubKonto
+		set cursor = trans_.createrawcursor(TYPEID_N5KONTO, "pKontoNadrz=" + cstr(this_.idobj), "" , "")		
+		for each pSubKonto in cursor
+			pSubKonto.eAktywne = clng(N5KONTO_NIEAKTYWNE)
+		next	
+	end if
+end sub
+
+function n5konto_befdel():n5konto_befdel = false
+	'Usuwanie obiektów zależnych
+	if (not remove_dependent_objects_save(TYPEID_N5KONTO, this_.idObj)) then
+		trans_.message 7000, 0, "nie udało usunąć się kont podrzędnych dla " + this_.text		
+		exit function
+	else
+		trans_.message 7000, 0, "usunięto konta podrzędna dla " + this_.text		
+	end if
+
+    n5konto_befdel = true
+end function
+
+
+
+function n5konto_befins()
+    n5konto_befins=n5konto_checkKontoNadrz() and n5konto_checkwaluta()
+end function
+
+function n5konto_befupd()
+	n5konto_befupd = n5konto_checkKontoNadrz() and n5konto_checkwaluta() and n5konto_eAnalit_check()
+	if n5konto_befupd then
+		n5konto_changeBilansInPod
+		n5konto_changeActiveInPod
+	end if
+end function
+
+function n5konto_as_text()
+	n5konto_as_text=this_.strSymbol + " ("+this_.strNazwa+")"
+end function
+
+
+' szukanie i wstawianie konta nadrzędnego wg wprowadzonego symbolu
+function n5konto_strSymbol_change(oldval)
+	'rozdzielamy po myslniku
+    dim arr:arr = split(this_.strSymbol,"-")
+	dim strSymbol,iter
+	'jezeli go nie ma to nie wstawiamy konta nadrzednego
+	if ubound(arr)=0 then
+		set this_.pKontoNadrz = nothing
+	else
+		'jezeli jest symbol nadrzednego bedzie bez ostatniego czlonu
+		'czyli dla 200-1- bedzie to konto 200-1
+		for iter=0 to ubound(arr)-1
+			if strSymbol = "" then
+				strSymbol= arr(iter)
+			else
+				strSymbol = strSymbol + "-" + arr(iter)
+			end if
+		next
+		'szukamy
+		dim id:id = trans_.findobjid(TYPEID_N5KONTO,"(eAnalit=N5KONTO_SYNTETYCZNE and eAktywne=N5KONTO_AKTYWNE and strSymbol like '"+cstr(strSymbol)+"')")
+		if id > 0 then
+			' i wstawiamy
+			set this_.pKontoNadrz = trans_.getobj(TYPEID_N5KONTO,id)
+		end if
+	end if
+	n5konto_strSymbol_change=true
+end function
+
+
+function n5konto_eAnalit_check():n5konto_eAnalit_check = false
+
+	dim res
+	if this_.eAnalit = N5KONTO_SYNTETYCZNE then
+		'dekrety
+		res = trans_.findobjid(TYPEID_N5DEKRET,"pKonto="+cstr(this_.idobj))
+		if res <> 0 then
+			trans_.message 7000, 0, "Istnieją zapisy na tym koncie - nie może ono być syntetyczne"
+			exit function
+		end if
+	end if
+
+	if this_.eAnalit = N5KONTO_ANALITYCZNE then
+		'subkonta
+		res = trans_.findobjid(TYPEID_N5KONTO,"pKontoNadrz="+cstr(this_.idobj))
+		if res <> 0 then
+			trans_.message 7000, 0, "Istnieją subkonta do tego konta - nie może ono być analityczne"
+			exit function
+		end if
+	end if
+
+	n5konto_eAnalit_check = true
+	
+end function
+
+
+]]>
+</script>
+</class>

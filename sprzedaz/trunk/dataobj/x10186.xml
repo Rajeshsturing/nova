@@ -1,0 +1,201 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+
+#include "h1000.h" 
+#include "h1200.h"
+#include "h1203.h"
+#include "h1229.h"
+#include "h1231.h"
+
+#define MXT_RECEPTA_ID		1
+
+prefix: prp_
+
+#define _RECALC_TABLENAME_	n5pozrealprod
+
+-->
+<class>
+	<identifier>TYPEID_N5POZZLECPROD</identifier>
+	<table>n5pozzlecprod</table>
+	<humanname>Pozycja zlecenia produkcyjnego</humanname>
+	<hidden/>
+	<child/>
+	<idobj/>
+	<ref>
+		<name>pProdukt</name>
+		<humanname>Wyrób</humanname>
+		<typeid>TYPEID_N5PRODUKT</typeid>
+	</ref>
+	<ref>
+		<name>pOpak</name>
+		<humanname>Opakowanie wyrobu</humanname>
+		<typeid>TYPEID_N5OPAKOWANIE_PRODUKTU</typeid>
+	</ref>
+	<ref>
+		<name>pRecepta</name>
+		<humanname>Recepta</humanname>
+		<typeid>TYPEID_N5RECEPTA</typeid>
+	</ref>
+	<embedded>
+		<name>curIloscOpak</name>
+		<sqltype>SQLqty</sqltype>
+		<humanname>Ilość</humanname>
+		<default>1.0</default>
+	</embedded>
+
+	
+	XDF_EXTRAS
+
+	<!-- ilosc wyrobow jaka jeszcze nie przyszla PP -->
+	<embedded>
+		<name>curIloscOpakPoz</name>
+		<sqltype>SQLqty</sqltype>
+		<humanname>Ilość pozostała do przyjęcia</humanname>
+		<default>1.0</default>
+	</embedded>
+
+	<!-- DB9 -->
+	<!-- ilosc wyrobow jaka jeszcze nie wyszla RP (na RP sa surowce przeliczone) -->
+	<embedded>
+		<name>prp_curIloscOpakPozWyd</name>
+		<sqltype>SQLqty</sqltype>
+		<humanname>Ilość pozostała do wydania</humanname>
+		<default>0.0</default>
+	</embedded>
+
+	<!-- ilosc wyrobow jaka jeszcze nie wyszla z REALPROD -->
+	<embedded>
+		<name>prp_curIloscOpakPozProd</name>
+		<sqltype>SQLqty</sqltype>
+		<humanname>Ilość pozostała do produkcji</humanname>
+		<default>0.0</default>
+	</embedded>
+
+<cursors />
+
+<script>
+<![CDATA[
+#include "50111"
+
+function n5pozzlecprod_as_text()
+	n5pozzlecprod_as_text=""
+end function
+
+function n5pozzlecprod_pProdukt_change(oldval)
+	if not this_.pProdukt is nothing then		
+		set this_.pOpak = this_.pProdukt.listOpakowania.get(1)
+	else
+		set this_.pOpak = nothing
+	end if
+	dim oMtxRecepta : set oMtxRecepta = trans_.holdmutex(this_.type,this_.idobj,MXT_RECEPTA_ID)
+	if not oMtxRecepta is nothing then
+		'szukaj pierwszej spełniającej recepty
+		if not this_.pProdukt is nothing and not this_.pOpak is nothing then
+			
+			dim idReceptura
+			dim curIloscWyrobu
+			
+#ifdef _KOMPOZYTY
+			if query_default_receptura_for_wyrob_ex(this_.pProdukt.idobj,this_.pOpak.idobj, _
+				idReceptura,curIloscWyrobu,"p_rcpt_eaktywny = N5RECEPTA_AKTYWNA") then
+				set this_.pRecepta = trans_.getobj(TYPEID_N5RECEPTA,idReceptura)
+				this_.curIloscOpak = curIloscWyrobu
+			end if
+#else
+			if query_default_receptura_for_wyrob(this_.pProdukt.idobj,this_.pOpak.idobj, _
+				idReceptura,curIloscWyrobu) then
+				set this_.pRecepta = trans_.getobj(TYPEID_N5RECEPTA,idReceptura)
+				this_.curIloscOpak = curIloscWyrobu
+			end if
+#endif      
+
+		end if
+	end if
+	n5pozzlecprod_pProdukt_change = true
+end function
+
+
+function n5pozzlecprod_pRecepta_change(oldval)
+	dim oMtxRecepta : set oMtxRecepta = trans_.holdmutex(this_.type,this_.idobj,MXT_RECEPTA_ID)
+	if not oMtxRecepta is nothing then
+		if not this_.pRecepta is nothing then
+			if not this_.pProdukt is nothing and not this_.pOpak is nothing then
+				dim nLP : nLP = this_.pRecepta.n5recepta_scan_for_wyrob(this_.pProdukt.idObj,this_.pOpak.idobj)
+				if nLP > 0 then
+					n5pozzlecprod_pRecepta_change = true
+					exit function
+				end if
+			end if
+			if this_.pRecepta.listWyrob.exists(1) then
+				set this_.pProdukt = this_.pRecepta.listWyrob.get(1).pProdukt
+				set this_.pOpak = this_.pRecepta.listWyrob.get(1).pOpak
+				n5pozzlecprod_pRecepta_change = true
+				exit function
+			end if
+		end if
+		set this_.pOpak = nothing
+		set this_.pProdukt = nothing
+	end if
+	n5pozzlecprod_pRecepta_change = true
+end function
+
+function n5pozzlecprod_check()
+	n5pozzlecprod_check = false
+	if this_.pProdukt is nothing then
+		exit function
+	end if
+	if this_.pRecepta is nothing then
+		n5pozzlecprod_check = true
+		exit function
+	end if
+
+	'szukaj czy recepta zawiera wyrób
+	dim pPozRecepta
+	for each pPozRecepta in this_.pRecepta.listWyrob
+		if pPozRecepta.pProdukt is this_.pProdukt and pPozRecepta.pOpak is this_.pOpak then
+			n5pozzlecprod_check = true
+			exit function
+		end if
+	next 
+end function
+
+function n5pozzlecprod_befins()
+	n5pozzlecprod_befins = n5pozzlecprod_check()
+end function
+
+function n5pozzlecprod_befupd()
+	n5pozzlecprod_befupd = n5pozzlecprod_check()
+end function
+
+function n5pozzlecprod_curIloscOpak_change(oldval)
+	this_.curIloscOpakPoz = this_.curIloscOpakPoz + this_.curIloscOpak - oldval
+	n5pozzlecprod_curIloscOpak_change = true
+end function
+
+
+
+
+function n5pozzlecprod_fill_from_pozzam(byref source)
+	#ifdef _DEBUG
+	trans_.message 1002 , 0 , "DEBUG: n5pozzlecprod_fill_from_pozzam"
+	#endif
+	set this_.pProdukt = source.pProdukt
+	set this_.pOpak = source.pOpak
+
+	this_.curIloscOpak = source.curIloscOpakPoz
+	this_.curIloscOpakPoz = source.curIloscOpakPoz
+
+end function
+
+
+function n5pozzlecprod_curIloscOpakPoz_change(oldval):n5pozzlecprod_curIloscOpakPoz_change = true
+	if this_.curIloscOpakPoz < ccur(0.0) then
+		trans_.message 1002 , 0 , "Ilość pozostała do realizacji nie może być ujemna"
+		n5pozzlecprod_curIloscOpakPoz_change = false
+	end if
+end function
+
+
+]]>
+</script>
+</class>

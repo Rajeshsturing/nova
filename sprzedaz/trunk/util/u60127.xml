@@ -1,0 +1,1830 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+
+<!--
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1004.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220_pictureid.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1201.h"
+#include "h1232.h"
+#include "h1223.h"
+
+
+#define PAGE_WIZZARD_EXPORT_IMPORT_FILE_STEP			20403
+#define PAGE_WIZZARD_EXPORT_IMPORT_FIELD_STEP			20404
+#define PAGE_WIZZARD_EXPORT_IMPORT_RESUME_STEP			20406
+
+-->
+
+
+<page>
+  <config>
+    <title>Wizzard</title>
+    <script>
+
+      <!--
+	ALWAYS MANUAL
+	Kreator eksportu/importu
+-->
+
+      <![CDATA[
+
+#include "50517"
+
+'nx_trace
+#include "50519"
+
+'HAR*
+#include "50101"
+'MessageBox
+#include "50122"
+'getCurrent*
+#include "50203"
+'system_add_root
+#include "50204"
+'Excel*
+#include "50205"
+'CWizzard
+#include "50209"
+'CFilesDrives
+#include "50211"
+'Preload functions
+#include "50303"
+'Licence XML
+#include "50304"
+'Export Firma
+#include "50615"
+'ImportSTREAM -> NE OBJECTS
+#include "50616"
+
+function fopen(): fopen = false
+	
+	if (trans_.isvar(APPVAR_IMPORT_KIND)) then
+
+		select case trans_.var(APPVAR_IMPORT_KIND)
+			case IMPFRM
+				if (not HARUI(UAR_CMDID(CMDID_WIZZARD_IMPEXP38))) then
+					exit function
+				end if
+		
+			case IMPXML
+				if (not HARUI(UAR_CMDID(CMDID_WIZZARD_IMPEXPEUROBIZNES))) then
+					exit function
+				end if
+		
+			case IMPXLS
+				if (not HARUI(UAR_CMDID(CMDID_WIZZARD_IMPEXPXLS))) then
+					exit function
+				end if
+	
+			case IMPEXT
+				if (not HARUI(UAR_CMDID(CMDID_WIZZARD_IMPEXPEXT))) then
+					exit function
+				end if
+				
+			case EXPXML
+				if (not HARUI(UAR_CMDID(CMDID_WIZZARD_EXPXML))) then
+					exit function
+				end if
+
+		end select
+
+	end if
+
+	'Uruchom wizzard
+	start_wizzard
+
+end function
+
+#define NV_ALL		1
+#define NV_NONE		2
+#define NV_SYB		3
+#define NV_SQL		4
+#define NV_KADRY	5
+
+'-------------------------------------------------------------------------------------------
+' Kontener wizarda importu / eksportu
+'-------------------------------------------------------------------------------------------
+'----------------------------------------------------------------
+'NEW_FIRMA_IMPORT
+'----------------------------------------------------------------
+dim g_pM60215 : set g_pM60215 = doc_.getmodule(60215)
+
+class CImportWizzardContainer
+	public m_strPath
+	public m_strImportType
+	public m_nNavoVersion
+	public m_nNavoShow
+	public m_bDefault
+	public m_strLogin
+	public m_strPass
+	public m_strServer
+	public m_pItems
+	public m_bResult
+
+	private m_oNAVOFirmaImportOptions
+'----------------------------------------------------------------
+	public m_oarrExpFilter
+	public m_nChoosenFilter
+
+	public m_nExportWay
+
+	Private Sub Class_Initialize()		
+		set m_pItems = trans_.afc.new_navoarray()
+	
+		m_strPath = ""
+		m_nExportWay = clng(1)
+		m_strImportType = ""
+		m_nNavoVersion = ""
+#if appvarImportKind = EXPXML
+		m_strLogin = getCurrentUser().strLogin
+#else
+		m_strLogin = "sa"
+#endif
+		m_strPass = ""
+		m_strServer = "."
+		m_nNavoShow = NV_NONE
+
+		m_bDefault = true
+
+		set m_oarrExpFilter = nothing
+		m_nChoosenFilter = -1
+
+		set m_oNAVOFirmaImportOptions = g_pM60215.new_NFIO()
+	End Sub
+
+	public function NewItemToImport()
+		dim pNewItem
+		set pNewItem = new CItemToImport
+
+		m_pItems.Add pNewItem
+		set NewItemToImport = pNewItem
+	end function
+#if appvarImportKind = EXPXML
+	public function get_suggested_path()
+		'compose new suggested file name
+		dim pFD, bOK
+		set pFD = CFileDrive(bOK)
+		if (not bOK) then
+			view_message 6161, 0
+		end if
+
+		dim strStartFile : strStartFile = m_oarrExpFilter.Value(m_nChoosenFilter).nazwa +_
+				"_z_" + CStr(Year(Now)) + "_" + CStr(Month(Now)) + "_" + CStr(Day(Now)) + ".nxd"
+
+		dim strStartPath : strStartPath = pFD.GetPath( m_strPath )
+		if (strStartPath="") then
+			strStartPath="c:\"
+		end if
+		if right(strStartPath,1) <> "\" then
+			strStartPath = strStartPath + "\"
+		end if
+		get_suggested_path = strStartPath + strStartFile
+	end function
+#endif
+	
+	public property get NFIO
+		set NFIO = m_oNAVOFirmaImportOptions
+	end property
+end class
+
+
+'-------------------------------------------------------------------------------------------
+' Klasa opisująca jeden element importowany / eksportowany
+'
+' m_nTypeID		- identyfikator typu
+' m_strName		- nazwa wyswietlana w podsumowniu
+' m_strParam1	- parametr 1
+' m_strParam2	- parametr 2
+' bDisplay		- czy wyswietlac w podsumowaniu
+'-------------------------------------------------------------------------------------------
+class CItemToImport
+	public m_nTypeID
+	public m_strName
+	public m_strParam1
+	public m_strParam2
+	public bDisplay
+end class
+
+
+'-------------------------------------------------------------------------------------------
+' Rozpocznij wizzard
+'-------------------------------------------------------------------------------------------
+dim g_pModule60272 : set g_pModule60272 = nothing
+
+function start_wizzard()
+	dim pWizzard
+	set pWizzard = CWizzard( false )
+
+	dim pContainer
+	set pContainer = new CImportWizzardContainer
+
+	pContainer.m_strImportType = trans_.var(APPVAR_IMPORT_KIND)
+
+	if (pContainer.m_strImportType = EXPXML) then
+		set g_pModule60272 = doc_.getmodule(60272)
+		set pContainer.m_oarrExpFilter = doc_.afc.new_navoarray()
+		'wczytaj definicję
+		dim idGlobFile : idGlobFile = trans_.findobjid(TYPEID_N5GLOBFILE,"nIndeks=GLOB_FILE_EXPORT_FILTER_DEFINITION")
+		if idGlobFile > 0 then
+			dim pGlobFile : set pGlobFile = trans_.getobj(TYPEID_N5GLOBFILE,idGlobFile)
+			if not pGlobFile.fPlik.isempty() then
+				g_pModule60272.load_data pContainer.m_oarrExpFilter, pGlobFile.fPlik 
+			end if
+		end if
+		if pContainer.m_oarrExpFilter.Count() <= 0 then
+			MessageBox "Nie zdefiniowano żadnego schematu eksportu", "Kreator eksportu/importu", vbOKOnly, vbInformation
+			exit function
+		end if
+		pContainer.m_nChoosenFilter = 0
+	end if
+		
+	if (pContainer.m_strImportType <> IMPEXT and pContainer.m_strImportType <> EXPXML) then
+		pWizzard.add_step PAGE_WIZZARD_EXPORT_IMPORT_FILE_STEP
+	end if
+
+	dim bMiniImportFirma: bMiniImportFirma = false
+
+	if (trans_.isvar(APPVAR_SHORTIMPORT)) then
+		if (trans_.var(APPVAR_SHORTIMPORT) = 1) then
+			bMiniImportFirma = true
+		end if
+	else
+		trans_.var(APPVAR_SHORTIMPORT) = CLng(0)
+	end if
+	
+	if (pContainer.m_strImportType <> IMPXML and (not bMiniImportFirma)) then 
+		pWizzard.add_step PAGE_WIZZARD_EXPORT_IMPORT_FIELD_STEP
+	end if
+
+	if (pContainer.m_strImportType = EXPXML) then
+		pWizzard.add_step PAGE_WIZZARD_EXPORT_IMPORT_FILE_STEP
+	end if
+
+	pWizzard.add_step PAGE_WIZZARD_EXPORT_IMPORT_RESUME_STEP
+	
+	pWizzard.add_container pContainer
+	pWizzard.run
+end function
+
+
+'-------------------------------------------------------------------------------------------
+'
+'						OBSLUGA KROKOW WIZZARDA
+'
+'-------------------------------------------------------------------------------------------
+
+
+'-------------------------------------------------------------------------------------------
+' Inicjacja strony kroku wizzarda
+'-------------------------------------------------------------------------------------------
+function onPageInit(pWizzardPage)
+
+	with pWizzardPage.m_pContainer
+
+	select case ( pWizzardPage.m_nPage )
+
+		case PAGE_WIZZARD_EXPORT_IMPORT_FILE_STEP
+			
+#if appvarImportKind <> EXPXML
+			'Zainicjuj storne informacjami o dostepnych wersjach
+			'Navo Firma
+			dim pInstallModule
+			set pInstallModule = doc_.getmodule(60116)
+
+			dim pNVInfo
+			set pNVInfo = pInstallModule.get_navo_firma_info()
+
+			if (not pNVInfo is nothing) then
+
+				'Instalacja zrodla danych Navo Firma jezeli
+				'go nie ma i jezeli wybralismy import z Navo Firma
+				if (.m_strImportType = IMPFRM) then
+
+					if (pNVInfo.m_Sybase) then
+
+						'Tutaj tymczasowo inicjujemy kalsy eksportu 
+						'by sprawdzic czy zalogowanie do wersji Sybase
+						'jest mozliwe i jezeli nie jest podejmujemy
+						'probe instalacji odpowiednich plikow
+
+						dim pTempExportManager
+						set pTempExportManager = new CADOExportManager
+						
+						pTempExportManager.m_bOnlyLogonTest = true
+					
+						dim pImportContainer
+						set pImportContainer = new CImportContainer
+
+						if (not pImportContainer.database_logon("", "", "", false, pTempExportManager)) then
+
+							view_message 6314, 0
+
+							dim instses
+							set instses = createobject("navoinstall.session")
+							instses.setlogname "navoSPRZEDAZ Serwer Setup.txt"
+
+							doc_.getmodule(72002).install_FirmaODBC pInstallModule, instses, false, false
+
+							if (not pImportContainer.database_logon("", "", "", false, pTempExportManager)) then
+								'Jeszcze jedna próba ale z instalacją sterownika ODBC
+								doc_.getmodule(72002).install_FirmaODBC pInstallModule, instses, false, true
+							else
+								view_message 6315, 0
+							end if
+
+						end if
+
+						set pImportContainer = nothing
+						set pTempExportManager = nothing
+
+					end if
+
+				end if
+
+				'Ustaw wartości domyślne dla kontrolek
+				if (pNVInfo.m_Sybase and pNVInfo.m_MsSQL) then
+					.m_nNavoVersion = "SQL"
+					.m_nNavoShow = NV_ALL
+				elseif (pNVInfo.m_MsSQL) then
+					.m_nNavoVersion = "SQL"
+					.m_nNavoShow = NV_SQL
+				elseif (pNVInfo.m_Sybase) then
+					.m_nNavoVersion = "SYBASE"
+					.m_nNavoShow = NV_SYB
+				end if
+
+			end if
+#endif
+	end select
+
+	end with
+
+end function
+
+'-------------------------------------------------------------------------------------------
+' Wejscie w jakis krok wizzarda
+'-------------------------------------------------------------------------------------------
+function onPageEnter(pWizzardPage)
+
+	with pWizzardPage.m_pContainer
+	
+	select case ( pWizzardPage.m_nPage )
+	
+		case PAGE_WIZZARD_EXPORT_IMPORT_FILE_STEP
+#if appvarImportKind = EXPXML
+			'Ustaw zapamietana wczesniej sciezke dla wyboru plików
+			.m_strPath = getglobprofile( GLOBPROF_EXPORT_PATH )
+			.m_strPath = .get_suggested_path()
+			.m_strServer = getglobprofile( GLOBPROF_EXPORT_REMOTE_COMPUTER )
+#else			
+
+			'Jesli import z firmy inicjujemy specjalnie nasza
+			'strone wizzarda
+			if (.m_strImportType=IMPFRM) then
+
+				'Jakie mamy wersje Navo Firma
+				select case .m_nNavoShow
+					case NV_ALL
+						pWizzardPage.m_pPage.showNavoChoice()
+
+					case NV_NONE
+						pWizzardPage.m_pPage.showNoNavo()
+						
+					case NV_SYB
+						pWizzardPage.m_pPage.showNavoSybase()
+
+					case NV_SQL
+						pWizzardPage.m_pPage.showNavoPrestige()
+				end select
+
+			end if
+#endif
+		case PAGE_WIZZARD_EXPORT_IMPORT_RESUME_STEP:
+
+			if (.m_strImportType = IMPFRM) then
+				if (trans_.isvar(APPVAR_SHORTIMPORT)) then
+					if (trans_.var(APPVAR_SHORTIMPORT) = 1) then
+
+						'Ustawiamy opcje dla importu z Navo Firma
+						'dla wersji skroconej
+						dim pOptionsMod
+						set pOptionsMod = doc_.getmodule(20404)
+
+
+						pOptionsMod.set_container pWizzardPage.m_pContainer
+						pOptionsMod.MiniImport_Firma
+
+						set pOptionsMod = nothing
+
+					end if
+				end if
+			end if
+
+			select case .m_strImportType
+				
+				case EXPXML
+					if .m_nExportWay = 1 then
+						pWizzardPage.m_pPage.setFileInfo("do pliku " + .m_strPath)
+					else
+						pWizzardPage.m_pPage.setFileInfo("na komputer " + .m_strServer)
+					end if
+
+				case IMPXML
+					pWizzardPage.m_pPage.setFileInfo(.m_strPath)
+
+				case IMPXLS
+					pWizzardPage.m_pPage.setFileInfo(.m_strPath)
+
+				case IMPFRM
+					if (.m_nNavoVersion = "SQL") then 
+						pWizzardPage.m_pPage.setFileInfo("Wersja NAVO Prestige")
+					end if
+					if (.m_nNavoVersion = "SYBASE") then 
+						pWizzardPage.m_pPage.setFileInfo("Wersja NAVO Sybase")
+					end if
+
+			end select
+
+			'Wypełnij informacją o obiektach gdy jakieś są
+			pWizzardPage.m_pPage.fillObjsInfo
+
+#if appvarImportKind = EXPXML
+	case PAGE_WIZZARD_EXPORT_IMPORT_FIELD_STEP
+		pWizzardPage.m_pPage.fill_schemas
+#endif
+	end select
+
+	end with
+
+end function
+
+'-------------------------------------------------------------------------------------------
+' Wyjście ze strony wizzarda
+'-------------------------------------------------------------------------------------------
+function onPageExit(pWizzardPage)
+	onPageExit=PAGE_DEFAULT
+
+	with pWizzardPage.m_pContainer
+
+	select case ( pWizzardPage.m_nPage )
+
+		case PAGE_WIZZARD_EXPORT_IMPORT_FIELD_STEP:
+#if appvarImportKind = EXPXML
+			if .m_nChoosenFilter < 0 then
+				MessageBox "Aby kontynuować musisz wybrać jakiś schemat", "Kreator eksportu/importu", vbOKOnly, vbInformation
+				onPageExit = PAGE_DONOTEXIT
+				exit function				
+			end if
+#else
+#if appvarImportKind = IMPFRM
+		dim strCheckResult : strCheckResult = .NFIO.check()
+		if strCheckResult <> "" then
+			MessageBox strCheckResult, "Kreator eksportu/importu", vbOKOnly, vbInformation
+			onPageExit = PAGE_DONOTEXIT
+			exit function				
+		end if
+#else
+			if (.m_pItems.Count()=0) then
+				MessageBox "Aby kontynuować musisz wybrać jakieś pola.", "Kreator eksportu/importu", vbOKOnly, vbInformation
+				onPageExit = PAGE_DONOTEXIT
+				exit function				
+			end if
+#endif
+#endif
+		case PAGE_WIZZARD_EXPORT_IMPORT_FILE_STEP
+			'W przypadku importu z Navo Firma sprawdzamy
+			'czy jest jakas wersja NV
+			if (.m_strImportType=IMPFRM and .m_nNavoShow=NV_NONE) then
+					MessageBox "Nie ma w systemie wersji Navo Firma - nie można kontynuować.", "Kreator eksportu/importu", vbOKOnly, vbInformation
+					onPageExit = PAGE_DONOTEXIT
+					exit function
+			end if
+
+			'W przypadku import/eksportu z/do pliku sprawdzamy czy
+			'wybrano plik i ewentualnie czy on istenieje i jest
+			'poprawny
+			if (.m_strImportType=IMPXML or _
+				.m_strImportType=IMPXLS or _
+				.m_strImportType=EXPXML) then
+				
+				'Gdy mamy podana sciezke
+				if (.m_strPath <> "") then
+					
+					dim strDestPath
+					strDestPath = .m_strPath
+
+					dim pFD, bOK
+					set pFD = CFileDrive(bOK)
+
+					if (not bOK) then
+						view_message 6161, 0
+						onPageExit = PAGE_DONOTEXIT
+						exit function
+					end if
+
+					dim strFileName
+					strFileName = pFD.GetFileName( strDestPath )
+
+					'Sprawdzamy czy jest nazwa pliku
+					if (strFileName="") then
+						MessageBox "Nie podano nazwy pliku.", "Kreator eksportu/importu", vbOKOnly, vbInformation
+						onPageExit = PAGE_DONOTEXIT
+						exit function	
+					end if
+
+					'W przypadku importów plik musi istnieć
+					if (.m_strImportType <> EXPXML) then
+						
+						if (not pFD.isFile( .m_strPath )) then
+							MessageBox "Plik """ + CStr(.m_strPath) + """ nie istnieje.", "Kreator eksportu/importu", vbOKOnly, vbInformation
+							onPageExit = PAGE_DONOTEXIT
+							exit function
+						end if
+
+					else
+						
+						'Dodaj rozszerzenie nxd gdy nie podano
+						dim strCheckFileName
+						strCheckFileName = pFD.GetFileName( .m_strPath )
+
+						if (pFD.GetFileExtension( strCheckFileName )="" and strCheckFileName<>"") then
+							.m_strPath = .m_strPath + ".nxd"
+						end if
+						
+					end if
+
+				else 'path is empty
+					if .m_strImportType=EXPXML and .m_nExportWay = 1 then
+						MessageBox "Nie podano nazwy pliku.", "Kreator eksportu/importu", vbOKOnly, vbInformation
+						onPageExit=PAGE_DONOTEXIT
+						exit function	
+					end if
+				end if
+				if .m_strImportType=EXPXML and .m_nExportWay = 2 then
+					if trim(.m_strServer) = "" then
+						MessageBox "Nie podano nazwy komputera docelowego.", "Kreator eksportu/importu", vbOKOnly, vbInformation
+						onPageExit=PAGE_DONOTEXIT
+						exit function	
+					end if
+				end if
+			end if 'IMPXML, IMPXLS, EXPXML
+	end select
+
+	end with
+
+end function
+
+'-------------------------------------------------------------------------------------------
+' Zakończenie całego wizzarda
+'-------------------------------------------------------------------------------------------
+function onWizzardComplete(byref pWizzardPage): onWizzardComplete = false
+	NX_TRACE_START_STREAM("Import i eksport danych",nothing)
+	
+	with pWizzardPage.m_pContainer
+
+	'Wykonaj odpowiedni tym importu	
+	select case (.m_strImportType)
+		
+		case IMPFRM
+			if (.m_nNavoVersion = "SQL") then
+				onWizzardComplete = Import_FromFirma37(true, pWizzardPage.m_pContainer)
+			end if
+			if (.m_nNavoVersion = "SYBASE") then
+				onWizzardComplete = Import_FromFirma37(false, pWizzardPage.m_pContainer)
+			end if
+
+		case EXPXML
+
+			onWizzardComplete = exportXML( pWizzardPage.m_pContainer )
+			
+			'store path for later
+			if (onWizzardComplete) then
+				dim pSubTrans
+				set pSubTrans=trans_.createsubtran()
+						
+					if .m_nExportWay = 1 then
+						setglobprofile GLOBPROF_EXPORT_PATH, .m_strPath
+					else
+						setglobprofile GLOBPROF_EXPORT_REMOTE_COMPUTER, .m_strServer
+					end if
+						
+					trans_.saveobjects
+
+				set pSubTrans=nothing
+			end if
+
+		case IMPXML
+			onWizzardComplete = (importXML( .m_strPath ) = 0)
+
+		case IMPXLS
+      
+			onWizzardComplete = Import_FromExcel( .m_strPath, pWizzardPage.m_pContainer )
+
+		case IMPEXT
+			onWizzardComplete = Import_AdditionalData( pWizzardPage.m_pContainer)
+
+	end select
+
+	'Aktywuj naszą stronę
+	pWizzardPage.m_pPage.activate
+
+	'Komunikat czy się udało 
+	if (onWizzardComplete) then
+		trans_.var(GVAR_MODALRES)=CLng(1)
+		MessageBox "Operacja się powiodła", "Kreator eksportu/importu", vbOKOnly, vbInformation
+	else
+		MessageBox "Operacja się NIE powiodła", "Kreator eksportu/importu", vbOKOnly, vbInformation
+	end if
+
+	end with
+	NX_TRACE_SHOW_LOG(1)
+end function
+
+
+'-------------------------------------------------------------------------------------------
+'
+' 				    FUNCKJE IMPORTUJACE/EKSPORTUJACE
+'
+'-------------------------------------------------------------------------------------------
+
+
+'--------------------------------------------------------------------
+' Funkcja importu danych z NavoFirma
+'--------------------------------------------------------------------
+function Import_FromFirma37(byval bSQL, byref pWizzardContainer) : Import_FromFirma37 = false
+	dim pM60214 : set pM60214 = doc_.getmodule(60214)
+	
+	dim pForeignConn
+	if bSQL then
+		set pForeignConn = pM60214.connectFirmaSQL(pWizzardContainer.m_strServer)
+	else
+		set pForeignConn = pM60214.connectFirma38Sybase()
+	end if
+
+	if pForeignConn is nothing then
+		MessageBox "Połączenie z bazą danych NAVO Firma nieudane", "Kreator eksportu/importu", vbOKOnly, vbInformation
+		exit function
+	end if
+
+	'store
+	dim idUser : idUser = 0
+	if trans_.isvar(GVAR_USER) then
+		idUser = trans_.var(GVAR_USER)
+	end if
+	dim idRokKsieg : idRokKsieg = 0
+	if trans_.isvar(GVAR_ROKKSIEG) then
+		idRokKsieg = trans_.var(GVAR_ROKKSIEG)
+	end if
+
+	Import_FromFirma37 = g_pM60215.do_import(pForeignConn,pWizzardContainer.NFIO)
+
+	'restore
+	trans_.var(GVAR_USER) = idUser
+	trans_.var(GVAR_ROKKSIEG) = idRokKsieg
+	trans_.afc.userprofile.set_user trans_,trans_.var(GVAR_USER)
+end function
+
+'--------------------------------------------------------------------
+' Funkcja importu danych z pliku XLS (Excel)
+'--------------------------------------------------------------------
+function Import_FromExcel(byval strFileName, byref pImportContainer)
+	NX_TRACE_START_STREAM("Import z pliku XLS",nothing)
+
+#ifdef NEW_EXCEL_IMPORT
+	dim pM60214 : set pM60214 = doc_.getmodule(60214)
+	dim pForeignConn 
+	set pForeignConn = pM60214.connectExcel(strFileName)
+	if pForeignConn is nothing then
+		view_message1 6309, 0, strFileName
+		exit function
+	end if
+
+	dim pM60284	: set pM60284 = doc_.getmodule(60284)
+		dim oXLSIO : set oXLSIO = pM60284.new_excel_import_param()
+		dim i
+		for i = 0 to pImportContainer.m_pItems.upperIndex()
+			select case CLng(pImportContainer.m_pItems.value(i).m_nTypeID)
+
+			case TYPEID_N5KLIENT
+				oXLSIO.m_bCustomers = "1"
+
+			case TYPEID_N5PRODUKT
+				oXLSIO.m_bProducts = "1"
+			end select
+		next
+	Import_FromExcel = pM60284.do_import(pForeignConn,oXLSIO)
+#else
+
+	dim pContainer
+	set pContainer = new CExcelExpContainer
+
+	dim pExportManager
+	set pExportManager = new CADOExportManager
+
+	pContainer.setExport pExportManager
+
+	'Ustaw kontener exportu
+	pExportManager.setContainer pContainer
+
+	'Podlacz się do pliku excelowego
+	if (not pContainer.logon(strFileName, pExportManager)) then
+		view_message1 6309, 0, strFileName
+		exit function
+	end if
+
+	'Importuj poszczególne obiekty
+	dim i
+	for i = 0 to pImportContainer.m_pItems.upperIndex()
+
+		select case CLng(pImportContainer.m_pItems.value(i).m_nTypeID)
+		
+			case TYPEID_N5MIEJSCOWOSC
+				eksport_XLSMiejscowosc pExportManager, ""
+
+			case TYPEID_N5JEDNOSTKA
+				if (pImportContainer.m_pItems.value(i).m_strParam1 = "M") then
+					eksport_XLSJednostki pExportManager, ""
+				end if
+				
+			case TYPEID_N5KRAJ
+				eksport_XLSKraje pExportManager, ""
+				eksport_XLSWaluty pExportManager, ""
+
+			case TYPEID_N5WOJEWODZTWO
+				eksport_XLSWojewodztwo pExportManager, ""
+
+			case TYPEID_N5TYPDOKUMENTU
+				eksport_XLSTypDokumentu pExportManager, ""
+
+			case TYPEID_N5KLIENT
+				eksport_XLSKlient pExportManager, ""
+
+      case TYPEID_N5_KLIENT_JEDN_ORG
+			eksport_XLSKlientJO pExportManager, ""
+
+			case TYPEID_N5PRODUKT
+				eksport_XLSProdukt pExportManager, ""
+
+			case TYPEID_N5KONTO
+				eksport_XLSKonto pExportManager, ""
+
+			'nie moge dac typeid - wiersz na formularzu z wyborem obiektow do importu 
+			'jest juz dokmag ale inaczej sa kontrlki sformatowane
+			case 101620
+				eksport_XLSDokMag pExportManager, ""
+        
+      case TYPEID_N5ZLECPROD
+				eksport_XLSZlecProd pExportManager, ""  
+        
+      case TYPEID_N5PRACOWNIK
+				eksport_XLSPracownicy pExportManager, "" 
+
+			case TYPEID_N5ZAMOWIENIE
+				eksport_XLSZamowienia pExportManager, ""
+
+			case 101310
+				eksport_XLSCenniki pExportManager, ""
+
+      case TYPEID_N5OPAKOWANIE_PRODUKTU
+        eksport_XLSCenyKartotekowe pExportManager, ""
+
+			case TYPEID_N5RECEPTA
+				eksport_XLSRecepta pExportManager, ""        
+      case TYPEID_N5TRANSAKCJA
+        import_XLS_Transakcja strFileName
+      case TYPEID_N5GRUPAPRODUKTOW
+        import_XLS_Grupa_Prod strFileName
+      case TYPEID_N5DOWODKSIEG
+        import_XLS_Dowod_Ksiegowy strFileName
+      case 50122 'bo_kont
+        import_XLS_BO_Kont strFileName
+      case 50123
+        import_XLS_BO_Plac strFileName
+      case TYPEID_N5POJAZD
+        import_XLSPojazdy strFileName
+		end select
+	next
+
+
+	Import_FromExcel = pContainer.end_import()
+
+	pExportManager.performing_destroy
+  if not pContainer.m_oExtraInfo is nothing then
+  		dim pPage : set pPage = doc_.getpagehli("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=60166")
+      prepare_import_result_raport pPage.ctrl(1), pContainer.m_oExtraInfo
+		  pPage.domodalauto()
+  end if
+	set pExportManager = nothing
+	set pContainer = nothing
+  
+	NX_TRACE_SHOW_LOG(1)
+#endif
+
+end function
+
+function render_import_result_hdr(byref oTB, strTitle)
+  oTB.newrow.row.bold = true
+  oTB.newcell.addtext strTitle
+  oTB.cell.colspan=4
+ 
+  oTB.newrow.row.bold = true  
+  oTB.newcell.addtext "Indeks"
+  oTB.newcell.addtext "Nazwa"
+  oTB.newcell.addtext "Stara cena"
+  oTB.newcell.addtext "Nowa cena"  
+end function
+
+function render_import_result_row(byref oTB,byref oImpResItem)
+  oTB.newrow
+  oTB.newcell.addtext oImpResItem(1)
+  oTB.newcell.addtext oImpResItem(2)
+  
+  oTB.newcell.addtext doc_.afc.display.money(oImpResItem(3),"")
+  oTB.cell.align = ALIGN_RIGHT
+  oTB.cell.width = 2000
+  oTB.newcell.addtext doc_.afc.display.money(oImpResItem(4),"")
+  oTB.cell.align = ALIGN_RIGHT
+  oTB.cell.width = 2000
+  
+end function
+
+function prepare_import_result_raport(byref oTargetContainer, byref oImpResArray)
+	dim pPlugInTable : set pPlugInTable = oTargetContainer.addnew(CTRL_TYPE_TABLE,-1)
+	pPlugInTable.border = 1
+	dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(pPlugInTable)
+
+  dim iter
+  dim oImpResItem
+  
+  render_import_result_hdr pTB, "Zdrożało"
+  
+  for iter = 0 to oImpResArray(0).count - 1
+    set oImpResItem = oImpResArray(0)(iter)
+    render_import_result_row pTB,oImpResItem
+  next
+  
+  render_import_result_hdr pTB, "Staniało"
+  
+  for iter = 0 to oImpResArray(1).count - 1
+    set oImpResItem = oImpResArray(1)(iter)
+    render_import_result_row pTB,oImpResItem
+  next
+  render_import_result_hdr pTB,  "Bez zmian"
+
+  for iter = 0 to oImpResArray(2).count - 1
+    set oImpResItem = oImpResArray(2)(iter)
+    render_import_result_row pTB,oImpResItem
+ next
+end function
+
+'-----------------------------------------------------------------------------
+' Import dodatkowych danych kartotekowych
+'-----------------------------------------------------------------------------
+function Import_AdditionalData(byref pImportContainer): Import_AdditionalData = false
+
+	with pImportContainer.m_pItems 
+
+	dim i
+	for i=0 to .UpperIndex()
+
+		select case (.value(i).m_nTypeID)
+			case TYPEID_N5MIEJSCOWOSC
+				if (not imPreload(T_PODZIAL_TERYTORIALNY)) then
+					exit function
+				end if
+			
+			case TYPEID_N5INSTYTUCJA
+				if (.value(i).m_strParam1 = "US") then
+					if not imPreload(T_URZAD_SKRABOWY)then
+						exit function
+					end if	
+				end if
+			
+			case TYPEID_N5BRANZA
+				if (not imPreload(T_EKD)) then
+					exit function
+				end if	
+
+		end select
+
+	next
+
+	end with
+
+	if (not trans_.saveobjects) then
+		view_message 6159, 0
+		exit function
+	end if
+
+	Import_AdditionalData = true
+end function
+
+'-----------------------------------------------------------------------------
+' Eksport poszczególnych obiektów do pliku XML
+'-----------------------------------------------------------------------------
+function exportXML(byref pImportContainer): exportXML = false
+	dim pExportFilter : set pExportFilter = pImportContainer.m_oarrExpFilter.Value(pImportContainer.m_nChoosenFilter)
+	
+	if pImportContainer.m_nExportWay = 1 then
+		exportXML = (pExportFilter.perform(pImportContainer.m_strPath) = 0)
+	else
+		exportXML = (pExportFilter.perform_remote(pImportContainer.m_strServer,_
+			pImportContainer.m_strLogin,pImportContainer.m_strPass) = 0)
+	end if
+end function
+
+'-----------------------------------------------------------------------------
+' Import obiektów z pliku 
+'-----------------------------------------------------------------------------
+function importXML(byval strFileName)
+	dim pImportHelper : set pImportHelper =  doc_.getmodule(60211) 
+	importXML = pImportHelper.import_nxd_file_2_EB( strFileName )
+end function
+
+'-------------------------------------------------------------------------------------------
+' Sprawdza czy zaznaczono do eksportu Firme
+'-------------------------------------------------------------------------------------------
+function FirmaExist(byref pImportContainer): FirmaExist = false
+	dim i
+	for i = 0 to pImportContainer.m_pItems.UpperIndex()
+		if (pImportContainer.m_pItems.value(i).m_nTypeID = TYPEID_N5FIRMA) then
+			FirmaExist = true
+			exit function
+		end if
+	next
+end function
+
+'-------------------------------------------------------------------------------------------
+' Sprawdza czy zaznaczono użytkownika do eksportu
+'-------------------------------------------------------------------------------------------
+function UsersExist(byref pImportContainer): UsersExist = false
+	dim i
+	for i = 0 to pImportContainer.m_pItems.UpperIndex()
+		if (pImportContainer.m_pItems.value(i).m_nTypeID = TYPEID_N5UZYTKOWNIK) then
+			UsersExist = true
+			exit function
+		end if
+	next
+end function
+
+
+'-------------------------------------------------------------------------------------------
+'
+' 						 OBSŁUGA PERFORMING'A
+'
+'-------------------------------------------------------------------------------------------
+
+
+dim pPrerformingXMLImp
+set pPrerformingXMLImp = nothing
+dim strOldTextXMLImp
+
+'-----------------------------------------------------------------------------
+' Event: Torzymy performing
+'-----------------------------------------------------------------------------
+function ImportXML_CreatePerforming(byref pExpMan, byval strText)
+	if (pPrerformingXMLImp is nothing) then
+		page_.updateview
+		set pPrerformingXMLImp = doc_.performing( strText )
+		strOldTextXMLImp=strText
+		exit function
+	end if
+
+	pPrerformingXMLImp.text = strText
+	strOldTextXMLImp=strText
+end function
+
+'-----------------------------------------------------------------------------
+' Event: Niszczymy performing
+'-----------------------------------------------------------------------------
+function ImportXML_DestroyPerforming(byref pExpMan)
+	set pPrerformingXMLImp = nothing
+	strOldTextXMLImp = ""
+end function
+
+dim pPrerformingXML
+set pPrerformingXML = nothing
+
+dim strOldXMLText
+
+'-----------------------------------------------------------------------------
+' Event: Torzymy performing
+'-----------------------------------------------------------------------------
+function XMLExport_CreatePerforming(byref pExpMan, byval strToDisplay)
+	
+	if (strOldXMLText=strToDisplay) then
+		exit function
+	end if
+
+	if (pPrerformingXML is nothing) then
+		page_.updateview
+		set pPrerformingXML = doc_.performing( strToDisplay )
+		strOldXMLText = strToDisplay
+		exit function
+	end if
+
+	pPrerformingXML.text = strToDisplay
+	strOldXMLText = strToDisplay
+end function
+
+'-----------------------------------------------------------------------------
+' Event: Niszczymy performing
+'-----------------------------------------------------------------------------
+function XMLExport_DestroyPerforming(byref pExpMan)
+	set pPrerformingXML = nothing
+	strOldXMLText = ""
+end function
+
+'-----------------------------------------------------------------------------
+'import BO_plac
+'-----------------------------------------------------------------------------
+dim g_idSubPSRURL
+dim g_idSubPSRZUS
+dim g_idSubDPON 
+dim g_idSubDRON
+
+function import_XLS_BO_Plac(strFileName)
+dim idRejWyn : idRejWyn  = choose_rejestr_dok("N5REJESTRDOK_WYNAGR", true, "Wybór rejestru")
+if idRejWyn <= 0 then
+  trans_.message 0,0, "Brak rejestru wynagrodzeń"
+  exit function
+end if
+
+dim idSklBO :idSklBO = trans_.findobjid(TYPEID_N5PLSCHEMATNAL,"strKOD='BO'")
+if idSklBO <= 0 then
+  trans_.message 0,0, "Brak składnika wynagrodzeń 'Bilans Otwarcia'"
+  exit function
+end if
+
+g_idSubPSRZUS=trans_.findobjid(TYPEID_N5PLSUBKONTO,"strKod='PSRZUS'")
+g_idSubDPON=trans_.findobjid(TYPEID_N5PLSUBKONTO,"strKod='DPON'")
+g_idSubDRON=trans_.findobjid(TYPEID_N5PLSUBKONTO,"strKod='DRON'")
+g_idSubPSRURL=trans_.findobjid(TYPEID_N5PLSUBKONTO,"strKod='PSRURL'")
+
+if g_idSubPSRZUS <= 0 or g_idSubDPON <= 0 or g_idSubDRON <= 0 or g_idSubPSRURL <= 0 then
+  trans_.message 0,0, "Brak subkont niezbednych dla wczytania Bilansu Otwarcia"
+  exit function
+end if
+
+dim pM60214 : set pM60214 = doc_.getmodule(60214)
+dim pForeignConn 
+set pForeignConn = pM60214.connectExcel(strFileName)
+if pForeignConn is nothing then
+  trans_.message 0,0, "Otwarcie pliku " + strFileName + " nieudane"
+	exit function
+end if
+
+dim pADORS:	set pADORS = pForeignConn.connection.execute("select * from [BO_Plac$]")
+do while not pADORS.EOF
+
+  dim idPrac
+  dim curChor(12)
+  dim curUrl(3)
+
+  dim iter
+  for iter=1 to 12
+    curChor(iter) = ccur(0.0)
+  next
+  for iter=1 to 3
+    curUrl(iter)=ccur(0.0)
+  next
+  
+  if not isnull(pADORS("idobj").value) then
+    idPrac = clng(pADORS("idobj").value)
+    curChor(1) = ccur(pADORS("CM12").value)
+    curChor(2) = ccur(pADORS("CM11").value)
+    curChor(3) = ccur(pADORS("CM10").value)
+    curChor(4) = ccur(pADORS("CM9").value)
+    curChor(5) = ccur(pADORS("CM8").value)
+    curChor(6) = ccur(pADORS("CM7").value)
+    curChor(7) = ccur(pADORS("CM6").value)
+    curChor(8) = ccur(pADORS("CM5").value)
+    curChor(9) = ccur(pADORS("CM4").value)
+    curChor(10) = ccur(pADORS("CM3").value)
+    curChor(11) = ccur(pADORS("CM2").value)
+    curChor(12) = ccur(pADORS("CM1").value)
+
+    curUrl(1) = ccur(pADORS("UM3").value)
+    curUrl(2) = ccur(pADORS("UM2").value)
+    curUrl(3) = ccur(pADORS("UM1").value)
+ 
+    dim idUmowa, idPozSkl
+    if not fill_single_pozost_skl(idPrac, idSklBO, idUmowa, idPozSkl) then
+      trans_.message 0,0, "Zapis Pozostałych składników dla idPrac=" + cstr(idPrac) + " nieudany"
+      exit function
+    end if
+    if not fill_single_plac_bo(idRejWyn, idUmowa, idPozSkl, idPrac, curChor, curUrl) then
+      trans_.message 0,0, "Zapis Naliczenia dla idPrac=" + cstr(idPrac) + " nieudany"
+      exit function
+    end if
+  end if
+
+  pADORS.movenext
+loop
+end function
+
+function fill_single_pozost_skl(idPrac, idSklBO, byref idUmowa, byref idPozSkl)
+fill_single_pozost_skl = false
+
+dim oCursor : set oCursor = trans_.createadors("select top 1 idobj from n5plumowa where pPracownik=" + cstr(idPrac)+ " order by dDataOd")
+if oCursor.EOF then
+  trans_.message 0,0, "Brak umowy dla pracownika o idObj=" + cstr(idPrac)
+  exit function
+end if
+
+idUmowa = clng(oCursor("idobj"))
+dim oUmowa : set oUmowa= trans_.getobj(TYPEID_N5PLUMOWA, idUmowa)
+
+dim oPozostSkl : set oPozostSkl = trans_.newobj(TYPEID_N5PLPOZOSTALE)
+idPozSkl = oPozostSkl.idobj
+
+set oPozostSkl.pPracownik = trans_.getobj(TYPEID_N5PRACOWNIK, idPrac)
+set oPozostSkl.pUmowa = oUmowa
+oPozostSkl.dDataRej = oUmowa.dDataOd
+oPozostSkl.dDataOd = oUmowa.dDataOd
+oPozostSkl.dDataDo = oUmowa.dDataOd
+
+set oPozostSkl.listSkladnik.addnew().pSchemat = trans_.getobj(TYPEID_N5PLSCHEMATNAL, idSklBO)
+
+fill_single_pozost_skl = trans_.saveobjects()
+end function
+
+function fill_single_plac_bo(idRejWyn, idUmowa, idPozSkl, idPrac, curChor, curUrl)
+fill_single_plac_bo = false
+
+dim oUmowa : set oUmowa= trans_.getobj(TYPEID_N5PLUMOWA, idUmowa)
+
+dim idLP : idLP = trans_.findobjid(TYPEID_N5PLLISTAPLAC,_
+  "lppl_pRejestrDok=" + cstr(idRejWyn)+ " and dDataOd<=" + trans_.afc.convert.date2SQL(oUmowa.dDataOd) +_
+  " and dDataDo>=" + trans_.afc.convert.date2SQL(oUmowa.dDataOd))
+if idLP <= 0 then
+  trans_.message 0,0, "Brak listy płac dla dnia " + trans_.afc.display.fulldate(oUmowa.dDataOd)
+  exit function
+end if
+
+trans_.var(APPVAR_REJESTR_DOKUMENTOW) = idRejWyn
+trans_.var(APPVAR_LISTAPLACE) = idLP
+
+dim oNaliczenie : set oNaliczenie = trans_.newobj(TYPEID_N5PLNALICZENIE)
+set oNaliczenie.pPracownik = trans_.getobj(TYPEID_N5PRACOWNIK, idPrac)
+oNaliczenie.dDataRej = oUmowa.dDataOd
+oNaliczenie.dDataOd = oUmowa.dDataOd
+oNaliczenie.dDataDo = oUmowa.dDataOd
+set oNaliczenie.pRejestrDok = trans_.getobj(TYPEID_N5REJESTRDOK, idRejWyn)
+dim iter
+
+for iter = 1 to 12
+  with oNaliczenie.listDekret.addnew()
+    .nNumNal = oNaliczenie.nNumNal
+    set .pSubKonto=trans_.getobj(TYPEID_N5PLSUBKONTO, g_idSubPSRZUS)
+    .curKwota = curChor(iter)
+    .dDataNal = oNaliczenie.dDataNal
+    .nlpdokzrodl = clng(1)
+    .strOpis = "Miesiąc " + cstr(iter-13)
+    set .wrefdokument = trans_.getobj(TYPEID_N5PLPOZOSTALE, idPozSkl)
+  end with
+    with oNaliczenie.listDekret.addnew()
+    .nNumNal = oNaliczenie.nNumNal
+    set .pSubKonto=trans_.getobj(TYPEID_N5PLSUBKONTO, g_idSubDPON)
+    .curKwota = ccur(1.0)
+    .dDataNal = oNaliczenie.dDataNal
+    .nlpdokzrodl = clng(1)
+    .strOpis = "Miesiąc " + cstr(iter-13)
+    set .wrefdokument = trans_.getobj(TYPEID_N5PLPOZOSTALE, idPozSkl)
+  end with
+    with oNaliczenie.listDekret.addnew()
+    .nNumNal = oNaliczenie.nNumNal
+    set .pSubKonto=trans_.getobj(TYPEID_N5PLSUBKONTO, g_idSubDRON)
+    .curKwota = ccur(1.0)
+    .dDataNal = oNaliczenie.dDataNal
+    .nlpdokzrodl = clng(1)
+    .strOpis = "Miesiąc " + cstr(iter-13)
+    set .wrefdokument = trans_.getobj(TYPEID_N5PLPOZOSTALE, idPozSkl)
+  end with
+next
+
+for iter = 1 to 3
+  with oNaliczenie.listDekret.addnew()
+    .nNumNal = oNaliczenie.nNumNal
+    set .pSubKonto=trans_.getobj(TYPEID_N5PLSUBKONTO, g_idSubPSRURL)
+    .curKwota = curUrl(iter)
+    .dDataNal = oNaliczenie.dDataNal
+    .nlpdokzrodl = clng(1)
+    .strOpis = "Miesiąc " + cstr(iter-4)
+    set .wrefdokument = trans_.getobj(TYPEID_N5PLPOZOSTALE, idPozSkl)
+  end with
+next
+
+fill_single_plac_bo = trans_.saveobjects()
+end function
+
+'-----------------------------------------------------------------------------
+'import grup prod
+'-----------------------------------------------------------------------------
+function import_XLS_Grupa_Prod(strFileName)
+
+dim pM60214 : set pM60214 = doc_.getmodule(60214)
+dim pForeignConn 
+set pForeignConn = pM60214.connectExcel(strFileName)
+if pForeignConn is nothing then
+  trans_.message 0,0, "Otwarcie pliku " + strFileName + " nieudane"
+	exit function
+end if
+
+dim pADORS:	set pADORS = pForeignConn.connection.execute("select * from [GrupyProd$]")
+
+do while not pADORS.EOF
+  
+  dim strNazwa : strNazwa=""
+  dim strInx : strInx=""
+  dim strNazwaSuper:strNazwaSuper=""
+  
+  if not isnull(pADORS("Nazwa").value) then
+    strNazwa = trim(cstr(pADORS("Nazwa").value))
+  end if
+  if not isnull(pADORS("Indeks").value) then
+    strInx = trim(cstr(pADORS("Indeks").value))
+  end if
+  if not isnull(pADORS("NazwaNadGrupy").value) then
+    strNazwaSuper= trim(cstr(pADORS("NazwaNadGrupy").value))
+  end if
+ 
+  if strNazwa <> "" and strInx <> "" then
+    dim idGrupa : idGrupa = trans_.findobjid(TYPEID_N5GRUPAPRODUKTOW, "strNazwa='"+strNazwa+"'")
+    dim oGrupa
+    if idGrupa > 0 then
+      set oGrupa = trans_.getobj(TYPEID_N5GRUPAPRODUKTOW, idGrupa)      
+    else
+      set oGrupa = trans_.newobj(TYPEID_N5GRUPAPRODUKTOW)
+      oGrupa.strNazwa = strNazwa
+    end if
+    
+    if strNazwaSuper <> "" then
+      dim idGrupaSuper : idGrupaSuper = trans_.findobjid(TYPEID_N5GRUPAPRODUKTOW,"strNazwa='"+strNazwaSuper+"'")
+      if idGrupaSuper > 0 then
+        set oGrupa.pGrupaNadrzedna = trans_.getobj(TYPEID_N5GRUPAPRODUKTOW, idGrupaSuper)
+      end if
+    end if
+    
+#ifdef ENABLE_DB11_C
+  oGrupa.grp_strIndeks = strInx
+#endif
+#ifdef ENABLE_DB11_D
+  if not isnull(pADORS("Uwagi").value) then
+    oGrupa.grp_strUwagi = trim(cstr(pADORS("Uwagi").value))
+  end if 
+#endif
+  end if
+
+if not trans_.saveobjects() then
+  trans_.message 0,0,"Import grup nie powiódł się"
+end if
+
+  pADORS.movenext
+loop
+
+
+
+end function
+
+
+'-----------------------------------------------------------------------------
+'import grup prod
+'-----------------------------------------------------------------------------
+function import_XLSPojazdy(strFileName)
+
+dim pM60214 : set pM60214 = doc_.getmodule(60214)
+dim pForeignConn 
+set pForeignConn = pM60214.connectExcel(strFileName)
+if pForeignConn is nothing then
+  trans_.message 0,0, "Otwarcie pliku " + strFileName + " nieudane"
+	exit function
+end if
+
+dim pADORS:	set pADORS = pForeignConn.connection.execute("select * from [Pojazdy$]")
+
+dim nLP: nLP = 1
+do while not pADORS.EOF
+  
+  dim strMarka: strMarka = ""
+  dim strTyp: strTyp = ""
+  dim strPaliwo: strPaliwo = ""
+  dim strNrVin: strNrVin = ""
+  dim strNrRejOld: strNrRejOld = ""
+  dim strNrRejNew: strNrRejNew = ""
+  dim strPojemnosc: strPojemnosc = ""
+  dim strLadownosc: strLadownosc = ""
+  dim strRokProd: strRokProd = ""
+  dim strNrPolisyOC: strNrPolisyOC = ""
+  dim strDataPolisyOC: strDataPolisyOC = ""
+  dim strNrPolisyAC: strNrPolisyAC = ""
+  dim strDataPolisyAC: strDataPolisyAC = ""
+  dim strDataPrzeg: strDataPrzeg = ""
+  dim strStanLicznika: strStanLicznika = ""
+  dim strDataLicznika: strDataLicznika = ""
+  dim strPrzeglad: strPrzeglad = ""
+  dim strDataOponLet: strDataOponLet = ""
+  dim strRozOponLet: strRozOponLet = ""
+  dim strDataOponZim: strDataOponZim = ""
+  dim strNrKarty: strNrKarty = ""
+  dim strKlient: strKlient = ""
+  dim strNrUmowyLeasing: strNrUmowyLeasing = ""
+  dim strDataZakLeasing: strDataZakLeasing = ""
+  dim strOkresGwar: strOkresGwar = ""
+  dim strPracownik: strPracownik = ""
+  dim strJednOrg: strJednOrg = ""
+  dim strKwotaLeasing: strKwotaLeasing = ""
+  dim strRataLeasing: strRataLeasing = ""
+  dim strWaluta: strWaluta = ""
+  dim strUwagi: strUwagi = ""
+
+  'marka pojazdu
+  if not isnull(pADORS("Marka").value) then
+    strMarka = trim(cstr(pADORS("Marka").value))
+  end if
+  'leasingodawca
+  if not isnull(pADORS("Leasingodawca").value) then
+    strKlient = trim(cstr(pADORS("Leasingodawca").value))
+  end if
+  'Pracownik dedykowany
+  if not isnull(pADORS("Pracownik dedykowany").value) then
+    strPracownik = trim(cstr(pADORS("Pracownik dedykowany").value))
+  end if   
+  
+  if strMarka <> "" and strKlient <> "" and strPracownik <> "" then
+    dim idPracownik: idPracownik = trans_.findobjid(TYPEID_N5PRACOWNIK,"prac_strIndeks = '" + strPracownik + "'")
+  
+    dim idKlient: idKlient = trans_.findobjid(TYPEID_N5KLIENT, "strIndeks = '" + strKlient + "'")
+    if idKlient <= 0 then
+      idKlient = trans_.findobjid(TYPEID_N5KLIENT, "strSkrot = '" + strKlient + "'")
+    end if
+    
+    if idKlient > 0 and idPracownik > 0 then
+      dim idPojazd: idPojazd = trans_.findobjid(TYPEID_N5POJAZD, "poj_strMarka = '" + strMarka + "'")
+      dim oPojazd
+      if idPojazd > 0 then
+        set oPojazd = trans_.getobj(TYPEID_N5POJAZD, idPojazd)      
+      else
+        set oPojazd = trans_.newobj(TYPEID_N5POJAZD)
+        oPojazd.poj_strMarka = strMarka
+      end if
+      
+      'leasingodawca
+      set oPojazd.poj_pKlient = trans_.getobj(TYPEID_N5KLIENT,idKlient)
+      
+      'pracownik dedykowany
+      set oPojazd.poj_pPracownik = trans_.getobj(TYPEID_N5PRACOWNIK,idPracownik)
+      
+      'typ
+      if not isnull(pADORS("Typ pojazdu").value) then
+        strTyp = trim(cstr(pADORS("Typ pojazdu").value))
+        if strTyp <> "" then
+          oPojazd.poj_eTyp = clng(strTyp)
+        end if
+      end if
+      
+      'Rodzaj paliwa
+      if not isnull(pADORS("Rodzaj paliwa").value) then
+        strPaliwo = trim(cstr(pADORS("Rodzaj paliwa").value))
+        oPojazd.poj_strPaliwo = strPaliwo
+      end if 
+      
+      'Numer nadwozia
+      if not isnull(pADORS("Numer nadwozia").value) then
+        strNrVin = trim(cstr(pADORS("Numer nadwozia").value))
+        oPojazd.poj_strNrVin = strNrVin
+      end if  
+      
+      'Numer rejestracyjny stary
+      if not isnull(pADORS("Numer rejestracyjny stary").value) then
+        strNrRejOld = trim(cstr(pADORS("Numer rejestracyjny stary").value))
+        oPojazd.poj_strNrRejOld = strNrRejOld
+      end if 
+      
+      'Numer rejestracyjny nowy
+      if not isnull(pADORS("Numer rejestracyjny nowy").value) then
+        strNrRejNew = trim(cstr(pADORS("Numer rejestracyjny nowy").value))
+        oPojazd.poj_strNrRejNew = strNrRejNew
+      end if 
+      
+      'Pojemnosc silnika
+      if not isnull(pADORS("Pojemnosc silnika").value) then
+        strPojemnosc = trim(cstr(pADORS("Pojemnosc silnika").value))
+        oPojazd.poj_strPojemnosc = strPojemnosc
+      end if 
+      
+      'Ladownosc
+      if not isnull(pADORS("Ladownosc").value) then
+        strLadownosc = trim(cstr(pADORS("Ladownosc").value))
+        oPojazd.poj_strLadownosc = strLadownosc
+      end if   
+      
+      'Rok produkcji
+      if not isnull(pADORS("Rok produkcji").value) then
+        strRokProd = trim(cstr(pADORS("Rok produkcji").value))
+        if strRokProd <> "" then
+          oPojazd.poj_iRokProd = clng(strRokProd)
+        end if
+      end if 
+      
+      'Oddzial
+      if not isnull(pADORS("Oddzial").value) then
+        strJednOrg = trim(cstr(pADORS("Oddzial").value))
+        dim idJednOrg: idJednOrg = trans_.findobjid(TYPEID_N5JEDN_ORG,"strNazwa = '" + strJednOrg + "'")
+        if idJednOrg > 0 then
+          set oPojazd.poj_pJednOrg = trans_.getobj(TYPEID_N5JEDN_ORG,idJednOrg)
+        end if
+      end if       
+      
+      'Numer polisy OC
+      if not isnull(pADORS("Numer polisy OC").value) then
+        strNrPolisyOC = trim(cstr(pADORS("Numer polisy OC").value))
+        oPojazd.poj_strNrPolisyOC = strNrPolisyOC
+      end if 
+      
+      'Data waznosci polisy OC
+      if not isnull(pADORS("Data waznosci polisy OC").value) then
+        strDataPolisyOC = trim(cstr(pADORS("Data waznosci polisy OC").value))
+        oPojazd.poj_dDataPolisyOC = cdate(strDataPolisyOC)
+      end if     
+      
+      'Numer polisy AC
+      if not isnull(pADORS("Numer polisy AC").value) then
+        strNrPolisyAC = trim(cstr(pADORS("Numer polisy AC").value))
+        oPojazd.poj_strNrPolisyAC = strNrPolisyAC
+      end if    
+      
+      'Data waznosci polisy AC
+      if not isnull(pADORS("Data waznosci polisy AC").value) then
+        strDataPolisyAC = trim(cstr(pADORS("Data waznosci polisy AC").value))
+        oPojazd.poj_dDataPolisyAC = cdate(strDataPolisyAC)
+      end if  
+      
+      'Data przegladu
+      if not isnull(pADORS("Data przegladu").value) then
+        strDataPrzeg = trim(cstr(pADORS("Data przegladu").value))
+        oPojazd.poj_dDataPrzeg = cdate(strDataPrzeg)
+      end if        
+      
+      'Stan licznika
+      if not isnull(pADORS("Stan licznika").value) then
+        strStanLicznika = trim(cstr(pADORS("Stan licznika").value))
+        if strStanLicznika <> "" then
+          oPojazd.poj_iStanLicznika = clng(strStanLicznika)
+        end if
+      end if  
+      
+      'Data aktualizacji licznika
+      if not isnull(pADORS("Data aktualizacji licznika").value) then
+        strDataLicznika = trim(cstr(pADORS("Data aktualizacji licznika").value))
+        oPojazd.poj_dDataLicznika = cdate(strDataLicznika)
+      end if  
+      
+      'Przeglad techniczny
+      if not isnull(pADORS("Przeglad techniczny").value) then
+        strPrzeglad = trim(cstr(pADORS("Przeglad techniczny").value))
+        oPojazd.poj_strPrzeglad = strPrzeglad
+      end if  
+      
+      'Data zakupu opon letnich
+      if not isnull(pADORS("Data zakupu opon letnich").value) then
+        strDataOponLet = trim(cstr(pADORS("Data zakupu opon letnich").value))
+        oPojazd.poj_dDataOponLet = cdate(strDataOponLet)
+      end if   
+      
+      'Rozmiar opon letnich
+      if not isnull(pADORS("Rozmiar opon letnich").value) then
+        strRozOponLet = trim(cstr(pADORS("Rozmiar opon letnich").value))
+        oPojazd.poj_strRozOponLet = strRozOponLet
+      end if   
+      
+      'Data zakupu opon zimowych
+      if not isnull(pADORS("Data zakupu opon zimowych").value) then
+        strDataOponZim = trim(cstr(pADORS("Data zakupu opon zimowych").value))
+        oPojazd.poj_dDataOponZim = cdate(strDataOponZim)
+      end if   
+      
+      'Nr karty stacji paliw
+      if not isnull(pADORS("Nr karty stacji paliw").value) then
+        strNrKarty = trim(cstr(pADORS("Nr karty stacji paliw").value))
+        oPojazd.poj_strNrKarty = strNrKarty
+      end if 
+      
+      'Nr umowy leasingowej
+      if not isnull(pADORS("Nr umowy leasingowej").value) then
+        strNrUmowyLeasing = trim(cstr(pADORS("Nr umowy leasingowej").value))
+        oPojazd.poj_strNrUmowyLeasing = strNrUmowyLeasing
+      end if  
+      
+      'Data zakonczenia leasingu
+      if not isnull(pADORS("Data zakonczenia leasingu").value) then
+        strDataZakLeasing = trim(cstr(pADORS("Data zakonczenia leasingu").value))
+        oPojazd.poj_dDataZakLeasing = cdate(strDataZakLeasing)
+      end if    
+      
+      'Okres gwarancji
+      if not isnull(pADORS("Okres gwarancji").value) then
+        strOkresGwar = trim(cstr(pADORS("Okres gwarancji").value))
+        oPojazd.poj_strOkresGwar = strOkresGwar
+      end if       
+      
+      'Kwota leasingu
+      if not isnull(pADORS("Kwota leasingu").value) then
+        strKwotaLeasing = trim(cstr(pADORS("Kwota leasingu").value))
+        if strKwotaLeasing <> "" then
+          oPojazd.poj_curKwotaLeasing = ccur(strKwotaLeasing)
+        end if
+      end if
+      
+      'Wielkosc raty leasingu
+      if not isnull(pADORS("Wielkosc raty leasingu").value) then
+        strRataLeasing = trim(cstr(pADORS("Wielkosc raty leasingu").value))
+        if strRataLeasing <> "" then
+          oPojazd.poj_curRataLeasing = ccur(strRataLeasing)
+        end if
+      end if     
+      
+      'Waluta leasingu
+      if not isnull(pADORS("Waluta leasingu").value) then
+        strWaluta = trim(cstr(pADORS("Waluta leasingu").value))
+        dim idWaluta: idWaluta = trans_.findobjid(TYPEID_N5JEDNOSTKA,"strSkrot = '" + strWaluta + "'")
+        if idWaluta > 0 then
+          set oPojazd.poj_pWaluta = trans_.getobj(TYPEID_N5JEDNOSTKA,idWaluta)
+        end if
+      end if       
+      
+      'Uwagi
+      if not isnull(pADORS("Uwagi").value) then
+        strUwagi = trim(cstr(pADORS("Uwagi").value))
+        oPojazd.poj_strUwagi = strUwagi
+      end if     
+      
+      if not trans_.saveobjects() then
+        trans_.message 0,0,"Import pojazdów nie powiódł się."
+      end if      
+      
+    else
+      if idKlient = 0 then
+        MessageBox "Pomijam pozycję " + cstr(nLP) + " - nie mogę wyszukać klienta o indeksie lub skrócie: " + strKlient, "Nieprawidłowa sytuacja", vbOkOnly, vbInformation
+      else
+        if idPracownik = 0 then
+          MessageBox "Pomijam pozycję " + cstr(nLP) + " - nie mogę wyszukać pracownika o indeksie: " + strPracownik, "Nieprawidłowa sytuacja", vbOkOnly, vbInformation
+        end if
+      end if
+    end if
+    
+  end if
+
+  pADORS.movenext
+  nLP = nLP + 1
+loop
+
+end function
+
+
+'-----------------------------------------------------------------------------
+'import transakcji
+'-----------------------------------------------------------------------------
+function import_XLS_Transakcja(strFileName)
+
+dim pM60214 : set pM60214 = doc_.getmodule(60214)
+dim pForeignConn 
+set pForeignConn = pM60214.connectExcel(strFileName)
+if pForeignConn is nothing then
+  trans_.message 0,0, "Otwarcie pliku " + strFileName + " nieudane"
+	exit function
+end if
+
+dim pADORS:	set pADORS = pForeignConn.connection.execute("select * from [TransakcjeKl$]")
+
+do while not pADORS.EOF
+  
+  dim strSymTrans : strSymTrans=""
+  dim strInxKlient : strInxKlient=""
+  dim dDataRozp: dDataRozp = trans_.var(GVAR_TODAY)
+  dim dDataWym: dDataWym= trans_.var(GVAR_TODAY)
+  dim eTyp : eTyp = 0
+  dim curWn:curWn=ccur(0.0)
+  dim curMa:curMa=ccur(0.0)
+  dim curWnEwid:curWnEwid=ccur(0.0)
+  dim curMaEwid:curMaEwid=ccur(0.0)
+  dim strWal : strWal = "PLN"
+  dim curKurs : curKurs = ccur(1.0)
+    
+  if not isnull(pADORS("Transakcja").value) then
+    strSymTrans = trim(cstr(pADORS("Transakcja").value))
+    
+    if not isnull(pADORS("Indeks").value) then
+      strInxKlient = trim(cstr(pADORS("Indeks").value))
+    end if
+    if not isnull(pADORS("DataRozp").value) then
+      dDataRozp = cdate(pADORS("DataRozp").value)
+    end if
+    if not isnull(pADORS("DataWym").value) then
+      dDataWym = cdate(pADORS("DataWym").value)
+    end if
+    if not isnull(pADORS("Typ").value) then
+      eTyp = clng(trim(cstr(pADORS("Typ").value)))
+    end if
+    if not isnull(pADORS("Winien").value) then
+      curWn = ccur(pADORS("Winien").value)
+    end if
+    if not isnull(pADORS("Ma").value) then
+      curMa = ccur(pADORS("Ma").value)
+    end if
+    if not isnull(pADORS("WinienEwid").value) then
+      curWnEwid = ccur(pADORS("WinienEwid").value)
+    end if
+    if not isnull(pADORS("MaEwid").value) then
+      curMaEwid = ccur(pADORS("MaEwid").value)
+    end if
+    if not isnull(pADORS("Waluta").value) then
+      strWal = trim(cstr(pADORS("Waluta").value))
+    end if
+    if not isnull(pADORS("Kurs").value) then
+      curKurs = ccur(pADORS("Kurs").value)
+    end if
+    
+    dim idKlient : idKlient = trans_.findobjid(TYPEID_N5KLIENT,"strIndeks='"+strInxKlient+"'")
+    if idKlient <= 0 then
+      trans_.message 0,0, "Pomijam transakcje dla nieznanego klienta o indeksie " + strInxKlient
+    else
+      dim idTrans : idTrans = trans_.findobjid(TYPEID_N5TRANSAKCJA,_
+        "strSymTrans='"+strSymTrans+"' and wrefPodmiot_wrt=TYPEID_N5KLIENT and wrefPodmiot=" + cstr(idKlient))
+      if idTrans <= 0 then
+        dim oTransOper:set oTransOper = trans_.newobj(TYPEID_N5TRANSAKCJA_OPERACJA)
+	      
+        dim oTrans:set oTrans= trans_.newobj(TYPEID_N5TRANSAKCJA)
+        set oTrans.wrefPodmiot = trans_.getobj(TYPEID_N5KLIENT, idKlient)
+        with oTrans
+          .strSymTrans=strSymTrans
+          .eTyp = eTyp
+          .dDataRozp = dDataRozp
+          .dDataWym = dDataWym
+          if strWal <> "" then
+            dim idWaluta:idWaluta=trans_.findobjid(TYPEID_N5JEDNOSTKA,"strSkrot='" + strWal + "'")
+            if idWaluta <= 0 then
+              trans_.message 0,0, "Nieznana waluta " + strWal + ". Import niemożliwy"
+              exit function
+            end if
+            set .pWaluta = trans_.getobj(TYPEID_N5JEDNOSTKA, idWaluta)
+          else
+            set .pWaluta = getCurrentFirma().pWaluta
+          end if
+        end with
+        
+ 		  with oTransOper
+				  .trop_dDataOp = dDataRozp
+          set .trop_pTransakcja = oTrans
+          .trop_curKursOp = curKurs
+          .trop_curWn = curWn
+          .trop_curMa = curMa
+          .trop_curWnEwid = curWnEwid
+          .trop_curMaEwid = curMaEwid
+          .trop_strOpis = "BO"
+        end with
+      else  
+        trans_.message 0,0, "Pomijam istniejącą transakcje o symbolu " + strSymTrans
+      end if
+    end if
+  end if
+
+  pADORS.movenext
+loop
+
+if not trans_.saveobjects() then
+  trans_.message 0,0,"Import rozrachunków nie powiódł się"
+end if
+
+end function
+
+function import_XLS_BO_Kont(strFileName)
+  import_XLS_Dowod_Ksiegowy_lub_BO strFileName, true
+end function
+
+function import_XLS_Dowod_Ksiegowy(strFileName)
+  import_XLS_Dowod_Ksiegowy_lub_BO strFileName, false
+end function
+
+function import_XLS_Dowod_Ksiegowy_lub_BO(strFileName, bBO)
+
+  dim idRejBO 
+  if bBO then
+    idRejBO = choose_rejestr_dok("N5REJESTRDOK_DZIENNIK_BO", true, "Wybór dziennika BO")
+  else
+    idRejBO = choose_rejestr_dok("N5REJESTRDOK_DZIENNIK_NORM", true, "Wybór dziennika")
+  end if
+
+  if idRejBO <= 0 then
+    trans_.message 0,0, "Nie wybrano lub brak właściwego dziennika"
+    exit function
+  end if
+  
+  trans_.var(APPVAR_DZIENNIK_DK) = idRejBO
+
+  dim pM60214 : set pM60214 = doc_.getmodule(60214)
+  dim pForeignConn 
+  set pForeignConn = pM60214.connectExcel(strFileName)
+  if pForeignConn is nothing then
+    trans_.message 0,0, "Otwarcie pliku " + strFileName + " nieudane"
+	  exit function
+  end if
+
+  dim pADORS
+  if bBO then
+    set pADORS = pForeignConn.connection.execute("select * from [BO_Kont$]")
+  else
+    set pADORS = pForeignConn.connection.execute("select * from [DowodKsiegowy$]")
+  end if
+
+  dim oDowKsieg : set oDowKsieg = trans_.newobj(TYPEID_N5DOWODKSIEG)
+
+  do while not pADORS.EOF
+    dim strSymKonta : strSymKonta =""
+    dim strSymTrans : strSymTrans =""
+    dim curWn:curWn=ccur(0.0)
+    dim curMa:curMa=ccur(0.0)
+    dim strOpis : strOpis = ""  
+    
+    if not isnull(pADORS("SymbolKonta").value) then
+      strSymKonta = trim(cstr(pADORS("SymbolKonta").value))
+    
+      if not isnull(pADORS("Transakcja").value) then
+        strSymTrans = trim(cstr(pADORS("Transakcja").value))
+      end if
+      
+      if not isnull(pADORS("Opis").value) then
+        strOpis = trim(cstr(pADORS("Opis").value))
+      end if
+  
+      if not isnull(pADORS("Wn").value) then
+        curWn = ccur(pADORS("Wn").value)
+      end if
+    
+      if not isnull(pADORS("Ma").value) then
+        curMa = ccur(pADORS("Ma").value)
+      end if    
+    
+      dim idKonto : idKonto = trans_.findobjid(TYPEID_N5KONTO, "strSymbol='" + strSymKonta + "'")
+      if idKonto <= 0 then
+        trans_.message 0,0,"Brak konta o symbolu " + strSymKonta
+        exit function
+      end if
+      dim oKonto : set oKonto = trans_.getobj(TYPEID_N5KONTO, idKonto)
+      if oKonto.eAnalit <> N5KONTO_ANALITYCZNE then
+        trans_.message 0,0,"Konto " + strSymKonta + " nie jest analityczne"
+        exit function
+      end if
+     dim oTrans:set oTrans= nothing
+        
+      if strSymTrans <> "" then
+        if oKonto.wrefPodmiotRozrach is nothing then
+          trans_.message 0,0,"Konto " + strSymKonta + " nie jest jest rozrachunkowe"
+          exit function
+        end if
+      
+        dim idTrans : idTrans = trans_.findobjid(TYPEID_N5TRANSAKCJA,_
+        "strSymTrans='"+strSymTrans+"' and wrefPodmiot_wrt=" + cstr(oKonto.wrefPodmiotRozrach.type) + " and wrefPodmiot=" + cstr(oKonto.wrefPodmiotRozrach.idObj))
+        if idTrans <= 0 then
+          trans_.message 0,0,"Brak transakcji o symbolu " + strSymTrans
+          exit function
+        end if
+        set oTrans = trans_.getobj(TYPEID_N5TRANSAKCJA, idTrans)
+      end if
+    
+      dim oDekret : set oDekret = oDowKsieg.listDekret.addnew()
+      with oDekret
+        set .pKonto = oKonto
+        .curWn = curWn
+        .curMa = curMa
+        .strOpis = strOpis
+        set .pTransakcja = oTrans
+      end with
+      
+    end if
+    
+    pADORS.movenext
+  loop
+
+  if not trans_.saveobjects() then
+    trans_.message 0,0,"Import nie powiódł się"
+  end if
+
+end function
+
+]]>
+
+    </script>
+  </config>
+
+  <body>
+  </body>
+
+</page>

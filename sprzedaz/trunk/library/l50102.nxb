@@ -1,0 +1,177 @@
+#ifndef LIBRARY_50102
+#define LIBRARY_50102
+
+'zabawa listami wyboru z kart
+
+
+' usuniêcie z wybranej listy
+'hli.prop(100) - id listy z ktorej usuwamy
+'hli.prop(101) - lp elementu ktury usuwamy
+'hli.prop(102) - nTypeId listy
+function delete_from_choicelist_hli(byref hli)
+
+	dim id_list:id_list = clng(hli.prop(100))
+	dim lp_elem:lp_elem = clng(hli.prop(101))
+	dim type_id:type_id = clng(hli.prop(102))
+
+	if id_list = 0 then
+		delete_from_unknown_choicelist(type_id)
+		exit function
+	end if
+
+	dim pChoiceList
+	set pChoiceList=trans_.getobj(TYPEID_CHOICELIST, id_list)
+	if MessageBox("Chcesz usun¹æ element z listy " + pChoiceList.strNazwa + "?", "Usuwanie", vbYesNo, vbQuestion )=vbYes then
+		pChoiceList.listElement.delete(lp_elem)
+		trans_.saveobjects()
+	end if
+
+end function
+
+'usuniecie z listy - nie wiemy czy na niej jest ale chcemy miec pewnosc ze go tam nie bedize...
+function delete_from_unknown_choicelist(byval nTypeId)
+	dim strWhere:strWhere = "nTypeID=" + cstr(nTypeId)+ " and " + doc_.getmodule(60106).GetWHERE_ForCheckRights(STDR_READ,TYPEID_CHOICELIST,"choicelist",trans_.var(GVAR_USER))
+	dim id_list:id_list = fire_choice_list(TYPEID_CHOICELIST,"","",strWhere,"","")
+	dim list,elem
+
+	if id_list <> 0 then
+		set list = trans_.getobj(TYPEID_CHOICELIST, id_list)
+		if list is nothing then
+			exit function
+		end if
+
+		dim iter:iter=1
+		for each elem in list.listElement			
+			if elem.idElement = page_.root.idobj then
+				list.listElement.delete(iter)
+			else
+				iter = iter+1
+			end if
+		next
+
+		if not trans_.saveobjects() then
+			trans_.message 7000 , 0 , "nie uda³o siê usun¹c elementu z listy..."
+		end if
+
+	end if
+
+end function
+
+
+'dodawani e elementu do listy wyboru - wo³ane z hli
+'hli.prop(100) - typeid listy wyboru
+'hli.prop(101) - id elementu ktory do listy chcemy dodac
+function add_to_choicelist(byref hli)
+
+	dim type_id:type_id = clng(hli.prop(100))
+	dim id_element:id_element = clng(hli.prop(101))
+
+	dim strWhere:strWhere = "nTypeID="+ CStr(type_id) + " and " + doc_.getmodule(60106).GetWHERE_ForCheckRights(STDR_UPDATE,TYPEID_CHOICELIST,"choicelist",trans_.var(GVAR_USER))  
+	
+	trans_.var(APPVAR_CHOICELIST_TYPEID) = CLng(type_id)
+
+	dim choice : choice = fire_choice_list( TYPEID_CHOICELIST, "Wybór listy wyboru", "strNazwa", strWhere, "", "")
+	
+	if choice <> 0 then
+		dim ChoiceList: set ChoiceList = trans_.getobj(TYPEID_CHOICELIST, choice)
+		if ChoiceList is nothing then
+			exit function
+		end if
+
+		dim perf
+		set perf = doc_.performing("Trwa dodawanie elementu i zapis danych")
+
+		if not ChoiceList.choicelist_addnew(page_.root.idobj) then
+			set perf = nothing
+			exit function
+		end if
+
+		
+		if not trans_.saveobjects then
+			trans_.message 7000 , 0 , "Nie dodano elementu do listy - nie uda³ siê zapis danych."
+		else
+			trans_.message 5000 , 0 , "Dodano element do listy."
+		end if
+
+		set perf = nothing
+	end if	
+
+end function
+
+
+
+private function choice_list_move_item(byval IdElement, byval IdSrcList,byval IdDestList)
+
+	choice_list_move_item = false
+
+	if IdSrcList = 0 or IdDestList = 0 then
+		exit function
+	end if
+
+	dim pSourceList:set pSourceList = trans_.getobj(TYPEID_CHOICELIST,IdSrcList)
+	dim pDestList:set pDestList = trans_.getobj(TYPEID_CHOICELIST,IdDestList)
+
+
+	dim iter:iter=1
+	dim elem,pNew
+	for each elem in pSourceList.listElement				
+		if elem.idElement = IdElement then			
+			if pDestList.choicelist_addnew(IdElement) then
+				pSourceList.listElement.delete(iter)
+				choice_list_move_item = true
+			else
+				choice_list_move_item = false
+			end if
+			exit function
+		else
+			iter = iter+1
+		end if
+	next
+
+	trans_.message 7000 , 0 , "Nie znaleziono obiektu na liscie Ÿród³owej."			
+	
+end function
+
+
+private function choice_list_move_item_save(byval IdElement, byval IdSrcList,byval IdDestList)
+	choice_list_move_item_save = false
+	if choice_list_move_item(IdElement,IdSrcList,IdDestList) then
+		choice_list_move_item_save = trans_.saveobjects()
+	else
+		choice_list_move_item_save = false
+	end if
+end function
+
+
+
+function choice_list_move_item_hli(hli)
+
+	dim idElement:idElement = clng(hli.prop(1))'id elementu do przesuniêcia
+	dim nTypeId:nTypeId = clng(hli.prop(2))'typeid tego elementu
+
+	'tutaj wybieramy tylko z tych list, ktore zawieraj¹ element
+	dim strWhere1:strWhere1 = "idobj in (select p_idobj from vlist_choicelist_listElement where p_nTypeId="+ CStr(nTypeId) +" and c_idElement = " + cstr(idElement) + " ) and " + doc_.getmodule(60106).GetWHERE_ForCheckRights(STDR_UPDATE,TYPEID_CHOICELIST,"choicelist",trans_.var(GVAR_USER))  	
+	dim strWhere:strWhere =  "nTypeID="+ CStr(nTypeId) + " and " + doc_.getmodule(60106).GetWHERE_ForCheckRights(STDR_UPDATE,TYPEID_CHOICELIST,"choicelist",trans_.var(GVAR_USER))  	
+	trans_.var(APPVAR_CHOICELIST_TYPEID) = CLng(nTypeId)
+
+	dim idSrcList : idSrcList = fire_choice_list( TYPEID_CHOICELIST, "Wybór listy Ÿród³owej", "strNazwa", strWhere1, "" , "")
+
+	if idSrcList <> 0 then
+		dim idDestList : idDestList = fire_choice_list( TYPEID_CHOICELIST, "Wybór listy docelowej", "strNazwa", strWhere, "", "")
+		if idSrcList <> 0 then
+			dim perf:set perf = doc_.performing("Trwa przenoszenie elementów i zapis danych")
+			if choice_list_move_item_save(IdElement,IdSrcList,IdDestList) then
+				trans_.message 7000 , 0 , "przeniesiono obiekt pomiêdzy listami"				
+			else
+				trans_.message 7000 , 0 , "nie uda³o siê przenieœæ obiektów"			
+			end if
+			set perf = nothing
+		end if		
+	end if		
+
+end function
+
+
+
+
+#endif

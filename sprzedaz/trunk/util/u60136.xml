@@ -1,0 +1,2426 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1200.h"
+#include "h1201.h"
+#include "h1203_appconfig.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1234.h"
+#include "h1250.h"
+
+
+PAGE_MODULE_RAPORT_CALLER
+
+wywoływacz raportów
+
+#define CONDITION_EWID    1
+
+#ifdef _METROX
+#undef CONDITION_EWID
+#define CONDITION_EWID    0
+#endif 
+
+#ifdef _FRAM
+#undef CONDITION_EWID
+#define CONDITION_EWID    0
+#endif 
+
+#ifdef _LABELMARKET
+#undef CONDITION_EWID
+#define CONDITION_EWID    0
+#endif 
+
+#ifdef _ABAKUS
+#undef CONDITION_EWID
+#define CONDITION_EWID    0
+#endif 
+
+#ifdef _PAKART
+#undef CONDITION_EWID
+#define CONDITION_EWID    0
+#endif 
+
+#ifdef _TORAL
+#undef CONDITION_EWID
+#define CONDITION_EWID    0
+#endif 
+
+-->
+<page>
+<config>
+<script>
+<![CDATA[
+
+'asp_raport_appfile
+#include "50518"	
+
+'LicUMUI
+#include "50101"
+
+'MessageBox
+#include "50122"
+'--------------------------------------------------------------------
+function make_raport_czestot_sprzed_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_CZESTOT_SPRZED_STANDARD, pParamArray
+	end if
+end function
+
+function make_raport_czestot_sprzed()
+	make_raport_czestot_sprzed_param nothing
+end function
+'--------------------------------------------------------------------
+
+function make_raport_cennik_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_HANDEL or EB_MOD_MASK_KONTAKT) then
+		asp_raport_appfile RAPTEMPLATE_CENNIK_STANDARD, pParamArray
+	end if
+end function
+
+function make_raport_cennik()
+	make_raport_cennik_param nothing
+end function
+'--------------------------------------------------------------------
+
+function make_raport_oferta()
+	if LicUMUI(EB_MOD_MASK_HANDEL or EB_MOD_MASK_KONTAKT) then
+		dim pRapDef: set pRapDef = doc_.afc.rap.new_rd(TYPEID_N5PRODUKT)
+		pRapDef.title = "Oferta"
+		with doc_.afc.rap
+		'dodaj filtr
+			pRapDef.add_filter .new_path(TYPEID_N5PRODUKT)_
+				.AddField("strNazwa").root.serialize(1)
+			pRapDef.add_filter .new_path(TYPEID_N5PRODUKT)_
+				.AddField("strIndeks").root.serialize(1)
+			pRapDef.add_filter .new_path(TYPEID_N5PRODUKT)_
+				.AddRef("pGrupaProd").AddField("strNazwa").root.serialize(1)
+			pRapDef.add_filter .new_path(TYPEID_N5PRODUKT)_
+				.AddField("eAktywny").root.serialize(1)
+		'dodaj uporządkowanie
+			pRapDef.add_order .new_path(TYPEID_N5PRODUKT)_
+				.AddField("strNazwa").root.serialize(1), true, false, false
+		'dodaj kolumny
+			pRapDef.add_col .new_path(TYPEID_N5PRODUKT)_
+				.AddField("strNazwa").root.serialize(1), true, false
+
+#ifdef _IOW
+			pRapDef.add_col .new_path(TYPEID_N5PRODUKT)_
+				.AddField("strCecha1").root.serialize(1), true, false
+#endif
+
+			pRapDef.add_col .new_path(TYPEID_N5PRODUKT)_
+				.AddField("strIndeks").root.serialize(1), false, false
+			pRapDef.add_col .new_path(TYPEID_N5PRODUKT)_
+				.AddRef("pJednostkaEwid").AddField("strNazwa").root.serialize(1), false, false
+			pRapDef.add_col .new_path(TYPEID_N5PRODUKT)_
+				.AddRef("pGrupaProd").AddField("strNazwa").root.serialize(1), false, false
+			pRapDef.add_col .new_path(TYPEID_N5PRODUKT)_
+				.AddList("listOpakowania").AddField("strNazwa").root.serialize(1), false, false
+		end with
+		'dodaj filtry
+
+		'doc_.getmodule(60186).create_asp_template(pRapDef).save "c:\temp\asptempl.txt"
+		asp_raport_rapdef pRapDef
+	end if
+end function
+
+'--------------------------------------------------------------------
+
+function make_raport_opmag_produkt_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_MAGAZYN) then
+		asp_raport_appfile RAPTEMPLATE_ZMIENNOSC_STANOW_MAGAZYNOWYCH, pParamArray
+	end if
+end function
+
+function make_raport_opmag_produkt()
+	make_raport_opmag_produkt_param nothing
+end function
+
+'--------------------------------------------------------------------
+
+function make_raport_opmag_kolejno_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_MAGAZYN) then
+		asp_raport_appfile RAPTEMPLATE_OPERACJE_MAGAZYNOWE, pParamArray
+	end if
+end function
+
+
+'robi raport operacji na magazynie
+function make_raport_opmag_kolejno()
+	make_raport_opmag_kolejno_param nothing
+end function
+
+'robi raport z operacji na magazynie korzystających z tej operacji (bNext), jako nNumOp podajemy nnumerop analizowanej dostawy
+'robi raport z operacji na magazynie z której ta operacja korzysta (!bNext), jako nNumOp podajemy nnumopmagdost analizowanej dostawy
+function make_raport_opmag_kolejno_next_prev(byval nNumOp,byval bNext)
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+	dim pParam : 
+	set pParam = doc_.afc.rap.param.new_text("Nazwa produktu").bindexpr("prod.strNazwa")
+	pParam.mode = 1
+	pParamArray.add pParam
+	set pParam = doc_.afc.rap.param.new_text("Nazwa magazynu").bindexpr("mag.strNazwa")
+	pParam.mode = 1
+'	pParamArray.add pParam
+	dim pExtraParam : set pExtraParam = doc_.afc.rap.param.new_filter("Extra")
+	if bNext then
+		pExtraParam.set_where_part doc_.afc.convert.formatter("(om.gmo_idDost=%1 and om.gmo_nNumOp<>%1)")(nNumOp).Done()
+	else
+		pExtraParam.set_where_part doc_.afc.convert.formatter("(om.gmo_nNumOp=%1)")(nNumOp).Done()
+	end if
+	pParamArray.add pExtraParam
+	make_raport_opmag_kolejno_param pParamArray
+end function
+
+
+
+
+'--------------------------------------------------------------------
+
+'raport ilosciowe stany magazynowe dla wskazanego magazynu, produktu i opakowania
+function make_raport_stanmag_ilosc_mag_prod_opak(byval pMag , byval pProd , byval pOpak)
+
+
+	dim strMagazyn:strMagazyn=""
+	if not pMag is nothing then
+		strMagazyn = pMag.strNazwa
+	end if
+
+	dim strProdukt:strProdukt=""
+	if not pProd is nothing then
+		strProdukt = pProd.strNazwa
+	end if
+
+	dim strOpakowanie:strOpakowanie=""
+	if not pOpak is nothing then
+		strOpakowanie = pOpak.strNazwa
+	end if
+
+
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+
+	dim pParamMAGAZYN:set pParamMAGAZYN = doc_.afc.rap.param.new_text("Nazwa magazynu").bindexpr("t_1.strNazwa")
+	if strMagazyn="" then
+		pParamMAGAZYN.mode = PARAM_TEXT_MODE_ANY_TEXT
+	else
+		pParamMAGAZYN.mode = PARAM_TEXT_MODE_EQUAL
+		pParamMAGAZYN.first_value = strMagazyn
+	end if
+	pParamArray.add pParamMAGAZYN
+
+
+	dim pRaportMomentParam
+	set pRaportMomentParam = doc_.afc.rap.param.new_date("Analizowany moment").bindexpr("")	
+	pRaportMomentParam.first_value = trans_.var(GVAR_TODAY)
+	pRaportMomentParam.mode = clng(1)
+	pParamArray.add pRaportMomentParam
+	'wolamy raport z zewnatrz
+	trans_.var(APPVAR_RAPORT_FROM_OUTSIDE) = clng(1)
+
+
+	dim pParamPRODUKT:set pParamPRODUKT = doc_.afc.rap.param.new_text("Nazwa produktu").bindexpr("t_2.p_strNazwa")
+	if strProdukt="" then
+		pParamPRODUKT.mode = PARAM_TEXT_MODE_ANY_TEXT
+	else
+		pParamPRODUKT.mode = PARAM_TEXT_MODE_EQUAL
+		pParamPRODUKT.first_value = strProdukt
+	end if
+	pParamArray.add pParamPRODUKT
+
+
+
+	dim pParamPRODUKT_INX:set pParamPRODUKT_INX = doc_.afc.rap.param.new_text("Indeks produktu").bindexpr("t_2.p_strIndeks")	
+	pParamPRODUKT_INX.mode = PARAM_TEXT_MODE_ANY_TEXT	
+	pParamArray.add pParamPRODUKT_INX
+
+
+
+'	dim pParamPRODUKT_GRUPA:set pParamPRODUKT_GRUPA = doc_.afc.rap.param.new_text("Indeks produktu").bindexpr("t_grupy.strNazwa")
+'	pParamPRODUKT_GRUPA.mode = PARAM_TEXT_MODE_ANY_TEXT	
+'	pParamArray.add pParamPRODUKT_GRUPA
+
+	dim pParamPRODUKT_GRUPA:set pParamPRODUKT_GRUPA = doc_.afc.rap.param.new_text("Grupa produktów").bindexpr("strNazwa")
+	pParamPRODUKT_GRUPA.mode = PARAM_TEXT_MODE_ANY_TEXT	
+	pParamArray.add pParamPRODUKT_GRUPA
+
+
+	'pParamArray.add doc_.getmodule(43025).new_filtr_grupa_prod("t_2.p_pGrupaProd")
+
+	
+	dim pParamFactory2: set pParamFactory2= doc_.afc.rap.param
+	dim pParam2: Set pParam2= pParamFactory2.new_choice("Status produktu").bindexpr("t_2.p_eAktywny")
+	pParamFactory2.init_on_enum pParam2, TYPEID_N5PRODUKT,"eAktywny"
+	pParam2.mode = PARAM_CHOICE_MODE_ALL
+	pParamArray.add pParam2
+
+
+
+	'pParamArray.add doc_.afc.rap.param.new_currency("Ilość opakowań").bindexpr("isnull(sum(t_0.gms_curIlosc),0)")
+	
+		
+
+	dim pParamOPAK: set pParamOPAK = doc_.afc.rap.param.new_text("Nazwa opakowania").bindexpr("t_2.c_strNazwa")
+	pParamOPAK.mode = PARAM_TEXT_MODE_ANY_TEXT
+	pParamArray.add pParamOPAK
+
+
+	dim pParamOPAK2: set pParamOPAK2 = doc_.afc.rap.param.new_text("Nazwa opakowania").bindexpr("t_2.c_strNazwa")
+	pParamOPAK2.mode = PARAM_TEXT_MODE_ANY_TEXT
+	pParamArray.add pParamOPAK2
+
+
+	dim g_ModuleRapCustom:set g_ModuleRapCustom = doc_.getmodule(43025)
+	dim g_ParamCustom
+
+	set g_ParamCustom = g_ModuleRapCustom.new_custom("Stany magazynowe").bindexpr("isnull(sum(t_0.gmo_curIlosc),0)").BindExprRight("t_2")
+	g_ParamCustom.mode = 1
+	pParamArray.add g_ParamCustom
+
+	make_raport_stanmag_ilosc_param pParamArray
+
+end function
+
+
+function make_raport_stanmag_ilosc_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_MAGAZYN) then
+		asp_raport_appfile RAPTEMPLATE_STAN_MAG_ILOSC, pParamArray
+	end if
+end function
+
+function make_raport_stanmag_ilosc()
+	make_raport_stanmag_ilosc_param nothing
+end function
+
+function make_raport_stanmag_ilosc_szczegoly_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_MAGAZYN) then
+		asp_raport_appfile RAPTEMPLATE_STAN_MAG_ILOSC_SZCZEGOLY, pParamArray
+	end if
+end function
+
+function make_raport_stanmag_ilosc_szczegoly()
+	make_raport_stanmag_ilosc_szczegoly_param nothing
+end function
+
+'funkcja do wywoływania raportu z parametrami (Grajewscy)
+function make_raport_stanmag_ilosc2(byval strNazwaGrupy, byval strNazwaMag, byval strMomentFV, byval strMomentM, byval strNazwaProdFV, byval strNazwaProdLV, byval strNazwaProdM, byval strIndeksProdFV, byval strIndeksProdLV, byval strIndeksProdM, byval  strNazwaGrupyM, byval strDostS0, byval strDostS1, byval strDostM, byval strIloscOpakFV, byval strIloscOpakLV, byval strIloscOpakM, byval strStanyMagM)
+	
+  dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+	dim pExtraParam
+
+  dim pParamMAGID : set pParamMAGID = doc_.getmodule(43025).new_filtr_magazyn("t_1.idobj","N5TYPMAG_PODSTAWOWY,N5TYPMAG_ZWROTY,N5TYPMAG_PRODUKCJAWTOKU,N5TYPMAG_REZERWACJE")
+  dim iter 
+	for iter = 0 to pParamMAGID.values.upperIndex
+    'domyślnie odznacz wszystkie
+		pParamMAGID.selected.value(iter) = false
+    'tylko dla produktów z magazynu strNazwaMag
+    if (pParamMAGID.names.value(iter) = strNazwaMag) then
+			pParamMAGID.selected.value(iter) = true
+    end if
+  next
+  pParamMAGID.mode = 0
+	pParamMAGID.multiple = true
+  pParamArray.add pParamMAGID
+
+  dim pRaportMomentParam : set pRaportMomentParam = doc_.afc.rap.param.new_date("Analizowany moment").bindexpr("")
+	pRaportMomentParam.first_value = strMomentFV
+	pRaportMomentParam.mode = CLng(strMomentM)
+	pParamArray.add pRaportMomentParam
+
+  pParamArray.add doc_.afc.rap.param.new_text("Nazwa produktu").bindexpr("t_2.p_strNazwa")
+  pParamArray.value(2).first_value = strNazwaProdFV
+  pParamArray.value(2).last_value = strNazwaProdLV
+  pParamArray.value(2).mode = CLng(strNazwaProdM)
+
+	pParamArray.add doc_.afc.rap.param.new_text("Indeks produktu").bindexpr("t_2.p_strIndeks")
+  pParamArray.value(3).first_value = strIndeksProdFV
+  pParamArray.value(3).last_value = strIndeksProdLV
+  pParamArray.value(3).mode = CLng(strIndeksProdM)  
+
+	dim pGrupaParam : set pGrupaParam = doc_.afc.rap.param.new_filter("Grupa produktów")
+	pGrupaParam.set_where_part "(strNazwa like '" + strNazwaGrupy + "')"
+  pParamArray.add pGrupaParam
+  
+	dim pParamSTATUS: Set pParamSTATUS= doc_.afc.rap.param.new_choice("Dostępność").bindexpr("t_2.p_eAktywny")
+	doc_.afc.rap.param.init_on_enum pParamSTATUS, TYPEID_N5PRODUKT,"eAktywny"
+  if strDostS0 = "Prawda" then
+    pParamSTATUS.selected.value(0) = true
+  else
+    pParamSTATUS.selected.value(0) = false
+  end if
+  if strDostS1 = "Prawda" then
+    pParamSTATUS.selected.value(1) = true
+  else
+    pParamSTATUS.selected.value(1) = false
+  end if
+  pParamSTATUS.mode = CLng(strDostM)
+  pParamArray.add pParamSTATUS
+
+  pParamArray.add doc_.afc.rap.param.new_currency("Ilość opakowań").bindexpr("isnull(sum(t_0.gmo_curIlosc),0)")	
+  pParamArray.value(6).first_value = CCur(strIloscOpakFV)
+  pParamArray.value(6).last_value = CCur(strIloscOpakLV)
+  pParamArray.value(6).mode = CLng(strIloscOpakM)
+
+	dim pParamOPAK: set pParamOPAK = doc_.afc.rap.param.new_text("Nazwa opakowania").bindexpr("t_2.c_strNazwa")
+	pParamOPAK.mode = PARAM_TEXT_MODE_ANY_TEXT
+	pParamArray.add pParamOPAK
+
+  dim g_ModuleRapCustom:set g_ModuleRapCustom = doc_.getmodule(43025)
+	dim g_ParamCustom : set g_ParamCustom = g_ModuleRapCustom.new_custom("Stany magazynowe").bindexpr("isnull(sum(t_0.gmo_curIlosc),0)").BindExprRight("t_2")
+	g_ParamCustom.mode = CLng(strStanyMagM)
+  pParamArray.add g_ParamCustom
+
+	make_raport_stanmag_ilosc_param pParamArray
+end function
+
+function make_raport_stanmag_ilosc_z_uwzg_zam_obcych_param(byref pParamArray)
+  
+	if LicUMUI(EB_MOD_MASK_MAGAZYN) then
+		asp_raport_appfile RAPTEMPLATE_STAN_MAG_Z_UWZG_ZAM_OBCYCH, pParamArray
+	end if
+end function
+
+function make_raport_stanmag_ilosc_z_uwzg_zam_obcych()
+	make_raport_stanmag_ilosc_z_uwzg_zam_obcych_param nothing
+end function
+
+'--------------------------------------------------------------------
+function make_raport_stanmag_wartosc_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_MAGAZYN) then
+		asp_raport_appfile RAPTEMPLATE_STAN_MAG_WARTOSC, pParamArray
+	end if
+end function
+
+function make_raport_stanmag_wartosc()
+	make_raport_stanmag_wartosc_param nothing
+end function
+
+
+'funkcja do wywoływania raportu z parametrami (Grajewscy)
+function make_raport_stanmag_wartosc2(byval strNazwaGrupy, byval strNazwaMag, byval strMomentFV, byval strMomentM, byval strNazwaProdFV, byval strNazwaProdLV, byval strNazwaProdM, byval strIndeksProdFV, byval strIndeksProdLV, byval strIndeksProdM, byval  strNazwaGrupyM, byval strDostS0, byval strDostS1, byval strDostM, byval strIloscOpakFV, byval strIloscOpakLV, byval strIloscOpakM, byval strTypProdM, byval strTypProdW, byval strTypProdP, byval strTypProdT)
+
+  dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+	dim pExtraParam
+
+  dim pParamMAGID : set pParamMAGID = doc_.getmodule(43025).new_filtr_magazyn("t_1.idobj","N5TYPMAG_PODSTAWOWY,N5TYPMAG_ZWROTY,N5TYPMAG_PRODUKCJAWTOKU,N5TYPMAG_REZERWACJE")
+  dim iter 
+	for iter = 0 to pParamMAGID.values.upperIndex
+    'domyślnie odznacz wszystkie
+		pParamMAGID.selected.value(iter) = false
+    'tylko dla produktów z magazynu strNazwaMag
+    if (pParamMAGID.names.value(iter) = strNazwaMag) then
+			pParamMAGID.selected.value(iter) = true
+    end if
+  next
+  pParamMAGID.mode = 0
+	pParamMAGID.multiple = true
+  pParamArray.add pParamMAGID
+
+  dim pRaportMomentParam : set pRaportMomentParam = doc_.afc.rap.param.new_date("Analizowany moment").bindexpr("")
+	pRaportMomentParam.first_value = strMomentFV
+	pRaportMomentParam.mode = CLng(strMomentM)
+	pParamArray.add pRaportMomentParam
+
+  pParamArray.add doc_.afc.rap.param.new_text("Nazwa produktu").bindexpr("t_2.strNazwa")
+  pParamArray.value(2).first_value = strNazwaProdFV
+  pParamArray.value(2).last_value = strNazwaProdLV
+  pParamArray.value(2).mode = CLng(strNazwaProdM)
+
+	pParamArray.add doc_.afc.rap.param.new_text("Indeks produktu").bindexpr("t_2.strIndeks")
+  pParamArray.value(3).first_value = strIndeksProdFV
+  pParamArray.value(3).last_value = strIndeksProdLV
+  pParamArray.value(3).mode = CLng(strIndeksProdM)  
+
+	dim pGrupaParam : set pGrupaParam = doc_.afc.rap.param.new_text("Grupa produktów").bindexpr("t_gr.strNazwa")
+  pGrupaParam.first_value = strNazwaGrupy
+  pGrupaParam.mode = CLng(3)
+	pParamArray.add pGrupaParam  
+
+	dim pParamSTATUS: Set pParamSTATUS= doc_.afc.rap.param.new_choice("Dostępność").bindexpr("t_2.eAktywny")
+	doc_.afc.rap.param.init_on_enum pParamSTATUS, TYPEID_N5PRODUKT,"eAktywny"
+  if strDostS0 = "Prawda" then
+    pParamSTATUS.selected.value(0) = true
+  else
+    pParamSTATUS.selected.value(0) = false
+  end if
+  if strDostS1 = "Prawda" then
+    pParamSTATUS.selected.value(1) = true
+  else
+    pParamSTATUS.selected.value(1) = false
+  end if
+  pParamSTATUS.mode = CLng(strDostM)
+  pParamArray.add pParamSTATUS
+
+  pParamArray.add doc_.afc.rap.param.new_currency("Ilość opakowań").bindexpr("isnull(sum(t_0.gmo_curIlosc),0)")	
+  pParamArray.value(6).first_value = CCur(strIloscOpakFV)
+  pParamArray.value(6).last_value = CCur(strIloscOpakLV)
+  pParamArray.value(6).mode = CLng(strIloscOpakM)
+
+#ifdef APPCONFIG_NEW_TWOJA_FIRMA_DZISIAJ
+	dim pParamOPAK: set pParamOPAK = doc_.afc.rap.param.new_text("Nazwa opakowania").bindexpr("t_2.c_strNazwa")
+	pParamOPAK.mode = PARAM_TEXT_MODE_ANY_TEXT
+	pParamArray.add pParamOPAK
+#endif
+
+	dim pParamTypPro : set pParamTypPro = doc_.afc.rap.param.new_choice("Typ produktu")
+	with pParamTypPro
+		.multiple = true
+
+		.names.add "Materiał"
+		.values.add 1
+		if strTypProdM="Prawda" then
+			.selected.add true
+		else
+			.selected.add false
+		end if
+
+		.names.add "Wyrób"
+		.values.add 2
+		if strTypProdW="Prawda" then
+			.selected.add true
+		else
+			.selected.add false
+		end if
+		
+		.names.add "Półprodukt"
+		.values.add 3
+		if strTypProdP="Prawda" then
+			.selected.add true
+		else
+			.selected.add false
+		end if
+	
+		.names.add "Towar"
+		if strTypProdT="Prawda" then
+			.selected.add true
+		else
+			.selected.add false
+		end if
+	end with
+	pParamArray.add pParamTypPro 'dodanie zakladnki "Typ produktu"
+	
+	
+	make_raport_stanmag_wartosc_param pParamArray
+end function
+
+
+
+'--------------------------------------------------------------------
+function make_raport_mag_opakowania_zwrotne_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_MAGAZYN) then
+		asp_raport_appfile RAPTEMPLATE_MAGAZYN_OPAKOWANIE_ZWROTNE, pParamArray
+	end if
+end function
+
+function make_raport_mag_opakowania_zwrotne()
+	make_raport_mag_opakowania_zwrotne_param nothing
+end function
+
+'--------------------------------------------------------------------
+function make_raport_mag_wolnosprzedajace_sie_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_MAGAZYN) then
+		asp_raport_appfile RAPTEMPLATE_TOWARY_WOLNOSPRZEDAJACE_SIE, pParamArray
+	end if
+end function
+
+function make_raport_mag_wolnosprzedajace_sie()
+	make_raport_mag_wolnosprzedajace_sie_param nothing
+end function
+
+'--------------------------------------------------------------------
+function make_raport_produkty_rp_zalegajace_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_MAGAZYN) then
+		asp_raport_appfile RAPTEMPLATE_PRODUKTY_RP_ZALEGAJACE, pParamArray
+	end if
+end function
+
+function make_raport_produkty_rp_zalegajace()
+	make_raport_produkty_rp_zalegajace_param nothing
+end function
+
+'--------------------------------------------------------------------
+function make_raport_wiekowanie_towarow_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_MAGAZYN) then
+		asp_raport_appfile RAPTEMPLATE_WIEKOWANIE_TOWAROW, pParamArray
+	end if
+end function
+
+function make_raport_wiekowanie_towarow()
+	make_raport_wiekowanie_towarow_param nothing
+end function
+
+'--------------------------------------------------------------------
+function make_raport_strukt_wiekowa_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_FINANSE or EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_STRUKTURA_WIEKOWA_NAL, pParamArray
+	end if
+end function
+
+
+function make_raport_strukt_wiekowa_odr_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_FINANSE or EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_STRUKTURA_WIEKOWA_NAL_ODR, pParamArray
+	end if
+end function
+
+'--------------------------------------------------------------------
+function make_raport_strukt_wiekowa_nal_zo_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_FINANSE or EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_STRUKTURA_WIEKOWA_NAL_ZO, pParamArray
+	end if
+end function
+
+function make_raport_strukt_wiekowa_nal_zo
+	make_raport_strukt_wiekowa_nal_zo_param nothing
+end function
+'--------------------------------------------------------------------
+
+function make_raport_strukt_wiekowa_nal( byval podmiot_type , byval podmiot_id)
+	make_raport_strukt_wiekowa N5TRANSAKCJA_NALEZNOSC , podmiot_type , podmiot_id
+end function
+
+
+
+function make_raport_strukt_wiekowa_nal_odr( byval podmiot_type , byval podmiot_id)
+	make_raport_strukt_wiekowa_odr N5TRANSAKCJA_NALEZNOSC , podmiot_type , podmiot_id
+end function
+
+
+
+function make_raport_strukt_wiekowa_zo( byval podmiot_type , byval podmiot_id)
+	make_raport_strukt_wiekowa N5TRANSAKCJA_ZOBOWIAZANIE , podmiot_type , podmiot_id
+end function
+
+function make_raport_strukt_wiekowa( byval eTyp , byval podmiot_type , byval podmiot_id)
+
+	
+	dim strTitle
+
+	select case eTyp
+		case N5TRANSAKCJA_NALEZNOSC 			
+			strTitle = "Struktura wiekowa należności"
+		case N5TRANSAKCJA_ZOBOWIAZANIE
+			strTitle = "Struktura wiekowa zobowiązań"
+	end select
+
+	trans_.var(1) = strTitle
+	trans_.var(2) = cstr(eTyp)
+
+	if podmiot_type > 0 then
+		trans_.var(3) = " wrefPodmiot_wrt=" + cstr(podmiot_type)
+		trans_.var(4) = " wrefPodmiot=" + cstr(podmiot_id)
+	else
+		trans_.var(3) = " 1=1 "
+		trans_.var(4) = " 1=1 "
+	end if
+
+	make_raport_strukt_wiekowa_param nothing
+
+end function
+
+
+
+
+
+function make_raport_strukt_wiekowa_odr( byval eTyp , byval podmiot_type , byval podmiot_id)
+
+	
+	dim strTitle
+
+	select case eTyp
+		case N5TRANSAKCJA_NALEZNOSC 			
+			strTitle = "Struktura wiekowa należności odroczonych"
+		case N5TRANSAKCJA_ZOBOWIAZANIE
+			strTitle = "Struktura wiekowa zobowiązań odroczonych"
+	end select
+
+	trans_.var(1) = strTitle
+	trans_.var(2) = cstr(eTyp)
+
+	if podmiot_type > 0 then
+		trans_.var(3) = " wrefPodmiot_wrt=" + cstr(podmiot_type)
+		trans_.var(4) = " wrefPodmiot=" + cstr(podmiot_id)
+	else
+		trans_.var(3) = " 1=1 "
+		trans_.var(4) = " 1=1 "
+	end if
+
+	make_raport_strukt_wiekowa_odr_param nothing
+
+end function
+
+
+
+
+'--------------------------------------------------------------------
+'%1 - filtr na typ
+'%2 - filtr na rozliczone / nierozliczone
+'%3 - filtr na przeterminowane
+
+'vs1  - tytuł
+'vn2  - nNalZob
+function make_raport_trans_lista_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_FINANSE or EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_TRANSAKCJE_LISTA, pParamArray
+	end if
+end function
+
+function make_raport_trans_lista(byval nNalZob,byval nRozl,byval bTylkoPrzet)
+	dim strTitle : strTitle = ""
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+
+	pParamArray.add doc_.afc.rap.param.new_date_range("Data wymagalności").bindexpr("t_trans.dDataWym")
+#ifdef _TORAL
+  'gdy wszystkie
+  if nRozl = 2 then
+	  dim pParamRozlicz: set pParamRozlicz = doc_.afc.rap.param.new_choice("Stan rozliczenia").bindexpr("stan_rozl")
+	  with pParamRozlicz
+		  .multiple = true
+		  .names.add "Rozliczone"
+		  .values.add 1
+		  .selected.add True
+		  .names.add "Nierozliczone"
+		  .values.add 2
+		  .selected.add True   
+	  end with
+	  pParamArray.add pParamRozlicz   
+  end if
+  'gdy wszystkie + zobowiązania => filtr Data wprowadzenia
+  if nRozl = 2 or nNalZob = 2 then
+    pParamArray.add doc_.afc.rap.param.new_date_range("Data wprowadzenia").bindexpr("case when t_trans.eTyp = 1 then isnull((select top 1 dDataOtrzym from n5zakup where pTransakcja = t_trop.trop_ptransakcja),'') else '' end")
+  end if
+#endif   
+#ifdef _FRAM
+	pParamArray.add doc_.afc.rap.param.new_int("Dni spóźnienia") _
+		.bindexpr("DATEDIFF(day, t_trans.dDataWym, [NA_DZIEN] )")
+#else
+	pParamArray.add doc_.afc.rap.param.new_int("Dni spóźnienia") _
+		.bindexpr("(" + doc_.afc.convert.date2SQL(trans_.var(GVAR_TODAY)) +  " - t_trans.dDataWym)")
+#endif    
+	pParamArray.add doc_.afc.rap.param.new_text("Indeks klienta").bindexpr("t_klient.strIndeks") 
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwa klienta").bindexpr("t_klient.strNazwa") 
+	pParamArray.add doc_.afc.rap.param.new_text("Grupa klientów").bindexpr("t_gr_klient.strNazwa") 
+	pParamArray.add doc_.afc.rap.param.new_currency("Kwota").bindexpr("t_trans.curWnEwid")
+	pParamArray.add doc_.afc.rap.param.new_text("Handlowiec").bindexpr("isnull(t_handlowiec.strNazwisko,'')") 
+	EXTRA_CUSTOMER_FILTER_PARAM(t_klient)
+
+
+
+	'typ transakcji
+	dim pExtraParam : set pExtraParam = doc_.afc.rap.param.new_filter("Typ")
+	with pExtraParam
+		select case nNalZob
+		case 0 'żadne
+			.set_where_part "(1=0)"
+			strTitle = "??? "
+		case 1 'należności
+			.set_where_part "(t_trans.eTyp = N5TRANSAKCJA_NALEZNOSC)"
+			strTitle = "Należności"
+		case 2 'zobowiąznia
+			.set_where_part "(t_trans.eTyp = N5TRANSAKCJA_ZOBOWIAZANIE)"
+			strTitle = "Zobowiązania"
+		case 3 'wszystkie
+			.set_where_part "(1=1)"
+			strTitle = "Należności i zobowiązania "
+		end select
+	end with
+	pParamArray.add pExtraParam
+
+	'stan rozliczenia
+	set pExtraParam = doc_.afc.rap.param.new_filter("Stan rozliczenia")
+	with pExtraParam
+#ifdef ENABLE_DB11
+		select case nRozl
+#ifdef _DENIS
+		case 0	'nierozl
+			.set_where_part "having sum(t_trop.trop_curWn - t_trop.trop_curMa) <> 0"
+		case 1	'rozliczone
+			.set_where_part "having sum(t_trop.trop_curWn - t_trop.trop_curMa) = 0"
+#else
+		case 0	'nierozl
+#if CONDITION_EWID = 0
+			.set_where_part "having sum(t_trop.trop_curWn - t_trop.trop_curMa) <> 0"
+#else
+			.set_where_part "having sum(t_trop.trop_curWnEwid - t_trop.trop_curMaEwid) <> 0"
+#endif
+		case 1	'rozliczone
+#if CONDITION_EWID = 0
+      .set_where_part "having sum(t_trop.trop_curWn - t_trop.trop_curMa) = 0"
+#else    
+			.set_where_part "having sum(t_trop.trop_curWnEwid - t_trop.trop_curMaEwid) = 0"
+#endif
+#endif
+		case 2	'wszystkie
+			.set_where_part ""
+		end select
+#else  
+		select case nRozl
+		case 0	'nierozl
+			.set_where_part "(t_trans.curWn<>t_trans.curMa)"
+		case 1	'rozliczone
+			.set_where_part "(t_trans.curWn=t_trans.curMa)"
+		case 2	'wszystkie
+			.set_where_part "(1=1)"
+		end select
+#endif    
+	end with
+	pParamArray.add pExtraParam
+
+
+
+
+	'przeterminowane
+	set pExtraParam = doc_.afc.rap.param.new_filter("Stan przeterminowania")
+	if bTylkoPrzet then
+		pExtraParam.set_where_part "(t_trans.dDataWym < " + doc_.afc.convert.date2SQL(trans_.var(GVAR_TODAY)) + ")"
+		strTitle = strTitle +  " przeterminowane "
+	else
+		pExtraParam.set_where_part "(1=1)"
+	end if
+	pParamArray.add pExtraParam
+
+
+
+
+
+	'klient
+	if trans_.isvar(APPVAR_PARAM_IDOBJ) then		
+		if trans_.var(APPVAR_PARAM_IDOBJ) <> 0 then
+			dim idCustomer:idCustomer = trans_.var(APPVAR_PARAM_IDOBJ)
+			set pExtraParam = doc_.afc.rap.param.new_filter("Podmiot")
+			dim podmiot_type
+			if trans_.isvar(APPVAR_PARAM_TYPEID) then
+				podmiot_type = 	trans_.var(APPVAR_PARAM_TYPEID)
+			else
+				podmiot_type = TYPEID_N5KLIENT
+			end if
+			
+			select case podmiot_type
+				case TYPEID_N5KLIENT
+					pExtraParam.set_where_part "(t_klient.idobj=" + cstr(idCustomer) + ")"
+				case TYPEID_N5PRACOWNIK
+					pExtraParam.set_where_part "(t_prac.idobj=" + cstr(idCustomer) + ")"
+				case TYPEID_N5BANK
+					pExtraParam.set_where_part "(t_bank.idobj=" + cstr(idCustomer) + ")"
+				case TYPEID_N5INSTYTUCJA
+					pExtraParam.set_where_part "(t_inst.idobj=" + cstr(idCustomer) + ")"
+			end select
+		else			
+			set pExtraParam = doc_.afc.rap.param.new_filter("Podmiot")
+			pExtraParam.set_where_part "(1=1)"		
+		end if
+	else		
+		set pExtraParam = doc_.afc.rap.param.new_filter("Podmiot")
+		pExtraParam.set_where_part "(1=1)"		
+	end if
+	pParamArray.add pExtraParam
+
+#ifdef ENABLE_DB11
+#ifndef _IOW
+	pParamArray.add doc_.afc.rap.param.new_date("Saldo na dzień").bindexpr("t_trop.trop_dDataOp")
+#endif  
+#endif
+
+#ifdef _RAFTEX
+  pParamArray.add doc_.afc.rap.param.new_text("Rejestr").bindexpr("t_rejdok.strNazwa")
+#endif
+
+#ifdef _FRAM
+  if nNalZob = 1 or nNalZob = 2 then
+    pParamArray.add doc_.afc.rap.param.new_date_range("Data wystawienia").bindexpr("t_trans.dDataRozp")
+    pParamArray.add doc_.afc.rap.param.new_currency("Termin wymagalności").bindexpr("datediff(day, t_trans.dDataRozp, t_trans.dDataWym)")
+  end if
+#endif
+
+  'domyślnie nierozliczone
+  dim nPrzeterm: nPrzeterm = 0
+  if bTylkoPrzet then
+    nPrzeterm = 1
+  end if
+
+	trans_.var(1) = strTitle
+	trans_.var(2) = nNalZob
+	trans_.var(3) = nRozl
+  trans_.var(4) = nPrzeterm
+	make_raport_trans_lista_param pParamArray
+end function
+
+function make_raport_naleznosci
+	make_raport_trans_lista 1,0,false
+end function
+
+function make_raport_naleznosci_przeterm
+	make_raport_trans_lista 1,0,true
+end function
+
+function make_raport_zobowiazania
+	make_raport_trans_lista 2,0,false
+end function
+
+function make_raport_zobowiazania_przeterm
+	make_raport_trans_lista 2,0,true
+end function
+
+function make_raport_trans_lista_wszystko
+	make_raport_trans_lista 3,2,false
+end function
+
+function make_raport_trans_lista_wszystko_przeterm
+	make_raport_trans_lista 3,2,true
+end function
+
+'--------------------------------------------------------------------
+function make_raport_rozklad_proc_splywu_nalezn_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_ROZKLAD_PROC_SPLYWU_NALEZN, pParamArray
+	end if
+end function
+
+function make_raport_rozklad_proc_splywu_nalezn
+	make_raport_rozklad_proc_splywu_nalezn_param nothing
+end function
+
+'--------------------------------------------------------------------
+function make_raport_potwierdzenie_sald_wg_nale_zob_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_POTWIERDZ_SALD_NAL_ZOB, pParamArray
+	end if
+end function
+
+function make_raport_potwierdzenie_sald_wg_nale_zob
+	make_raport_potwierdzenie_sald_wg_nale_zob_param nothing
+end function
+
+'--------------------------------------------------------------------
+function make_raport_naleznosci_zaplacone_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_NALEZNOSCI_ZAPLACONE, pParamArray
+	end if
+end function
+
+function make_raport_naleznosci_zaplacone
+	make_raport_naleznosci_zaplacone_param nothing
+end function
+
+'--------------------------------------------------------------------
+function make_raport_transakcje_niepowiazane_param(byref pParamArray)
+	asp_raport_appfile RAPTEMPLATE_TRANSAKCJE_NIEPOWIAZANE, pParamArray
+end function
+
+function make_raport_transakcje_niepowiazane
+	make_raport_transakcje_niepowiazane_param nothing
+end function
+'--------------------------------------------------------------------
+function make_raport_platnosci_lista_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_FINANSE or EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_PLATNOSCI_LISTA, pParamArray
+	end if
+end function
+
+function make_raport_platnosci_lista()
+	make_raport_platnosci_lista_param nothing
+end function
+'--------------------------------------------------------------------
+'--------------------------------------------------------------------
+function make_raport_platnosci_lista_split_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_FINANSE or EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_PLATNOSCI_LISTA_SPLIT_PAYMENT, pParamArray
+	end if
+end function
+
+function make_raport_platnosci_lista_split()
+	make_raport_platnosci_lista_split_param nothing
+end function
+'--------------------------------------------------------------------
+'dla raport twoja firma dzisiaj
+function make_raport_platnosci_lista_twFir(byval curRej)
+  dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+	pParamArray.add doc_.afc.rap.param.new_date_range("Data operacji").bindexpr("t_platn.dDataOper")
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwa klienta").bindexpr("t_klient.strNazwa")
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwisko pracownika").bindexpr("t_prac.strNazwisko")
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwa instytucji").bindexpr("t_inst.strNazwa")
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwa banku").bindexpr("t_bank.strNazwa")
+
+	dim pParamFactory3: set pParamFactory3= doc_.afc.rap.param
+	dim pParam3: Set pParam3= pParamFactory3.new_choice("Rejestr").bindexpr("t_rej.idobj")
+	doc_.afc.rap.param.init_on_query pParam3, trans_ ,_
+    "select strNazwa , idobj from n5rejestrdok where eTyp in (N5REJESTRDOK_KASOWY,N5REJESTRDOK_BANKOWY) and idobj = " + cstr(curRej) + " order by strNazwa "
+	pParamArray.add pParam3
+
+	dim pParamFactory2: set pParamFactory2= doc_.afc.rap.param
+	dim pParam2: Set pParam2= pParamFactory2.new_choice("Status").bindexpr("t_platn.eStatus")
+	pParamFactory2.init_on_enum pParam2, TYPEID_N5PLATNOSC, "eStatus"
+	pParamArray.add pParam2
+	EXTRA_CUSTOMER_FILTER_PARAM(t_klient)
+
+	make_raport_platnosci_lista_param pParamArray
+end function
+'--------------------------------------------------------------------
+function make_raport_platnosci_szczegoly_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_FINANSE or EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_PLATNOSCI_SZCZEGOLY, pParamArray
+	end if
+end function
+
+function make_raport_platnosci_szczegoly()
+	make_raport_platnosci_szczegoly_param nothing
+end function
+
+'--------------------------------------------------------------------
+function make_raport_vat_sprzed_stawkami_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_FINANSE or EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_VAT_SPRZEDAZ_STAWKAMI, pParamArray
+	end if
+end function
+
+function make_raport_vat_sprzed_stawkami(byval nDateRangeMode)
+	make_raport_vat_sprzed_stawkami_param nothing
+end function
+
+'--------------------------------------------------------------------
+function make_raport_ewidencja_korekt_paragonow_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_FINANSE or EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_EWIDENCJA_KOREKT_PARAGONOW, pParamArray
+	end if
+end function
+
+function make_raport_ewidencja_korekt_paragonow()
+	make_raport_ewidencja_korekt_paragonow_param nothing
+end function
+
+'--------------------------------------------------------------------
+function make_raport_kreator_korekt_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_FINANSE or EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_KREATOR_KOREKT, pParamArray
+	end if
+end function
+
+function make_raport_kreator_korekt()
+	make_raport_kreator_korekt_param nothing
+end function
+
+'--------------------------------------------------------------------
+function make_raport_uzgod_wart_dok_zakupu_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_FINANSE or EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_UZGOD_WART_DOK_ZAKUPU, pParamArray
+	end if
+end function
+
+function make_raport_uzgod_wart_dok_zakupu()
+	make_raport_uzgod_wart_dok_zakupu_param nothing
+end function
+
+'--------------------------------------------------------------------
+function make_raport_vat_sprzed_podsumowanie_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_FINANSE or EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_VAT_SPRZEDAZ_PODSUMOWANIE, pParamArray
+	end if
+end function
+
+#ifdef APPCONFIG_NEW_TWOJA_FIRMA_DZISIAJ
+function make_raport_vat_sprzed_podsumowanie(byval nDateRangeMode,byval strNrMonth)
+
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+
+	dim pTempParam:set pTempParam = doc_.afc.rap.param.new_date_range("Data wystawienia").bindexpr("t_sprz.dDataWyst")
+	pTempParam.mode = nDateRangeMode
+	if nDateRangeMode = 7 then
+		pTempParam.first_value = doc_.afc.display.fulldate(DateSerial(year(trans_.var(GVAR_TODAY)),strNrMonth,1))
+		pTempParam.last_value = doc_.afc.display.fulldate(DateSerial(year(trans_.var(GVAR_TODAY)),strNrMonth+1,0))
+	end if
+	pParamArray.add pTempParam
+
+	dim pParamFactory2: set pParamFactory2= doc_.afc.rap.param
+	dim pParam2: Set pParam2= pParamFactory2.new_choice("Rejestr").bindexpr("t_1.idobj")
+	doc_.afc.rap.param.init_on_query pParam2, trans_ ,_
+		"select strNazwa , idobj from n5rejestrdok where eTyp in (N5REJESTRDOK_FAKT_SP,N5REJESTRDOK_KOR_FAKT_SP, " +_
+		"N5REJESTRDOK_RACH,N5REJESTRDOK_KOR_RACH,N5REJESTRDOK_PARAGON,N5REJESTRDOK_KOR_PARAGON, " +_
+		"N5REJESTRDOK_FAKT_EXP,N5REJESTRDOK_KOR_FAKT_EXP,N5REJESTRDOK_KOREKTA_WDT,N5REJESTRDOK_WDT, " +_
+		"N5REJESTRDOK_WNT,N5REJESTRDOK_KOREKTA_WNT,N5REJESTRDOK_FAKTURA_ZALICZKOWA,N5REJESTRDOK_FAKTURA_ZALICZKOWA_KOR) order by strNazwa "
+																  
+	pParamArray.add pParam2
+	
+	dim pParamFactory3: set pParamFactory3= doc_.afc.rap.param
+	dim pParam3: Set pParam3= pParamFactory3.new_choice("Okres VAT").bindexpr("t_sprz.pRozlVAT")
+	doc_.afc.rap.param.init_on_query pParam3, trans_ , _
+		"select 'bez odliczeń',0 union select ltrim(str(year(vat7_ddataod))) + '/' + substring(ltrim(str(100+month(vat7_ddataod))),2,2),idobj " +_
+		"from n5rozlvat where datediff(month,vat7_ddataod," + trans_.afc.convert.date2SQL(trans_.var(GVAR_TODAY)) + ") < 12 order by 1 desc"
+	pParamArray.add pParam3
+
+	make_raport_vat_sprzed_podsumowanie_param pParamArray
+end function
+#else
+function make_raport_vat_sprzed_podsumowanie(byval nDateRangeMode)
+
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+
+	dim pTempParam:set pTempParam = doc_.afc.rap.param.new_date_range("Data wystawienia").bindexpr("t_sprz.dDataWyst")
+	pTempParam.mode = nDateRangeMode
+	pParamArray.add pTempParam
+
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwa rejestru").bindexpr("t_1.strNazwa")
+	dim pParamFactory2: set pParamFactory2= doc_.afc.rap.param
+	dim pParam2: Set pParam2= pParamFactory2.new_choice("Typ rejestru").bindexpr("t_1.eTyp")
+	pParamFactory2.init_on_enum pParam2, TYPEID_N5REJESTRDOK, "eTyp"
+	pParamArray.add pParam2
+
+	make_raport_vat_sprzed_podsumowanie_param pParamArray
+end function
+#endif
+
+'--------------------------------------------------------------------
+function make_raport_vat_zakup_stawkami_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_FINANSE or EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_VAT_ZAKUP_STAWKAMI, pParamArray
+	end if
+end function
+
+function make_raport_vat_zakup_stawkami(byval nDateRangeMode)
+	make_raport_vat_zakup_stawkami_param nothing
+end function
+
+'--------------------------------------------------------------------
+function make_raport_vat_zakup_podsumowanie_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_FINANSE or EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_VAT_ZAKUP_PODSUMOWANIE, pParamArray
+	end if
+end function
+
+function make_raport_vat_zakup_podsumowanie(byval nDateRangeMode)
+
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+
+	dim pTempParam:set pTempParam = doc_.afc.rap.param.new_date_range("Data wystawienia").bindexpr("t_sprz.dDataWyst")
+	pTempParam.mode = nDateRangeMode
+	pParamArray.add pTempParam
+
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwa rejestru").bindexpr("t_1.strNazwa")
+	dim pParamFactory2: set pParamFactory2= doc_.afc.rap.param
+	dim pParam2: Set pParam2= pParamFactory2.new_choice("Typ rejestru").bindexpr("t_1.eTyp")
+	pParamFactory2.init_on_enum pParam2, TYPEID_N5REJESTRDOK, "eTyp"
+	pParamArray.add pParam2
+
+	make_raport_vat_zakup_podsumowanie_param pParamArray
+end function
+
+'--------------------------------------------------------------------
+function make_raport_kpir_lista_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_FINANSE) then
+		asp_raport_appfile RAPTEMPLATE_KPIR_LISTA, pParamArray
+	end if
+end function
+
+function make_raport_kpir_lista
+	make_raport_kpir_lista_param nothing
+end function
+'--------------------------------------------------------------------
+function make_raport_podsumowanie_kpir_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_FINANSE) then
+		asp_raport_appfile RAPTEMPLATE_KPIR_PODSUMOWANIE, pParamArray
+	end if
+end function
+
+function make_raport_podsumowanie_kpir
+	make_raport_podsumowanie_kpir_param nothing
+end function
+'--------------------------------------------------------------------
+function make_raport_sprzedaz_vs_dokmag_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_MAGAZYN or EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_SPRZEDAZ_VS_DOKMAG, pParamArray
+	end if
+end function
+
+function make_raport_sprzedaz_vs_dokmag
+	make_raport_sprzedaz_vs_dokmag_param nothing
+end function
+'--------------------------------------------------------------------
+function make_raport_mag_przych_rozch_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_MAGAZYN) then
+		asp_raport_appfile RAPTEMPLATE_MAG_PRZYCH_ROZCHODY, pParamArray
+	end if
+end function
+
+function make_raport_mag_przych_rozch
+	make_raport_mag_przych_rozch_param nothing
+end function
+'--------------------------------------------------------------------
+function make_raport_mag_rotacja_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_MAGAZYN) then
+		asp_raport_appfile RAPTEMPLATE_MAG_ROTACJA, pParamArray
+	end if
+end function
+
+function make_raport_mag_rotacja
+	make_raport_mag_rotacja_param nothing
+end function
+
+
+'--------------------------------------------------------------------
+function make_raport_place_zbiorcza_bez_nazwisk_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_PRACOWNIK) then
+		asp_raport_appfile RAPTEMPLATE_LP_NO_SURNAME, pParamArray
+	end if
+end function
+
+function make_raport_place_zbiorcza_bez_nazwisk
+	make_raport_place_zbiorcza_bez_nazwisk_param nothing
+end function
+
+'--------------------------------------------------------------------
+function make_raport_zestawienie_skl_placowych_param(byref pParamArray)
+  if LicUMUI(EB_MOD_MASK_MAGAZYN) then
+		asp_raport_appfile RAPTEMPLATE_ZEST_SKL_PLACOWYCH, pParamArray
+	end if
+end function
+
+function make_raport_zestawienie_skl_placowych
+	make_raport_zestawienie_skl_placowych_param nothing
+end function
+
+'--------------------------------------------------------------------
+#ifdef _AMPLUS
+function make_raport_place_zbiorcza_amplus_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_PRACOWNIK) then
+		asp_raport_appfile DOCTEMPLATE_NALICZENIE_PLAC, pParamArray
+	end if
+end function
+#endif
+
+function make_raport_place_zbiorcza_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_PRACOWNIK) then
+		asp_raport_appfile RAPTEMPLATE_PLACE_ZBIORCZA, pParamArray
+	end if
+end function
+
+function make_raport_place_zbiorcza
+	make_raport_place_zbiorcza_param nothing
+end function
+'--------------------------------------------------------------------
+function make_raport_place_indywid_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_PRACOWNIK) then
+		asp_raport_appfile RAPTEMPLATE_PLACE_INDYWIDUALNA, pParamArray
+	end if
+end function
+
+function make_raport_place_indywid
+	make_raport_place_indywid_param nothing
+end function
+'--------------------------------------------------------------------
+function make_raport_karta_wyn_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_PRACOWNIK) then
+		asp_raport_appfile RAPTEMPLATE_KARTA_WYNAGRODZEN, pParamArray
+	end if
+end function
+
+function make_raport_karta_wyn
+	make_raport_karta_wyn_param nothing
+end function
+'--------------------------------------------------------------------
+function make_raport_ranking_klientow_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_HANDEL or EB_MOD_MASK_KONTAKT) then
+		asp_raport_appfile RAPTEMPLATE_KLIENT_RANKING, pParamArray
+	end if
+end function
+
+function make_raport_ranking_klientow
+	make_raport_ranking_klientow_param nothing
+end function
+'--------------------------------------------------------------------
+function make_raport_ranking_klienci_nieaktywni(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_HANDEL or EB_MOD_MASK_KONTAKT) then
+		asp_raport_appfile RAPTEMPLATE_SPRZEDAZ_KLIENCI_NIEAKTYWNI, pParamArray
+	end if
+end function
+
+function make_raport_ranking_klienci
+	make_raport_ranking_klienci_nieaktywni nothing
+end function
+'--------------------------------------------------------------------
+function make_raport_zamowienia_klientow_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_HANDEL or EB_MOD_MASK_KONTAKT) then
+		asp_raport_appfile RAPTEMPLATE_ZAMOWIENIA_DO_REAL_WG_KLIENTOW, pParamArray
+	end if
+end function
+
+function make_raport_zamowienia_klientow
+	make_raport_zamowienia_klientow_param nothing
+end function
+'--------------------------------------------------------------------
+function make_raport_zamowienia_produkty_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_HANDEL or EB_MOD_MASK_PRODUKCJA) then
+		asp_raport_appfile RAPTEMPLATE_ZAMOWIENIA_DO_REAL_WG_PRODUKT, pParamArray
+	end if
+end function
+
+#ifdef APPCONFIG_NEW_TWOJA_FIRMA_DZISIAJ
+function make_raport_zamowienia_produkty(byval nDateRangeMode, byval dtStartDate)
+ 
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+	dim pExtraParam
+
+	set pExtraParam = doc_.afc.rap.param.new_date_range("Termin realizacji  ...").bindexpr("t_0.c_pzam_ddatareal")
+	pExtraParam.mode = nDateRangeMode	
+		if nDateRangeMode = 7 then
+			pExtraParam.first_value = cdate(dtStartDate)
+			pExtraParam.last_value =	dateadd("d",-1,dateadd("m",1,cdate(dtStartDate)))
+		end if
+	pParamArray.add pExtraParam
+
+	set pExtraParam = doc_.afc.rap.param.new_text("Nazwa klienta").bindexpr("t_1.strNazwa")
+	pExtraParam.mode = PARAM_TEXT_MODE_ANY_TEXT
+	pParamArray.add pExtraParam
+
+	set pExtraParam = doc_.afc.rap.param.new_text("Nazwa produktu").bindexpr("t_4.strNazwa")
+	pExtraParam.mode = PARAM_TEXT_MODE_ANY_TEXT
+	pParamArray.add pExtraParam
+	
+	set pExtraParam = doc_.afc.rap.param.new_text("Nazwa opakowania").bindexpr("t_3.strNazwa")
+	pExtraParam.mode = PARAM_TEXT_MODE_ANY_TEXT
+	pParamArray.add pExtraParam
+  
+  
+
+	make_raport_zamowienia_produkty_param pParamArray
+end function
+#else
+function make_raport_zamowienia_produkty(byval nDateRangeMode)
+
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+	dim pExtraParam
+
+	set pExtraParam = doc_.afc.rap.param.new_date_range("Termin realizacji  ...").bindexpr("t_0.dDataReal")
+	pExtraParam.mode = nDateRangeMode
+	pParamArray.add pExtraParam
+
+	set pExtraParam = doc_.afc.rap.param.new_text("Nazwa klienta").bindexpr("t_1.strNazwa")
+	pExtraParam.mode = PARAM_TEXT_MODE_ANY_TEXT
+	pParamArray.add pExtraParam
+
+	set pExtraParam = doc_.afc.rap.param.new_text("Nazwa produktu").bindexpr("t_4.strNazwa")
+	pExtraParam.mode = PARAM_TEXT_MODE_ANY_TEXT
+	pParamArray.add pExtraParam
+	
+	set pExtraParam = doc_.afc.rap.param.new_text("Nazwa opakowania").bindexpr("t_3.strNazwa")
+	pExtraParam.mode = PARAM_TEXT_MODE_ANY_TEXT
+	pParamArray.add pExtraParam
+  
+  
+
+	make_raport_zamowienia_produkty_param pParamArray
+end function
+#endif
+
+function make_raport_zamowienia_produkty_2(byval indeks)
+
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+	dim pExtraParam
+	
+	'odwołania do SQL w e95223 -raport zam.obcych
+	set pExtraParam = doc_.afc.rap.param.new_text("Termin realizacji").bindexpr("t_0.p_ddatareal")
+	pExtraParam.mode = PARAM_TEXT_MODE_ANY_TEXT
+	pParamArray.add pExtraParam
+
+	set pExtraParam = doc_.afc.rap.param.new_text("Nazwa klienta").bindexpr("t_1.strNazwa")
+	pExtraParam.mode = PARAM_TEXT_MODE_ANY_TEXT
+	pParamArray.add pExtraParam
+
+	set pExtraParam = doc_.afc.rap.param.new_text("Indeks klienta").bindexpr("t_1.strIndeks")
+	pExtraParam.mode = PARAM_TEXT_MODE_ANY_TEXT
+	pParamArray.add pExtraParam
+
+	set pExtraParam = doc_.afc.rap.param.new_text("Nazwa produktu").bindexpr("t_4.strNazwa")
+	pExtraParam.mode = PARAM_TEXT_MODE_ANY_TEXT
+	pParamArray.add pExtraParam
+
+	set pExtraParam = doc_.afc.rap.param.new_text("Indeks produktu").bindexpr("t_4.strIndeks")
+	pExtraParam.mode = PARAM_TEXT_MODE_EQUAL
+	pExtraParam.first_value = indeks
+	pParamArray.add pExtraParam
+		
+	set pExtraParam = doc_.afc.rap.param.new_text("Nazwa grupy").bindexpr("t_grupy.strNazwa")
+	pExtraParam.mode = PARAM_TEXT_MODE_ANY_TEXT
+	pParamArray.add pExtraParam
+
+	set pExtraParam = doc_.afc.rap.param.new_text("Nazwa opakowania").bindexpr("t_3.strNazwa")
+	pExtraParam.mode = PARAM_TEXT_MODE_ANY_TEXT
+	pParamArray.add pExtraParam
+	
+	set pExtraParam = doc_.afc.rap.param.new_text("Kod pocztowy").bindexpr("t_1.strKod")
+	pExtraParam.mode = PARAM_TEXT_MODE_ANY_TEXT
+	pParamArray.add pExtraParam
+
+	make_raport_zamowienia_produkty_param pParamArray
+end function
+'--------------------------------------------------------------------
+function make_raport_produkty_ilosci_ranking_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_HANDEL or EB_MOD_MASK_KONTAKT) then
+		asp_raport_appfile RAPTEMPLATE_PRODUKTY_ILOSCI_RANKING, pParamArray
+	end if
+end function
+
+function make_raport_produkty_ilosci_ranking
+	make_raport_produkty_ilosci_ranking_param nothing
+end function
+'--------------------------------------------------------------------			
+function make_raport_produkty_obroty_ranking_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_HANDEL or EB_MOD_MASK_KONTAKT) then
+		asp_raport_appfile RAPTEMPLATE_PRODUKTY_OBROTY_RANKING, pParamArray
+	end if
+end function
+
+function make_raport_produkty_obroty_ranking
+	make_raport_produkty_obroty_ranking_param nothing
+end function
+'--------------------------------------------------------------------
+function make_raport_budzet_kont_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_FINANSE) then
+		dim pBudzetyModule : set pBudzetyModule = doc_.getmodule(MODULE_AKTUALIZUJ_BUDZETY)
+		if pBudzetyModule.aktualizuj_budzety_all(trans_.var(GVAR_TODAY)) then
+			trans_.saveobjects()
+		end if
+
+		asp_raport_appfile RAPTEMPLATE_BUDZET_KONT, pParamArray
+	end if
+end function
+
+function make_raport_budzet_kont
+	make_raport_budzet_kont_param nothing
+end function
+'--------------------------------------------------------------------
+function make_raport_mag_podsumowanie_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_MAGAZYN) then
+		asp_raport_appfile RAPTEMPLATE_MAG_PODSUMOWANIE, pParamArray
+	end if
+end function
+
+function make_raport_mag_podsumowanie
+	make_raport_mag_podsumowanie_param nothing
+end function
+'--------------------------------------------------------------------
+function make_raport_mag_podsumowanie_wg_grup_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_MAGAZYN) then
+		asp_raport_appfile RAPTEMPLATE_MAG_PODSUMOWANIE_WG_GRUP, pParamArray
+	end if
+end function
+
+function make_raport_mag_podsumowanie_wg_grup
+	make_raport_mag_podsumowanie_wg_grup_param nothing
+end function
+'--------------------------------------------------------------------
+
+function make_raport_mag_szczegoly_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_MAGAZYN) then
+		asp_raport_appfile RAPTEMPLATE_MAG_SZCZEGOLY, pParamArray
+	end if
+end function
+
+function make_raport_mag_szczegoly
+	make_raport_mag_szczegoly_param nothing
+end function
+'--------------------------------------------------------------------
+function make_raport_analfinans_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_FINANSE) then
+#ifdef _SECURITY
+    if trans_.var(GVAR_DBNAME) = "navo2002trio" then
+      if MessageBox("Czy chcesz aktualizować dane w bazie navo2002trio ", "Aktualizowanie danych...", vbYesNo, vbQuestion) = vbYes then
+        ' aktualizacja danych - pobranie z navo200 i navo2002bis na potrzeby analiz finansowych
+        dim pM60159 : set pM60159 = doc_.getmodule(60159)
+        if pM60159.wczytaj_dane_trio() then
+        end if
+        'asp_raport_appfile RAPTEMPLATE_ODCHYLENIE_RECEPT, pParamArray
+      end if
+    end if
+#endif
+		asp_raport_appfile RAPTEMPLATE_ANAL_FINANS_TABLE, pParamArray
+	end if
+end function
+
+function make_raport_analfinans
+	make_raport_analfinans_param nothing
+end function
+'--------------------------------------------------------------------
+
+
+function make_raport_zadania_do_wyk_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_KONTAKT) then
+		asp_raport_appfile RAPTEMPLATE_ZADANIA_DO_WYK_WG_WYKON, pParamArray
+	end if
+end function
+
+function make_raport_zadania_do_wyk
+	trans_.var(1) = "Zadania do wykonania wg wykonawcy"
+	if trans_.isvar(3) then
+		trans_.var(1) = "Zadania do wykonania wg daty realizacji"    
+	end if
+	if trans_.isvar(2) then
+		dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+		dim oParamInx : set oParamInx = doc_.afc.rap.param.new_text("Indeks wykonawcy").bindexpr("t_1.strIndeks")
+		
+		oParamInx.mode = PARAM_TEXT_MODE_EQUAL
+		oParamInx.first_value = cstr(trans_.var(2))
+		pParamArray.add oParamInx
+		
+		dim pExtraParam : set pExtraParam = doc_.afc.rap.param.new_filter("Extra")
+		pExtraParam.set_where_part "(1=1)"
+		pParamArray.add pExtraParam
+
+		make_raport_zadania_do_wyk_param pParamArray
+	else
+		make_raport_zadania_do_wyk_param nothing
+	end if
+end function
+
+function prepare_przeterminowane_where()
+	dim strCurrentDateSQL : strCurrentDateSQL = doc_.afc.convert.date2SQL(trans_.var(GVAR_SYSDATE))
+	dim strCurrentTimeSQL : strCurrentTimeSQL = cstr(trans_.var(GVAR_SYSTIME))
+
+	prepare_przeterminowane_where = doc_.afc.convert.formatter(_
+	"(t_zadanie.eTypterminZak in(N5ZADANIE_ENDTYP_W_MOMENCIE,N5ZADANIE_ENDTYP_NIE_POZNIEJ_NIZ)) and " +_
+	"(t_zadanie.dDataTerminZak < %1 or (t_zadanie.dDataTerminZak = %2 and t_zadanie.tCzasTerminZak < %3))") _
+	(strCurrentDateSQL)(strCurrentDateSQL)(strCurrentTimeSQL).Done()
+end function
+
+function make_raport_zadania_do_wyk_przeterm
+	trans_.var(1) = "Zadania przeterminowane wg wykonawcy"
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+	pParamArray.add doc_.afc.rap.param.new_text("Wykonawca").bindexpr("t_1.strIndeks")
+
+	dim pExtraParam : set pExtraParam = doc_.afc.rap.param.new_filter("Extra")
+	pExtraParam.set_where_part prepare_przeterminowane_where()
+
+	pParamArray.add pExtraParam
+	make_raport_zadania_do_wyk_param pParamArray
+end function
+
+'--------------------------------------------------------------------
+function make_raport_zadania_do_wyk_klient_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_KONTAKT) then
+		asp_raport_appfile RAPTEMPLATE_ZADANIA_DO_WYK_WG_KLIENTOW, pParamArray
+	end if
+end function
+
+
+function make_raport_zadania_aktywnosc
+	if LicUMUI(EB_MOD_MASK_KONTAKT) then
+		asp_raport_appfile RAPTEMPLATE_ZADANIA_AKTYWNOSC, nothing
+	end if
+end function
+
+function make_raport_dzialania
+	if LicUMUI(EB_MOD_MASK_KONTAKT) then
+		asp_raport_appfile RAPTEMPLATE_DZIALANIA, nothing
+	end if
+end function
+
+function make_raport_monitoring_kontaktow
+	if LicUMUI(EB_MOD_MASK_KONTAKT) then
+		asp_raport_appfile RAPTEMPLATE_MONITORING_KONTAKTOW, nothing
+	end if
+end function
+
+function make_raport_zadania_do_wyk_klient
+	trans_.var(1) = "Zadania do wykonania wg klientów"
+	make_raport_zadania_do_wyk_klient_param nothing
+end function
+
+function make_raport_zadania_do_wyk_klient_przeterm
+	trans_.var(1) = "Zadania przeterminowane wg klientów"
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwa pełna").bindexpr("t_1.strNazwa")
+
+	dim pExtraParam : set pExtraParam = doc_.afc.rap.param.new_filter("Extra")
+	pExtraParam.set_where_part prepare_przeterminowane_where()
+	pParamArray.add pExtraParam
+
+	make_raport_zadania_do_wyk_klient_param pParamArray
+end function
+'--------------------------------------------------------------------
+function make_raport_zapisynakontach_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_FINANSE) then
+		asp_raport_appfile RAPTEMPLATE_ZAPISY_NA_KONCIE, pParamArray
+	end if
+end function
+
+function make_raport_zapisynakontach
+	make_raport_zapisynakontach_param nothing
+end function
+
+'--------------------------------------------------------------------
+function make_raport_dziennik_szcz_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_FINANSE) then
+		asp_raport_appfile RAPTEMPLATE_DZIENNIK_SZCZEGOLY, pParamArray
+	end if
+end function
+
+function make_raport_dziennik_szcz
+	make_raport_dziennik_szcz_param nothing
+end function
+
+'--------------------------------------------------------------------
+function make_raport_dziennik_skrot_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_FINANSE) then
+		asp_raport_appfile RAPTEMPLATE_DZIENNIK_SKROT, pParamArray
+	end if
+end function
+
+function make_raport_dziennik_skrot
+	make_raport_dziennik_skrot_param nothing
+end function
+'--------------------------------------------------------------------
+function make_raport_dziennik_szcz_wg_nrdok_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_FINANSE) then
+		asp_raport_appfile RAPTEMPLATE_DZIENNIK_SZCZEGOLY_WG_NRDOK, pParamArray
+	end if
+end function
+
+function make_raport_dziennik_szcz_wg_nrdok
+	make_raport_dziennik_szcz_wg_nrdok_param nothing
+end function
+
+'--------------------------------------------------------------------
+function make_raport_dziennik_skrot_wg_nrdok_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_FINANSE) then
+		asp_raport_appfile RAPTEMPLATE_DZIENNIK_SKROT_WG_NRDOK, pParamArray
+	end if
+end function
+
+function make_raport_dziennik_skrot_wg_nrdok
+	make_raport_dziennik_skrot_wg_nrdok_param nothing
+end function
+
+
+'--------------------------------------------------------------------
+'--------------------------------------------------------------------
+function make_raport_srtrw_op_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_FINANSE) then
+		asp_raport_appfile RAPTEMPLATE_SRTRW_OPERACJE, pParamArray
+	end if
+end function
+
+function make_raport_srtrw_op
+	make_raport_srtrw_op_param nothing
+end function
+
+
+function make_raport_srtrw_tab_amor
+	if LicUMUI(EB_MOD_MASK_FINANSE) then
+		asp_raport_appfile RAPTEMPLATE_TABELA_AMORTYZ, nothing
+	end if
+end function
+
+
+function make_raport_srtrw
+	if LicUMUI(EB_MOD_MASK_FINANSE) then
+		asp_raport_appfile RAPTEMPLATE_SRODKI_TRWALE, nothing
+	end if
+end function
+
+'---------------------------------------------------------------------
+function make_raport_zlecprod_wg_klientow_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_PRODUKCJA) then
+		asp_raport_appfile RAPTEMPLATE_ZLECPROD_WG_KLIENTOW, pParamArray
+	end if
+end function
+
+function make_raport_zlecprod_wg_klientow
+	make_raport_zlecprod_wg_klientow_param nothing
+end function
+'---------------------------------------------------------------------
+function make_raport_zlecprod_wg_wyrobow_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_PRODUKCJA) then
+		asp_raport_appfile RAPTEMPLATE_ZLECPROD_WG_WYROBOW, pParamArray
+	end if
+end function
+
+function make_raport_zlecprod_wg_wyrobow
+	make_raport_zlecprod_wg_wyrobow_param nothing
+end function
+
+'---------------------------------------------------------------------
+function make_raport_zlecprod_niezrealizowane_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_PRODUKCJA) then
+		asp_raport_appfile RAPTEMPLATE_ZLECPROD_NIEZREALIZOWANE, pParamArray
+	end if
+end function
+
+function make_raport_zlecprod_niezrealizowane
+	make_raport_zlecprod_niezrealizowane_param nothing
+end function
+
+'---------------------------------------------------------------------
+function make_raport_zlecprod_wg_numeru_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_PRODUKCJA) then
+		asp_raport_appfile RAPTEMPLATE_ZLECPROD_WG_NUMERU, pParamArray
+	end if
+end function
+
+function make_raport_zlecprod_wg_numeru
+	make_raport_zlecprod_wg_numeru_param nothing
+end function
+
+'---------------------------------------------------------------------
+function make_raport_zlecprod_surowce_suma_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_PRODUKCJA) then
+		asp_raport_appfile RAPTEMPLATE_ZLECPROD_SUROWCE_SUMA, pParamArray
+	end if
+end function
+
+function make_raport_zlecprod_surowce_suma
+	make_raport_zlecprod_surowce_suma_param nothing
+end function
+
+'---------------------------------------------------------------------
+function make_raport_zlecprod_surowce_wg_kl_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_PRODUKCJA) then
+		asp_raport_appfile RAPTEMPLATE_ZLECPROD_SUROWCE_WG_KLIENTOW, pParamArray
+	end if
+end function
+
+function make_raport_zlecprod_surowce_wg_kl
+	make_raport_zlecprod_surowce_wg_kl_param nothing
+end function
+
+'---------------------------------------------------------------------
+function make_raport_zysk_na_sprzedazy_dok_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_ZYSK_NA_SPRZEDAZY_DOK, pParamArray
+	end if
+end function
+
+function make_raport_zysk_na_sprzedazy_dok
+	make_raport_zysk_na_sprzedazy_dok_param nothing
+end function
+
+'---------------------------------------------------------------------
+function make_raport_rent_wg_prawonik_dedyk_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_RENT_WG_PRACOWNIKA_DEDYK, pParamArray
+	end if
+end function
+
+function make_raport_rent_wg_prawonik_dedyk
+	make_raport_rent_wg_prawonik_dedyk_param nothing
+end function
+
+'---------------------------------------------------------------------
+function make_raport_zysk_na_sprzedazy_dok_poz_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_ZYSK_NA_SPRZEDAZY_POZYCJE, pParamArray
+	end if
+end function
+
+function make_raport_zysk_na_sprzedazy_dok_poz
+	make_raport_zysk_na_sprzedazy_dok_poz_param nothing
+end function
+'---------------------------------------------------------------------
+function make_raport_zysk_na_produkcie_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_ZYSK_NA_PRODUKCIE, pParamArray
+	end if
+end function
+
+function make_raport_zysk_na_produkcie
+	make_raport_zysk_na_produkcie_param nothing
+end function
+
+function make_raport_zysk_na_produkcie_wz_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_ZYSK_NA_PRODUKCIE_WZ, pParamArray
+	end if
+end function
+
+function make_raport_zysk_na_produkcie_wz
+	make_raport_zysk_na_produkcie_wz_param nothing
+end function
+
+function make_raport_zysk_na_produkcie_2() 
+  make_raport_zysk_na_produkcie_param nothing
+end function
+'--------------------------------------------------------------------
+function make_raport_mag_dok_przychody_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_MAGAZYN) then
+		trans_.var(APPVAR_REJESTR_TYP) = clng(N5REJESTRDOK__PZ)
+		asp_raport_appfile RAPTEMPLATE_MAG_DOKUMENTY_WARTOSC, pParamArray
+	end if
+end function
+
+function make_raport_mag_dok_przychody
+	make_raport_mag_dok_przychody_param nothing
+end function
+
+'--------------------------------------------------------------------
+function make_raport_mag_dok_wz_sprzedaz_param(byref pParamArray)
+  if LicUMUI(EB_MOD_MASK_MAGAZYN) then
+		asp_raport_appfile RAPTEMPLATE_MAG_DOKUMENTY_WZ_SPRZEDAZ, pParamArray
+	end if
+end function
+
+function make_raport_mag_dok_wz_sprzedaz
+	make_raport_mag_dok_wz_sprzedaz_param nothing
+end function
+
+'--------------------------------------------------------------------
+function make_raport_wz_wg_wartosci_param(byref pParamArray)
+  if LicUMUI(EB_MOD_MASK_MAGAZYN) then
+		asp_raport_appfile RAPTEMPLATE_WZ_WG_WARTOSCI, pParamArray
+	end if
+end function
+
+function make_raport_wz_wg_wartosci
+	make_raport_wz_wg_wartosci_param nothing
+end function
+
+'--------------------------------------------------------------------
+function make_raport_mag_dokumenty_mm_wg_pracow_param(byref pParamArray)
+  if LicUMUI(EB_MOD_MASK_MAGAZYN) then
+		asp_raport_appfile RAPTEMPLATE_MAG_DOKUMENTY_MM_WG_PRACOW, pParamArray
+	end if
+end function
+
+function make_raport_mag_dokumenty_mm_wg_pracow
+	make_raport_mag_dokumenty_mm_wg_pracow_param nothing
+end function
+
+'--------------------------------------------------------------------
+function make_raport_rozl_wplat_przewoz_param(byref pParamArray)
+  if LicUMUI(EB_MOD_MASK_MAGAZYN) then
+		asp_raport_appfile RAPTEMPLATE_ROZL_WPLAT_PRZEWOZ, pParamArray
+	end if
+end function
+
+function make_raport_rozl_wplat_przewoz
+	make_raport_rozl_wplat_przewoz_param nothing
+end function
+
+'--------------------------------------------------------------------
+function make_raport_stany_ilosc_zbiorczy_param(byref pParamArray)
+  if LicUMUI(EB_MOD_MASK_MAGAZYN) then
+		asp_raport_appfile RAPTEMPLATE_STAN_MAG_ILOSC_ZBIORCZY, pParamArray
+	end if
+end function
+
+function make_raport_stany_ilosc_zbiorczy
+	make_raport_stany_ilosc_zbiorczy_param nothing
+end function
+
+'--------------------------------------------------------------------
+function make_raport_mag_dok_rozchody_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_MAGAZYN) then
+		trans_.var(APPVAR_REJESTR_TYP) = clng(N5REJESTRDOK__WZ)
+		asp_raport_appfile RAPTEMPLATE_MAG_DOKUMENTY_WARTOSC, pParamArray
+	end if
+end function
+
+function make_raport_mag_dok_rozchody
+	make_raport_mag_dok_rozchody_param nothing
+end function
+
+'--------------------------------------------------------------------
+
+
+function make_raport_mag_rozch_by_art_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_MAGAZYN) then
+		trans_.var(APPVAR_REJESTR_TYP) = clng(N5REJESTRDOK__WZ)
+		asp_raport_appfile RAPTEMPLATE_TOWARY_PRZYCH_ROZCH_BY_ART, pParamArray
+	end if
+end function
+
+function make_raport_mag_rozch_by_art
+	make_raport_mag_rozch_by_art_param nothing
+end function
+
+
+'---------------------------------------------------------------------
+function make_raport_mag_rozch_by_rp_iow_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_MAGAZYN) then
+		asp_raport_appfile RAPTEMPLATE_ROZCH_WG_RP_IOW, pParamArray
+	end if
+end function
+
+function make_raport_mag_rozch_by_rp_iow
+	make_raport_mag_rozch_by_rp_iow_param nothing
+end function
+
+
+function make_raport_mag_przych_by_art_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_MAGAZYN) then
+		trans_.var(APPVAR_REJESTR_TYP) = clng(N5REJESTRDOK__PZ)
+		asp_raport_appfile RAPTEMPLATE_TOWARY_PRZYCH_ROZCH_BY_ART, pParamArray
+	end if
+end function
+
+function make_raport_mag_przych_by_art
+	make_raport_mag_przych_by_art_param nothing
+end function
+
+'---------------------------------------------------------------------------------------------------------
+function make_raport_zapotrzebowanie_na_produkty_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_MAGAZYN) then
+		asp_raport_appfile RAPTEMPLATE_ZAPOTRZEBOWANIE_NA_PRODUKTY, pParamArray
+	end if
+end function
+
+function make_raport_zapotrzebowanie_na_produkty()
+	make_raport_zapotrzebowanie_na_produkty_param nothing
+end function
+
+'--------------------------------------------------------------------
+
+function make_raport_sprzedaz_zestawienie_szczegolowe
+	if LicUMUI(EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_SPRZEDAZ_ZESTAWIENIE_SZCZEGOLOWE, nothing
+	end if
+end function
+         
+#ifdef APPCONFIG_NEW_TWOJA_FIRMA_DZISIAJ
+function make_raport_sprzedaz_zestawienie_szczegolowe_twoja_firma_dzis(byval nDateRangeMode, byval strNrMonth)
+
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+	dim pExtraParam
+
+	set pExtraParam = doc_.afc.rap.param.new_date_range("Data wystawienia").bindexpr("t_sprzed.dDataWyst")
+	pExtraParam.mode = nDateRangeMode	
+		if nDateRangeMode = 7 then
+			pExtraParam.first_value = doc_.afc.display.fulldate(DateSerial(year(trans_.var(GVAR_TODAY)),strNrMonth,1))
+			pExtraParam.last_value =	doc_.afc.display.fulldate(DateSerial(year(trans_.var(GVAR_TODAY)),strNrMonth+1,0))
+		end if
+	pParamArray.add pExtraParam
+  
+	make_raport_sprzedaz_zestawienie_szczegolowe_param pParamArray
+end function
+
+function make_raport_sprzedaz_zestawienie_szczegolowe_param(byval pParamArray)
+	if LicUMUI(EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_SPRZEDAZ_ZESTAWIENIE_SZCZEGOLOWE, pParamArray
+	end if
+end function
+#endif
+
+function make_raport_zakup_zestawienie_szczegolowe
+	if LicUMUI(EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_ZAKUP_ZESTAWIENIE_SZCZEGOLOWE, nothing
+	end if
+end function
+
+
+
+function make_raport_sprzedaz_podsumowanie_wg_klientow
+	if LicUMUI(EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_SPRZEDAZ_PODSUMOWANIE_WG_KLIENTOW, nothing
+	end if
+end function
+
+
+function make_dokhandl_raport(byval nRaportTemplate)
+	if LicUMUI(EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile nRaportTemplate, nothing
+	end if
+end function
+
+'--------------------------------------------------------------------
+function make_raport_zois_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_FINANSE) then
+		asp_raport_appfile RAPTEMPLATE_ZESTAWIENIE_OBROTOW_I_SALD, pParamArray
+	end if
+end function
+
+function make_raport_zois
+	make_raport_zois_param nothing
+end function
+
+'--------------------------------------------------------------------
+
+function make_raport_zakup_vs_dokmag_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_MAGAZYN) then
+		asp_raport_appfile RAPTEMPLATE_ZAKUP_VS_DOKMAG, pParamArray
+	end if
+end function
+
+function make_raport_zakup_vs_dokmag
+	make_raport_zakup_vs_dokmag_param nothing
+end function
+
+
+
+'----------------------------------------------------
+
+
+function make_raport_potwierdzenie_sald()
+	if LicUMUI(EB_MOD_MASK_FINANSE) then
+		asp_raport_appfile RAPTEMPLATE_POTWIERDZENIE_SALD, nothing
+#ifdef _SECURITY
+    'if MessageBox("Czy chcesz wydrukować dokument na drukarce igłowej.?", "Drukowanie...", vbYesNo, vbQuestion) = vbYes then
+      ' uruchamia "ten sam" raport ale dzialajacy pod igle todo: zrobic tak aby nie trzeba bylo 2 razy wpisywac filtrów
+      'asp_raport_appfile RAPTEMPLATE_ODCHYLENIE_RECEPT, nothing
+	  'end if
+#endif
+  end if
+end function
+
+
+
+function make_raport_rozliczenie_etykiet()
+	if LicUMUI(EB_MOD_MASK_PRODUKCJA) then
+		asp_raport_appfile RAPTEMPLATE_RAP_ETYKIET, nothing
+	end if
+end function
+
+
+function make_raport_odchylenie_recepty
+	if LicUMUI(EB_MOD_MASK_PRODUKCJA) then
+		asp_raport_appfile RAPTEMPLATE_ODCHYLENIE_RECEPT, nothing
+	end if
+end function
+
+
+
+function make_raport_proloj
+	if LicUMUI(EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_PROGRAM_LOJALNOSC, nothing
+	end if
+end function
+
+function make_raport_place_choroby_by_pracownik
+	if LicUMUI(EB_MOD_MASK_PRACOWNIK) then
+		asp_raport_appfile RAPTEMPLATE_PLACE_CHOROBY_BY_PRACOWNIK, nothing
+	end if
+end function
+
+function make_raport_place_nieob_by_pracownik
+	if LicUMUI(EB_MOD_MASK_PRACOWNIK) then
+		asp_raport_appfile RAPTEMPLATE_PLACE_NIEOB_BY_PRACOWNIK, nothing
+	end if
+end function
+
+
+
+function make_raport_place_choroby_podsumowanie
+	if LicUMUI(EB_MOD_MASK_PRACOWNIK) then
+		asp_raport_appfile RAPTEMPLATE_PLACE_CHOROBY_PODSUMOWANIE, nothing
+	end if
+end function
+
+
+function make_raport_place_nieob_podsumowanie_by_prac
+	if LicUMUI(EB_MOD_MASK_PRACOWNIK) then
+		asp_raport_appfile RAPTEMPLATE_PLACE_NIEOB_PODSUMOWANIE_BY_PRACOWNIK, nothing
+	end if
+end function
+
+
+function make_raport_place_nieob_podsumowanie_by_typ
+	if LicUMUI(EB_MOD_MASK_PRACOWNIK) then
+		asp_raport_appfile RAPTEMPLATE_PLACE_NIEOB_PODSUMOWANIE_BY_TYP, nothing
+	end if
+end function
+
+function make_raport_place_nieob_wszystkie
+	if LicUMUI(EB_MOD_MASK_PRACOWNIK) then
+		asp_raport_appfile RAPTEMPLATE_PLACE_NIEOB_WSZYSTKIE, nothing
+	end if
+end function
+
+function make_raport_rcp_wg_prac
+	if LicUMUI(EB_MOD_MASK_PRACOWNIK) then
+		asp_raport_appfile RAPTEMPLATE_RCP_WG_PRACOWNIKOW, nothing
+	end if
+end function
+
+function make_raport_rcp_wg_kli
+	if LicUMUI(EB_MOD_MASK_PRACOWNIK) then
+		asp_raport_appfile RAPTEMPLATE_RCP_WG_KLIENTOW, nothing
+	end if
+end function
+
+function make_raport_kalendarz_czasu_pracy
+	if LicUMUI(EB_MOD_MASK_PRACOWNIK) then
+		asp_raport_appfile RAPTEMPLATE_KALENDARZ_CZASU_PRACY, nothing
+	end if
+end function
+
+function make_raport_umowy_aktywne_nieaktywne
+	if LicUMUI(EB_MOD_MASK_PRACOWNIK) then
+		asp_raport_appfile RAPTEMPLATE_UMOWY_AKTYWNE_NIEAKTYWNE, nothing
+	end if
+end function
+
+function make_raport_marser
+	if LicUMUI(EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_MARSER, nothing
+	end if
+end function
+
+function make_raport_marser_2
+	if LicUMUI(EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_MARSER_2, nothing
+	end if
+end function
+
+function make_raport_rand_maszyny
+	if LicUMUI(EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_RAND_MASZYNY, nothing
+	end if
+end function
+
+function make_raport_narzut_prod
+	if LicUMUI(EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_NARZUT_PROD, nothing
+	end if
+end function
+
+function make_raport_rozlicz_plat_karta
+	if LicUMUI(EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_ROZL_PLATNOSCI_KARTA, nothing
+	end if
+end function
+
+function make_raport_obroty_wg_klientow
+	if LicUMUI(EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_OBROTY_WG_KLINTOW, nothing
+	end if
+end function
+
+function make_raport_obroty_wg_dostawcow
+	if LicUMUI(EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_OBROTY_WG_DOSTAWCOW, nothing
+	end if
+end function
+
+function make_raport_sprzed_klie_prod
+	if LicUMUI(EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_SPRZEDAZ_KLIENT_PRODUKT, nothing
+	end if
+end function
+
+function make_raport_sprzed_prod_klie
+	if LicUMUI(EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_SPRZEDAZ_PRODUKT_KLIENT, nothing
+	end if
+end function
+
+function make_raport_sprzed_maszyn
+	if LicUMUI(EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_SPRZEDAZ_MASZYN, nothing
+	end if
+end function
+
+function make_raport_faktury_bez_dostaw
+	if LicUMUI(EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_FAKTURY_BEZ_DOSTAW, nothing
+	end if
+end function
+
+function make_raport_nierozl_faktury_zaliczkowe
+	if LicUMUI(EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_NIEROZL_FAKTURY_ZALICZKOWE, nothing
+	end if
+end function
+
+function make_raport_sprzedaz_bez_zaliczek
+	if LicUMUI(EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_SPRZEDAZ_BEZ_ZALICZEK, nothing
+	end if
+end function
+
+function make_raport_prowizja_metrox
+	if LicUMUI(EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_PROWIZJA_METROX, nothing
+	end if
+end function
+
+function make_raport_toral_mod_2034_sprz_wegla
+	if LicUMUI(EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_TORAL_MOD_2034_SPRZ_WEGLA, nothing
+	end if
+end function
+
+function make_raport_toral_mod_2027_opmag_egz
+	if LicUMUI(EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_TORAL_MOD_2027_OPMAG_EGZ, nothing
+	end if
+end function
+
+function make_raport_ankieta_toral
+	if LicUMUI(EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_ANKIETA_TORAL, nothing
+	end if
+end function
+
+function make_raport_info_dostawca
+	if LicUMUI(EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_INFO_DOSTAWCA, nothing
+	end if
+end function
+
+function make_raport_rezerwacje_param(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_REZERWACJE, pParamArray
+	end if
+end function
+
+function make_raport_pracownik_zatrudnienia
+	if LicUMUI(EB_MOD_MASK_PRACOWNIK) then
+		asp_raport_appfile RAPTEMPLATE_PRACOWNIK_ZATRUDNIENIA, nothing
+	end if
+end function
+
+function make_raport_rezerwacje(byval indeks)
+
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+	dim pExtraParam
+	
+	'odwołania do SQL w e95350 -raport rezerwacje
+	set pExtraParam = doc_.afc.rap.param.new_text("Indeks produktu").bindexpr("p.strIndeks")
+	pExtraParam.mode = PARAM_TEXT_MODE_EQUAL
+	pExtraParam.first_value = indeks
+	pParamArray.add pExtraParam
+		
+	make_raport_rezerwacje_param pParamArray
+end function
+
+function make_raport_zestawienie_sklad_plac(byval strNumerDok, byval dDataPocz, byval dDataKonc)
+
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+	pParamArray.add doc_.afc.rap.param.new_text("Lista płac").bindexpr("t_listaplac.strNrDok")
+	pParamArray.add doc_.afc.rap.param.new_date_range("Data naliczenia").bindexpr("t_nal.dDataNal")
+	
+	'parametr lista wyboru
+	dim pParam : set pParam = doc_.afc.rap.param.new_choice("Widok")
+  doc_.afc.rap.param.init_on_query  pParam , trans_ ,  "select strNazwa,IdObj from choicelist where nTypeId=TYPEID_N5PLSUBKONTO order by strNazwa"
+	pParam.multiple = true
+	pParamArray.add pParam
+  
+  pParamArray.value(0).first_value = strNumerDok
+  pParamArray.value(0).mode = 2
+  pParamArray.value(1).first_value = dDataPocz
+  pParamArray.value(1).last_value = dDataKonc
+  pParamArray.value(1).mode = 7
+  pParamArray.value(2).mode = 2
+  
+	make_raport_zestawienie_skl_placowych_param pParamArray
+end function
+
+function make_raport_uslugi (byval idkl, byval data,byval indeksObiektu)
+
+ 	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+	dim pExtraParam
+	
+	'dim pM60312 : set pM60312 = doc_.getmodule(60312)
+	'dim pRentSP : set prentsp = pM60312.new_rent_sp()
+  
+  set pExtraParam = doc_.afc.rap.param.new_text("Indeks klienta").bindexpr("wynik.strIndeksKl")
+  pExtraParam.mode = PARAM_TEXT_MODE_EQUAL
+	pExtraParam.first_value = idkl
+	pParamArray.add pExtraParam
+
+  set pExtraParam = doc_.afc.rap.param.new_date_range("Data wystawienia").bindexpr("wynik.data")
+	pExtraParam.mode = PARAM_DATE_MODE_RANGE
+  pExtraParam.first_value = dateserial(mid(data,1,4),mid(data,6,2),1)
+	pExtraParam.last_value = dateserial(mid(data,1,4),mid(data,6,2)+ 1,1) -1
+  
+	pParamArray.add pExtraParam
+  
+  set pExtraParam = doc_.afc.rap.param.new_text("Indeks obiektu klienta").bindexpr("wynik.strIndeksObKl")
+  pExtraParam.mode = PARAM_TEXT_MODE_EQUAL
+	pExtraParam.first_value = indeksObiektu
+  
+	pParamArray.add pExtraParam
+  make_raport_uslugi_idkl pParamArray
+
+end function
+
+
+function make_raport_amortyzacja (byval idkl, byval data,byval indeksObiektu)
+
+ 	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+	dim pExtraParam
+	
+	'dim pM60312 : set pM60312 = doc_.getmodule(60312)
+	'dim pRentSP : set prentsp = pM60312.new_rent_sp()
+  
+  set pExtraParam = doc_.afc.rap.param.new_text("Indeks klienta").bindexpr("wynik.strIndeksKl")
+  pExtraParam.mode = PARAM_TEXT_MODE_EQUAL
+	pExtraParam.first_value = idkl
+	pParamArray.add pExtraParam
+
+  set pExtraParam = doc_.afc.rap.param.new_date_range("Data wystawienia").bindexpr("wynik.data")
+	pExtraParam.mode = PARAM_DATE_MODE_RANGE
+  pExtraParam.first_value = dateserial(mid(data,1,4),mid(data,6,2),1)
+	pExtraParam.last_value = dateserial(mid(data,1,4),mid(data,6,2)+ 1,1) -1
+  
+	pParamArray.add pExtraParam
+  
+  set pExtraParam = doc_.afc.rap.param.new_text("Indeks obiektu klienta").bindexpr("wynik.strIndeksObKl")
+  pExtraParam.mode = PARAM_TEXT_MODE_EQUAL
+	pExtraParam.first_value = indeksObiektu
+	pParamArray.add pExtraParam
+
+  make_raport_amortyzacja_idkl pParamArray
+
+end function
+
+
+function make_raport_material(byval idkl,byval data,byval indeksObiektu)
+	
+ 	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+	dim pExtraParam
+	
+	'dim pM60312 : set pM60312 = doc_.getmodule(60312)
+	'dim pRentSP : set prentsp = pM60312.new_rent_sp()
+  
+  set pExtraParam = doc_.afc.rap.param.new_text("Indeks klienta").bindexpr("wynik.strIndeksKl")
+  pExtraParam.mode = PARAM_TEXT_MODE_EQUAL
+	pExtraParam.first_value = idkl
+	pParamArray.add pExtraParam
+
+  set pExtraParam = doc_.afc.rap.param.new_date_range("Data wystawienia").bindexpr("wynik.data")
+	pExtraParam.mode = PARAM_DATE_MODE_RANGE
+  pExtraParam.first_value = dateserial(mid(data,1,4),mid(data,6,2),1)
+	pExtraParam.last_value = dateserial(mid(data,1,4),mid(data,6,2)+ 1,1) -1
+  
+	pParamArray.add pExtraParam
+  
+  set pExtraParam = doc_.afc.rap.param.new_text("Indeks obiektu klienta").bindexpr("wynik.strIndeksObKl")
+  pExtraParam.mode = PARAM_TEXT_MODE_EQUAL
+	pExtraParam.first_value = indeksObiektu
+	pParamArray.add pExtraParam
+
+	make_raport_material_idkl pParamArray
+  
+end function
+
+function make_raport_material_idkl(byref idkl)
+	if LicUMUI(EB_MOD_MASK_HANDEL) then
+		asp_raport_appfile RAPTEMPLATE_RAND_RENTOWNOSC_MASZYN, idkl
+	end if
+end function
+
+function make_raport_uslugi_idkl (byref parametry)
+    if LicUMUI(EB_MOD_MASK_HANDEL) then
+		    asp_raport_appfile RAPTEMPLATE_RAND_RENTOWNOSC_MASZYN_USLUGI, parametry
+	  end if
+end function
+
+function make_raport_amortyzacja_idkl (byref parametry)
+    if LicUMUI(EB_MOD_MASK_HANDEL) then
+		    asp_raport_appfile RAPTEMPLATE_RAND_RENTOWNOSC_MASZYN_AMORT, parametry
+	  end if
+end function
+
+'-------------------------------------------------------------------------------------------------------
+function make_raport_kreator_przydz_tow_kontrah(byval idProd)
+
+  dim strWhere : strWhere = "strNazwa = (select g.strNazwa from n5produkt p " +_ 
+                                        "inner join n5grupaproduktow g on p.pGrupaProd = g.idobj " +_
+                                        "where p.idobj = " + CStr(idProd) + ")"
+                                     
+	dim idGrupy : idGrupy = trans_.findobjid(TYPEID_N5GRUPAPRODUKTOW,strWhere) 
+  if idGrupy > 0 then
+    dim oGrupa : set oGrupa = trans_.getobj(TYPEID_N5GRUPAPRODUKTOW,idGrupy)
+    dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+	  pParamArray.add doc_.afc.rap.param.new_text("Nazwa grupy produktów").bindexpr("g.strNazwa")
+	
+    'ręczne ustawienie parametrów dla raportu
+    pParamArray.value(0).first_value = oGrupa.strNazwa
+    pParamArray.value(0).mode = 2
+    
+    'wykonaj raport
+	  make_raport_kreator_przydz_tow_kontrah_param pParamArray
+  
+  end if  
+end function
+
+function make_raport_kreator_przydz_tow_kontrah_param(byref pParamArray)
+  if LicUMUI(EB_MOD_MASK_MAGAZYN) then
+		asp_raport_appfile RAPTEMPLATE_KREATOR_PRZY_TOW_KONTRAH, pParamArray
+	end if
+end function
+'---------------------------------------------------------------------------------------------------------
+
+
+'''''''''''''''''''''''''''''''Maciej Donajski''''''''''''''''''''''''''''''''''
+
+function make_raport_wyroby_poz_do_real(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_HANDEL or EB_MOD_MASK_PRODUKCJA) then
+		asp_raport_appfile RAPTEMPLATE_WYROBY_POZ_DO_REAL, pParamArray
+	end if
+end function
+
+function make_raport_wyroby_poz_do_real_lista(byval strFiltr1, byval strFiltr2)
+  dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+  
+  dim pParam :
+  set pParam = doc_.afc.rap.param.new_text("Zamowienie").bindexpr("t_tmp.idZamow")
+  
+  pParamArray.add pParam
+  pParamArray.value(0).first_value=strFiltr1
+  pParamArray.value(0).mode=2
+  
+  set pParam = doc_.afc.rap.param.new_text("Produkt").bindexpr("t_tmp.idProd")
+  
+  pParamArray.add pParam
+  pParamArray.value(1).first_value=strFiltr2
+  pParamArray.value(1).mode=2
+  
+  asp_raport_appfile RAPTEMPLATE_WYROBY_POZ_DO_REAL_LISTA, pParamArray
+  
+end function
+
+function make_raport_wyroby_poz_do_real_lista1(byval strFiltr1, byval strFiltr2)
+  dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+  
+  dim pParam :
+  set pParam = doc_.afc.rap.param.new_text("Zamowienie").bindexpr("v_zamow.p_idobj")
+  
+  pParamArray.add pParam
+  pParamArray.value(0).first_value=strFiltr1
+  pParamArray.value(0).mode=2
+
+  set pParam = doc_.afc.rap.param.new_text("Produkt").bindexpr("v_zlec.c_pProdukt")
+  
+  pParamArray.add pParam
+  pParamArray.value(1).first_value=strFiltr2
+  pParamArray.value(1).mode=2
+  
+  asp_raport_appfile RAPTEMPLATE_WYROBY_POZ_DO_REAL_LISTA1, pParamArray
+  
+end function
+  
+  
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+
+function make_raport_pzzipz(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_FINANSE) then
+		asp_raport_appfile RAPTEMPLATE_OPLATA_PZZIPZ, nothing
+	end if
+end function
+
+
+function make_raport_aktualizacja_dok_bank(byref pParamArray)
+	asp_raport_appfile RAPTEMPLATE_AKTUALIZACIA_DOK_BANK, pParamArray
+end function
+
+
+'---------------------------------------------------------------------------------------------------------
+function make_raport_dokumenty_zaksiegowane(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_FINANSE) then
+		asp_raport_appfile RAPTEMPLATE_DOKUMENTY_ZAKSIEGOWANE, pParamArray
+	end if
+end function
+
+
+'---------------------------------------------------------------------------------------------------------
+function make_raport_dekretow(byref pParamArray)
+	if LicUMUI(EB_MOD_MASK_FINANSE) then
+		asp_raport_appfile RAPTEMPLATE_RAPORT_DEKRETOW, pParamArray
+	end if
+end function
+
+
+'---------------------------------------------------------------------------------------------------------
+
+]]>
+</script>
+</config>
+	<body>
+	</body>
+</page>

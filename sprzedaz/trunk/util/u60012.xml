@@ -1,0 +1,283 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1200.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1201.h"
+
+#comment todo:spiko Ten plik ma być tylko po stronie SERWERA NAVO!
+
+
+				-- DO PRZEROBIENIA I URUCHOMIENIA --
+-->
+<page>
+<config>
+<script>
+<![CDATA[
+
+#include "50100"
+#include "50103"
+#include "50203"
+#include "50204"
+#include "50304"
+
+'EXPORT_XML_VERSION
+#include "50631"
+
+
+'SelectFile
+#include "50123"
+
+'----------------------------------------------------------------
+' Klasa importuje w specjalny sposób obiekt n5licencja
+' a pozostałe obiekty importuje normalnie managerem importu
+'----------------------------------------------------------------
+class CLicenceRequestContext
+	public m_error_msg
+	public m_nResult
+	
+	private pParent		   'wskaznik na CXML Import Manager, ktory w rzeczywistosci
+						   'zajmuje sie importem-trzeba tak zrobic bo nie
+						   'mamy dziedziczenia w VB
+
+	public pLicence		   'obj typu CLicenceKey
+	public strIdUser
+	private m_strInfo
+	
+	public sub class_initialize()
+		m_error_msg = ""
+		m_strInfo = ""
+		strIdUser = ""
+		m_nResult = 0
+		set pLicence=nothing
+
+		'set pParent=new CXML Import Manager
+	end sub
+
+    public sub class_terminate()   'OK
+		set pParent = nothing
+	end sub
+
+	public function isImported()
+		isImported = pParent.isImported()
+	end function
+
+	public sub OnMessageBegin(byref pMsgObj,byref bBreak)
+		m_strInfo=pMsgObj.header("info")
+		pParent.OnMessageBegin pMsgObj, bBreak
+	end sub
+
+	public sub OnMessageEnd(pMsgObj,byref bBreak)
+		pParent.OnMessageEnd pMsgObj, bBreak
+	end sub
+
+	public sub OnObject(pObject,byref bBreak)
+		
+		'licencji nie importujemy tylko wypelniamy obiekt typu CLicenceKey
+		'ktory reprezentuje licencje, generuje klucze itd. itp.
+		if pObject.typeid=TYPEID_N5LICENCJA then
+
+			'cos jest nie tak - co to za obiekt
+			if (not pObject.isfield("strKontrola")) then
+				exit sub
+			end if
+
+			'pobierz z naglowka xml'a informacje
+			'o typie aplikacji jaka ktos chce
+			dim pInfoArray
+			set pInfoArray = doc_.afc.new_navoarray()
+
+			pInfoArray.Separate m_strInfo, ";"
+			
+			if (pInfoArray.Count()<>2) then
+				exit sub
+			end if
+
+			dim strKontrola
+			strKontrola=pObject.field("strKontrola")
+
+			set pLicence=new CLicenceKey
+			if (not pLicence.openKey(strKontrola)) then
+				set pLicence=nothing
+			end if
+
+			pLicence.setAppName pInfoArray.Value( 1 )
+
+
+			if (pObject.isfield("strIdUser")) then
+				strIdUser = pObject.field("strIdUser")
+			end if
+			
+			exit sub
+		end if
+				
+		'dla reszty wolamy implementacje domyslna,czyli reszte importujemy
+		pParent.OnObject pObject, bBreak
+	end sub
+
+end class
+
+'------------------------------------------------------------------------
+'zwraca kod xml'a z informacja ze wystapil blad podczas proby zwrotu lic.
+'------------------------------------------------------------------------
+function getErrorXML(byval strErrorMessage)
+	dim strXMLError
+	strXMLError="<?xml version=""1.0"" encoding=""windows-1250""?>" + _
+	"<neipckg>" + _
+		"<neimsg>" + _
+			"<neio>" + _
+				"<typeid>8002</typeid>" + _
+				"<idobj>1</idobj>" + _
+				"<fstatus vt='8'><![CD" + "ATA[ERROR]" + "]></fstatus>" + _
+				"<fdescription vt='8'><![CD" + "ATA[" + strErrorMessage + "]" + "]></fdescription>" + _
+			"</neio>" + _
+		"</neimsg>" + _
+	"</neipckg>"
+
+	getErrorXML=strXMLError
+end function
+
+'------------------------------------------------------------------------
+'zwraca kod xml'a z lic. dla klienta
+'------------------------------------------------------------------------
+function getLicenceXML(byval dValidDate, byval strExData, byval strAppName, byval nUsers)
+
+	dim strValidDate 'yyyy/mm/dd
+	strValidDate=CStr(Year(dValidDate))+"/"+CStr(Month(dValidDate))+"/"+CStr(Day(dValidDate))
+
+	dim strUser
+	strUser=CStr(nUsers)
+
+	dim strStanowiska
+	strStanowiska=CStr(nUsers)
+
+	dim strLogin
+	dim strPassword
+	
+	dim strLicence
+	strLicence="<?xm" + "l version=""1.0"" encoding=""windows-1250""?>" + _
+	"<neipckg>" + _
+		"<neimsg>" + _
+			"<neio>" + _
+				"<typeid>8001</typeid>" + _
+				"<idobj>1</idobj>" + _
+				"<fversion vt='3'>" + CStr(EXPORT_XML_VERSION) + "</fversion>" + _
+				"<finfo vt='8'><![CD" + "ATA[Licencja]" + "]></finfo>" + _
+			"</neio>" + _
+			"<neio>" + _
+				"<typeid>8002</typeid>" + _
+				"<idobj>1</idobj>" + _
+				"<fstatus vt='8'><![CD" + "ATA[OK]" + "]></fstatus>" + _
+				"<fdescription vt='8'><![CD" + "ATA[Licencja została przekazana do klienta.]" + "]></fdescription>" + _
+			"</neio>" + _
+			"<neio>" + _
+				"<typeid>10106</typeid>" + _
+				"<idobj>1</idobj>" + _
+				"<finf_child vt='3'>0</finf_child>" + _
+				"<finf_parent_list_fld vt='3'>0</finf_parent_list_fld>" + _
+				"<finf_parenttypeid vt='3'>0</finf_parenttypeid>" + _
+				"<fexport_level vt='3'>0</fexport_level>" + _
+				"<finf_parentidobj vt='3'>0</finf_parentidobj>" + _
+				"<fddatawazn vt='7'>@VALIDDATE@</fddatawazn>" + _
+				"<fstrkontrola vt='8'><![CD" + "ATA[@EXDATA@]" + "]></fstrkontrola>" + _
+				"<fstrkod vt='8'><![CDA" + "TA[@APPNAME@]" + "]></fstrkod>" + _
+			"</neio>" + _
+		"</neimsg>" + _
+	"</neipckg>"
+
+	strLicence=replace(strLicence, "@VALIDDATE@", strValidDate)
+	strLicence=replace(strLicence, "@EXDATA@", strExData)
+	strLicence=replace(strLicence, "@APPNAME@", strAppName)
+
+	getLicenceXML=strLicence
+end function
+
+'------------------------------------------------------------------------
+'przetwarzanie żądania licencji wolane na serwerze licencji ze strony ASP
+'uwaga! rezultat false jest równoznaczny z wygenerowaniem przez serwer
+'default'owego komunikatu błędu. Zwrócenie true moze oznaczas blad gdy
+'strXMLOut zawiera kod zwrocony przez getErrorXML - w tym przypadku
+'licencja na kliencie tez nie bedzie zaimportowana
+'------------------------------------------------------------------------
+function internal_process_licence_request(byref soIn,byref strXMLOut)
+	internal_process_licence_request=true
+
+	'reprezentuje strumień wyjściowy przekazywany do klienta
+	strXMLOut=""
+
+	'--- analiza danych wejściowych ----
+
+	'utwórz obiekt importera
+	dim imppckg: set imppckg = createobject("navoexpimp.ImportPackage")
+	
+	'przypisz strumień
+	imppckg.istream soIn
+	
+	'utworz kontekst importu
+	dim import : set import = new CLicenceRequestContext
+	set imppckg.sink = import
+	
+	'importuj pliki
+	dim nImportRes
+	nImportRes = imppckg.go()
+
+	'--- sprawdzanie poprawnosci tego co dostalismy ----
+
+	if (import.pLicence is nothing) then
+		strXMLOut=getErrorXML("Nie dostarczono licencji lub błędny kod licencji.")
+		exit function
+	end if
+
+	if (not import.isImported()) then
+		strXMLOut=getErrorXML("Nie udało się zaimportować dostarczonych danych.")
+		exit function
+	end if
+
+
+	'ktos rzada licencji dla aplikacji:
+	dim strAppName: strAppName=import.pLicence.getAppName()
+	'dla liczby stanowisk:
+	dim nUsers: nUsers=import.pLicence.getUsers()
+	'i posiada kod exData
+	dim strExData: strExData=import.pLicence.getExData()
+
+
+	'!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	'todo:!!!!! sprawdzanie czy ktos moze otrzymac lic. i zapisanie
+	'jezeli otrzymal jaka, kiedy itd. itp.
+	'uwaga! przy imporcie firma nie bedzie zapisana bo w naszej bazie
+	'jedna firma juz istnieje - trzeba to w razie czego zmienic
+	'!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	strXMLOut=getErrorXML("Usługa rejestracji licencji przez internet nie jest jeszcze uruchomiona. Dziękujemy za test.")
+	exit function
+	
+
+	'generujemy nowy klucz dla licencji i wychodzimy
+	dim dNew
+	dNew=DateSerial(Year(srvDate()) + MAX_LIC_YEARS, Month(srvDate()), Day(srvDate()))
+
+	import.pLicence.setDate dNew
+	import.pLicence.setUnlockCode import.strIdUser
+
+	strXMLOut=getLicenceXML(dNew, import.pLicence.getKey(), APP_NAME, nUsers)
+end function
+
+function external_process_licence_request(byref arrBytesIn,byref strXMLOut)
+	external_process_licence_request = false
+
+	'zamień tablicę na strumień	
+	dim soIn : set soIn = doc_.createstreamobj
+	soIn.attach arrBytesIn
+	'wywołaj włąściwą funkcję
+	external_process_licence_request = internal_process_licence_request(soIn,strXMLOut)
+end function
+
+]]>
+</script>
+</config>
+	<body>
+		<t>Analyze licence request. Used from ASP</t>
+	</body>
+</page>

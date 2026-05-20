@@ -1,0 +1,603 @@
+#ifndef LIB_RAPORTS
+#define LIB_RAPORTS
+
+#comment OBSOLETE - check calls and remove
+
+'///////////////////////////////////////
+'// (C) 2001 NAVO					  //
+'// Raport classes Kosma Bieñkowski	  //
+'///////////////////////////////////////
+
+'WYMAGANY 50203
+
+'--------------------------------------------------
+'CRawRapSection - low level
+'
+'
+' 1. uwtórz obiekt
+' 2. zainicjuj go podaj¹c procedury jakie maj¹ byæ wo³ane
+'	 na pocz¹tku, na koñcu sekcji oraz dla ka¿dego wiersza (sumowanie)
+'	 podaj iloœæ liczników (obiekt przechowuje je za Ciebie)
+' 
+'	 WDFieldInx - numer pola, którego zmiana koñczy sekcjê
+'	 begin_proc(byref pRRS,byref pSO, byref pCurrRec)	- ma wypisaæ nag³owek sekcji oraz zresetowaæ liczniki
+'	 end_proc(byref pRRS,byref pSO) - ma wypisaæ koniec sekcji (np. sumy)
+'	 row_proc(byref pRRS,byref pSO, byref pCurrRec)
+'
+'	 set pRRS = CRawRapSection
+'	 pRRS.init 1,"pocz_sekcji_kontrahent","koniec_sekcji_kontrahent","sumator_kontrahenta",1
+'	 pRaport.addsection pRRS
+'--------------------------------------------------
+
+#define RAP_PROP_ALIGN_TYPE		1
+
+class CRawRapSection
+	private m_WDValue	'watchdog value
+	private m_WDFieldInx	'watchdog field
+
+	public m_Counters()
+
+	public m_pBeginProc	'begin section procedure
+	public m_pEndProc		'end section procedure
+	public m_pRowProc		'row notification procedure
+
+	public sub init(byval WDFieldInx,byval strBeginProc,byval strEndProc,byval strRowProc,byval nCountersCnt)
+		m_WDValue = 0	'good for idobj
+		m_WDFieldInx = WDFieldInx
+		if strBeginProc <> "" then
+			set m_pBeginProc = getref(strBeginProc)
+		else
+			set m_pBeginProc = nothing
+		end if
+		if strEndProc <> "" then
+			set m_pEndProc = getref(strEndProc)
+		else
+			set m_pEndProc = nothing
+		end if
+		if strRowProc <> "" then
+			set m_pRowProc = getref(strRowProc)
+		else
+			set m_pRowProc = nothing
+		end if
+		redim m_Counters(nCountersCnt)
+	end sub
+
+	'runtime procedures
+	public sub begin_section(byref pSO,byref pCurrRec)
+		if not m_pBeginProc is nothing then
+			m_pBeginProc me,pSO, pCurrRec
+		end if
+	end sub
+	public sub end_section(byref pSO)
+		if not m_pEndProc is nothing then
+			m_pEndProc me,pSO
+		end if
+	end sub
+	public sub process_row(byref pSO,byref pCurrRec)
+		if not m_pRowProc is nothing then
+			m_pRowProc me,pSO, pCurrRec
+		end if
+	end sub
+	public function getwdfield()
+		getwdfield = m_WDFieldInx 
+	end function
+	public property get wdval()
+		wdval = m_WDValue
+	end property
+	public property let wdval(newval)
+		m_WDValue = newval
+	end property
+end class
+
+'--------------------------------------------------
+'	CRawRaport - low level
+'--------------------------------------------------
+class CRawRaport
+	public m_Sections()
+	public m_SectionUB		'm_Sections upper bound
+
+	public m_strADOQuery
+
+	private sub Class_Initialize()
+		m_SectionUB = -1
+		redim m_Sections(0)
+	end sub
+
+	public sub addsection(byref pRRS)
+		m_SectionUB = m_SectionUB + 1
+		redim preserve m_Sections(m_SectionUB+1)
+		set m_Sections(m_SectionUB) = pRRS
+	end sub
+
+	public sub removeall()
+		m_SectionUB = -1
+		redim m_Sections(0)
+	end sub
+
+	public sub removesection(byval nIndex)
+        dim i
+
+        for i = (nIndex + 1) to ubound(m_Sections) - 1
+            if isobject(m_Sections(i)) then
+                set m_Sections(i - 1) = m_Sections(i)
+            else
+                m_Sections(i - 1) = m_Sections(i)
+            end if
+        next
+
+        redim preserve m_Sections(ubound(m_Sections) - 1)
+		m_SectionUB = ubound(m_Sections)
+	end sub
+
+	public function getsection(byval nIndex)
+		set getsection=m_Sections(nIndex)
+	end function
+
+end class
+
+'--------------------------------------------------
+' CRaportColumn - medium level
+'--------------------------------------------------
+class CRaportColumn
+	public m_FieldInx
+	public m_strColPattern
+	public m_nCounter
+
+	'dodatkowe property
+	private m_strAlign
+	
+	'g³ównie dla linków
+	public m_FieldInx2
+
+	public m_FieldInx3
+
+	public function FormatData(byref varVal)
+		if isNull(varVal) then
+			varVal=""
+		end if
+
+		'to zmieniæ dla > 9 poziomów grup
+		'FormatData = replace(replace(m_strColPattern,"%s%",cstr(varVal)), "%ITER%", cstr(100000+m_nCounter))
+		FormatData = replace(replace(m_strColPattern,"%s%",cstr(varVal)), "%ITER%", cstr(1000000+m_nCounter))
+		FormatData = replace(FormatData, "%align%", m_strAlign)
+	end function
+
+	public function FormatData2(byref varVal, byref strInput)
+		if varVal<>"" then
+			FormatData2 = replace(strInput,"%h",cstr(varVal))
+		else
+			' brak referencji
+			FormatData2 = replace(strInput,"%h", "0") '//@TODO - wartoœæ domyœlna w zmiennej
+		end if
+	end function
+
+	public function FormatData3(byref varVal, byref strInput)
+		if varVal<>"" then
+			FormatData3 = replace(strInput,"%g",cstr(varVal))
+		else
+			' brak referencji
+			FormatData3 = replace(strInput,"%g", "0") '//@TODO - wartoœæ domyœlna w zmiennej
+		end if
+	end function
+
+	public function setProperty(byval nPropType, byval varValue)
+		select case nPropType
+			case RAP_PROP_ALIGN_TYPE
+				m_strAlign = varValue
+
+		end select
+	end function
+
+	private sub Class_Initialize()
+		m_strColPattern = "<td %align%><t><![CDA"+"TA[%s%]]"+"></t></td>" + vbCrLf
+		m_FieldInx2=-1
+		m_FieldInx3=-1
+		m_nCounter = clng(1)
+	end sub
+
+	' procedura wywo³ywana przed czytaniem naztêpnej wartoœci
+	public sub OnPrepareNextData()
+		m_nCounter = m_nCounter + 1
+	end sub
+
+end class
+
+'--------------------------------------------------
+' CRaportColumnPic - kolumna z rysunkiem
+'--------------------------------------------------
+class CRaportColumnPic
+	public m_FieldInx
+	public m_strColPattern
+	public m_nCounter
+	public m_nTypeId
+
+	'dodatkowe property
+	private m_strAlign
+
+	'g³ównie dla linków
+	public m_FieldInx2
+
+	public m_FieldInx3
+
+	private m_pPicIdModule
+
+	private sub Class_Initialize()
+		m_strColPattern = "<td %align%><t><![CDA"+"TA[%s%]]"+"></t></td>" + vbCrLf
+		m_nTypeId = clng(0)
+		m_FieldInx2=-1
+		m_FieldInx3=-1
+		m_nCounter = clng(1)
+		set m_pPicIdModule = nothing
+	end sub
+
+	private sub class_terminate()   'OK
+		set m_pPicIdModule = nothing
+	end sub
+
+	public function FormatData(byref varVal)
+		if isNull(varVal) then
+			varVal=""
+		end if
+
+		'to zmieniæ dla > 9 poziomów grup
+'		FormatData = replace(replace(m_strColPattern,"%s%",cstr(varVal)),"%ITER%",cstr(100000+m_nCounter))
+		FormatData = replace(replace(m_strColPattern,"%s%",cstr(varVal)),"%ITER%",cstr(1000000+m_nCounter))
+		FormatData = replace(FormatData, "%align%", m_strAlign)
+	end function
+
+	public function FormatData2(byref varVal, byref strInput)
+
+		if (m_pPicIdModule is nothing) then
+			set m_pPicIdModule = doc_.getmodule(60301)
+		end if
+
+		if varVal<>"" then
+			FormatData2 = replace(strInput,"%h",cstr(varVal))
+			FormatData2 = replace(FormatData2,"%pic", cstr(m_pPicIdModule.get_obj_pic_id(m_nTypeId, clng(varVal), PICUSE_LISTELEM)) )
+		else
+			FormatData2 = "<td><text></text></td>"
+		end if
+	end function
+
+	public function FormatData3(byref varVal, byref strInput)
+		FormatData3 = ""
+	end function
+
+	public function setProperty(byval nPropType, byval varValue)
+		select case nPropType
+			case RAP_PROP_ALIGN_TYPE
+				m_strAlign = varValue
+
+		end select
+	end function
+
+	' procedura wywo³ywana przed czytaniem naztêpnej wartoœci
+	public sub OnPrepareNextData()
+		m_nCounter = m_nCounter + 1
+	end sub
+
+end class
+
+'--------------------------------------------------
+' CRaportColumnLP - medium level
+' To samo jak CRaportColumn, ale wyœwietla tylko LP: 1, 2, 3, ...
+'--------------------------------------------------
+class CRaportColumnLP
+	public m_FieldInx ' nie u¿ywane
+	public m_strColPattern
+	public m_nCounter
+
+	'dodatkowe property
+	private m_strAlign
+
+	'g³ównie dla linków
+	public m_FieldInx2 ' nie u¿ywane
+	public m_FieldInx3 ' nie u¿ywane
+
+	public function FormatData(byref varVal)
+		FormatData = replace(m_strColPattern,"%s%",cstr(m_nCounter))
+		FormatData = replace(FormatData, "%align%", m_strAlign)
+	end function
+
+	public function FormatData2(byref varVal, byref strInput)
+		FormatData2 = replace(strInput,"%h",cstr(m_nCounter))
+	end function
+
+	public function FormatData3(byref varVal, byref strInput)
+		FormatData3 = ""
+	end function
+
+	public function setProperty(byval nPropType, byval varValue)
+		select case nPropType
+			case RAP_PROP_ALIGN_TYPE
+				m_strAlign = varValue
+
+		end select
+	end function
+
+	private sub Class_Initialize()
+		m_strColPattern = "<td %align% width='min'><t><![CDA"+"TA[%s%]]"+"></t></td>" + vbCrLf
+		m_FieldInx2=-1 ' nie u¿ywane
+		m_FieldInx3=-1 ' nie u¿ywane
+		m_nCounter = clng(1)
+	end sub
+
+	' procedura wywo³ywana przed czytaniem naztêpnej wartoœci
+	public sub OnPrepareNextData()
+		m_nCounter = m_nCounter + 1
+	end sub
+
+end class
+
+
+
+'--------------------------------------------------
+' CRaportBody - medium level
+'
+'
+'--------------------------------------------------
+class CRaportBody
+	public m_Columns()
+	public m_ColumnUB
+	public m_strRowPattern
+	public m_nCounter
+
+	private sub Class_Initialize()
+		m_ColumnUB = -1
+		m_strRowPattern = "<tr %XCLR%>%s%</tr>" + vbCrLf
+		m_nCounter = 0
+		redim m_Columns(0)
+	end sub
+
+	public sub addcolumn(byref pRapCol)
+		m_ColumnUB = m_ColumnUB + 1
+		redim preserve m_Columns(m_ColumnUB+1)
+		set m_Columns(m_ColumnUB) = pRapCol
+	end sub
+
+	public sub removeall()
+		m_ColumnUB = -1
+		redim m_Columns(0)
+	end sub
+
+	public sub removecolumn(byval nIndex)
+        dim i
+
+        for i = (nIndex + 1) to ubound(m_Columns) - 1
+            if isobject(m_Columns(i)) then
+                set m_Columns(i - 1) = m_Columns(i)
+            else
+                m_Columns(i - 1) = m_Columns(i)
+            end if
+        next
+
+        redim preserve m_Columns(ubound(m_Columns) - 1)
+		m_ColumnUB = ubound(m_Columns)
+	end sub
+
+	public function getcolumn(byval nIndex)
+		set getcolumn=m_Columns(nIndex)
+	end function
+
+	'runtime
+	'dummy proc
+	public sub begin_section(byref pSO,byref pCurrRec)
+	end sub
+	public sub end_section(byref pSO)
+	end sub
+	public function getwdfield()
+		getwdfield = -1	'not a watchdog
+	end function
+
+	'real working proc
+	public sub process_row(byref pSO,byref pCurrRec)
+		
+		'zmieniamy ustawienia regionalne na US
+		dim org: org=GetLocale()
+		SetLocale(1033)
+
+
+		dim strRow : strRow = ""
+		dim strColor,strTempRow
+		dim iter
+		for iter = 0 to m_ColumnUB
+			dim strResult
+	
+
+			dim varValue : varValue = pCurrRec.fields(m_Columns(iter).m_FieldInx)
+			
+			if isNull(varValue) then
+				varValue=""
+			else
+
+				dim iVarType: iVarType = varType(varValue)
+
+				if (iVarType = vbDecimal) or (iVarType = vbCurrency) then
+					
+					varValue = doc_.afc.display.money(varValue, "")
+
+					'Ustaw wyrownanie do prawej. Poniewaz funkcja setProperty
+					'nie jest wymagana w klasie odpowiedzialnej za wyswietalnie
+					'komorki to on error
+					on error resume next
+					m_Columns(iter).setProperty RAP_PROP_ALIGN_TYPE, "align='right'"
+					on error goto 0
+
+				elseif (iVarType = vbDate) then
+					varValue = doc_.afc.display.fulldate(varValue)
+				end if
+
+			end if
+
+			'strResult=m_Columns(iter).FormatData(doc_.afc.convert.str2XML(cstr(varValue)))
+			strResult = m_Columns(iter).FormatData(cstr(varValue))
+
+			if (m_Columns(iter).m_FieldInx2>-1) then
+				dim varValue2 : varValue2 = pCurrRec.fields(m_Columns(iter).m_FieldInx2)
+				if isNull(varValue2) then
+					varValue2=""
+				else
+					varValue2 = cstr(varValue2)
+				end if
+				strResult=m_Columns(iter).FormatData2(varValue2, strResult)
+			end if
+
+			if (m_Columns(iter).m_FieldInx3>-1) then
+				dim varValue3 : varValue3 = pCurrRec.fields(m_Columns(iter).m_FieldInx3)
+				if isNull(varValue3) then
+					varValue3=""
+				else
+					varValue3 = cstr(varValue3)
+				end if
+				strResult=m_Columns(iter).FormatData3(varValue3, strResult)
+			end if
+
+			' przygotuj dane dla nastêpnego czytania (u¿ywane dla CRaportColumnLP)
+			m_Columns(iter).OnPrepareNextData
+
+			strRow = strRow + strResult
+		next
+
+		if (m_nCounter mod 2) = 0 then
+			strColor="backcolor='transparent'"
+		else
+			strColor="backcolor='#EFF4FE'"
+		end if
+
+
+		strTempRow = replace(m_strRowPattern,"%XCLR%",strColor)
+
+		pSO.write replace(strTempRow,"%s%",strRow)
+
+		SetLocale(org)'przywracamy oryginalne
+
+		m_nCounter = m_nCounter + 1
+
+	end sub
+end class
+
+'--------------------------------------------------
+const CT_COUNT	= 1
+const CT_SUM	= 2
+const CT_MAX	= 3
+const CT_MIN	= 4	
+
+class CRaportCounter
+	public m_value
+	public m_type
+	public m_CntFldInx
+
+	public sub init(byval countertype,byval fldinx)
+		m_type = countertype
+		m_CntFldInx = fldinx
+	end sub
+	public sub reset()
+		select case m_type
+		case CT_COUNT,CT_SUM
+			m_value = ccur(0.0)
+		case CT_MAX
+			m_value = ccur(-999999999.99)
+		case CT_MIN
+			m_value = ccur(999999999.99)
+		end select
+	end sub
+	public sub update(byval vValue)
+		select case m_type
+		case CT_COUNT
+			m_value = m_value + 1
+		case CT_SUM
+			m_value = m_value + ccur(vValue)
+		case CT_MAX
+			if ccur(vValue) > m_value then
+				m_value = ccur(vValue)
+			end if
+		case CT_MIN
+			if ccur(vValue) < m_value then
+				m_value = ccur(vValue)
+			end if
+		end select
+	end sub
+end class
+
+class CRaportSection
+	private m_WDValue		'watchdog value
+	private m_WDFieldInx	'watchdog field
+	private m_pBeginRB		'CRaportBody for section's begin
+	private m_pEndRB		'CRaportBody for section's end
+
+	public m_Counters()
+	public m_nCounterUB
+
+	public sub addcounter(byref pCounter)
+		m_nCounterUB = m_nCounterUB + 1
+		redim preserve m_Counters(m_nCounterUB+1)
+		set m_Counters(m_nCounterUB) = pCounter
+	end sub
+
+	private sub Class_Initialize()
+		m_nCounterUB = -1
+	end sub
+
+	public sub init(byval WDFieldInx,byref pBeginRB, byref pEndRB)
+		m_WDFieldInx = WDFieldInx
+		set m_pBeginRB = pBeginRB
+		set m_pEndRB = pEndRB
+	end sub
+
+	public function getBeginRB()
+		set getBeginRB = m_pBeginRB
+	end function
+
+	public function getEndRB()
+		set getEndRB = m_pEndRB
+	end function
+
+	'runtime procedures
+	public sub begin_section(byref pSO,byref pCurrRec)
+		'reset counters
+		dim iter
+		for iter = 0 to m_nCounterUB
+			m_Counters(iter).reset
+		next
+		m_pBeginRB.process_row pSO,pCurrRec
+	end sub
+
+	public sub end_section(byref pSO)
+		if not m_pEndRB is nothing then
+			dim strRow : strRow = ""
+			dim iter
+			for iter = 0 to m_nCounterUB
+				dim varValue : varValue = m_Counters(iter).m_value
+				'roboczo - bez formatowania
+				varValue = cstr(varValue)
+				
+'co to??		strRow = strRow + replace(replace(m_pEndRB.m_Columns(iter).m_strColPattern,"%s%",varValue),"%ITER%",CStr(iter))
+				strRow = strRow + replace(m_pEndRB.m_Columns(iter).m_strColPattern,"%s%",varValue)
+ 			next
+			pSO.write replace(m_pEndRB.m_strRowPattern,"%s%",strRow)
+		end if
+	end sub
+
+	public sub process_row(byref pSO,byref pCurrRec)
+		'update counters
+		dim iter
+		for iter = 0 to m_nCounterUB
+			m_Counters(iter).update(pCurrRec.fields(m_Counters(iter).m_CntFldInx))
+		next
+	end sub
+
+	public function getwdfield()
+		getwdfield = m_WDFieldInx 
+	end function
+
+	public property get wdval()
+		wdval = m_WDValue
+	end property
+
+	public property let wdval(newval)
+		m_WDValue = newval
+	end property
+
+end class
+
+#endif

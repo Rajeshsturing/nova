@@ -1,0 +1,1792 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1203_appconfig.h"
+#include "h1003.h"
+#include "h1200.h"
+#include "h1201.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+
+
+#define REQUIRED_PLATFORM_VERSION "15.10.27.0"
+#define REQUIRED_AFC_VERSION	  "1.2.0.1050"
+
+
+-->
+<page>
+<config>
+<script>
+
+<!--
+	Moduł ten jest odpowiedzialny za proces inicjowania systemu
+-->
+
+<![CDATA[
+
+#include "50101"
+#include "50120"
+#include "50129"
+#include "50103"
+#include "50122"
+#include "50203"
+#include "50204"
+#include "50516"
+
+#include "50125"
+'OnUserLogon, OnUserLogoff
+#include "50627"
+#include "50611"
+
+#include "50525"
+
+dim g_nDBVersion : g_nDBVersion = -1	'wersja bazy danych
+dim nLicenceID							'idobj licencji jeżeli już istnieje
+nLicenceID = CLng(0)
+
+#include "50303"
+
+'----------------------------------------------------------------------
+' inicjowanie, ktore zawsze musi byc wolane
+'----------------------------------------------------------------------
+function system_init_always() : system_init_always = false
+	if not check_platform() then
+		exit function
+	end if
+
+	nx_.apprep.attach_definition_manager doc_.stdobjdef
+	dim pM60170 : set pM60170 = doc_.getmodule(60170)
+
+	dim iter
+	for iter = 95500 to 95505
+		nx_.apprep.load pM60170.preprocess_repository(doc_.getappfile(iter))
+	next
+	nx_.apprep.load pM60170.preprocess_repository(doc_.getappfile(95599))
+
+  if (trans_.var( GVAR_NAVO2001VERSION ) < "16.10.24") then
+	  set nx_.slot0 = doc_.system.activex("eb5util.eb5utilhub")
+  else
+	  set nx_.slot0 = nx_.create_net_object("navo2012.net.eb5util.dll", "eb5util.eb5utilhub, navo2012.net.eb5util")
+	end if
+  
+	'only required before ENGINE2008
+	if False then
+		set nx_.slot1 = doc_.system.activex("eb5hand.eb5handhub")
+		set nx_.slot2 = doc_.system.activex("eb5fk.eb5fkhub")
+	end if
+
+	system_init_always = true
+end function
+'----------------------------------------------------------------------
+'rozpoczyna proces incjowania. zwraca true jezeli aplikacja zostala
+'zainicjowana poprawnie
+'----------------------------------------------------------------------
+function system_init_ex(byref pStartingHLI)
+
+	system_init_ex = system_init()
+	
+end function
+
+function system_init(): system_init=false
+	dim dStart
+
+	if not system_init_always() then
+		exit function
+	end if
+
+	'---------------------------------------------------
+	' Próba podłączenia do bazy danych
+	'---------------------------------------------------
+	dim strDatabaseName
+	strDatabaseName = trans_.var(GVAR_DBNAME)
+
+	dim strServerName
+	strServerName = trans_.var(GVAR_DBSERVER)
+
+	on error resume next
+
+	err.clear
+	'---------------------------------------------------
+	'dummy operacja wymuszajaca logowanie sie do bazy po stronie serwera
+	'blad w silniku <= 1.2.1043.0
+	'---------------------------------------------------
+	dim iDummy : iDummy = trans_.findobjid(TYPEID_N5UZYTKOWNIK,"")
+
+	g_nDBVersion = getglobprofileLong(GLOBPROF_DBVERSION)
+
+	if (err.number<>0) then
+		MessageBox "Połączenie z bazą danych """ + strDatabaseName + """ na serwerze """ + strServerName + """ się nie udało. Serwer zatrzymany lub nie został zainstalowany.", "Uruchomienie aplikacji", vbOkOnly, vbInformation
+		exit function
+	end if
+
+	on error goto 0
+
+	trans_.var(GVAR_USER)=CLng(0)
+	'normal operation mode
+	trans_.var(GVAR_OPERATION_MODE) = clng(OPERATION_MODE_NORMAL)
+
+	'---------------------------------------------------
+	'sprawdzenie wersji komponentow np. wersji klienta
+	'---------------------------------------------------
+	if (not system_check_components()) then
+		exit function
+	end if
+
+	'---------------------------------------------------
+	' Sprawdzenie wersji bazy danych
+	'---------------------------------------------------
+	if (not system_check_db_version()) then
+		exit function
+	end if
+
+	'---------------------------------------------------
+	'pierwszy uzytkownik i firma
+	'---------------------------------------------------
+	if (not system_fill_initial_data()) then
+		exit function
+	end if
+
+
+	'-----------------------------------------------------
+	'zeruj maskę użycia modułów
+	'-----------------------------------------------------
+	LicInit
+	'---------------------------------------------------
+	'sprawdzenie licencji
+	'---------------------------------------------------
+	on error resume next
+	err.clear
+
+	dim pM60137 : set pM60137 = doc_.getmodule(60137)
+	dim nCheckRes : nCheckRes = pM60137.check_licences_on_start()
+	if (err.number<>0) then
+		MessageBox "Wystąpił problem z weryfikacją licencji", "Weryfikacja licencji", vbOkOnly, vbInformation
+		exit function
+	end if
+	if nCheckRes < 0 then
+		exit function
+	end if
+
+	if nCheckRes > 0 then
+		dim pPageRegister : set pPageRegister = doc_.getpagehli("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=20126")
+		pPageRegister.domodalauto
+		nCheckRes = pM60137.check_licences_on_start()
+    
+    'if nCheckRes <> 0 and  nCheckRes <> 2 then
+		'  exit function
+    'end if
+    
+	end if
+
+	on error goto 0
+
+	trans_.var(GVAR_USER)=CLng(0)
+	if trans_.isvar(GVAR_APPUSERNAME) and trans_.isvar(GVAR_APPUSERPASSWORD) then
+		dim strDummy
+		trans_.var(GVAR_USER) = clng(doc_.getmodule(60106).try_logon_user(trans_.var(GVAR_APPUSERNAME),trans_.var(GVAR_APPUSERPASSWORD),strDummy))
+	end if
+	if trans_.var(GVAR_USER) = 0 then
+		if not(doc_.getmodule(PAGE_FORM_LOGON).logon()) then
+			system_init= false
+			exit function
+		end if
+	else
+		OnUserLogon true
+	end if
+	
+	if (not system_bookkeeping_init(true)) then
+		exit function
+	end if
+
+
+	'Podmiana menu itd. ostateczna faza uruchamiania
+	'Ustaw zmienne globalne
+	system_set_global_variables
+
+	'podmien menu na pełne
+#ifdef _SWIAT_TOREBEK
+	doc_.setmenu clng(73900)
+	auto_backup
+#else
+	#ifdef _ABAKUS
+		'jeśli nadano uprawnienie do pełnego menu => załaduj pełne, w przeciwnym wypadku => załaduj uproszczone
+		if not doc_.getmodule(60106).FindRightFullMenu() then
+			'uproszczone menu
+			doc_.setmenu clng(73900)
+			auto_backup      
+		else
+			'pełne menu
+			doc_.setmenu clng(MENU_FULL_TREE)
+		end if
+	#else
+		doc_.setmenu clng(MENU_FULL_TREE)
+	#endif
+#endif
+
+	'Pokazuj outlookbar lub nie. Toolbar został
+	'już załadowany za logowaniem
+	ShowHideOutlookBar
+
+	if getCurrentUser().strLogin = ADMIN_LOGIN then
+		if getglobprofileLong(GLOBPROF_ISDONE_CLIENT_UPG_DB8_DB9) <> 1 then
+			if not doc_.getmodule(60268).client_upgrade_data_db8_to_db9() then
+				system_init= false
+				exit function
+			else
+				system_saveglobprof GLOBPROF_ISDONE_CLIENT_UPG_DB8_DB9, clng(1)
+			end if			
+		end if
+	end if
+  
+#ifdef ENABLE_VAT2011
+	trans_.var(GVAR_CURRENT_MODE_VAT) = "0"
+#endif
+#ifdef ENABLE_DB11
+	trans_.var(GVAR_CURRENT_REJESTR_TYP) = "0"
+#endif
+
+  trans_.var(GVAR_RAPORT_GEN_MODE)=clng(0)
+
+#ifdef APPCONFIG_NIEZMIENNE_WYDRUKI
+  trans_.var(GVAR_NIEZMIENNE_WYDRUKI_FILE_PATH) = ""
+  trans_.var(GVAR_NIEZMIENNE_WYDRUKI) = 0
+#endif
+
+#ifdef _ALMA_TREND
+  trans_.var(GVAR_POMIN_BLOKADE_DOK_ZAREJESTROWANE) = "0"
+#endif
+
+#ifdef _TORAL
+	trans_.var(GVAR_REJESTR_PREFIX) = get_rejestr_prefix()
+#endif
+
+	system_init= true
+end function
+
+'-------------------------------------------------------------------------------
+'pobiera prefix rejestru z jednostki organizacyjnej dla zalogowanego użytkownika
+'-------------------------------------------------------------------------------
+function get_rejestr_prefix(): get_rejestr_prefix = ""
+	if trans_.isvar(GVAR_USER) then
+		dim strQuery
+		strQuery = "select left(j.strNazwa,2) from n5jedn_org j " + vbNewLine +_
+					"inner join n5pracownik p on p.pJednostkaOrg = j.IdObj " + vbNewLine +_
+					"inner join n5wykonawca w on w.wrefObiekt = p.IdObj and w.wrefObiekt_wrt = TYPEID_N5PRACOWNIK " + vbNewLine +_
+					"inner join n5uzytkownik u on u.pWykonawca = w.IdObj " + vbNewLine +_
+					"where u.IdObj = " + cstr(trans_.var(GVAR_USER))
+		dim oRS: set oRS = trans_.createadors(strQuery)
+		if not oRS.EOF then
+			get_rejestr_prefix = cstr(oRS(0).value)
+		end if
+	end if
+end function
+
+'----------------------------------------------------------------------
+'called once while installing DB at app server 
+'----------------------------------------------------------------------
+function system_init_first_time() : system_init_first_time = false
+	'---------------------------------------------------
+	'Pierwsza część initu
+	'---------------------------------------------------
+	dim dStart
+
+	if not system_init_always() then
+		exit function
+	end if
+
+	'---------------------------------------------------
+	' Próba podłączenia do bazy danych
+	'---------------------------------------------------
+	dim strDatabaseName
+	strDatabaseName = trans_.var(GVAR_DBNAME)
+
+	dim strServerName
+	strServerName = trans_.var(GVAR_DBSERVER)
+
+	on error resume next
+
+	err.clear
+	g_nDBVersion = getglobprofileLong(GLOBPROF_DBVERSION)
+
+	if (err.number<>0) then
+		MessageBox "Połączenie z bazą danych """ + strDatabaseName + """ na serwerze(""" + strServerName + """ się nie udało. Serwer zatrzymany lub nie został zainstalowany.", "Uruchomienie aplikacji", vbOkOnly, vbInformation
+		exit function
+	end if
+
+	on error goto 0
+
+	trans_.var(GVAR_USER)=CLng(0)
+	'normal operation mode
+	trans_.var(GVAR_OPERATION_MODE) = clng(OPERATION_MODE_NORMAL)
+
+	'---------------------------------------------------
+	'komunikat, iz jest to pierwsze uruchomienie
+	'---------------------------------------------------
+	
+		dim pNewHli
+		set pNewHli=doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=PAGE_FORM_SYSTEM_INIT")
+
+		dim pInfoPage
+		set pInfoPage=doc_.getpagehli(pNewHli)
+		
+		dim nResult
+		nResult=pInfoPage.domodalauto()
+
+		if (nResult=WIZZARD_CMD_CANCEL or nResult=0) then
+			exit function
+		end if
+
+
+	'---------------------------------------------------
+	'sprawdzenie wersji komponentow np. wersji klienta
+	'---------------------------------------------------
+	if (not system_check_components()) then
+		exit function
+	end if
+
+	if not system_fill_first_user() then
+		exit function
+	end if
+	'---------------------------------------------------
+	' Założenie roku księgowego ....
+	'---------------------------------------------------
+	if (not system_createRKS()) then
+		exit function
+	end if
+
+	'---------------------------------------------------
+	' Preload danych i wczytanie danych startowych
+	'---------------------------------------------------
+	if (not system_first_init()) then
+		exit function
+	end if
+
+	'---------------------------------------------------
+	'import danych
+	'---------------------------------------------------
+	if (not system_import()) then
+		exit function
+	end if
+
+	'---------------------------------------------------
+	'pierwszy uzytkownik i firma
+	'---------------------------------------------------
+	if (not system_fill_initial_data()) then
+		exit function
+	end if
+
+
+	'wczytaj rejestry dokumentów
+	if not doc_.getmodule(60268).PreloadRejDok_BD6() then
+		trans_.message 1002 , 0 , "Nie udało się wczytac rejestrów dokumentów"
+		exit function
+	end if
+
+
+'	if (not system_add_rejdok()) then
+'		exit function
+'	end if
+
+#ifdef APPCONFIG_PKPIR
+	if not doc_.getmodule(60268).perform_PreloadKPIRSchematy() then
+		exit function
+	end if
+#endif
+#ifdef _TERRANOVA
+	'.exportset 10145,"eTyp in (5,6,9)"
+	'.exportset 10155,""
+	'.exportset 10002,"nazwa like '@br%'"
+	imPreload(50320)
+#endif
+
+	'-----------------------------------------------------
+	'zeruj maskę użycia modułów
+	'-----------------------------------------------------
+	LicInit
+	'---------------------------------------------------
+	'sprawdzenie licencji
+	'---------------------------------------------------
+	dim pM60137 : set pM60137 = doc_.getmodule(60137)
+	'utwórz brakujące licencje
+	pM60137.get_create_licence_objects true
+	if not trans_.saveobjects then
+		exit function
+	end if
+
+	dim nCheckRes : nCheckRes = pM60137.check_licences_on_start()
+	if nCheckRes < 0 then
+		exit function
+	end if
+
+	if nCheckRes > 0 then
+		dim pPageRegister : set pPageRegister = doc_.getpagehli("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=20126")
+		pPageRegister.domodalauto
+		pM60137.check_licences_on_start()
+	end if
+	'---------------------------------------------------
+	'---------------------------------------------------
+	'logowanie
+	'---------------------------------------------------			
+	dim nUsers
+	nUsers=trans_.findobjid(TYPEID_N5UZYTKOWNIK, "strLogin='" + doc_.afc.convert.DoubleApostrophe(getOSUserName())  + "' AND eAktywny <> 3")
+
+	if (nUsers=0) then
+		MessageBox "W oknie logowania podaj użytkownika "ADMIN_LOGIN" i naciśnij OK", "Domyślny użytkownik", vbOkOnly, vbInformation
+	end if
+
+	trans_.var(GVAR_USER)=CLng(0)
+	if not(doc_.getmodule(PAGE_FORM_LOGON).logon()) then
+		system_init_first_time= false
+		exit function
+	end if
+	
+	dim idAdminUser:idAdminUser = trans_.findobjid(TYPEID_N5UZYTKOWNIK, "strLogin='" + ADMIN_LOGIN + "'")
+	if idAdminUser <> trans_.var(GVAR_USER) then  'Jeżeli użytkownik inny od admina
+		if not system_write_so (trans_.var(GVAR_USER)) then
+			system_init_first_time=false
+			exit function
+		end if
+	end if
+
+	'teraz zaznacz że instalacja jest całkowicie dokonania
+	system_savedbversion CURRENT_DB_VERSION
+
+	system_init_first_time = true
+end function
+
+'----------------------------------------------------------------------
+'remote system init
+'optimistic approach - everything is properly setup
+'----------------------------------------------------------------------
+function remote_system_init(byval strUser,byval strPassword)
+	remote_system_init = false
+	
+	if not system_init_always() then
+		exit function
+	end if
+
+	trans_.var(GVAR_USER)=CLng(0)
+	'normal operation mode
+	trans_.var(GVAR_OPERATION_MODE) = clng(OPERATION_MODE_NORMAL)
+	LicInit
+
+	'logowanie
+	dim strErrorMsg
+	dim idUser : idUser = doc_.getmodule(60106).try_logon_user(strUser,strPassword,strErrorMsg)
+	if idUser = 0 then
+		exit function
+	end if
+
+	trans_.var(GVAR_USER)= idUser
+	trans_.afc.userprofile.set_user trans_,trans_.var(GVAR_USER)
+
+	if (not system_bookkeeping_init(false)) then
+		exit function
+	end if
+	
+	system_set_global_variables
+	
+	remote_system_init = true
+end function
+'----------------------------------------------------------------------
+'zapisz nowa wersje bazy danych
+'----------------------------------------------------------------------
+function system_savedbversion(byval dbVersion):system_savedbversion=false
+
+	if system_saveglobprof(GLOBPROF_DBVERSION, dbVersion) then
+		g_nDBVersion = CLng(dbVersion)
+		system_savedbversion=true
+	end if
+
+end function
+
+sub system_done
+	system_unregister_users
+end sub
+'----------------------------------------------------------------------
+' Pobiera date z serwera. Nie uzywamy srvDate by nie include'ować 
+' za dużo
+'----------------------------------------------------------------------
+private function getServerDate()
+	getServerDate = CDate(trans_.var(GVAR_SYSDATE))
+end function
+
+'----------------------------------------------------------------------
+' Zainicjuj wszystkie zmienne do celów księgowych i zmienne specyficzne
+' dls Sprzedaży np. bieżący rok księgowy
+'	- dodane ustawianie precyzji wyswietlania cen
+'----------------------------------------------------------------------
+private function system_bookkeeping_init(byval bUI): system_bookkeeping_init = false
+
+	'precyzja wyswietlania cen
+
+	trans_.var(GVAR_PRICE_PREC) = getglobprofileLong(GLOBPROF_PRICE_PREC)
+
+
+	trans_.var(GVAR_WALUTA_FIRMY_UNIT) = getCurrentFirma().pWaluta.strSkrot
+
+	'poziom weryfikacji GM'a
+	trans_.var(GVAR_GM_ACCURACY_LEVEL) = getglobprofileLong(GLOBPROF_NAPRAWA_AFT_DEL_INS)
+
+	'rok księgowy
+	trans_.var(GVAR_ROKKSIEG) = CLng(0)
+	trans_.var(GVAR_CURR_JO) = CLng(0)
+
+	'-- domyslnie tryb wymuszajacy fiskalizacje (zastosowanie: sp. detal)
+	trans_.var(GVAR_NONFISCAL_MODE) = clng(0)
+
+	'REV:KB:TODO sugeruję użyć findCurrentRKS
+	'{{
+		dim strSQLToday
+		strSQLToday = doc_.afc.convert.date2SQL(getCurrentDate())
+
+		dim pRKCursor
+		set pRKCursor = trans_.createrawcursor(TYPEID_N5ROKKSIEG, "dDataRozp <= " + strSQLToday + " and dDataZakon >= " + strSQLToday, "dDataRozp desc, dDataZakon desc", "")
+
+		if (pRKCursor.exists(1)) then
+			setCurrentRKS( pRKCursor.get(1).IdObj )
+		end if
+	'}}
+	'REV:KB:TODO
+
+
+	dim pCurrentUser
+	set pCurrentUser = getCurrentUser()
+
+	if (not pCurrentUser is nothing) then
+		if (not pCurrentUser.pWykonawca is nothing) then
+			dim pWykonawca
+			set pWykonawca = pCurrentUser.pWykonawca
+
+			if (pWykonawca.wrefObiekt.type=TYPEID_N5PRACOWNIK) then
+				trans_.var(GVAR_CURR_JO) = pWykonawca.wrefObiekt.pJednostkaOrg.IdObj
+			end if
+		end if
+	end if
+
+	'Jeżeli jednostka nie została określona na podstawie użytkownika
+	if (trans_.var(GVAR_CURR_JO)=0) then
+		'Sprawdzamy czy istnieje jedna jednostka organizacyjna. Jeżeli
+		'tak to zostaje ona domyślnie wybrana
+		dim nIdJednOrg
+		nIdJednOrg = trans_.findobjid(TYPEID_N5JEDN_ORG, "")
+		
+		if (nIdJednOrg > 0) then
+			trans_.var(GVAR_CURR_JO) = CLng(nIdJednOrg)
+		end if
+	end if
+
+	if (trans_.var(GVAR_ROKKSIEG)=0 or _
+		trans_.var(GVAR_CURR_JO)=0) then
+		
+		if not bUI then
+			exit function
+		end if 
+
+		if (trans_.var(GVAR_ROKKSIEG)=0) then
+			view_message 6246, 0
+		end if
+
+		if (trans_.var(GVAR_CURR_JO)=0) then
+			view_message 6247, 0
+		end if
+
+		dim pNewHli
+		set pNewHli = doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=20351")
+
+		dim pPage
+		set pPage = doc_.getpagehli(pNewHli)
+
+		pPage.called_from_init
+
+		dim nResult
+		nResult = pPage.domodalauto()
+
+		if (((nResult=CMD_GOBACK) or (nResult=0)) and (trans_.var(GVAR_ROKKSIEG)=0 or trans_.var(GVAR_CURR_JO)=0)) or (nResult=WIZZARD_CMD_CANCEL) then
+			exit function
+		end if
+
+	end if
+
+	if (not system_add_warehouse()) then
+		if bUI then
+			MessageBox "Nie udało się dodać magazynu podstawowego.", "Uruchomienie aplikacji", vbOkOnly, vbInformation
+			exit function
+		end if
+	end if
+  
+#ifdef ENABLE_DB11
+  'odbudowa tropów
+  rebuild_trops
+
+#ifdef ENABLE_DB11_PLATNOSCI_FIFO
+    'fifo w płatnościach
+    dim pGlobProf : set pGlobProf = nx_get_globprofile_obj(GLOBPROF_PLATNOSC_NUMER)
+    if not pGlobProf is nothing then
+      if pGlobProf.Wartosc = cstr(0) then
+        if MessageBox("Czy chcesz rozpocząć odbudowę stanów płatności FIFO?", "Odbudowa stanów płatności", vbYesNo, vbQuestion) = vbYes then
+          doc_.getmodule(60253).rebuid_pt_from_platnosc()
+          doc_.getmodule(60253).pt_ensure_accuracy_ui(true)    
+        end if
+      end if
+    end if   
+#endif  
+  
+#endif
+
+#ifdef APPCONFIG_FIND_KLIENT_GUS
+	dim pGlobProfAutoKurs: set pGlobProfAutoKurs = nx_get_globprofile_obj(GLOBPROF_AUTO_POBIERZ_KURSY_WALUT)
+	if pGlobProfAutoKurs is nothing then
+		setglobprofile GLOBPROF_AUTO_POBIERZ_KURSY_WALUT, "0"
+		if not trans_.saveobjects() then
+			exit function
+		end if    
+	end if
+#endif
+
+	system_bookkeeping_init = true
+end function
+
+
+'----------------------------------------------------------------------
+'powoduje założenie magazynu - jezeli takiego nie ma
+'oraz zwraca jego IdObj jako: byref nWarehouse
+'----------------------------------------------------------------------
+private function system_add_custom_warehouse(byval strWarehouse , byval eWarehouseType , byval nWarehouse): system_add_custom_warehouse = false
+
+	nWarehouse=trans_.findobjid(TYPEID_N5MAGAZYN, "eTyp=" + cstr(eWarehouseType) )
+
+	'brak magazynu podstawowego
+	if (nWarehouse=0) then
+		dim pWarehouse
+		set pWarehouse=trans_.newobj(TYPEID_N5MAGAZYN)
+		
+		nWarehouse = pWarehouse.IdObj
+		pWarehouse.strNazwa = strWarehouse
+		pWarehouse.eTyp = clng(eWarehouseType)
+
+
+		dim pFirma
+		set pFirma = getCurrentFirma()
+		if (pFirma is nothing) then
+			exit function
+		end if
+		set pWarehouse.pWaluta = pFirma.pWaluta		
+		
+		if (getCurrentJO() is nothing) then
+			exit function
+		end if
+
+		set pWarehouse.pJednostkaOrg = getCurrentJO()
+
+		if (not trans_.saveobjects()) then
+			exit function
+		end if
+
+	end	if
+
+	system_add_custom_warehouse = true
+end function
+
+
+private function system_add_warehouse(): system_add_warehouse = false
+
+	dim nIdObj
+ 
+	if not system_add_custom_warehouse("Podstawowy",N5TYPMAG_PODSTAWOWY, nIdObj) then
+		exit function
+	end if
+
+	if not system_add_custom_warehouse("Zwroty",N5TYPMAG_ZWROTY, nIdObj) then
+		exit function
+	end if
+
+	if not system_add_custom_warehouse("Towar w drodze",N5TYPMAG_TOWARWARWDRODZE, nIdObj) then
+		exit function
+	end if
+
+	if not system_add_custom_warehouse("Produkcja w toku" , N5TYPMAG_PRODUKCJAWTOKU, nIdObj) then
+		exit function
+	end if
+
+	if not system_add_custom_warehouse("Rezerwacje" , N5TYPMAG_REZERWACJE, nIdObj) then
+		exit function
+	end if
+
+	system_add_warehouse = true
+end function
+
+'----------------------------------------------------------------------
+' Sprawdzamy ilość aktualnych użytkowników i rejestrujemy liczbę
+' wejść do systemu
+'----------------------------------------------------------------------
+private function system_registerUsers(byref pLicenceModule): system_registerUsers=false
+	'Próbujemy pobrać zasób
+	
+	dim strResourceName
+	strResourceName=trans_.var(GVAR_APPLICATION) + ":" + CStr(trans_.var(GVAR_DBNAME))
+
+	dim nRes: nRes=doc_.useres( strResourceName )
+	
+	'gdy nie ma zasobu to jesteśmy pierwsi - zakładamy go
+	if (nRes=-1) then
+
+		'licencja ma zawsze istnieć
+		dim pLicence
+		set pLicence=trans_.getobj(TYPEID_N5LICENCJA, pLicenceModule.licence_once_id(nLicenceID))
+
+		if (pLicence is nothing) then
+			exit function
+		end if
+
+		'licencja na liczbe userow
+		dim nMaxUsers: nMaxUsers=CLng( pLicence.nStanowiska )
+
+		'robimy zasob
+		doc_.createres strResourceName, nMaxUsers
+		nRes=doc_.useres( strResourceName )
+	end if
+
+	if (nRes=0) then
+		MessageBox "Twoja licencja nie pozwala na podłączenie się większej liczby uzytkowników (klientów).", "Sprawdzenie licencji", vbOkOnly, vbInformation
+		exit function
+	end if
+
+	system_registerUsers=true
+end function
+
+private sub system_unregister_users
+	if trans_.isvar(GVAR_USED_APP_MODULE) then
+		LicFM EB_MOD_MASK_HANDEL
+		LicFM EB_MOD_MASK_MAGAZYN
+		LicFM EB_MOD_MASK_KONTAKT
+		LicFM EB_MOD_MASK_PRODUKCJA
+		LicFM EB_MOD_MASK_FINANSE
+		LicFM EB_MOD_MASK_PRACOWNIK
+
+		'i zeruj maskę użycia modułów
+		LicDone
+	end if
+end sub
+
+
+'----------------------------------------------------------------------
+'save glob profile
+'UWAGA! specjalna wersja zapisywania do profila (bez wykorzystania nx_)
+' stosowana w trakcie instalacji, gdy moze jeszcze nie byc ebutil
+'----------------------------------------------------------------------
+function system_saveglobprof(byval nIndex, byval nValue)
+	system_saveglobprof=false
+	dim pGlobProfileObj : set pGlobProfileObj = nothing
+
+	dim idprof : idprof=trans_.findobjid(TYPEID_GLOBPROFILE,"Indeks=" + CStr(nIndex))
+	if idprof < 0 then
+		err.raise 1,"getglobprof","Zduplikowany profil globalny #" + CStr(nIndex)
+		exit function
+	else
+		if idprof > 0 then
+			set pGlobProfileObj = trans_.getobj(TYPEID_GLOBPROFILE,idprof)
+		end if
+	end if
+	if pGlobProfileObj is nothing then
+		set pGlobProfileObj = trans_.newobj(TYPEID_GLOBPROFILE)
+		pGlobProfileObj.indeks=clng(nIndex)
+	end if
+	pGlobProfileObj.Wartosc = cstr(nValue)
+	if not trans_.saveobjects() then
+		exit function
+	end if
+
+	system_saveglobprof=true
+end function
+
+'----------------------------------------------------------------------
+'sprawdza zainstalowane wersje exe'kow itd.itp. i jezeli trzeba to
+'wykonuje upgrade komponentow
+'----------------------------------------------------------------------
+private function system_check_components():system_check_components=false
+	dim strClientVer
+	strClientVer = doc_.system.registry(hKey_LocalMachine,"SOFTWARE\NAVO\NAVO2002\Applications\" + trans_.var(GVAR_APPLICATION), "ClientVersion")
+
+	'ustaw wersje klienta
+	dim nClientVersion
+	nClientVersion=CLng(0)
+
+	if (isNumeric(strClientVer)) then
+		nClientVersion=clng( strClientVer )
+	end if
+	
+
+	'wymagany jest mini upgrade klienta - ustawiamy log'a, robimy skroty
+	'i robimy odpowiednie katalogi
+  'ale tylko dla wersji < 13. 13 i w gore juz nie
+  
+	if (nClientVersion < 13 and nClientVersion < CURRENT_CLIENT_VERSION) then
+		'zmiana wersji klienta z 11 na 12
+		if nClientVersion = 11 and CURRENT_CLIENT_VERSION = 12 then
+			dim sysobj: set sysobj = doc_.system    
+			sysobj.registry(hKey_LocalMachine,"SOFTWARE\NAVO\NAVO2002\Applications\" + trans_.var(GVAR_APPLICATION),"ClientVersion") = cstr(CURRENT_CLIENT_VERSION)
+		else
+			if (not doc_.getmodule(72000).do_install_client()) then
+				MessageBox "Program wymagał uaktualnienia klienta, które się nie udało.", "Upgrade klienta", vbOkOnly, vbInformation
+				exit function
+			end if
+		end if
+	end if
+	
+	system_check_components=true
+end function
+
+'----------------------------------------------------------------------
+'sprawdza wersje bazy i wywoluje upgrade jezeli jest on potrzebny
+'wola tez jezeli brak wersji (pierwsze uruchomienie) system init
+'i system_import
+'----------------------------------------------------------------------
+private function system_check_db_version():system_check_db_version=false
+	if (not (g_nDBVersion=CURRENT_DB_VERSION)) then
+		MessageBox "Posiadasz nieprawidłową wersję bazy danych #" + CStr(g_nDBVersion), "Uruchomienie systemu nieudane", vbOkOnly, vbInformation
+		exit function
+	end if
+
+  system_check_db_version = true
+end function
+
+
+'----------------------------------------------------------------------
+'powoduje zainicjowanie bazy danych danymi startowymi - nie sa to dane
+'importowe z Navo Firma Chodzi np o wojewodztwa i miejscowosci
+'wolane tylko raz. Jednak funckja ma byc napisana tak by zawolanie jej
+'wiele razy nie powodowalo bledow!!!
+'----------------------------------------------------------------------
+private function system_first_init():system_first_init=false
+
+	if (getglobprofileLong(GLOBPROF_FIRST_INIT)=0) then
+	
+		dim Preload
+		Preload = doc_.getmodule(60268).perform_PreloadRequired()
+		
+		'nie udał się preload danych
+		if not Preload then 
+			MessageBox "Nie udał się preload danych.", "Uruchomienie aplikacji", vbOkOnly, vbInformation
+			exit function
+		end if
+
+		'ustawienia domyślne - globalne
+		'ustawienia specyficzne dla danego user'a w befins n5uzytkownik
+		'tutaj wymuszamy istnienie odpowiednich profili
+		setglobprofile GLOBPROF_PRODUKT_NRDOK_FORMAT, "%n"
+		'setglobprofile GLOBPROF_PLLISTAPLAC_NRDOK_FORMAT, "%r/%m/%n"
+		setglobprofile GLOBPROF_NRDOK_FORMAT, "%r/%m/%d/%n"
+		setglobprofile GLOBPROF_KLIENT_INDEKS_FORMAT, "%n"
+		setglobprofile GLOBPROF_NRDOK, 0
+		setglobprofile GLOBPROF_PRODUKT_NRDOK, 0
+		setglobprofile GLOBPROF_PLLISTAPLAC_NRDOK, 0
+		setglobprofile GLOBPROF_KLIENT_INDEKS_NR, 0
+		setglobprofile GLOBPROF_DOKMAG_NUMER, 0
+		setglobprofile GLOBPROF_PLATNOSC_NUMER, 0
+
+		setglobprofile GLOBPROF_KLOB_NRDOK_FORMAT, "%n"
+		setglobprofile GLOBPROF_KLOB_NRDOK,			0
+		setglobprofile GLOBPROF_KLOB_AUTONUM,		"1"
+
+		'numerowanie informacji serwisowych
+		setglobprofile GLOBPROF_INFO_FORMAT, "P%n"
+		setglobprofile GLOBPROF_INFO_NR, 0
+
+    	setglobprofile GLOBPROF_GM_ARCHIVE_BORDER, 0
+
+		'Domyślne nazwy cen
+		setglobprofile GLOBPROF_CENA1_NAME, "Cena detaliczna"
+		setglobprofile GLOBPROF_CENA2_NAME, "Cena hurtowa 1"
+		setglobprofile GLOBPROF_CENA3_NAME, "Cena hurtowa 2"
+		setglobprofile GLOBPROF_CENA4_NAME, ""
+		setglobprofile GLOBPROF_CENA5_NAME, ""
+		setglobprofile GLOBPROF_CENA6_NAME, ""
+		setglobprofile GLOBPROF_PRICE_PREC , CLng(PRICE_PREC_DEFAULT)
+		setglobprofile GLOBPROF_PRICE_SYSTEM, clng(1)
+
+		'Domyslny sposob oceny klienta
+		setglobprofile GLOBPROF_CLIENT_RATE_FREQ, cstr(CLIENT_RATE_FREQ_WEEKLY)
+		
+		dim nJednostkaKG
+		nJednostkaKG=trans_.findobjid(TYPEID_N5JEDNOSTKA, "strSkrot='kg'")
+
+		if (nJednostkaKG>0) then
+			setglobprofile GLOBPROF_OPAKOWANIEPROD_WAGA, nJednostkaKG
+		else
+			setglobprofile GLOBPROF_OPAKOWANIEPROD_WAGA, 0
+		end if
+
+		setglobprofile GLOBPROF_CUSTOM_NUMERATOR , 0
+
+		setglobprofile GLOBPROF_GM_BORDER , GM_BORDER_ALL_BAD
+
+
+		'profile globalne z db5
+
+
+		'profile globalne z db6
+		setglobprofile GLOBPROF_EWID_ETYKIET_FORMAT, "%n"
+		setglobprofile GLOBPROF_EWID_ETYKIET_NR, 0
+		setglobprofile GLOBPROF_EWID_ETYKIET_AUTONUM , "1"
+		setglobprofile GLOBPROF_EWID_ETYKIET_LICZNIK, 0
+
+		setglobprofile GLOBPROF_PRAC_FORMAT, "%n"
+		setglobprofile GLOBPROF_PRAC_NR, 0
+		setglobprofile GLOBPROF_PRAC_AUTONUM , "1"
+
+		setglobprofile GLOBPROF_SRTRW_FORMAT, "%n"
+		setglobprofile GLOBPROF_SRTRW_NR, 0
+		setglobprofile GLOBPROF_SRTRW_AUTONUM , "1"
+
+
+
+		system_saveglobprof GLOBPROF_FIRST_INIT, 1
+	
+	end if
+	system_first_init=true
+end function
+
+'----------------------------------------------------------------------
+'importuje dane z NavoFirma lub wprowadza dane demo
+'----------------------------------------------------------------------
+private function system_import()
+	system_import=true
+	trans_.var(APPVAR_SHORTIMPORT)=CLng(0)
+	exit function
+
+	dim bImported:bImported=false
+
+	dim bExistsNF
+	bExistsNF=system_existsNF()
+
+	dim pNewHli
+	set pNewHli=doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=20325")
+
+	dim pImpPage
+	set pImpPage=doc_.getpagehli(pNewHli)
+
+	if (not bExistsNF) then
+		pImpPage.disableNavoFirmaChoice
+	end if
+
+	dim nResult
+	nResult=pImpPage.domodalauto()
+
+	if (nResult=0 or nResult=WIZZARD_CMD_CANCEL) then
+		exit function
+	end if
+
+	select case pImpPage.getImportType()
+		case 2: 'import danych demo
+			if not (system_import_demo_data()) then
+				exit function
+			end if
+
+		case 3: 'import części danych z Navo Firma
+			trans_.var(APPVAR_SHORTIMPORT)=CLng(1)
+			if (not system_import_NF())	then
+				exit function
+			end if
+
+		case 4: 'import z Navo Firma
+			trans_.var(APPVAR_SHORTIMPORT)=CLng(0)
+			if (not system_import_NF())	then
+				exit function
+			end if
+
+	end select
+	
+	trans_.var(APPVAR_SHORTIMPORT)=CLng(0)
+	system_import=true
+end function
+
+'----------------------------------------------------------------------
+'importuj dane przykładowe
+'----------------------------------------------------------------------
+private function system_import_demo_data():system_import_demo_data=false
+	system_import_demo_data = doc_.getmodule(60268).PreloadDemo()
+end function
+
+'----------------------------------------------------------------------
+'importuj dane z programu Navo Firma
+'----------------------------------------------------------------------
+private function system_import_NF():system_import_NF=false
+	'zwraca wynik z wizzarda
+	trans_.var(GVAR_MODALRES)=CLng(0)
+	trans_.var(APPVAR_IMPORT_KIND)=CLng(IMPFRM)
+
+	dim pNewHli
+	set pNewHli=doc_.createhlistr("varCmd=CMD_OPEN_WIZARD_PAGE varDestPage=PAGE_WIZZARD_ROOT_EXPORT_IMPORT")
+
+	dim pWizzardPage
+	set pWizzardPage=doc_.getpagehli(pNewHli)
+	
+	system_import_NF=(trans_.var(GVAR_MODALRES)=CLng(1))
+	trans_.var(APPVAR_IMPORT_KIND)=CLng(0)
+	set pWizzardPage=nothing
+end function
+
+'----------------------------------------------------------------------
+'sprawdza czy istnieje Navo Firma SQL
+'----------------------------------------------------------------------
+private function system_existsNF():system_existsNF=false
+	dim pUtil
+	set pUtil = doc_.getmodule(60116)
+
+	dim pFirmaInfo
+	set pFirmaInfo=pUtil.get_navo_firma_info()
+
+	system_existsNF=(not (pFirmaInfo is nothing))
+end function
+
+'-----------------------------------------------------------------------
+'robi w danym stringu pierwsza litere duza
+'-----------------------------------------------------------------------
+private function getOSUserName()
+
+	getOSUserName = trans_.var(GVAR_OSUSERNAME)
+
+	dim nLength
+	nLength = len(getOSUserName)
+
+	if (nLength=0) then
+		exit function
+	end if
+
+	if (nLength=1) then
+		getOSUserName = UCase(getOSUserName)
+		exit function
+	end if
+
+	getOSUserName = UCase(Mid(getOSUserName, 1, 1)) + Mid(getOSUserName, 2, nLength-1)
+end function
+
+
+'----------------------------------------------------------------------
+'powoduje wymuszenie wprowadzenia danych np. gdy nie ma userow
+'wymusz wprowadzenie pierwszego
+'----------------------------------------------------------------------
+private function system_fill_first_user() : system_fill_first_user = false
+
+	'dodajemy systemowego user'a - administratora - tylko
+	'jezeli jeszcze go nie ma
+	if (not system_add_root()) then
+		MessageBox "Nie udało się zapisać systemowego użytkownika Administrator", "Uruchomienie aplikacji", vbOkOnly, vbInformation
+		exit function
+	end if
+
+	'badamy liczbe userow w tablicy n5uzytkownik roznych
+	'od user'a o loginie ADMIN_LOGIN (czyli admina)
+	dim nUsers:nUsers=trans_.findobjid(TYPEID_N5UZYTKOWNIK, "strLogin<>'" + ADMIN_LOGIN + "' AND eAktywny <> 3")
+
+	dim pNewHli
+	dim nResult
+	
+	if (nUsers=0) then
+		'brak uzytkownikow - wymuszamy dodanie minimum jednego
+
+		do 
+
+			set pNewHli=doc_.createhlistr("varCmd=CMD_OPEN_RECORD_PAGE varDestPage=PAGE_FORM_UZYTKOWNIK_INICJACJA")
+
+			dim pUserPage
+			set pUserPage=doc_.getpagehli(pNewHli)
+
+			'domyślnie proponuj nazwę użytkownika logowania do Windows
+			dim strUserName
+			strUserName = getOSUserName()
+			
+			if strUserName <> ADMIN_LOGIN then
+				pUserPage.root.strNazwa=strUserName
+				pUserPage.root.strLogin=strUserName
+			end if
+			
+			nResult=pUserPage.domodalauto()
+			set pUserPage=nothing
+
+			nUsers=trans_.findobjid(TYPEID_N5UZYTKOWNIK, "")
+			if (((nResult=CMD_GOBACK) or (nResult=0)) and (nUsers=0)) or (nResult=WIZZARD_CMD_CANCEL) then
+				exit function
+			end if
+
+		loop until (nUsers<>0)
+
+		trans_.var(GVAR_USER)=nUsers
+		
+		'Ustawiam na admina,żeby nie było problemów z uprawnieniami
+		'Użytkownik zostanie zmieniony przy logowaniu
+		dim idUser:idUser = trans_.findobjid(TYPEID_N5UZYTKOWNIK, "strLogin='" + ADMIN_LOGIN + "'")
+		if idUser > clng(0) then
+			trans_.var(GVAR_USER)=idUser
+		end if
+
+		trans_.afc.userprofile.set_user trans_,trans_.var(GVAR_USER)
+
+	end if 
+	system_fill_first_user = true
+end function
+
+private function system_fill_first_firma() : system_fill_first_firma = false
+	'wymuszamy wprowadzenie firmy
+	dim nFirma:nFirma=trans_.findobjid(TYPEID_N5FIRMA, "")
+
+	if (nFirma=0) then
+		'brak firmy
+
+		do 
+
+			dim pNewHli
+			set pNewHli=doc_.createhlistr("varCmd=CMD_OPEN_RECORD_PAGE varDestPage=PAGE_FORM_FIRMA_INICJACJA")
+
+			dim pFirmaPage
+			set pFirmaPage=doc_.getpagehli(pNewHli)
+			
+			'wyszukaj walute "Złoty" i ustaw w obiekcie firmy
+			dim idWaluta
+			idWaluta=trans_.findobjid(TYPEID_N5JEDNOSTKA, "eTyp="+CStr(N5JEDNOSTKA_WALUTA) + "and strNazwa='złoty'")
+
+			if (idWaluta>0) then
+				set pFirmaPage.root.pWaluta=trans_.getobj(TYPEID_N5JEDNOSTKA, idWaluta)
+			end if
+			
+			'wyszukaj Polskę
+			dim idKraj
+			idKraj = trans_.findobjid(TYPEID_N5KRAJ, "strSkrot='PL'")
+			if idKraj > 0 then
+				set pFirmaPage.root.pKraj = trans_.getobj(TYPEID_N5KRAJ,idKraj)
+			end if
+
+			'open the page
+			dim nResult: nResult=pFirmaPage.domodalauto()
+			set pFirmaPage=nothing
+
+			nFirma=trans_.findobjid(TYPEID_N5FIRMA, "")
+			if (((nResult=CMD_GOBACK) or (nResult=0)) and (nFirma=0)) or (nResult=WIZZARD_CMD_CANCEL) then
+				exit function
+			end if
+
+		loop until (nFirma<>0)
+
+	end if 
+
+	'istnieje juz firma - ustaw tylko zmienna globalna
+	trans_.var(GVAR_FIRMA)=nFirma
+	system_fill_first_firma = true
+end function
+
+private function system_fill_initial_data() : system_fill_initial_data = false
+	if not system_fill_first_firma() then
+		exit function
+	end if
+	if not system_fill_first_user() then
+		exit function
+	end if
+	system_fill_initial_data=true
+end function
+
+
+
+private function system_add_rejdok():system_add_rejdok = false
+
+	dim pObjectDef
+	set pObjectDef = doc_.stdobjdef.getobjdef(10145)
+
+	
+
+	dim nEnumFldID:nEnumFldID = pObjectDef.getfieldindex("eTyp")
+	dim pFieldDef
+	set pFieldDef = pObjectDef.field(nEnumFldID)
+
+
+	dim nEnum: nEnum = 0
+	dim pNewRej
+
+	if (pFieldDef.enumvalue(nEnum)<>"") then
+		do						
+			nEnum = nEnum + 1
+			trans_.var(APPVAR_REJESTR_TYP) = clng(nEnum)
+			set pNewRej = trans_.newobj(TYPEID_N5REJESTRDOK)
+		loop until (pFieldDef.enumvalue(nEnum) = "")
+
+	end if
+
+	system_add_rejdok = trans_.saveobjects()
+
+end function
+
+'----------------------------------------------------------------------
+'Ustawienie wszystkich dostępnych obiektów security dla użytkownika
+'----------------------------------------------------------------------
+private function system_write_so(byval idUser):system_write_so = true
+	dim pTrans:set pTrans = trans_.createsubtran()
+	
+	dim pUser:set pUser= trans_.getobj(TYPEID_N5UZYTKOWNIK, idUser) 
+	
+	dim pP:set pP = doc_.performing("Trwa nadawanie uprawnień użytkownika: " + cstr(pUser.strNazwa) )
+	
+
+	dim pCursor:set pCursor = trans_.createrawcursor(TYPEID_N5SOD, "idObj not in(select pSOD from n5securityobj where pUser  = " + cstr(idUser) + ")" , "", "")
+	dim Obiekt
+	for each Obiekt in pCursor
+		if not Obiekt is nothing then
+			dim pSO:set pSO = trans_.newobj(TYPEID_N5SECURITYOBJ)
+			set pSO.pSOD  = Obiekt
+			set pSO.pUser = pUser
+		end if
+	next
+	if (not trans_.saveobjects()) then
+		' 1, 0, "Nie można zachować SOD"
+		view_message 6181, 0
+		system_write_so = false
+	end if
+	set pP = nothing
+	set pTrans = nothing
+end function
+
+
+'----------------------------------------------------------------------
+' Ustaw dodatkowe zmienne globalne tzn. nie usera i licencji ...
+' (nie wynikajace z formularzy init'u danych)
+'----------------------------------------------------------------------
+private function system_set_global_variables()
+
+	'Dotyczy polityki rabatowej (definiowanie cen)
+	'ZAWSZE WŁĄCZONE!!!
+	'if (getglobprofileBOOL(GLOBPROF_USE_CUSTOM_PRICES)) then
+	trans_.var( GVAR_USE_CUSTOM_PRICES ) = CLng(1)
+	'else
+	'	trans_.var( GVAR_USE_CUSTOM_PRICES ) = CLng(0)
+	'end if
+
+
+
+	if getuserprofileBOOL( USERPROF_CUSTOMER_AUTOCOMPLETE ) then
+		trans_.var(GVAR_CUSTOMER_AUTOCOMPLETE) = clng(1)
+	else
+		trans_.var(GVAR_CUSTOMER_AUTOCOMPLETE) = clng(0)
+	end if
+
+#comment '-------------------------------------------
+#comment 'NX code
+#comment 'dodawanie magazynow do nx_.apprep
+#comment '-------------------------------------------
+	dim oCursor : set oCursor = trans_.createcursor(TYPEID_N5MAGAZYN,CURSOR_MAGAZYNY_NORMALNE)
+	dim oMagazyn
+	for each oMagazyn in oCursor
+		oMagazyn.n5magazyn_register_in_apprep
+	next
+	
+	nx_update_cena_human_name
+#comment '-------------------------------------------
+  
+  if has_nxm_feature("") then
+    dim oNXMFeatures
+    set oNXMFeatures = nx_.nxm_features
+    oNXMFeatures.nxm_service_gam.licence_owner_code = getCurrentFirma().strNIP
+    oNXMFeatures.nxm_service_gam.application_id = trans_.var(GVAR_APPLICATION)
+    
+    if oNXMFeatures.windows_version > 7 then
+	  if trans_.var(GVAR_NAVO2001VERSION) >= "2022.02.06" then
+		
+		oNXMFeatures.nxm_service_server_url = "wss://nxm.com.pl:2030"
+		'oNXMFeatures.nxm_service_server_url = "wss://127.0.0.1:2024"
+		trans_.message 1610, 0, "Ustalam komunikację za pomocą WebSockets (nxm.web.services.2024.01)"
+	  else
+		  if trans_.var(GVAR_NAVO2001VERSION) >= "2020.08.30" then
+					oNXMFeatures.nxm_service_server_url = "ws://nxm.com.pl:2020"
+					trans_.message 1610, 0, "Ustalam komunikację za pomocą WebSockets (nxm.web.services.2020)"
+		  else
+					oNXMFeatures.nxm_service_server_url = "ws://nxm.com.pl:1610"
+					trans_.message 1610, 0, "Ustalam komunikację za pomocą WebSockets"
+		  end if
+      end if
+    else   
+      trans_.message 1309, 0, "Ustalam komunikację za pomocą SignalR"
+      oNXMFeatures.nxm_service_server_url = "http://nxm.com.pl:1309"
+    end if
+    
+  end if
+  
+	system_set_global_variables = true
+end function
+
+
+#comment '-------------------------------------------------------------
+#comment 'NX code
+#comment '
+#comment 'zmienia nazwy ludzkie cen na podstawie nazewnictwa uzytkownika
+#comment '-------------------------------------------------------------
+function nx_update_cena_human_name()
+	dim oFields : set oFields = nx_.apprep.objects.get_object(TYPEID_N5OPAKOWANIE_PRODUKTU).fields
+	dim iter 
+	for iter = 1 to 6
+		dim strFieldCenaNetto : strFieldCenaNetto = "curCenaNetto" + cstr(iter)
+		dim strFieldCenaBruto : strFieldCenaBruto = "curCenaBrutto" + cstr(iter)
+		dim strCenaName : strCenaName = nx_get_globprofile_value(GLOBPROF_CENA1_NAME + iter - 1)
+		with oFields.get_field(strFieldCenaNetto)
+			.hidden = (strCenaName = "")
+			if strCenaName = "" then
+				.human_name = "Cena " + cstr(iter) + " (netto) (nieużywana)"
+			else
+				.human_name = strCenaName + " (netto)"
+			end if
+		end with
+		with oFields.get_field(strFieldCenaBruto)
+			.hidden = (strCenaName = "")
+			if strCenaName = "" then
+				.human_name = "Cena " + cstr(iter) + " (brutto) (nieużywana)"
+			else
+				.human_name = strCenaName + " (brutto)"
+			end if
+		end with
+	next
+end function
+
+function nx_update_product_buildin_browser()
+	dim oRDProduktBrowser : set oRDProduktBrowser = nx_.apprep.objects.get_object(TYPEID_N5PRODUKT) _
+			.raports.get_raport_by_name("@browser_##TYPEID_N5PRODUKT##@")
+	'-- usun stare ceny i magazyny --
+	dim oRDColumn
+	dim oNXPath
+	dim iter : iter = 0
+	do while iter <= oRDProduktBrowser.columns.upper_index
+		set oRDColumn = oRDProduktBrowser.columns.get_column(iter)
+		dim bRemove : bRemove = false
+		if oRDColumn.path.expression = "listOpakowania" then
+			if instr(oRDColumn.path.child_node.expression,"@stan_mag_") <> 0 or _
+			   instr(oRDColumn.path.child_node.expression,"curCena") <> 0 or _
+			   instr(oRDColumn.path.child_node.expression,"strNazwa") <> 0 then
+				bRemove = true
+			end if
+		end if
+		if bRemove then
+			 oRDProduktBrowser.columns.remove(iter)
+		else
+			 iter = iter + 1
+		end if
+	loop
+	if nx_get_current_userprofile_value(USERPROF_PRODCHOICELIST_SHOWOPAK) = "1" then
+		set oNXPath = nx_.new_path_list(TYPEID_N5PRODUKT,"listOpakowania")
+		set oNXPath.child_node = nx_.new_path_field(TYPEID_N5OPAKOWANIE_PRODUKTU,"strNazwa")
+		set oRDColumn = oRDProduktBrowser.addcol(oNXPath,false,false)
+	end if
+	'-- dodaj ceny ---
+	dim strCenaMask : strCenaMask = nx_get_current_userprofile_value(USERPROF_PRODCHOICELIST_CENY)
+	for iter = 1 to 6
+		if mid(strCenaMask,iter + iter - 1,1) = "1" then
+			set oNXPath = nx_.new_path_list(TYPEID_N5PRODUKT,"listOpakowania")
+			set oNXPath.child_node = nx_.new_path_field(TYPEID_N5OPAKOWANIE_PRODUKTU,"curCenaNetto" + cstr(iter))
+			set oRDColumn = oRDProduktBrowser.addcol(oNXPath,false,false)
+		end if
+		if mid(strCenaMask,iter + iter,1) = "1" then
+			set oNXPath = nx_.new_path_list(TYPEID_N5PRODUKT,"listOpakowania")
+			set oNXPath.child_node = nx_.new_path_field(TYPEID_N5OPAKOWANIE_PRODUKTU,"curCenaBrutto" + cstr(iter))
+			set oRDColumn = oRDProduktBrowser.addcol(oNXPath,false,false)
+		end if
+	next
+	'-- dodaj magazyny ---
+	dim oNXArray : set oNXArray = nx_.new_array()
+	oNXArray.split_string nx_get_current_userprofile_value(USERPROF_PRODCHOICELIST_MAGAZYNY),"**"
+	
+	dim strIdMag
+	for each strIdMag in oNXArray
+		set oNXPath = nx_.new_path_list(TYPEID_N5PRODUKT,"listOpakowania")
+		set oNXPath.child_node = nx_.new_path_field(TYPEID_N5OPAKOWANIE_PRODUKTU,"@stan_mag_" + strIdMag)
+		set oRDColumn = oRDProduktBrowser.addcol(oNXPath,false,false)
+		oRDColumn.human_header = "Magazyn " + trans_.getobj(TYPEID_N5MAGAZYN,clng(strIdMag)).text
+	next
+end function
+#comment '-------------------------------------------------------------
+
+'----------------------------------------------------------------------
+' Wołana na sprawdzenie czy istnieją dodatkowe dane. Jeżeli nie 
+' to zostaną wprowadzone. Całość wołana przed preload'em
+'----------------------------------------------------------------------
+private function system_createRKS(): system_createRKS = false
+	dim nIdRokKsiegowy
+	nIdRokKsiegowy = trans_.findobjid(TYPEID_N5ROKKSIEG, "")
+
+	if (nIdRokKsiegowy=0) then
+		'Brak roku księgowego - wymuszamy istnienie
+		'jednego roku księgowego
+
+		do
+
+			dim pNewHli
+			set pNewHli = doc_.createhlistr("varCmd=CMD_OPEN_RECORD_PAGE varDestPage=20180")
+
+			dim pRKPage
+			set pRKPage = doc_.getpagehli(pNewHli)
+
+			dim nResult
+			nResult = pRKPage.domodalauto()
+
+
+
+			nIdRokKsiegowy = trans_.findobjid(TYPEID_N5ROKKSIEG, "")
+
+			if (((nResult=CMD_GOBACK) or (nResult=0)) and (nIdRokKsiegowy=0)) or (nResult=WIZZARD_CMD_CANCEL) then
+				exit function
+			end if
+
+		loop until (nIdRokKsiegowy<>0)
+
+		trans_.var(GVAR_ROKKSIEG) = nIdRokKsiegowy
+
+	end if
+
+	system_createRKS = true
+end function
+
+function check_platform()
+	check_platform = false
+	'---------------------------------------------------
+	' Sprawdzamy wersje platformy
+	'---------------------------------------------------
+   
+	if (trans_.var( GVAR_NAVO2001VERSION ) < REQUIRED_PLATFORM_VERSION) then
+		MessageBox "Ta aplikacja wymaga nowszej wersji Platformy NAVO Enterprise 2015",_
+		"Nieprawidłowa wersja Platformy NAVO Enterprise 2015 !",vbOkOnly,vbInformation
+#ifndef _DEBUG
+		exit function
+#endif
+	end if
+	on error resume next
+		dim strAFCVersion : strAFCVersion = ""
+		strAFCVersion = doc_.afc.get_afc_version()
+		err.clear
+	on error goto 0
+	if strAFCVersion < REQUIRED_AFC_VERSION then
+		MessageBox "Ta aplikacja wymaga nowszej wersji biblioteki NAVO AFC. ", _
+		"Nieprawidłowa wersja Platformy NAVO Enterprise 2015 !",vbOkOnly,vbInformation
+#ifndef _DEBUG
+		exit function
+#endif
+	end if
+	check_platform = true
+end function
+
+function auto_backup()
+	dim iLastBackupDayNr : iLastBackupDayNr = getglobprofileLong(GLOBPROF_LAST_BACKUP_DATE)
+	dim iTodayDayNr : iTodayDayNr = clng(trans_.var(GVAR_SYSDATE))
+	if iLastBackupDayNr = 0 then
+		iLastBackupDayNr = iTodayDayNr
+	end if
+	if iTodayDayNr - iLastBackupDayNr > 7 then
+		if weekday(trans_.var(GVAR_SYSDATE)) = 2 then	'tydzien zaczyna sie od niedzieli
+			dim pM60295 : set pM60295 = doc_.getmodule(60295)
+			pM60295.full_backup
+		end if
+	end if
+	
+end function
+
+function getFirmaNazwa() : getFirmaNazwa = ""
+  dim pFirma : set pFirma = getCurrentFirma()
+  if not pFirma is nothing then
+    getFirmaNazwa = pFirma.strNazwa
+  end if
+end function
+
+function getFirmaSkrot() : getFirmaSkrot = ""
+  dim pFirma : set pFirma = getCurrentFirma()
+  if not pFirma is nothing then
+    getFirmaSkrot = pFirma.strSkrot
+  end if
+end function
+
+
+'========================================================
+'=====  funkcje do odbudowy operacji na transakcji ======
+'========================================================
+function getTransQuery(): getTransQuery = ""
+  getTransQuery = "-- sprzedaz " + vbNewLine +_
+                  "select 'idTrans'=s.pTransakcja,'data'=s.dDataWyst,'kol'='A','id'=s.IdObj,'typ'=TYPEID_N5SPRZEDAZ,'id_parent'=0,'typ_parent'=0 " + vbNewLine +_
+                  "from n5sprzedaz s " + vbNewLine +_
+                  " inner join n5transakcja t on s.pTransakcja = t.idobj and not (t.curWn = 0 and t.curMa = 0) " + vbNewLine +_
+                  "-- zakup " + vbNewLine +_
+                  "union all " + vbNewLine +_
+                  "select 'idTrans'=z.pTransakcja,'data'=z.dDataOtrzym,'kol'='B','id'=z.IdObj,'typ'=TYPEID_N5ZAKUP,'id_parent'=0,'typ_parent'=0 " + vbNewLine +_
+                  "from n5zakup z " + vbNewLine +_
+                  " inner join n5transakcja t on z.pTransakcja = t.idobj and not (t.curWn = 0 and t.curMa = 0) " + vbNewLine +_
+                  "-- pozrata sprzedaz " + vbNewLine +_
+                  "union all " + vbNewLine +_
+                  "select 'idTrans'=sr.c_prat_ptransakcja,'data'=sr.p_dDataWyst,'kol'='C','id'=sr.c_idobj,'typ'=TYPEID_N5POZRATA,'id_parent'=sr.p_idobj,'typ_parent'=TYPEID_N5SPRZEDAZ " + vbNewLine +_
+                  "from vlist_n5sprzedaz_sprzed_listRata sr " + vbNewLine +_
+                  " inner join n5transakcja t on sr.c_prat_ptransakcja = t.idobj and not (t.curWn = 0 and t.curMa = 0) " + vbNewLine +_
+                  "-- pozrata zakup " + vbNewLine +_
+                  "union all " + vbNewLine +_
+                  "select 'idTrans'=zr.c_prat_ptransakcja,'data'=zr.p_ddataotrzym,'kol'='D','id'=zr.c_idobj,'typ'=TYPEID_N5POZRATA,'id_parent'=zr.p_idobj,'typ_parent'=TYPEID_N5ZAKUP " + vbNewLine +_
+                  "from vlist_n5zakup_zak_listRata zr " + vbNewLine +_
+                  " inner join n5transakcja t on zr.c_prat_ptransakcja = t.idobj and not (t.curWn = 0 and t.curMa = 0) " + vbNewLine +_
+                  "-- pozplatnosc " + vbNewLine +_
+                  "union all " + vbNewLine +_
+                  "select 'idTrans'=p.c_ptransakcja,'data'=p.p_ddataoper,'kol'='E','id'=p.c_idobj,'typ'=TYPEID_N5POZPLATNOSC,'id_parent'=p.p_idobj,'typ_parent'=TYPEID_N5PLATNOSC " + vbNewLine +_
+                  "from vlist_n5platnosc_listPozycje p " + vbNewLine +_
+                  " inner join n5transakcja t on p.c_ptransakcja = t.idobj and not (t.curWn = 0 and t.curMa = 0) " + vbNewLine +_
+                  "-- plnaliczenie " + vbNewLine +_
+                  "union all " + vbNewLine +_
+                  "select 'idTrans'=pl.pTransakcja,'data'=pl.dDataRej,'kol'='F','id'=pl.IdObj,'typ'=TYPEID_N5PLNALICZENIE,'id_parent'=0,'typ_parent'=0 " + vbNewLine +_
+                  "from n5plnaliczenie pl " + vbNewLine +_
+                  " inner join n5transakcja t on pl.pTransakcja = t.idobj and not (t.curWn = 0 and t.curMa = 0) " + vbNewLine +_
+                  "-- dekret " + vbNewLine +_
+                  "union all " + vbNewLine +_
+                  "select 'idTrans'=ld.c_ptransakcja,'data'=ld.c_ddataksieg,'kol'='G','id'=ld.c_idobj,'typ'=TYPEID_N5DEKRET,'id_parent'=ld.p_idobj,'typ_parent'=TYPEID_N5DOWODKSIEG " + vbNewLine +_
+                  "from vlist_n5dowodksieg_listDekret ld " + vbNewLine +_ 
+                  " inner join n5transakcja t on ld.c_ptransakcja = t.idobj and not (t.curWn = 0 and t.curMa = 0) " + vbNewLine +_
+                  "where c_cauto = '" + N5_DEKRET_RECZ + "'" + vbNewLine +_
+                  "-- puste transakcje " + vbNewLine +_
+                  "union all " + vbNewLine +_
+                  "select 'idTrans'=t.idobj,'data'=min(t.dDataRozp),'kol'='H','id'=min(t.IdObj),'typ'=0,'id_parent'=0,'typ_parent'=0 " + vbNewLine +_
+                  "from n5transakcja t  " + vbNewLine +_
+	                "  left outer join n5sprzedaz s on s.pTransakcja = t.idobj " + vbNewLine +_ 
+	                "  left outer join n5zakup z on z.pTransakcja = t.idobj " + vbNewLine +_ 
+	                "  left outer join n5pozrata pr on pr.prat_pTransakcja = t.idobj " + vbNewLine +_ 
+	                "  left outer join n5plnaliczenie n on n.pTransakcja = t.idobj " + vbNewLine +_ 
+	                "  left outer join n5plnaliczenie n2 on n2.plnal_pTransakcjaUS = t.idobj " + vbNewLine +_
+	                "  left outer join n5plnaliczenie n3 on n3.plnal_pTransakcjaZUS51 = t.idobj " + vbNewLine +_
+	                "  left outer join n5plnaliczenie n4 on n4.plnal_pTransakcjaZUS52 = t.idobj " + vbNewLine +_
+	                "  left outer join n5plnaliczenie n5 on n5.plnal_pTransakcjaZUS53 = t.idobj " + vbNewLine +_
+	                "  left outer join n5pozplatnosc pp on pp.pTransakcja = t.idobj " + vbNewLine +_ 
+	                "  left outer join n5dekret d on d.pTransakcja = t.idobj and d.cAuto = '" + N5_DEKRET_RECZ + "'" + vbNewLine +_
+                  "where not (t.curWn = 0 and t.curMa = 0) " + vbNewLine +_
+                  "group by t.idobj " + vbNewLine +_ 
+                  "having min(isnull(s.idobj,0)) = 0 and min(isnull(z.idobj,0)) = 0 and min(isnull(pr.idobj,0)) = 0 and " + vbNewLine +_
+                  "     min(isnull(n.idobj,0)) = 0 and min(isnull(n2.idobj,0)) = 0 and min(isnull(n3.idobj,0)) = 0 and " + vbNewLine +_
+                  "     min(isnull(n4.idobj,0)) = 0 and min(isnull(n5.idobj,0)) = 0 and min(isnull(pp.idobj,0)) = 0 and " + vbNewLine +_
+                  "     min(isnull(d.idobj,0)) = 0 " + vbNewLine +_
+                  "order by 1,2,3,4"               
+end function
+
+'sprawdza czy ustawiony jest zus i urząd skarobwy w n5firma
+function checkUSZUS(oRS) : checkUSZUS = false
+  dim bIsNalicz : bIsNalicz = false
+  do while not oRS.EOF
+    if oRS("kol").value = "F" then
+      bIsNalicz = true
+      exit do
+    end if
+    oRS.movenext
+  loop
+  if bIsNalicz then
+    dim oFirma : set oFirma = getcurrentFirma()
+    if not oFirma is nothing then
+      if oFirma.pUrzadSkarbowyPD is nothing then
+        trans_.message 7000, 0, "Nie podano Urzędu Skarbowego w danych firmy. Po ustawieniu US ponownie uruchom system."
+        exit function
+      else
+        if oFirma.pZUS is nothing then
+          trans_.message 7000, 0, "Nie podano ZUS w danych firmy. Po ustawieniu ZUS ponownie uruchom system."
+          exit function        
+        end if
+      end if
+    end if
+  end if
+  checkUSZUS = true
+end function
+
+function rebuild_trop(oRS)
+  dim idDok: idDok = clng(oRS("id").value)
+  dim nTypId: nTypId = clng(oRS("typ").value) 
+  dim idParent: idParent = clng(oRS("id_parent").value)
+  dim nParentTypId: nParentTypId = clng(oRS("typ_parent").value)
+  if idDok > clng(0) then
+    select case nTypId
+      case TYPEID_N5SPRZEDAZ
+        dim oSprzed: set oSprzed = trans_.getobj(TYPEID_N5SPRZEDAZ,idDok)
+        oSprzed.n5sprzedaz_rebuild_trop true
+      case TYPEID_N5ZAKUP
+        dim oZakup: set oZakup = trans_.getobj(TYPEID_N5ZAKUP,idDok)
+        oZakup.n5zakup_rebuild_trop true
+      case TYPEID_N5POZRATA,TYPEID_N5POZPLATNOSC,TYPEID_N5DEKRET
+        if idParent > clng(0) then
+          dim oDokParent: set oDokParent = trans_.getobj(nParentTypId,idParent)
+          dim nLP, oPoz
+          if nParentTypId = TYPEID_N5SPRZEDAZ then
+            nLP = oDokParent.sprzed_listRata.findonid(idDok)
+            set oPoz = oDokParent.sprzed_listRata.get(nLP)
+            oPoz.n5pozrata_rebuild_trop true
+          elseif nParentTypId = TYPEID_N5ZAKUP then
+            nLP = oDokParent.zak_listRata.findonid(idDok)
+            set oPoz = oDokParent.zak_listRata.get(nLP)
+            oPoz.n5pozrata_rebuild_trop true
+          elseif nParentTypId = TYPEID_N5PLATNOSC then
+            nLP = oDokParent.listPozycje.findonid(idDok)
+            set oPoz = oDokParent.listPozycje.get(nLP)
+            oPoz.n5pozplatnosc_rebuild_trop true
+          elseif nParentTypId = TYPEID_N5DOWODKSIEG then
+            nLP = oDokParent.listDekret.findonid(idDok)
+            set oPoz = oDokParent.listDekret.get(nLP)
+            oPoz.n5dekret_rebuild_trop true            
+          end if
+        end if
+      case TYPEID_N5PLNALICZENIE
+        dim oNalicz: set oNalicz = trans_.getobj(TYPEID_N5PLNALICZENIE,idDok)
+        oNalicz.n5plnaliczenie_rebuild_trop true
+      case else  
+        'pusta
+        empty_trans idDok
+    end select
+    if not trans_.saveobjects() then
+      exit function
+    end if     
+  end if
+end function
+
+function empty_trans(idTrans)
+  dim oTrans: set oTrans = trans_.getobj(TYPEID_N5TRANSAKCJA,idTrans)
+  dim oTransOper: set oTransOper = nothing
+  initialize_transaction_oper oTrans, oTransOper
+  	    
+#ifdef ENABLE_DB14
+  update_transaction_oper oTrans, oTransOper, 0, 0, 0, 0, ccur(0.0), ccur(0.0)
+#else
+  update_transaction_oper oTrans, oTransOper, 0, 0, 0, 0
+#endif
+
+end function  
+
+function update_trans_oper(idTrans, oTransOper)
+  if idTrans > clng(0) then
+    dim oTrans, curWn, curMa
+    dim pCursor: set pCursor = trans_.createrawcursor(TYPEID_N5TRANSAKCJA_OPERACJA,"trop_pTransakcja = " + cstr(idTrans) +_
+                               " and idobj <> " + cstr(oTransOper.idobj), "", "")
+    for each oTrans in pCursor
+      curWn = curWn + oTrans.trop_curWn
+      curMa = curMa + oTrans.trop_curMa
+    next    
+    oTransOper.trop_curWn = oTransOper.trop_curWn - curWn
+    oTransOper.trop_curMa = oTransOper.trop_curMa - curMa    
+  end if
+end function
+  
+function rebuild_trops()
+  dim pGlobProf : set pGlobProf = nx_get_globprofile_obj(GLOBPROF_REBUILD_TRANS_OPER)
+  if pGlobProf is nothing then
+    set pGlobProf = trans_.newobj(TYPEID_GLOBPROFILE)
+    pGlobProf.indeks = clng(GLOBPROF_REBUILD_TRANS_OPER)
+    pGlobProf.Wartosc = cstr(0)
+    if not trans_.saveobjects then
+      exit function
+    end if
+  else	
+    if pGlobProf.Wartosc <> cstr(0) then
+      exit function
+    end if
+  end if
+  
+  'odbudowa operacji na transakcjach tylko z konta administratora
+  dim idAdminUser : idAdminUser = trans_.findobjid(TYPEID_N5UZYTKOWNIK, "strLogin='" + ADMIN_LOGIN + "'")
+  if idAdminUser <> trans_.var(GVAR_USER) then
+    trans_.message 7000, 0, "Odbudowa operacji na transakcjach tylko z poziomu konta Administratora systemu"
+    exit function
+  end if  
+  
+#ifdef _DEBUG
+  if MessageBox("Czy rozpocząć rebuild transakcji-operacji?", "Odbudowa operacji-transakcji: tylko DEBUG", vbYesNo, vbQuestion) <> vbYes then
+    exit function
+  end if
+#endif
+  
+  dim oRS: set oRS = trans_.createadors(getTransQuery())
+  if oRS.recordCount > clng(0) then
+    'gdy są transakcje z naliczeniami płac => sprawdzić czy ustaiowny jest US i ZUS w firma
+    if not checkUSZUS(oRS) then
+      exit function
+    end if  
+    
+    oRS.movefirst
+    trans_.var(GVAR_OPERATION_MODE) = clng(OPERATION_MODE_UPGRADE)
+    dim pPerf: set pPerf = doc_.performing("Trwa generowanie operacji dla istniejących transakcji:")
+    
+    dim oTrans, oTransOper, curWn, curMa
+    dim idTrans: idTrans = clng(0)
+    set oTransOper = nothing
+    curWn = ccur(0)
+    curMa = ccur(0)    
+    dim nRecCount: nRecCount = oRS.recordCount
+    dim iter: iter = 1    
+    do while not oRS.EOF
+      if clng(oRS("idTrans").value) <> idTrans and idTrans <> clng(0) and not oTransOper is nothing then
+        'update trop bedącej dopełnieniem
+        update_trans_oper idTrans, oTransOper
+        if oTransOper.trop_curWn = ccur(0) and oTransOper.trop_curMa = ccur(0) then
+          oTransOper.markdel = true
+          set oTransOper = nothing       
+        end if
+        if not trans_.saveobjects() then
+        end if         
+        curWn = ccur(0)
+        curMa = ccur(0)
+        set oTransOper = nothing
+      end if
+      
+      'dopełnienie trop
+      if cstr(oRS("kol").value) <> "H" then
+        if oTransOper is nothing then
+          idTrans = clng(oRS("idTrans").value)
+          if idTrans > clng(0) then
+            set oTrans = trans_.getobj(TYPEID_N5TRANSAKCJA,idTrans)
+            initialize_transaction_oper oTrans, oTransOper
+            	    
+#ifdef ENABLE_DB14
+            update_transaction_oper oTrans, oTransOper, 0, 0, 0, 0, ccur(0.0), ccur(0.0)
+#else
+            update_transaction_oper oTrans, oTransOper, 0, 0, 0, 0
+#endif
+
+            oTransOper.trop_strOpis = "dop"
+            if not trans_.saveobjects() then
+            end if          
+          end if
+        end if       
+      end if        
+      
+      rebuild_trop oRS
+      oRS.movenext
+      
+      pPerf.text = "Trwa generowanie operacji dla istniejących transakcji: wykonano " + CStr(Int(iter/nRecCount*100)) + "%"
+      iter = iter + 1 
+      
+    loop
+
+    'po wyjściu z pętli (ostatni element)
+    if not oTransOper is nothing then 
+      update_trans_oper idTrans, oTransOper
+      if oTransOper.trop_curWn = ccur(0) and oTransOper.trop_curMa = ccur(0) then
+        oTransOper.markdel = true
+        set oTransOper = nothing        
+      end if  
+      if not trans_.saveobjects() then
+      end if        
+    end if  
+    
+    set pPerf = nothing      
+  end if
+  'ustaw profil po rebuild
+  setglobprofile GLOBPROF_REBUILD_TRANS_OPER, cstr(1)
+  if not trans_.saveobjects then
+    exit function
+  end if  
+  trans_.var(GVAR_OPERATION_MODE) = clng(OPERATION_MODE_NORMAL)  
+end function
+
+function strSystemDate
+	strSystemDate = trans_.afc.display.fulldate(trans_.var(GVAR_TODAY))
+end function
+
+function isDBProdukcja: isDBProdukcja = false
+	if trans_.isvar(GVAR_DBNAME) then
+		if trans_.var(GVAR_DBNAME) = "navo2002bis" then
+			isDBProdukcja = true
+		end if
+	end if
+end function
+
+]]>
+
+</script>
+</config>
+</page>

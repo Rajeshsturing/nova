@@ -1,0 +1,2248 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1200.h"
+#include "h1231.h"
+#include "h1240_appvar.h"
+#include "h1234.h"
+
+
+
+#define CENNIK_IMPORT_NAZWA_PROMOCJI		Cennik
+
+
+-->
+<page>
+<config>
+<script>
+<![CDATA[
+
+'FilesDrives
+#include "50211"
+'choose_rejestr_dok
+#include "50517"
+
+'choose_typ_rejestru_restrict
+#include "50112"
+
+'getCurrentFirma
+#include "50203"
+
+'getCurrentRKS
+#include "50120"
+
+'fire_choice_list
+#include "50200"
+
+'getvalue
+#include "50205"
+
+'getvalue
+#include "50524"
+
+#include "50518"
+
+function importCennik_XLS(byref pExpMan):importCennik_XLS = false
+
+	pExpMan.performing_destroy
+	
+	dim pDostawca,idCustomer
+	idCustomer = fire_choice_list( TYPEID_N5KLIENT, "Wybór klienta", "strNazwa", "","","")
+	if idCustomer > 0 then
+		set pDostawca = trans_.getobj(TYPEID_N5KLIENT,idCustomer)
+	else
+		pExpMan.cancelExport
+		EXIT FUNCTION		
+	end if
+
+
+
+	dim pWaluta,idwaluta
+	idwaluta = fire_choice_list( TYPEID_N5JEDNOSTKA, "Wybór waluty", "strNazwa", "eTyp=N5JEDNOSTKA_WALUTA","","")
+	if idwaluta > 0 then
+		set pWaluta = trans_.getobj(TYPEID_N5JEDNOSTKA,idwaluta)
+	else
+		pExpMan.cancelExport
+		EXIT FUNCTION
+	end if
+	
+
+	dim nMode
+
+	dim pRecordset
+
+	on error resume next
+
+	'sprawdzam czy to cennik z arkuszem nettoliste
+	trans_.message 1002, 0, "Próba podłączenia do arkusza ""Cennik"""	
+	set pRecordset = pExpMan.getConnection().execute( "select * from [Cennik$]" )
+
+	if (err.number<>0) then			
+		pExpMan.cancelExport
+		on error goto 0
+		EXIT FUNCTION
+	end if
+	
+	on error goto 0
+
+
+	importCennik_XLS = import_cennik_format1 ( pExpMan ,  pRecordset , pdostawca , pWaluta)
+
+	trans_.discard
+
+end function
+
+
+
+function import_cennik_format1 ( byref ex_man , byref rs , byval pDostawca , BYVAL pWaluta ): import_cennik_format1 = true
+	dim oImpResArray : set oImpResArray = nx_.new_array()
+  set ex_man.container().m_oExtraInfo = oImpResArray
+  
+  '3 elementy (zdrozalo, stanialo, bez zmian)
+  oImpResArray.add nx_.new_array()
+  oImpResArray.add nx_.new_array()
+  oImpResArray.add nx_.new_array()
+  
+  dim perf:set perf = doc_.performing("Import cenników")
+	dim iter:iter = 2
+	while not rs.eof
+		if iter mod 50 = 0 then
+			perf.text = "Import cenników - wiersz " + cstr(iter)
+		end if
+		if isnull(rs("Produkt").value) then			
+			trans_.message 1002 , 0 , "Import zakonczony na wierszu " + cstr(iter) + ": pusty indeks produktu"
+			ex_man.cancelExport
+			set perf = nothing
+			exit function
+		end if			
+		dim curCena : curCena = rs("Cena").value
+		dim curMnoznik : curMnoznik = rs("Narzut").value
+		if not isnull(curCena) then
+			if isnull(curMnoznik) then
+				curMnoznik = ccur(0.0)
+			end if
+			if ccur(curCena) <> ccur(0.0) then
+				if not process_one_row ( cstr(rs("Produkt")) , ccur(curCena) , curMnoznik, pdostawca , pWaluta, oImpResArray ) then
+					ex_man.cancelExport
+					set perf = nothing
+					exit function
+				end if
+			else
+				trans_.message 1002 , 0 , "Pomijam wiersz " + cstr(rs("Produkt")) + " - wiersz " + cstr(iter) + " - brak ceny "
+			end if
+		else
+			trans_.message 1002 , 0 , "Pomijam wiersz " + cstr(rs("Produkt")) + " - wiersz " + cstr(iter) + " - brak ceny "
+		end if
+
+		rs.movenext
+		iter = iter + 1
+	wend
+	set perf = nothing
+	trans_.message 1002 , 0 , "Import zakonczony na wierszu " + cstr(iter) + ": koniec pliku"
+
+	
+	if not trans_.saveobjects() then
+		trans_.discard
+		ex_man.cancelExport
+	end if
+
+end function
+
+function findProdukt ( strIndeks , idKlient ):findProdukt = 0
+	'najpierw po obcych
+	dim id
+	'szukam info klienta o produkcie dla dostawcy o podanym id i indeksie produktu
+	id = trans_.FindObjId(TYPEID_N5KLIENT_PRODUKT,"klpr_strIndeks like '" + trans_.afc.convert.DoubleApostrophe(strIndeks) + "' and klpr_pKlient=" + cstr(idKlient))
+	'jesli znalazlem to pobieram id produktu
+	if id>0 then
+		findProdukt = trans_.getobj(TYPEID_N5KLIENT_PRODUKT,id).klpr_pProdukt.idobj
+	end if
+
+	if findProdukt > 0 then 
+		exit function
+	end if
+	findProdukt = trans_.FindObjId(TYPEID_N5PRODUKT,"strIndeks like '" + trans_.afc.convert.DoubleApostrophe(strIndeks) + "'")
+end function
+
+dim g_curStawka:g_curStawka = -1
+
+function process_one_row ( byval strIndeks , byval curCena , byval curMnoznik, byval pdostawca , byval pWaluta, byref oImpResArray):process_one_row = true
+	dim idProd:idProd = findProdukt ( strIndeks , pdostawca.idobj ) 
+	if idProd < 1 then
+		'ponizsza linijke trzeba odblokowac jesli chcemy pomijac nieznalezione produkty
+		'process_one_row = false
+		trans_.message 1002 , 0 , "Brak produktu o indeksie " + strIndeks
+		exit function
+	end if
+
+	dim pProd:set pProd = trans_.getobj(TYPEID_N5PRODUKT,idProd)
+  
+  dim curStaraCena : curStaraCena = pProd.listOpakowania.get(1).curCenaNetto1
+	dim curCenaBazowa
+	dim bCPRes : bCPRes = nx_compute_price(pdostawca, pProd, pProd.listOpakowania.get(1), trans_.var(GVAR_TODAY), 0.0, _
+		1, pWaluta,true, curCenaBazowa, curStaraCena)
+  
+  dim pPolRab:set pPolRab = create_get_polrab(pProd,pDostawca,pWaluta,curCena)
+
+	'aktualizacja ceny produktu
+	if g_curStawka < 0 then
+		 dim crsr_stawki:set crsr_stawki = trans_.createrawcursor(TYPEID_N5PLSTAWKA,"strKod like 'NARBAZ' and ( ( " + trans_.afc.convert.date2SQL(trans_.var(1007)) + " between dDataOd and dDataDo) or (" + trans_.afc.convert.date2SQL(trans_.var(1007)) + ">= dDataOd and dDataDo=" + trans_.afc.convert.date2SQL( trans_.afc.globals.nulldate()) + " ) )  ", "dDataOd desc" , "")
+		 if crsr_stawki.exists(1) then
+			g_curStawka = crsr_stawki.get(1).curWartosc
+		else
+			trans_.message 1002 , 0 , "Nie udało sie obliczyć mnoznika."
+			g_curStawka = ccur(-1)
+		end if		
+	end if
+	if curMnoznik = 0 then
+		curMnoznik = g_curStawka 
+	end if
+	dim curNowaCena
+
+	if curMnoznik > -1 then
+		curNowaCena = trans_.afc.convert.roundn(ccur(curCena) + ((ccur(curMnoznik)/100) * ccur(curCena)),trans_.var(GVAR_PRICE_PREC))
+		doc_.getmodule(60278).przelicz_cene  pWaluta  , pProd.listOpakowania.get(1).pWaluta , trans_.var(1007)  , "" , curNowaCena 
+		pProd.listOpakowania.get(1).curCenaNetto1 = curNowaCena
+	end if
+  
+  'zapamietaj zmiany
+	dim oImpResItem : set oImpResItem = nx_.new_array()
+  
+  oImpResItem.add pProd.idobj
+  oImpResItem.add pProd.strIndeks
+  oImpResItem.add pProd.strNazwa
+  oImpResItem.add curStaraCena
+  oImpResItem.add curCena
+
+  if curCena > curStaraCena then
+    oImpResArray(0).add oImpResItem
+  else
+    if curCena < curStaraCena then
+      oImpResArray(1).add oImpResItem
+    else
+      oImpResArray(2).add oImpResItem    
+    end if
+  end if
+  
+end function
+
+
+
+function create_get_polrab (byval pProdukt , byval pDostawca , byval pWaluta , byval curCena)
+	dim pPolRab
+'	dim strWhere:strWhere = " wpKlientGrupa=" + cstr(pDostawca.idobj) + " and wpKlientGrupa_wrt=TYPEID_N5KLIENT and wpProdGrupa=" + cstr(pProdukt.idobj) + " and wpProdGrupa_wrt = TYPEID_N5PRODUKT and strNazwaPromocji like 'CENNIK_IMPORT_NAZWA_PROMOCJI'"
+'dim idPolRab:idPolRab = trans_.FindObjId(TYPEID_N5POLRAB, strWhere)
+'if idPolRab = 0 then
+	set pPolRab = trans_.newobj(TYPEID_N5POLRAB)
+	set pPolRab.wpProdGrupa = pProdukt
+	set pPolRab.wpKlientGrupa = pDostawca
+	pPolRab.strNazwaPromocji = "CENNIK_IMPORT_NAZWA_PROMOCJI"
+'else
+'	set pPolRab = trans_.getobj(TYPEID_N5POLRAB,idPolRab)
+'end if			
+	set pPolRab.polrab_pWalutaCeny = pWaluta
+	pPolRab.curCenaRab = curCena
+	pPolRab.dDataOd = trans_.var(GVAR_TODAY)
+	set create_get_polrab = pPolRab
+end function
+
+
+function import_XLSOpakowania(byref pExpMan) : import_XLSOpakowania = false
+  
+  dim pRecordset
+  dim strSQL
+  
+  'utwórz tabelę pomocniczą	
+  strSQL = " CREATE TABLE #dane_wstepne                    " + vbCrLf +_
+           " (indeksObiektuKlienta VARCHAR (32) collate SQL_Polish_CP1250_CI_AS NOT NULL," + vbCrLf +_
+           " indeksObiektuProduktu VARCHAR (32) collate SQL_Polish_CP1250_CI_AS NOT NULL," + vbCrLf +_
+           " intIlosc decimal(14,4) not null,            " + vbCrLf +_
+           " dData datetime not null)               " 
+  trans_.execsql strSQL
+	
+  on error resume next
+
+  'gdy wybierzemy plik excel => załaduj dane
+  if not pExpMan is nothing then
+    set pRecordset = pExpMan.getConnection().execute( "select * from [opakowania$]" )
+    pExpMan.performing_show "Import Opakowań"
+    if (err.number = 0) then
+      while (not pRecordset.EOF)
+	   pExpMan.performing_restore
+
+	   if not Opakowania_XLS_process_obj(pRecordset , pExpMan ) then
+	      pExpMan.cancelExport
+	      exit function
+	   end if
+	   pRecordset.movenext	
+      wend
+    end if
+  end if
+  
+  'klienci nie będący w pliku excel - zawsze wyświetlani
+	strSQL = " CREATE TABLE #pozostali                    " + vbCrLf +_
+           " (indeksObiektuKlienta VARCHAR (32) collate SQL_Polish_CP1250_CI_AS NOT NULL," + vbCrLf +_
+           " indeksObiektuProduktu VARCHAR (32) collate SQL_Polish_CP1250_CI_AS NOT NULL," + vbCrLf +_
+           " intIlosc decimal(14,4) not null,            " + vbCrLf +_
+           " dData datetime not null)               " 
+	trans_.execsql strSQL
+	
+	strSQL = "insert into #pozostali  " +_
+			"select klient,indeks,0, min(data)-1 from " +_
+			"(select min(vsprzed.p_ddatawyst) as data,k.strindeks as klient,p.strindeks as indeks " +_
+			"from n5produkt as p "+_
+			"inner join vlist_n5sprzedaz_listPozycje as vsprzed	on p.idobj=vsprzed.c_pprodukt " +_
+			"inner join n5grupaproduktow as grProd on grProd.idobj=p.pGrupaprod " +_
+			"inner join n5klient as k on k.idobj=vsprzed.p_pklient " +_
+			"where grProd.idobj in ( " +_
+      "select idobj from n5grupaproduktow where strNazwa like 'OPAKOWANIA' " +_
+      "union all " +_
+      "select idobj from n5grupaproduktow where pGrupaNadrzedna in " +_ 
+      "(select idobj from n5grupaproduktow where strNazwa like 'OPAKOWANIA') " +_
+      "union all " +_
+      "select idobj from n5grupaproduktow where pGrupaNadrzedna in ( " +_
+      "select idobj from n5grupaproduktow where pGrupaNadrzedna in " +_ 
+      "(select idobj from n5grupaproduktow where strNazwa like 'OPAKOWANIA')) " +_
+      ") " +_
+      "and k.strindeks not in (select indeksObiektuKlienta from #dane_wstepne) " +_
+			"group by k.strindeks,p.strindeks " +_
+			"union " +_
+			"select min(vdokmag.p_ddatawyst) as data,k.strindeks as klient,p.strindeks as indeks " +_
+			"from n5produkt as p "+_
+			"inner join vlist_n5dokmag_listPozycje as vdokmag on p.idobj=vdokmag.c_pprodukt " +_
+			"inner join n5grupaproduktow as grProd on grProd.idobj=p.pGrupaprod " +_
+			"inner join n5klient as k on k.idobj=vdokmag.p_pklient " +_
+			"where vdokmag.p_ntypdok in (18,19) and grProd.idobj in ( " +_
+      "select idobj from n5grupaproduktow where strNazwa like 'OPAKOWANIA' " +_
+      "union all " +_
+      "select idobj from n5grupaproduktow where pGrupaNadrzedna in " +_ 
+      "(select idobj from n5grupaproduktow where strNazwa like 'OPAKOWANIA') " +_
+      "union all " +_
+      "select idobj from n5grupaproduktow where pGrupaNadrzedna in ( " +_
+      "select idobj from n5grupaproduktow where pGrupaNadrzedna in " +_ 
+      "(select idobj from n5grupaproduktow where strNazwa like 'OPAKOWANIA')) " +_
+      ") " +_
+      "and k.strindeks not in (select indeksObiektuKlienta from #dane_wstepne) " +_        
+			"group by k.strindeks,p.strindeks ) as v1 "+_
+			"group by klient,indeks " +_
+			"order by 1,2"  
+	trans_.execsql strSQL
+  
+  strSQL = "insert into #dane_wstepne " +_
+           "select * from #pozostali"
+  trans_.execsql strSQL
+
+  trans_.execsql "drop table #pozostali"
+
+	import_XLSOpakowania = true
+
+end function
+
+function import_XLSPit11Data(byref pExpMan):import_XLSPit11Data = false
+
+	dim pRecordset
+
+	on error resume next
+
+	set pRecordset = pExpMan.getConnection().execute( "select * from [Arkusz1$]" )
+
+	if (err.number <> 0) then
+		exit function
+	end if
+
+	on error goto 0
+
+	pExpMan.performing_show "Import danych pracowników do PIT-11"
+
+	while (not pRecordset.EOF)
+		pExpMan.performing_restore
+
+		if not Pit11_XLS_process_obj(pRecordset, pExpMan, TYPEID_N5PIT11) then
+			pExpMan.cancelExport
+			exit function
+		end if
+
+		if not pRecordset.EOF then
+			pRecordset.movenext
+		end if
+	wend
+
+  pExpMan.performing_destroy
+  
+	import_XLSPit11Data = true
+
+end function
+
+function importPracownicy_XLS(byref pExpMan):importPracownicy_XLS = false
+
+	dim pRecordset
+
+	on error resume next
+
+	set pRecordset = pExpMan.getConnection().execute( "select * from [Dane kadrowe$]" )
+
+	if (err.number<>0) then
+		exit function
+	end if
+
+	on error goto 0
+
+	pExpMan.performing_show "Import pracowników"
+
+	while (not pRecordset.EOF)
+
+		pExpMan.performing_restore
+
+		if not Pracownicy_XLS_process_obj(pRecordset , pExpMan , TYPEID_N5PRACOWNIK ) then
+			pExpMan.cancelExport
+			exit function
+		end if
+
+		if not pRecordset.EOF then
+			pRecordset.movenext
+		end if
+					
+	wend
+
+	importPracownicy_XLS = true
+
+end function
+
+
+
+function importDokMag_XLS(byref pExpMan):importDokMag_XLS = false
+
+	dim pRecordset
+
+	on error resume next
+
+	set pRecordset = pExpMan.getConnection().execute( "select * from [DokMag$]" )
+
+	if (err.number<>0) then
+		exit function
+	end if
+
+	on error goto 0
+
+	pExpMan.performing_show "Import dokumentów magazynowych"
+
+	while (not pRecordset.EOF)
+
+		pExpMan.performing_restore
+
+		if not DokHandl_XLS_process_obj(pRecordset , pExpMan , TYPEID_N5DOKMAG ) then
+			pExpMan.cancelExport
+			exit function
+		end if
+
+		if not pRecordset.EOF then
+			pRecordset.movenext
+		end if
+					
+	wend
+
+	importDokMag_XLS = true
+
+end function
+
+
+
+function importZlecProd_XLS(byref pExpMan):importZlecProd_XLS = false
+
+	dim pRecordset
+	on error resume next
+
+	set pRecordset = pExpMan.getConnection().execute( "select * from [ZlecProd$]" )
+
+	if (err.number<>0) then
+		exit function
+	end if
+
+	on error goto 0
+
+	pExpMan.performing_show "Import zleceń produkcyjnych..."
+  
+  dim bZakoncz : bZakoncz = false
+	
+  while (not pRecordset.EOF)
+	  pExpMan.performing_restore
+	  if not ZlecProd_XLS_process_obj(pRecordset, pExpMan, TYPEID_N5ZLECPROD) then
+      if bZakoncz then
+        exit function
+      else
+        pExpMan.cancelExport
+	      exit function
+      end if
+    else
+      bZakoncz = true
+	  end if
+	  if not pRecordset.EOF then
+		  pRecordset.movenext
+	  end if 
+	wend
+
+	importZlecProd_XLS = true
+
+end function
+
+
+'import recept z excela - ale nie odpowiada to standardowemu schematow - jeden wiersz - jeden obiekt
+'dlateo wykorzystany mechanizm odrebny a nie "spikowy"
+function importRecepta_XLS(byref pExpMan):importRecepta_XLS = false
+	DEBUG_MESSAGE("importRecepta_XLS")
+
+	dim pRecordset
+
+	on error resume next
+		set pRecordset = pExpMan.getConnection().execute( "select * from [Recepty$]" )
+		if (err.number<>0) then
+			exit function
+		end if
+	on error goto 0
+
+	pExpMan.performing_show "Import recept .... "
+	dim iter:iter = 1
+
+
+		while (not pRecordset.EOF)
+
+			pExpMan.performing_restore
+
+			if not Recepta_XLS_process_obj(pRecordset , pExpMan , iter ) then
+				pExpMan.cancelExport
+				exit function
+			end if
+					
+		wend
+
+	importRecepta_XLS = trans_.saveobjects()
+	if not importRecepta_XLS then
+		trans_.discard
+	end if
+
+#ifdef _DEBUG
+	importRecepta_XLS = false
+#endif
+
+
+
+end function
+
+
+
+
+function Recepta_XLS_process_obj(byref rs , byref pExpMan , byref iter ):Recepta_XLS_process_obj = false
+	DEBUG_MESSAGE("Recepta_XLS_process_obj")
+
+	'czytam nazwe recepty = ma byc w pierwszym wierszu zaczynającym całą receptę
+	if getValue(pExpMan, rs, "nazwa", true) = "" then
+		error_message "Nie podano nazwy recepty" , iter
+		pExpMan.performing_destroy
+		exit function
+	end if
+
+	dim silent:silent = true
+	'tworze recepte
+	dim page:set page = nothing
+	dim obj:set obj = create_receipt(silent,page,getValue(pExpMan, rs, "nazwa", true))
+	fill_receipt_header rs , pExpMan , obj
+	iter = iter + 1
+	rs.movenext
+
+
+	'teraz czytamy indeksy produktów
+	while getValue(pExpMan, rs, "produkt", true) <> "" 
+		if not fill_receipt_position ( rs , pExpMan , obj , iter ) then
+			error_message "Bład w trakcie wypełniania pozycji recepty" , iter
+			pExpMan.performing_destroy
+			exit function
+		end if			
+	wend	
+
+	Recepta_XLS_process_obj = true
+end function
+
+
+
+function fill_receipt_position(byref rs , byref pExpMan , byref obj , byref iter):fill_receipt_position = false
+	DEBUG_MESSAGE("fill_receipt_position")
+	'przesuwanie sie pozostawiamy tej funkcji
+	dim idProd
+	idProd = map_by_inx(getValue(pExpMan, rs, "produkt", true) , TYPEID_N5PRODUKT)
+	if idProd < 1 then
+		error_message "Brak produktu o indeksie " + getValue(pExpMan, rs, "produkt", true) , iter
+		exit function
+	end if
+	
+	if getValue(pExpMan, rs, "skladnik", true) = "" then
+		error_message "Brak wartości w kolumnie ""składnik""", iter
+		exit function
+	end if
+
+	dim child
+	select case getValue(pExpMan, rs, "skladnik", true)
+		case "S"
+			set child =  obj.listSurowce.addnew()
+		case "C"
+			set child =  obj.listCzynnosci.addnew()
+		case "W"
+			set child =  obj.listWyrob.addnew()
+		case else
+			error_message "Błędna wartość w kolumnie ""skladnik"" ", iter
+			exit function
+	end select
+
+	set child.pProdukt = trans_.getobj(TYPEID_N5PRODUKT,idProd)
+	if not isempty(getValue(pExpMan, rs, "ilosc", true) ) then
+		child.curIloscOpak = ccur(getValue(pExpMan, rs, "ilosc", true))
+	end if
+
+
+	iter = iter + 1
+	rs.movenext	
+
+	fill_receipt_position = true
+end function
+
+
+
+function fill_receipt_header(byref rs , byref pExpMan ,byref obj)
+	DEBUG_MESSAGE("fill_receipt_header")
+	obj.strNazwa = cstr( getValue(pExpMan, rs, "nazwa", true) )
+	obj.strNorma = cstr( getValue(pExpMan, rs, "norma", true) )
+end function
+
+
+sub error_message (byval strMessage , byval iter)
+	trans_.message 1002 , 0 ,  strMessage + " - wiersz " + cstr(iter+1)
+end sub
+
+
+'tworzy nowy obiekt recepty
+'jesli nie silent to bedziemy miec strone ktora mozemy co recepta otworzyc
+function create_receipt(byval silent, byref page , byval key)
+	dim id:id = trans_.findobjid(TYPEID_N5RECEPTA," UPPER(strNazwa) like '"+cstr(UCASE(key))+"' ")
+	if silent then
+		if id<1 then
+			trans_.var(APPVAR_RECEPTA_TYPE) = clng(N5RECEPTURA_RECEPTURA)
+			set create_receipt = trans_.newobj(TYPEID_N5RECEPTA)
+		else
+			set create_receipt = trans_.getobj(TYPEID_N5RECEPTA,id)
+			create_receipt.listSurowce.deleteall()
+			create_receipt.listCzynnosci.deleteall()
+			create_receipt.listWyrob.deleteall()
+		end if
+	end if
+end function
+
+
+function importZamowienia_XLS(byref pExpMan):importZamowienia_XLS = false
+
+	DEBUG_MESSAGE("importZamowienia_XLS")
+
+	dim pRecordset
+
+	on error resume next
+
+	set pRecordset = pExpMan.getConnection().execute( "select * from [Zamowienia$]" )
+
+	if (err.number<>0) then
+		exit function
+	end if
+
+	on error goto 0
+
+	pExpMan.performing_show "Import zamowien"
+
+	while (not pRecordset.EOF)
+
+		pExpMan.performing_restore
+
+		if not DokHandl_XLS_process_obj(pRecordset , pExpMan , TYPEID_N5ZAMOWIENIE ) then
+			pExpMan.cancelExport
+			exit function
+		end if
+
+		if not pRecordset.EOF then
+			pRecordset.movenext
+		end if
+					
+	wend
+
+	importZamowienia_XLS = true
+
+end function
+
+'---------------------------------------------------------------------------
+#macro SET_CENA_KART(_nr_ceny_)  \
+      if getValue(pExpMan, oRS, "CenaNetto##_nr_ceny_", true) <> "" then   \
+        pProd.listOpakowania.get(1).curCenaNetto##_nr_ceny_ = ccur(getValue(pExpMan, oRS, "CenaNetto##_nr_ceny_", true))   \
+      else   \
+        if getValue(pExpMan, oRS, "CenaBrutto##_nr_ceny_", true) <> "" then   \
+          pProd.listOpakowania.get(1).curCenaBrutto##_nr_ceny_ = ccur(getValue(pExpMan, oRS, "CenaBrutto##_nr_ceny_", true))   \
+        end if   \      
+      end if   \
+      if getValue(pExpMan, oRS, "WalutaCeny##_nr_ceny_", true) <> "" then   \
+        idWaluta = trans_.findobjid(TYPEID_N5JEDNOSTKA,"strSkrot = '" + cstr(getValue(pExpMan, oRS, "WalutaCeny##_nr_ceny_", true)) +"'")   \
+        if idWaluta > 0 then   \
+          set pWaluta = trans_.getobj(TYPEID_N5JEDNOSTKA,idWaluta)   \
+          if _nr_ceny_ = 1 then   \
+            set pProd.listOpakowania.get(1).pWaluta = pWaluta   \
+          else   \
+            set pProd.listOpakowania.get(1).opak_pWaluta##_nr_ceny_= pWaluta   \
+          end if   \
+        end if   \
+      end if
+
+function import_XLSCenyKartotekowe(byref pExpMan) : import_XLSCenyKartotekowe = false
+
+	dim pRecordset
+	on error resume next
+
+	set pRecordset = pExpMan.getConnection().execute( "select * from [CenyKartotekowe$]" )
+
+	if (err.number<>0) then
+		exit function
+	end if
+
+	on error goto 0
+
+	pExpMan.performing_show "Import cen kartotekowych..."
+  
+	import_XLSCenyKartotekowe = importCenKartotekowych(pRecordset, pExpMan)
+
+end function
+
+function importCenKartotekowych(byref oRS, byref pExpMan) : importCenKartotekowych = false
+  'ropocznij od 2 wiersza
+	dim iter : iter = 2
+  
+  do while not oRS.eof
+    if isnull(oRS("Produkt").value) then			
+      trans_.message 1002 , 0 , "Import zakończony na wierszu " + cstr(iter)
+      exit do
+    end if
+    'wypełnij ceny na opakowaniu
+    fill_cenyopak oRS, pExpMan
+    oRS.movenext
+    iter = iter + 1
+  loop
+
+  if not trans_.saveobjects() then
+    trans_.discard
+    pExpMan.cancelExport
+  end if
+
+  importCenKartotekowych = true
+end function
+
+sub fill_cenyopak(byref oRS, byref pExpMan)
+  'obiekt produktu
+  dim idProd : idProd = trans_.findobjid(TYPEID_N5PRODUKT,"strIndeks ='" + cstr(oRS("Produkt").value) + "'")
+  if idProd > 0 then
+    dim idWaluta : idWaluta = clng(0)
+    dim pWaluta : set pWaluta = nothing
+    dim pProd : set pProd = trans_.getobj(TYPEID_N5PRODUKT,idProd)
+    dim iter
+    if not pProd.listOpakowania.get(1) is nothing then
+       SET_CENA_KART(1)
+       SET_CENA_KART(2)
+       SET_CENA_KART(3)
+       SET_CENA_KART(4)
+       SET_CENA_KART(5)
+       SET_CENA_KART(6)
+       
+      if getValue(pExpMan, oRS, "CenaNettoMin", true) <> "" then   
+        pProd.listOpakowania.get(1).opak_curCenaMinNetto = ccur(getValue(pExpMan, oRS, "CenaNettoMin", true))   
+      else   
+        if getValue(pExpMan, oRS, "CenaBruttoMin", true) <> "" then   
+          pProd.listOpakowania.get(1).opak_curCenaMinBrutto = ccur(getValue(pExpMan, oRS, "CenaBruttoMin", true))   
+        end if         
+      end if   
+      if getValue(pExpMan, oRS, "WalutaCenyMin", true) <> "" then   
+        idWaluta = trans_.findobjid(TYPEID_N5JEDNOSTKA,"strSkrot = '" + cstr(getValue(pExpMan, oRS, "WalutaCenyMin", true)) +"'")   
+        if idWaluta > 0 then   
+          set pWaluta = trans_.getobj(TYPEID_N5JEDNOSTKA, idWaluta)   
+          set pProd.listOpakowania.get(1).opak_pWalutaMinCenySprzed = pWaluta   
+        end if   
+      end if
+      
+    end if
+  else
+    exit sub
+  end if   
+end sub
+'-------------------------------------------------------------------------
+
+function Opakowania_XLS_process_obj(byref rs , byref pExpMan) : Opakowania_XLS_process_obj = false
+
+dim strSQLInsert
+	if ((not getValue(pExpMan, rs, "Indeks klienta", true) ="") and (not getValue(pExpMan, rs, "Indeks produktu", true) ="") and (not getValue(pExpMan, rs, "Data", true) ="") and (not getValue(pExpMan, rs, "Ilosc sztuk", true) =""))then
+		dim indekskli : indekskli = getValue(pExpMan, rs, "Indeks klienta", true)
+		dim indeksProd : indeksProd = getValue(pExpMan, rs, "Indeks produktu", true)
+		dim intIlosc : intIlosc = getValue(pExpMan, rs, "Ilosc sztuk", true)
+		intIlosc = replace (intIlosc, "," ,".")
+		dim dDataT : dDataT =getValue(pExpMan, rs, "Data", true) 
+		strSQLInsert = "insert into #dane_wstepne" + vbCrLf +_
+						"(indeksObiektuKlienta, indeksObiektuProduktu, intIlosc, dData )" + vbCrLf +_
+					"values( '"+cStr(indekskli)+"','"+cStr(indeksProd)+"',"+cStr(intIlosc)+","+cStr(trans_.afc.convert.date2SQL(dDataT))+")"
+		
+		trans_.execsql strSQLInsert						
+	else
+		pExpMan.performing_destroy
+		exit function
+	end if
+	
+	Opakowania_XLS_process_obj=true
+	
+end function
+
+function Pracownicy_XLS_process_obj(byref rs , byref pExpMan , byval typeid ):Pracownicy_XLS_process_obj = false
+
+	if getValue(pExpMan, rs, "Lp", true) ="" then
+		trans_.message 1002 , 0 , "Brak znacznka początku dokumentu "
+		pExpMan.performing_destroy
+		exit function
+	end if
+
+	dim pPracHli
+	set pPracHli = doc_.getmodule(60129).prepare_form_open_command(typeid,0,0)
+	if pPracHli is nothing then
+		pExpMan.performing_destroy
+		exit function
+	end if
+	
+	dim pFormPrac
+	set pFormPrac = doc_.getpagehli(pPracHli)
+	if pFormPrac is nothing then
+		pExpMan.performing_destroy
+		exit function
+	end if
+  
+  if not fill_pracownicy(pFormPrac.root, rs ,pExpMan ,1) then
+		pExpMan.performing_destroy
+		exit function
+	end if
+		
+	
+
+	pExpMan.performing_destroy
+
+	pFormPrac.domodalauto()
+
+	Pracownicy_XLS_process_obj = true
+
+end function
+
+
+function Pit11_XLS_process_obj(byref rs, byref pExpMan, byval typeid) : Pit11_XLS_process_obj = false
+
+	if getValue(pExpMan, rs, "PESEL", true) = "" then
+		trans_.message 1002 , 0 , "Brak znacznka początku dokumentu "
+		pExpMan.performing_destroy
+		exit function
+	end if
+
+	dim pPitHli
+	set pPitHli = doc_.getmodule(60129).prepare_form_open_command(typeid,0,0)
+	if pPitHli is nothing then
+		pExpMan.performing_destroy
+		exit function
+	end if
+	
+	dim pFormPit
+	set pFormPit = doc_.getpagehli(pPitHli)
+	if pFormPit is nothing then
+		pExpMan.performing_destroy
+		exit function
+	end if
+  
+  if not fill_pit11(pFormPit.root, rs ,pExpMan) then
+		pExpMan.performing_destroy
+		exit function
+	end if
+
+  'wydruk automatyczny
+ 	trans_.var(4040) = clng(1)
+  dim iter 
+  for iter = 1 to 3
+    print_page1_auto pFormPit.root
+    print_page2_auto pFormPit.root
+  next	
+
+	Pit11_XLS_process_obj = true
+
+end function
+
+function print_page1_auto(oPit11)
+	dim pHLI
+  set pHLI = asp_object_appfile_hli(DOCFORM_PIT11_1,oPit11)
+	if not pHLI is nothing then
+		dim pPage : set pPage = doc_.getpagehli(pHLI)
+		trans_.var(GVAR_AUTOPRINT) = 1
+		pPage.fprint
+		trans_.var(GVAR_AUTOPRINT) = 0
+	end if
+end function
+
+function print_page2_auto(oPit11)
+  dim pHLI
+  set pHLI = asp_object_appfile_hli(DOCFORM_PIT11_2,oPit11)
+	if not pHLI is nothing then
+		dim pPage : set pPage = doc_.getpagehli(pHLI)
+		trans_.var(GVAR_AUTOPRINT) = 1
+		pPage.fprint
+		trans_.var(GVAR_AUTOPRINT) = 0
+	end if
+end function
+
+
+
+
+
+
+
+function DokHandl_XLS_process_obj(byref rs , byref pExpMan , byval typeid ):DokHandl_XLS_process_obj = false
+
+	if getValue(pExpMan, rs, "Klucz", true) <> "Typ" then
+		trans_.message 1002 , 0 , "Brak znacznka początku dokumentu "
+		pExpMan.performing_destroy
+		exit function
+	end if
+
+	if not prepare_rejdok_env ( getValue(pExpMan, rs, "Wartosc", true)  ) then
+		pExpMan.performing_destroy
+		exit function
+	end if
+
+
+	dim pDokHandlHli
+	set pDokHandlHli = doc_.getmodule(60129).prepare_form_open_command(typeid,0,0)
+	if pDokHandlHli is nothing then
+		pExpMan.performing_destroy
+		exit function
+	end if
+	
+	dim pFormDokHandl
+	set pFormDokHandl = doc_.getpagehli(pDokHandlHli)
+	if pFormDokHandl is nothing then
+		pExpMan.performing_destroy
+		exit function
+	end if
+
+	select case typeid
+		case TYPEID_N5DOKMAG
+			if not fill_dokmag ( pFormDokHandl.root , rs , pExpMan , 1 ) then
+				pExpMan.performing_destroy
+				exit function
+			end if
+		case TYPEID_N5ZAMOWIENIE
+			if not fill_zam ( pFormDokHandl.root , rs , pExpMan , 1 ) then
+				pExpMan.performing_destroy
+				exit function
+			end if
+	end select
+
+
+	pExpMan.performing_destroy
+
+	pFormDokHandl.domodalauto()
+
+	DokHandl_XLS_process_obj = true
+
+end function
+
+
+function ZlecProd_XLS_process_obj(byref rs, byref pExpMan, byval typeid):ZlecProd_XLS_process_obj = false
+
+	if getValue(pExpMan, rs, "Klucz", true) <> "Typ" then
+		trans_.message 1002 , 0 , "Brak znacznka początku dokumentu "
+		pExpMan.performing_destroy
+		exit function
+	end if
+  
+  dim nDestRejType : nDestRejType = choose_typ_rejestru_restrict(N5REJESTRDOK__ZLECPROD,true)
+	if nDestRejType > 0 then
+		dim nDestRejID : nDestRejID   = choose_rejestr_dok(cstr(nDestRejType), true , "Wybierz rejestr")
+	else
+		exit function
+	end if
+	
+	trans_.var(APPVAR_REJESTR_TYP) = nDestRejType
+	trans_.var(APPVAR_REJESTR_DOKUMENTOW) = nDestRejID
+
+	dim pZlecProdHli
+	set pZlecProdHli = doc_.getmodule(60129).prepare_form_open_command(typeid,0,0)
+	if pZlecProdHli is nothing then
+		pExpMan.performing_destroy
+		exit function
+	end if
+	
+	dim pFormZlecProd
+	set pFormZlecProd = doc_.getpagehli(pZlecProdHli)
+	if pFormZlecProd is nothing then
+		pExpMan.performing_destroy
+		exit function
+	end if
+
+	if not fill_zlecprod(pFormZlecProd.root, rs ,pExpMan ,1) then
+		pExpMan.performing_destroy
+		exit function
+	end if
+		
+	pExpMan.performing_destroy
+
+	pFormZlecProd.domodalauto()
+
+	ZlecProd_XLS_process_obj = true
+
+end function
+
+
+
+function fill_zam ( byref  zam , byref rs , byref pExpMan , byref nFirstPos ): fill_zam = false
+	DEBUG_MESSAGE("fill_zam")
+	'numer dokumentu to kolejny wiersz	
+	rs.movenext	
+
+	if getValue(pExpMan, rs, "Wartosc", true) <> "" then
+		zam.strNrDok = getValue(pExpMan, rs, "Wartosc", true)
+	end if
+
+	'kolejny wiersz to data wystawienia
+	rs.movenext
+	if getValue(pExpMan, rs, "Wartosc", true) <> "" then
+		zam.dDataWyst = cdate( getValue(pExpMan, rs, "Wartosc", true) )
+	end if
+
+	'indeks klienta
+	rs.movenext
+	dim idKlient
+	idKlient = map_by_inx (getValue(pExpMan, rs, "Wartosc", true) , TYPEID_N5KLIENT)
+	if idKlient > 0 then
+		set zam.pKlient = trans_.getobj(TYPEID_N5KLIENT,idKlient)
+	end if
+
+	if rs.EOF then
+		fill_zam = true
+		exit function
+	end if
+	'pozycje
+	rs.movenext
+
+	if rs.EOF then
+		fill_zam = true
+		exit function
+	end if
+
+	rs.movenext
+	dim idProd
+	dim pos
+	dim lp
+	while not getValue(pExpMan, rs, "Klucz", true) = ""
+		idProd = map_by_inx(getValue(pExpMan, rs, "Klucz", true) , TYPEID_N5PRODUKT)
+		if idProd < 1 then
+			trans_.message 1002 , 0, "Brak produktu o indeksie " + getValue(pExpMan, rs, "Klucz", true)
+			exit function
+		end if
+		set pos = zam.listPozycje.addnew()
+		set pos.pProdukt = trans_.getobj(TYPEID_N5PRODUKT , idProd)
+
+		'opakowanie
+		if getValue(pExpMan, rs, "Wartosc", true) <> "" then
+			lp = map_opakowanie(pos.pProdukt , getValue(pExpMan, rs, "Wartosc", true))	
+			if lp < 1 then
+				trans_.message 1002 , 0, "Brak opakowania o nazwie "+ getValue(pExpMan, rs, "Wartosc", true) + " w produkcie " + pos.pProdukt.text
+				exit function
+			end if
+			pos.pOpak = pos.pProdukt.listOpakowania.get(lp)
+		end if
+
+		'ilosc
+		if getValue(pExpMan, rs, "Ilosc", true) <> "" then
+			pos.curIloscOpak = ccur(getValue(pExpMan, rs, "Ilosc", true))
+		end if
+
+
+		'cena
+		if getValue(pExpMan, rs, "Cena", true) <> "" then
+			pos.curCenaBazowaNettoWal = ccur(getValue(pExpMan, rs, "Cena", true))
+		end if
+     
+    if getValue(pExpMan, rs, "nr_tygodnia", true) <> "" then
+			pos.curExtra4 = ccur(getValue(pExpMan, rs, "nr_tygodnia", true))
+		end if
+
+		rs.movenext
+	wend
+
+	fill_zam = true
+
+end function
+
+
+
+
+function fill_dokmag ( byref  dokmag , byref rs , byref pExpMan , byref nFirstPos ): fill_dokmag = false
+	
+	'numer dokumentu to kolejny wiersz	
+	rs.movenext	
+
+	if getValue(pExpMan, rs, "Wartosc", true) <> "" then
+		dokmag.strNrDok = getValue(pExpMan, rs, "Wartosc", true)
+	end if
+
+	'kolejny wiersz to data wystawienia
+	rs.movenext
+	if getValue(pExpMan, rs, "Wartosc", true) <> "" then
+		dokmag.dDataWyst = cdate( getValue(pExpMan, rs, "Wartosc", true) )
+	end if
+
+	'magazyn przyjecia
+	rs.movenext
+	dim idMagDocel	
+	idMagDocel = map_magazyn (getValue(pExpMan, rs, "Wartosc", true))
+	if idMagDocel > 0 then
+		set dokmag.pMagDocel = trans_.getobj(TYPEID_N5MAGAZYN,idMagDocel)
+	end if
+
+	
+
+	'magazyn wydania
+	rs.movenext
+	dim idMagZrod
+	idMagZrod = map_magazyn (getValue(pExpMan, rs, "Wartosc", true))
+	if idMagZrod > 0 then
+		set dokmag.pMagZrod = trans_.getobj(TYPEID_N5MAGAZYN,idMagZrod)
+	end if
+
+
+
+	'indeks klienta
+	rs.movenext
+	dim idKlient
+	idKlient = map_by_inx (getValue(pExpMan, rs, "Wartosc", true) , TYPEID_N5KLIENT)
+	if idKlient > 0 then
+		set dokmag.pKlient = trans_.getobj(TYPEID_N5KLIENT,idKlient)
+	end if
+
+	if rs.EOF then
+		fill_dokmag = true
+		exit function
+	end if
+	'pozycje
+	rs.movenext
+
+
+	if rs.EOF then
+		fill_dokmag = true
+		exit function
+	end if
+	rs.movenext
+	dim idProd
+	dim pos
+	dim lp
+	while not getValue(pExpMan, rs, "Klucz", true) = ""
+		idProd = map_by_inx(getValue(pExpMan, rs, "Klucz", true) , TYPEID_N5PRODUKT)
+		if idProd < 1 then
+			trans_.message 1002 , 0, "Brak produktu o indeksie " + getValue(pExpMan, rs, "Klucz", true)
+			exit function
+		end if
+    
+    dim oProdukt : set oProdukt = trans_.getobj(TYPEID_N5PRODUKT , idProd)
+
+    if oProdukt.eRodzaj = N5PRODUKT_TOWAR then
+		  set pos = dokmag.listPozycje.addnew()
+		  set pos.pProdukt = oProdukt
+
+  		'opakowanie
+		  if getValue(pExpMan, rs, "Wartosc", true) <> "" then
+			  lp = map_opakowanie(pos.pProdukt , getValue(pExpMan, rs, "Wartosc", true))	
+			  if lp < 1 then
+				  trans_.message 1002 , 0, "Brak opakowania o nazwie "+ getValue(pExpMan, rs, "Wartosc", true) + " w produkcie " + pos.pProdukt.text
+				  exit function
+			  end if
+			  pos.pOpak = pos.pProdukt.listOpakowania.get(lp)
+		  end if
+
+		'ilosc
+		  if getValue(pExpMan, rs, "Ilosc", true) <> "" then
+			  pos.curIloscOpak = ccur(getValue(pExpMan, rs, "Ilosc", true))
+		  end if
+
+		'cena
+		  if getValue(pExpMan, rs, "Cena", true) <> "" then
+			  pos.curCenaMag = ccur(getValue(pExpMan, rs, "Cena", true))
+		  end if
+
+'data wazn
+		  if getValue(pExpMan, rs, "DataWaznosci", true) <> "" then
+			  pos.dDataWazn = cdate(getValue(pExpMan, rs, "DataWaznosci", true))
+		  end if
+
+#ifdef _HJORT
+		  'gdy rejestr MM dla pracowników
+		  if not dokmag.pRejestrDok is nothing then
+			  if dokmag.pRejestrDok.eTyp = N5REJESTRDOK__MM and dokmag.pRejestrDok.rejdok_strSkrot = "2" then
+				  'wczytaj identyfikator pracownika
+				  if getValue(pExpMan, rs, "Identyfikator", true) <> "" then
+					  pos.curExtra4 = ccur(getValue(pExpMan, rs, "Identyfikator", true))
+					  if pos.curExtra4 > ccur(0) then
+						  dim idPrac: idPrac = trans_.findobjid(TYPEID_N5PRACOWNIK,"strFax = '" + CStr(pos.curExtra4) + "'")
+						  if idPrac > clng(0) then
+							  dim pPrac: set pPrac = trans_.getobj(TYPEID_N5PRACOWNIK,idPrac)
+							  pos.strUwagi = pPrac.strNazwisko + " " + pPrac.strImie
+						  end if
+					  end if
+				  end if        
+			  end if
+		  end if
+#endif
+  else
+	  trans_.message 1002 , 0, "Pominięto usługę " + oProdukt.text
+	end if
+
+		rs.movenext
+	wend
+
+	fill_dokmag = true
+end function
+
+
+function add_gmina(byref nazwa_gminy,byref wojewodztwo,byref powiat) : set add_gmina=nothing
+
+dim pSubTrans:set pSubTrans = trans_.createsubtran()		
+dim idGmina
+dim pgmina
+ 
+set pgmina=trans_.newobj(TYPEID_N5GMINA)
+pgmina.gmi_strNazwa=nazwa_gminy
+pgmina.gmi_pWojewodztwo=trans_.getobj(TYPEID_N5WOJEWODZTWO,Wojewodztwo)
+if powiat<>0 then
+pgmina.gmi_pPowiat=trans_.getobj(TYPEID_N5POWIAT,Powiat)
+end if
+idGmina=pgmina.idobj
+   if (not trans_.SaveObjects) then
+           set pgmina=nothing
+           set pgmina.gmi_pPowiat=nothing  
+           set pSubTrans= nothing
+           exit function
+   end if
+   
+set pgmina.gmi_pPowiat=nothing  
+set pgmina=nothing
+set pSubTrans=nothing
+set add_gmina=trans_.getobj(TYPEID_N5GMINA,idGmina)
+end function
+
+function add_powiat(byref nazwa_powiatu,byref wojewodztwo):set add_powiat=nothing
+
+dim pSubTrans:set pSubTrans = trans_.createsubtran()		
+dim idpowiat
+dim ppowiat
+set ppowiat=trans_.newobj(TYPEID_N5POWIAT)
+ppowiat.pow_strNazwa=nazwa_powiatu
+
+ppowiat.pow_pWojewodztwo=trans_.getobj(TYPEID_N5WOJEWODZTWO,wojewodztwo)
+idPowiat=ppowiat.idobj
+if (not trans_.SaveObjects) then
+      set ppowiat.pow_pWojewodztwo=nothing
+      set ppowiat = nothing
+      set pSubTrans= nothing
+      exit function
+end if
+
+set ppowiat.pow_pWojewodztwo=nothing
+set ppowiat=nothing
+set pSubTrans=nothing
+
+set add_powiat=trans_.getobj(TYPEID_N5POWIAT,idPowiat)
+end function
+
+function add_miasto(byref nazwa_miasta,byref wojewodztwo,byref powiat,byref gmina):set add_miasto=nothing
+
+dim idmiasto
+dim pmiasto
+dim pSubTrans:set pSubTrans = trans_.createsubtran()		
+
+set pmiasto=trans_.newobj(TYPEID_N5MIEJSCOWOSC)
+pmiasto.strNazwa=nazwa_miasta
+pmiasto.pWojewodztwo=trans_.getobj(TYPEID_N5WOJEWODZTWO,wojewodztwo)
+if Powiat <>0 then
+    pmiasto.mie_pPowiat=trans_.getobj(TYPEID_N5POWIAT,powiat)
+end if
+if Gmina <>0 then
+      pmiasto.mie_pGmina=trans_.getobj(TYPEID_N5GMINA,gmina)
+end if
+idMiasto=pmiasto.idobj
+if (not trans_.SaveObjects()) then
+    set pmiasto=nothing
+    set pSubTrans=nothing
+    exit function
+end if
+set pmiasto=nothing
+set pSubTrans=nothing
+set add_miasto=trans_.getobj(TYPEID_N5MIEJSCOWOSC,idmiasto)
+
+end function
+
+function add_instytucja(byref nazwa, byref miasto, byref ulica, byref nrdom, byref kod, byref typ):set add_instytucja=nothing
+
+dim idinst
+dim pinst
+dim idobjmiejscowosc
+dim idobjFirma1
+dim idobjmiastof
+dim pSubTrans:set pSubTrans = trans_.createsubtran()		
+
+set pinst=trans_.newobj(TYPEID_N5INSTYTUCJA)
+
+pinst.strNazwa=nazwa
+pinst.strSkrot="US"
+if typ<>0 then
+pinst.ptyp=trans_.getobj(TYPEID_N5TYPINSTYTUCJI,typ)
+end if
+if ulica <>"" then
+  pinst.strUlica=ulica
+end if
+if nrdom <>"" then
+  pinst.strNrDomu=nrdom
+end if
+if kod<>"" then
+  pinst.strKod=kod
+end if
+if miasto<>0 then
+   set idobjmiejscowosc=trans_.getobj(TYPEID_N5MIEJSCOWOSC,miasto)
+  if not idobjmiejscowosc is nothing then
+    pinst.pmiejscowosc=trans_.getobj(TYPEID_N5MIEJSCOWOSC,miasto)
+  else
+   set idobjFirma1 = trans_.getobj(TYPEID_N5FIRMA, 1)
+   if idobjFirma1.pmiejscowosc.idobj<>"" then
+      idobjmiastof=idobjFirma1.pmiejscowosc.idobj
+      pinst.pmiejscowosc=trans_.getobj(TYPEID_N5MIEJSCOWOSC,idobjmiastof)
+   end if
+  end if   
+else
+   set idobjFirma1 = trans_.getobj(TYPEID_N5FIRMA, 1)
+   if idobjFirma1.pmiejscowosc.idobj<>"" then
+      idobjmiastof=idobjFirma1.pmiejscowosc.idobj
+      pinst.pmiejscowosc=trans_.getobj(TYPEID_N5MIEJSCOWOSC,idobjmiastof)
+   end if
+end if
+
+idinst=pinst.idobj
+if (not trans_.SaveObjects()) then
+      set pinst = nothing
+      set pSubTrans=nothing
+      exit function
+end if
+set idobjmiejscowosc=nothing
+set idobjFirma1=nothing
+set pinst=nothing
+set pSubTrans=nothing
+set add_instytucja=trans_.getobj(TYPEID_N5INSTYTUCJA,idinst)
+
+end function
+
+
+function add_urzad():set add_urzad=nothing
+
+dim pSubTrans:set pSubTrans = trans_.createsubtran()		
+dim idinsttyp
+dim pinsttyp
+set pinsttyp=trans_.newobj(TYPEID_N5TYPINSTYTUCJI)
+
+pinsttyp.strNazwa="Urzad Skarbowy"
+idinsttyp=pinsttyp.idobj
+if (not trans_.SaveObjects) then
+      set pinsttyp = nothing
+      set pSubTrans= nothing
+      exit function
+end if
+set pinsttyp=nothing
+set pSubTrans=nothing
+set add_urzad=trans_.getobj(TYPEID_N5TYPINSTYTUCJI,idinsttyp)
+
+end function
+
+function fill_pit11(byref pit11, byref rs ,byref pExpMan): fill_pit11 = false
+
+  'przykładowy pracownik dla wpisania pesel na formularz
+  if getValue(pExpMan, rs, "PESEL", true) <> "" then
+    dim idPrac: idPrac = trans_.findobjid(TYPEID_N5PRACOWNIK,"idobj = (select min(idobj) from n5pracownik)")
+    if idPrac > clng(0) then
+      dim oPrac: set oPrac = trans_.getobj(TYPEID_N5PRACOWNIK,idPrac)
+      oPrac.strPesel = CStr(getValue(pExpMan,rs,"PESEL",true))
+      set pit11.pt11_pPodatnik = oPrac
+    end if  
+  end if
+
+  if getValue(pExpMan, rs, "NIP", true) <> "" then
+    pit11.pt11_strNIPPodatnik = CStr(getValue(pExpMan,rs,"NIP",true))
+  end if
+  
+  if getValue(pExpMan, rs, "NAZWISKO", true) <> "" then
+    pit11.pt11_strNazwisko = CStr(getValue(pExpMan,rs,"NAZWISKO",true))
+  end if  
+  
+  if getValue(pExpMan, rs, "IMIE", true) <> "" then
+    pit11.pt11_strImie = CStr(getValue(pExpMan,rs,"IMIE",true))
+  end if  
+  
+  if getValue(pExpMan, rs, "DATA_URODZ", true) <> "" then
+    pit11.pt11_dDataUr = CDate(getValue(pExpMan,rs,"DATA_URODZ",true))
+  end if    
+  
+  if getValue(pExpMan, rs, "KRAJ", true) <> "" then
+    pit11.pt11_strKraj = CStr(getValue(pExpMan,rs,"KRAJ",true))
+  end if 
+  
+  if getValue(pExpMan, rs, "WOJEWODZTWO", true) <> "" then
+    pit11.pt11_strWojewodztwo = CStr(getValue(pExpMan,rs,"WOJEWODZTWO",true))
+  end if 
+  
+  if getValue(pExpMan, rs, "POWIAT", true) <> "" then
+    pit11.pt11_strPowiat = CStr(getValue(pExpMan,rs,"POWIAT",true))
+  end if   
+  
+  if getValue(pExpMan, rs, "GMINA", true) <> "" then
+    pit11.pt11_strGmina = CStr(getValue(pExpMan,rs,"GMINA",true))
+  end if 
+  
+  if getValue(pExpMan, rs, "ULICA", true) <> "" then
+    pit11.pt11_strUlica = CStr(getValue(pExpMan,rs,"ULICA",true))
+  end if  
+  
+  if getValue(pExpMan, rs, "NR_DOMU", true) <> "" then
+    pit11.pt11_strNrDomu = CStr(getValue(pExpMan,rs,"NR_DOMU",true))
+  end if 
+  
+  if getValue(pExpMan, rs, "NR_LOKALU", true) <> "" then
+    pit11.pt11_strNrLokalu = CStr(getValue(pExpMan,rs,"NR_LOKALU",true))
+  end if  
+  
+  if getValue(pExpMan, rs, "KOD_POCZ", true) <> "" then
+    pit11.pt11_strKod = CStr(getValue(pExpMan,rs,"KOD_POCZ",true))
+  end if
+  
+  if getValue(pExpMan, rs, "POCZTA", true) <> "" then
+    pit11.pt11_strPoczta = CStr(getValue(pExpMan,rs,"POCZTA",true))
+  end if 
+  
+  if getValue(pExpMan, rs, "MIEJSCOWOSC", true) <> "" then
+    pit11.pt11_strMiejscowosc = CStr(getValue(pExpMan,rs,"MIEJSCOWOSC",true))
+  end if 
+  
+  'cześć E przychody pracownika
+  
+  if getValue(pExpMan, rs, "PRZYCHOD_36", true) <> "" then
+    pit11.pt11_curPrzychod_WynZas = CCur(getValue(pExpMan,rs,"PRZYCHOD_36",true))
+  end if 
+  
+  if getValue(pExpMan, rs, "KOSZTY_UZYSK_37", true) <> "" then
+    pit11.pt11_curKUPrzychodu_WynZas = CCur(getValue(pExpMan,rs,"KOSZTY_UZYSK_37",true))
+  end if
+  
+  if getValue(pExpMan, rs, "DOCHOD_ZW_39", true) <> "" then
+    pit11.pt11_curDochodZwol_WynZas = CCur(getValue(pExpMan,rs,"DOCHOD_ZW_39",true))
+  end if  
+  
+  if getValue(pExpMan, rs, "ZALICZKA_40", true) <> "" then
+    pit11.pt11_curZaliczka_WynZas = CCur(getValue(pExpMan,rs,"ZALICZKA_40",true))
+  end if   
+
+  if getValue(pExpMan, rs, "PRZYCHOD_56", true) <> "" then
+    pit11.pt11_curPrzychod_OsWykDzial = CCur(getValue(pExpMan,rs,"PRZYCHOD_56",true))
+  end if
+  
+  if getValue(pExpMan, rs, "KOSZTY_UZYSK_57", true) <> "" then
+    pit11.pt11_curKUPrzychodu_OsWykDzial = CCur(getValue(pExpMan,rs,"KOSZTY_UZYSK_57",true))
+  end if  
+
+  if getValue(pExpMan, rs, "ZALICZKA_59", true) <> "" then
+    pit11.pt11_curZaliczka_OsWykDzial = CCur(getValue(pExpMan,rs,"ZALICZKA_59",true))
+  end if  
+  
+  'ubezpieczenie społeczne
+  if getValue(pExpMan, rs, "UB_SPOL_76", true) <> "" then
+    pit11.pt11_curSkladka_UbSpol = CCur(getValue(pExpMan,rs,"UB_SPOL_76",true))
+  end if
+  if getValue(pExpMan, rs, "UB_SPOL_ZAG_77", true) <> "" then
+    pit11.pt11_curSkladka_UbSpol_Zagr = CCur(getValue(pExpMan,rs,"UB_SPOL_ZAG_77",true))
+  end if 
+  
+  'ubezpieczenia zdrowotne
+  if getValue(pExpMan, rs, "UB_ZDROW_78", true) <> "" then
+    pit11.pt11_curSkladka_UbZdr = CCur(getValue(pExpMan,rs,"UB_ZDROW_78",true))
+  end if
+  if getValue(pExpMan, rs, "UB_ZDROW_ZAG_79", true) <> "" then
+    pit11.pt11_curSkladka_UbZdr_Zagr = CCur(getValue(pExpMan,rs,"UB_ZDROW_ZAG_79",true))
+  end if   
+
+  'koszty uzyskania
+  if getValue(pExpMan, rs, "KOSZTY_UZYSK_D", true) <> "" then
+    pit11.pt11_eKosztUPOd = clng(getValue(pExpMan,rs,"KOSZTY_UZYSK_D",true))
+  end if
+
+  'urząd skarbowy
+  if getValue(pExpMan, rs, "URZAD_SKARB", true) <> "" then
+    pit11.pt11_strUS = CStr(getValue(pExpMan,rs,"URZAD_SKARB",true))
+  end if     
+
+  fill_pit11 = true
+
+end function
+
+function fill_pracownicy(byref  prac, byref rs ,byref pExpMan ,byref nFirstPos): fill_pracownicy= false
+
+dim idobjKraj
+dim idobjWojewodztwo
+dim idobjPowiat
+dim idobjGmina
+dim idobjMiasto
+dim idobjFirma
+dim objPowiat
+dim objGmina
+dim objMiasto
+dim idobjTypInst
+dim idobjInst
+dim objInst
+dim objUS
+dim idobjUS
+dim oddzialNFZ
+dim oddzialNFZ1 'pierwszy znak oddzialu nfz(moze byc 1 lub 0)
+dim oddzialNFZ2 'drugi znak oddzialu nfz
+
+'while  not getValue(pExpMan, rs, "Lp", true)=""
+
+  if getValue(pExpMan, rs, "Kod", true) <> "" then
+    prac.prac_strIndeks=getValue(pExpMan,rs,"Kod",true)
+  end if
+
+  if getValue(pExpMan, rs, "Nazwisko", true) <> "" then
+    prac.strNazwisko=getValue(pExpMan,rs,"Nazwisko",true)
+  else
+ 			trans_.message 1002 , 0, "Brak nazwiska pracownika "
+  end if
+  
+  if getValue(pExpMan, rs, "Imie", true) <> "" then
+    prac.strImie=getValue(pExpMan,rs,"Imie",true)
+  else
+ 			trans_.message 1002 , 0, "Brak imienia pracownika "
+  end if
+  
+  if getValue(pExpMan, rs, "Drugie_imie", true) <> "" then
+    prac.strImie2=getValue(pExpMan,rs,"Drugie_imie",true)
+  end if
+ 
+  if getValue(pExpMan, rs, "Data_urodzenia", true) <> "" then
+    prac.dDataUr=cdate(getValue(pExpMan,rs,"Data_urodzenia",true))
+  end if
+  
+  if getValue(pExpMan, rs, "Miejsce_urodzenia", true) <> "" then
+    prac.strMiejsceUr=getValue(pExpMan,rs,"Miejsce_urodzenia",true)
+  else
+ 			trans_.message 1002 , 0, "Brak miejsca urodzenia pracownika "
+  end if
+  
+  if getValue(pExpMan, rs, "Imie_ojca", true) <> "" then
+    prac.strprac_Imie_ojca=getValue(pExpMan,rs,"Imie_ojca",true)
+  end if
+  
+  if getValue(pExpMan, rs, "Imie_matki", true) <> "" then
+    prac.strprac_Imie_matki=getValue(pExpMan,rs,"Imie_matki",true)
+  end if
+  
+  if getValue(pExpMan, rs, "Nazwisko_rodowe", true) <> "" then
+    prac.strprac_Nazwisko_rod=getValue(pExpMan,rs,"Nazwisko_rodowe",true)
+  end if
+
+ if getValue(pExpMan, rs, "Nazwisko_rodowe_matki", true) <> "" then
+    prac.strprac_Nazwisko_rod_mat=getValue(pExpMan,rs,"Nazwisko_rodowe_matki",true)
+ end if
+  
+ if getValue(pExpMan, rs, "Plec", true) <> "" then
+    if getValue(pExpMan, rs, "Plec", true)="M" then
+        prac.ePlec=clng(2)
+     else
+        prac.ePlec=clng(1)
+     end if
+end if
+
+ if getValue(pExpMan, rs, "Pesel", true) <> "" then
+    prac.strPesel=getValue(pExpMan,rs,"Pesel",true)
+ end if
+
+ if getValue(pExpMan, rs, "Nip", true) <> "" then
+    prac.strNip=getValue(pExpMan,rs,"Nip",true)
+end if
+
+ if getValue(pExpMan, rs, "Dowod_osobisty", true) <> "" then
+    prac.eTypDT=clng(1)
+    prac.strNrDokTozsamosci=getValue(pExpMan,rs,"Dowod_osobisty",true)
+end if
+
+ if getValue(pExpMan, rs, "Dowod_wydany_przez", true) <> "" then
+    prac.strprac_Organ_wyd_dok_toz=getValue(pExpMan,rs,"Dowod_wydany_przez",true)
+end if
+
+
+ if getValue(pExpMan, rs, "Kraj", true) <> "" then
+    idobjKraj=trans_.findobjid(TYPEID_N5KRAJ,"strNazwa= '"+getValue(pExpMan, rs, "Kraj", true)+"'")
+    prac.pKraj=trans_.getobj(TYPEID_N5KRAJ,idobjKraj)
+end if
+
+if getValue(pExpMan, rs, "Wojewodztwo", true) <> "" then
+    idobjWojewodztwo=trans_.findobjid(TYPEID_N5WOJEWODZTWO,"strNazwa like '"+cStr(trim(lcase(getValue(pExpMan, rs, "Wojewodztwo", true))))+"'")
+    if (idobjWojewodztwo = 0) then
+        idobjWojewodztwo=1
+    end if
+else
+    idobjWojewodztwo=1
+end if
+
+
+ if getValue(pExpMan, rs, "Miejscowosc", true) <> "" then
+    idobjMiasto=trans_.findobjid(TYPEID_N5MIEJSCOWOSC,"strNazwa like '"+cStr(trim(getValue(pExpMan, rs, "Miejscowosc", true))) + "'")
+    if (idobjMiasto = 0) then
+    'podanej miejscowosci nie ma na spisie-trzeba ja dodac
+      'szukamy czy jest powiat
+        if getValue(pExpMan, rs, "Powiat", true) <> "" then      
+            idobjPowiat=trans_.findobjid(TYPEID_N5POWIAT,"pow_strNazwa like '"+getValue(pExpMan, rs, "Powiat", true)+"'")
+             if idobjPowiat = 0 then
+                'trzeba dodac powiat
+                set objPowiat=add_powiat(getValue(pExpMan, rs, "Powiat", true),idobjWojewodztwo)
+             else
+                set objPowiat=trans_.getobj(TYPEID_N5POWIAT,idobjPowiat)
+             end if
+              else
+              set objPowiat=nothing
+        end if
+        'szukamy gminy-jesli jej nie ma trzeba ja dodac
+        if getValue(pExpMan, rs, "Gmina", true)<>"" then
+            idobjGmina=trans_.findobjid(TYPEID_N5GMINA,"gmi_strNazwa like '"+getValue(pExpMan, rs, "Gmina", true)+"'")
+            if idobjGmina = 0 then
+                'brak gminy trzeba ja dodac
+                if objPowiat is nothing then
+                   set objGmina= add_gmina(getValue(pExpMan, rs, "Gmina", true),idobjWojewodztwo,0)
+                else
+                   set objGmina= add_gmina(getValue(pExpMan, rs, "Gmina", true),idobjWojewodztwo,objPowiat.idobj)
+                end if
+            else
+                set objGmina=trans_.getobj(TYPEID_N5GMINA,idobjGmina)
+            end if 
+
+        end if
+        
+        if (objPowiat is nothing) and (objGmina is nothing) then
+            set objmiasto=add_miasto(getValue(pExpMan, rs, "Miejscowosc", true),idobjWojewodztwo,0,0)
+            prac.pMiejscowosc=trans_.getobj(TYPEID_N5MIEJSCOWOSC,objMiasto.idobj)
+        end if
+        if (not(objPowiat is nothing)) and (objGmina is nothing) then
+                set objmiasto=add_miasto(getValue(pExpMan, rs, "Miejscowosc", true), idobjWojewodztwo,objPowiat.idobj,0)
+                prac.pMiejscowosc=trans_.getobj(TYPEID_N5MIEJSCOWOSC,objMiasto.idobj)
+        end if
+        if (objPowiat is nothing) and (not(objGmina is nothing)) then
+                set objmiasto=add_miasto(getValue(pExpMan, rs, "Miejscowosc", true), idobjWojewodztwo,0,objGmina.idobj)
+                prac.pMiejscowosc=trans_.getobj(TYPEID_N5MIEJSCOWOSC,objMiasto.idobj)
+        end if
+       if (not(objPowiat is nothing)) and (not(objGmina is nothing)) then
+          set objmiasto=add_miasto(getValue(pExpMan, rs, "Miejscowosc", true), idobjWojewodztwo,objPowiat.idobj,objGmina.idobj)
+          prac.pMiejscowosc=trans_.getobj(TYPEID_N5MIEJSCOWOSC,objMiasto.idobj)
+       end if
+    else
+    prac.pMiejscowosc=trans_.getobj(TYPEID_N5MIEJSCOWOSC,idobjMiasto)
+    end if
+else
+   set idobjFirma = trans_.getobj(TYPEID_N5FIRMA, 1)
+   if idobjFirma.pmiejscowosc.idobj<>"" then
+   idobjMiasto=idobjFirma.pmiejscowosc.idobj
+   prac.pMiejscowosc=trans_.getobj(TYPEID_N5MIEJSCOWOSC,idobjMiasto)
+   end if
+end if
+
+
+if getValue(pExpMan, rs, "Ulica", true) <> "" then
+    prac.strUlica=getValue(pExpMan,rs,"Ulica",true)
+end if
+
+if getValue(pExpMan, rs, "Nr_domu", true) <> "" then
+    prac.strNrDomu=getValue(pExpMan,rs,"Nr_domu",true)
+end if
+
+if getValue(pExpMan, rs, "Nr_lokalu", true) <> "" then
+    prac.strNrLokalu=getValue(pExpMan,rs,"Nr_lokalu",true)
+end if
+
+
+if getValue(pExpMan, rs, "Kod_pocztowy", true) <> "" then
+    prac.strKod=getValue(pExpMan,rs,"Kod_pocztowy",true)
+end if
+
+
+if getValue(pExpMan, rs, "Poczta", true) <> "" then
+    prac.strPoczta=getValue(pExpMan,rs,"Poczta",true)
+end if
+
+if getValue(pExpMan, rs, "Telefon_domowy", true) <> "" then
+    prac.strTel3=getValue(pExpMan,rs,"Telefon_domowy",true)
+end if
+
+if getValue(pExpMan, rs, "Telefon_komorkowy", true) <> "" then
+    prac.strTel4=getValue(pExpMan,rs,"Telefon_komorkowy",true)
+end if
+
+if getValue(pExpMan, rs, "Stanowisko", true) <> "" then
+    prac.strStanowisko=getValue(pExpMan,rs,"Stanowisko",true)
+end if
+
+if getValue(pExpMan, rs, "Kod_zawodu", true) <> "" then
+    prac.prac_strKodZawodu=mid(getValue(pExpMan,rs,"Kod_zawodu",true),1,4)
+end if
+
+if getValue(pExpMan, rs, "Kod_wyksztalcenia", true) <> "" and getValue(pExpMan, rs, "Kod_wyksztalcenia", true) <> 0 then
+    prac.prac_strKodWyksztalcenia=cStr(getValue(pExpMan,rs,"Kod_wyksztalcenia",true))
+end if
+
+if getValue(pExpMan, rs, "US_nazwa", true) <> "" then
+    'sprawdz czy w tabeli n5typinstytucji jest urzad skarbowy
+    idobjTypInst=trans_.findobjid(TYPEID_N5TYPINSTYTUCJI,"lower(strnazwa) like 'urząd skarbowy'")
+    if idobjTypInst = 0 then
+        'brak takiego wpisu w bazie-trzeba go dodac
+        set objUS=add_urzad()
+    else
+        set objUS=trans_.getobj(TYPEID_N5TYPINSTYTUCJI,idobjTypInst)
+    end if
+    if (not objUS is nothing)then
+         idobjTypInst=objUs.idobj
+    else
+         idobjTypInst=0
+    end if
+    
+    idobjInst=trans_.findobjid(TYPEID_N5INSTYTUCJA,"lower(strNazwa) like '"+cStr(trim(lcase(getValue(pExpMan, rs, "US_nazwa", true))))+"'")
+    if idobjInst <= 0 then
+        'brak takiego wpisu w bazie-trzeba go dodac
+        idobjmiasto=trans_.findobjid(TYPEID_N5MIEJSCOWOSC,"strNazwa like '"+getValue(pExpMan,rs,"US_miejscowosc",true)+"'")
+        if idobjmiasto = 0 then
+             set objInst=add_instytucja(getValue(pExpMan,rs,"US_nazwa",true),0,getValue(pExpMan,rs,"US_ulica",true),getValue(pExpMan,rs,"US_nr_domu",true),getValue(pExpMan,rs,"US_kod_pocztowy",true),idobjTypInst)
+        else
+            set objInst=add_instytucja(getValue(pExpMan,rs,"US_nazwa",true),idobjmiasto,getValue(pExpMan,rs,"US_ulica",true),getValue(pExpMan,rs,"US_nr_domu",true),getValue(pExpMan,rs,"US_kod_pocztowy",true),idobjTypInst)
+        end if 
+    else
+        set objInst=trans_.getobj(TYPEID_N5INSTYTUCJA,idobjInst)
+    end if
+    
+    if (not objInst is nothing) then
+        idobjInst=objInst.idobj
+        prac.pUrzadSkarbowy=trans_.getobj(TYPEID_N5INSTYTUCJA,idobjInst)
+    end if
+end if
+
+
+if getValue(pExpMan, rs, "Kod_oddzialu_NFZ", true) <> "" then
+    oddzialNFZ=mid(getValue(pExpMan, rs, "Kod_oddzialu_NFZ", true),1,2)
+    oddzialNFZ1=mid(oddzialNFZ,1,1)
+    oddzialNFZ2=mid(oddzialNFZ,2,1)
+    if oddzialNFZ1=0 then
+      if oddzialNFZ2>5 then
+          prac.eprac_Oddzial_NFZ=clng(oddzialNFZ2)
+      else
+          if oddzialNFZ2=2 then
+              prac.eprac_Oddzial_NFZ=clng(5)
+          else
+              prac.eprac_Oddzial_NFZ=clng(oddzialNFZ2-1)
+          end if
+      end if
+    else
+      prac.eprac_Oddzial_NFZ=clng(oddzialNFZ)
+    end if
+end if
+
+
+	if rs.EOF then
+		fill_pracownicy = true
+		exit function
+	end if
+
+fill_pracownicy = true
+  
+end function
+
+
+
+function fill_zlecprod(byref  zlecprod, byref rs ,byref pExpMan ,byref nFirstPos): fill_zlecprod = false
+
+	'numer dokumentu to kolejny wiersz	
+	rs.movenext	
+
+	if getValue(pExpMan, rs, "Wartosc", true) <> "" then
+		zlecprod.strNrDok = getValue(pExpMan, rs, "Wartosc", true)
+	end if
+
+	'kolejny wiersz to data wystawienia
+	rs.movenext
+	if getValue(pExpMan, rs, "Wartosc", true) <> "" then
+		zlecprod.dDataWyst = cdate(getValue(pExpMan, rs, "Wartosc", true))
+	end if
+  
+  'kolejny wiersz to termin realizacji
+	rs.movenext
+	if getValue(pExpMan, rs, "Wartosc", true) <> "" then
+		zlecprod.dDataReal = cdate(getValue(pExpMan, rs, "Wartosc", true))
+	end if
+
+	'indeks klienta
+	rs.movenext
+	dim idKlient : idKlient = map_by_inx(getValue(pExpMan, rs, "Wartosc", true), TYPEID_N5KLIENT)
+	if idKlient > 0 then
+		set zlecprod.pKlient = trans_.getobj(TYPEID_N5KLIENT,idKlient)
+	end if
+
+	if rs.EOF then
+		fill_zlecprod = true
+		exit function
+	end if
+  
+	'pozycje zlecenia produkcyjnego
+	rs.movenext
+
+	if rs.EOF then
+		fill_zlecprod = true
+		exit function
+	end if
+	rs.movenext
+	dim idProd, pos, lp
+  
+	while not getValue(pExpMan, rs, "Klucz", true) = ""
+		idProd = map_by_inx(getValue(pExpMan, rs, "Klucz", true) , TYPEID_N5PRODUKT)
+		if idProd < 1 then
+			trans_.message 1002 , 0, "Brak produktu o indeksie " + getValue(pExpMan, rs, "Klucz", true)
+			exit function
+		end if
+		set pos = zlecprod.listPozycje.addnew()
+		set pos.pProdukt = trans_.getobj(TYPEID_N5PRODUKT , idProd)
+
+		'opakowanie
+		if getValue(pExpMan, rs, "Wartosc", true) <> "" then
+			lp = map_opakowanie(pos.pProdukt , getValue(pExpMan, rs, "Wartosc", true))	
+			if lp < 1 then
+				trans_.message 1002 , 0, "Brak opakowania o nazwie "+ getValue(pExpMan, rs, "Wartosc", true) + " w produkcie " + pos.pProdukt.text
+				exit function
+			end if
+			pos.pOpak = pos.pProdukt.listOpakowania.get(lp)
+		end if
+
+    'receptura
+    if getValue(pExpMan, rs, "Receptura", true) <> "" then
+      'gdy w pliku .xls będzie wpisana nazwa recepty
+      dim idRec : idRec = map_receptura(getValue(pExpMan, rs, "Receptura", true))
+		  if idRec < 1 then
+			  trans_.message 1002 , 0, "Brak produktu o indeksie " + getValue(pExpMan, rs, "Klucz", true)
+			  exit function
+		  else
+        set pos.pRecepta = trans_.getobj(TYPEID_N5RECEPTA , idRec)
+      end if
+    else
+      'gdy w pliku .xls nie ma nazwy recepty wyszukaj receptę powiązaną z produktem
+      dim oRS: set oRS = trans_.createadors("select 'id_rec'=p_idobj from vlist_n5recepta_listWyrob where c_pprodukt = " + cstr(idProd))
+      do while not oRS.EOF
+        set pos.pRecepta = trans_.getobj(TYPEID_N5RECEPTA , CCur(oRS("id_rec")))
+        exit do
+  	    oRS.MoveNext
+	    loop
+    end if  
+      
+		'ilosc do produkcji
+		if getValue(pExpMan, rs, "Ilosc", true) <> "" then
+			pos.curIloscOpak = ccur(getValue(pExpMan, rs, "Ilosc", true))
+		end if
+
+		rs.movenext
+	wend
+
+	fill_zlecprod = true
+end function
+
+
+
+function map_opakowanie(byval prod , byval strNazwa ):map_opakowanie = 0
+	dim opak , lp
+	lp = 1
+	for each opak in prod.listOpakowania 
+		if lcase(opak.strNazwa) = lcase(strNazwa) then
+			map_opakowanie = lp
+			exit function
+		end if
+		lp = lp + 1
+	next
+end function
+
+
+function map_magazyn(byval strNazwa)
+	map_magazyn = 	trans_.findobjid(TYPEID_N5MAGAZYN , "strNazwa='" + trans_.afc.convert.DoubleApostrophe(strNazwa) + "'")	
+end function
+
+function map_by_inx(byval strIndeks , typeid):map_by_inx = 0
+	map_by_inx = trans_.findobjid(typeid , "strIndeks='" + trans_.afc.convert.DoubleApostrophe(strIndeks) + "'")	
+end function
+
+
+function map_receptura(byval strNazwa)
+	map_receptura =	trans_.findobjid(TYPEID_N5RECEPTA, "strNazwa='" + trans_.afc.convert.DoubleApostrophe(strNazwa) + "'")	
+end function
+
+
+function prepare_rejdok_env (byval strTypRej):prepare_rejdok_env = false
+
+	DEBUG_MESSAGE("prepare_rejdok_env dla  " +  strTypRej )	
+
+	dim nDestRejType
+	dim nDestRejID
+	dim strRestrict:strRestrict = ""
+
+	select case strTypRej  
+		case "ZO"
+			strRestrict = "N5REJESTRDOK__ZAM_OBCE"
+		case "ZW"
+			strRestrict = "N5REJESTRDOK__ZAM_WLASNE"
+		case "PW"
+			strRestrict = "N5REJESTRDOK__PW"
+		case "RW"
+			strRestrict = "N5REJESTRDOK__RW"
+
+		case "PZ"
+			strRestrict = "N5REJESTRDOK__PZ"
+		case "WZ"
+			strRestrict = "N5REJESTRDOK__WZ"
+
+		case "MM"
+			strRestrict = "N5REJESTRDOK__MM"
+		case "MP"
+			strRestrict = "N5REJESTRDOK__MP"
+		case "MR"
+			strRestrict = "N5REJESTRDOK__MR"
+
+		case "IP"
+			strRestrict = "N5REJESTRDOK__IP"
+		case "IR"
+			strRestrict = "N5REJESTRDOK__IR"
+
+		case "PP"
+			strRestrict = "N5REJESTRDOK__PP"
+		case "RP"		
+			strRestrict = "N5REJESTRDOK__RP"
+
+	end select
+
+	
+	nDestRejType = choose_typ_rejestru_restrict(strRestrict,true)
+	if nDestRejType > 0 then
+		nDestRejID   = choose_rejestr_dok(cstr(nDestRejType), true , "Wybierz rejestr")
+	else
+		exit function
+	end if
+	
+	trans_.var(APPVAR_REJESTR_TYP) = nDestRejType
+	trans_.var(APPVAR_REJESTR_DOKUMENTOW) = nDestRejID
+
+	prepare_rejdok_env = true
+
+end function
+
+'-------------------------------------------------------------------------
+' parametry importu z XLS
+'-------------------------------------------------------------------------
+#define TYPEID_SELFMAPID			2
+
+class CExcelImportParam
+	public m_bCustomers
+	public m_bProducts
+
+	private sub class_initialize()
+		m_bCustomers = "0"
+		m_bProducts = "0"
+	end sub
+
+	public function description()
+		description = ""
+	end function
+end class
+
+function new_excel_import_param()
+	set new_excel_import_param = new CExcelImportParam
+end function
+'-------------------------------------------------------------------------
+' procedura importu z XLS
+'-------------------------------------------------------------------------
+function adofld_2_str(byref pADORS,byval strFld)
+	if isnull(pADORS(strFld).value) then
+		adofld_2_str = ""
+	else
+		adofld_2_str = trim(cstr(pADORS(strFld).value))
+	end if
+end function
+
+function adofld_2_cur(byref pADORS,byval strFld)
+	if isnull(pADORS(strFld).value) then
+		adofld_2_cur = ccur(0.0)
+	else
+		adofld_2_cur = ccur(pADORS(strFld).value)
+	end if
+end function
+
+function adofld_2_long(byref pADORS,byval strFld)
+	if isnull(pADORS(strFld).value) then
+		adofld_2_long = clng(0)
+	else
+		adofld_2_long = clng(pADORS(strFld).value)
+	end if
+end function
+
+#macro ADOLONG(_fld_name_)	adofld_2_long(pADORS,"_fld_name_")
+#macro ADOSTR(_fld_name_)	adofld_2_str(pADORS,"_fld_name_")
+#macro ADODATE(_fld_name_)	cdate(pADORS("_fld_name_").value)
+#macro ADOCUR(_fld_name_)	adofld_2_cur(pADORS,"_fld_name_")
+
+#macro CHECK_ALREADY_WAS(_srctype_,_key_,_function_)	\
+	dim nDummy											\
+	if pHandler.getmapping(_srctype_,_key_,nDummy,_function_) then	\
+		exit function	\
+	end if
+
+function EmitSelfMap(byref pHandler,idTypeId,idObj)
+	CHECK_ALREADY_WAS(cstr(idTypeId),cstr(idObj),EmitSelfMap)
+
+	dim pNOCU : set pNOCU = _
+		pHandler.new_nocu(nothing,TYPEID_SELFMAPID,0,cstr(idTypeId),cstr(idObj))
+	with pNOCU
+		.field("_selfmap_typeid") = clng(idTypeId)
+		.field("_selfmap_idobj") = clng(idObj)
+		.done
+	end with
+
+	EmitSelfMap = pNOCU.idobj
+end function
+
+function Klienci_Convert2NXD(byref pHandler,byref pADORS) : Klienci_Convert2NXD = 0
+	dim strIndeks : strIndeks = ADOSTR(Indeks)
+	
+	CHECK_ALREADY_WAS("Klient",strIndeks,Klienci_Convert2NXD)
+
+	dim pNOCUGA : set pNOCUGA = _
+		pHandler.new_nocu(pADORS,TYPEID_N5KLIENT,0,"Klient",strIndeks)
+
+	with pNOCUGA
+		.map_field "strIndeks","Indeks"
+		.map_field "strSkrot","Skrot"
+		.map_field "strNazwa","Nazwa"
+
+		.map_field "strNazwisko","Nazwisko"
+		.map_field "strImie","Imie"
+		
+		if trim(cstr(pADORS("Firma(T/N)").value)) <> "N" then
+			.field("ePrywat") = clng(N5KLIENT_FIRMA)
+		else
+			.field("ePrywat") = clng(N5KLIENT_OSOBAPRYWATNA)
+		end if
+		
+		.map_ref "pGrupaKlient",cstr(TYPEID_N5GRUPAKLIENT),ADOSTR(GrupaKlienta),true
+		.map_field "strNrDomu","NumerDomu"
+		.map_field "strNrLokalu","NumerLokalu"
+
+		.map_field "strKod","Kod"
+		.map_ref "pMiejscowosc",cstr(TYPEID_N5MIEJSCOWOSC),ADOSTR(Miejscowosc),true
+		
+		'...
+		'...
+
+		.map_ref "pWaluta",cstr(TYPEID_N5JEDNOSTKA),ADOSTR(SkrotWaluty),true
+
+		.field("_enter_sub") = clng(0)
+		.field("_leave_sub") = clng(0)
+		.mark_save_now
+	end with
+
+	Klienci_Convert2NXD = pNOCUGA.idobj
+
+end function
+
+#macro MAP_CENA_PRODUKTU(_nr_)									\
+	if isnull(pADORS("CenaBrutto##_nr_").value) then			\
+		.map_field "curCenaNetto##_nr_","CenaNetto##_nr_"		\
+	else														\
+		.map_field "curCenaBrutto##_nr_","CenaBrutto##_nr_"		\
+	end if
+
+
+function Produkty_Convert2NXD(byref pHandler,byref pADORS) : Produkty_Convert2NXD =0
+	dim strIndeks : strIndeks = ADOSTR(Indeks)
+	
+	CHECK_ALREADY_WAS("Produkt",strIndeks,Produkty_Convert2NXD)
+
+	dim pNOCUGA : set pNOCUGA = _
+		pHandler.new_nocu(pADORS,TYPEID_N5PRODUKT,0,"Produkt",strIndeks)
+
+	with pNOCUGA
+		.map_field "strIndeks","Indeks"
+		.map_field "strNazwa","Nazwa"
+		.map_field "strKodPKWiU","PKWiU"
+		
+		dim strTowar : strTowar = "T"
+		if not isnull(pADORS("TowarUsluga(T/U)").value) then
+			strTowar = trim(cstr(pADORS("TowarUsluga(T/U)").value))
+		end if
+		if strTowar <> "U" then
+			.field("eRodzaj") = clng(N5PRODUKT_TOWAR)
+		else
+			.field("eRodzaj") = clng(N5PRODUKT_USLUGA)
+		end if
+
+		dim strWyrob : strWyrob = "N"
+		if not isnull(pADORS("Wyrob(T/N)").value) then
+			strWyrob = trim(cstr(pADORS("Wyrob(T/N)").value))
+		end if
+		if  strWyrob <> "N" then
+			.field("prod_cWyrob") = "1"
+		else
+			.field("prod_cWyrob") = "0"
+		end if
+
+		dim strSurowiec : strSurowiec = "N"
+		if not isnull(pADORS("Wyrob(T/N)").value) then
+			strSurowiec = trim(cstr(pADORS("Wyrob(T/N)").value))
+		end if
+		if strSurowiec <> "N" then
+			.field("prod_cSurowiec") = "1"
+		else
+			.field("prod_cSurowiec") = "0"
+		end if
+
+		dim strStatus : strStatus = "D"
+		if not isnull(pADORS("Status(D/N)").value) then
+			strStatus = trim(cstr(pADORS("Status(D/N)").value))
+		end if
+		if strStatus <> "N" then
+			.field("eAktywny") = clng(N5PRODUKT_AKTYWNY)
+		else
+			.field("eAktywny") = clng(N5PRODUKT_NIEAKTYWNY)
+		end if
+					
+		.map_field "strOpis","Opis"
+		.map_field "strCecha1","Cecha1"
+		.map_field "strCecha2","Cecha2"
+		.map_field "strCecha3","Cecha3"
+						
+
+		.map_ref "pGrupaProd",cstr(TYPEID_N5GRUPAPRODUKTOW),ADOSTR(GrupaProduktu),true
+		.map_ref "pJednostkaEwid",cstr(TYPEID_N5JEDNOSTKA),ADOSTR(SkrotJM),true
+
+		.field("_enter_sub") = clng(0)
+		.mark_begin_unit
+	end with
+
+	'--------- opakowanie [idobj taki sam jak idArt]---------------
+	dim pNOCUOpak : set pNOCUOpak = _
+		pHandler.new_nocu(pADORS,TYPEID_N5OPAKOWANIE_PRODUKTU,0,"ArtykulOpakowanie",pNOCUGA.idobj)
+	with pNOCUOpak
+		.field("strNazwa") = "Podstawowe"
+		.map_field "strEAN","KodKreskowy"
+		.field("pJednOpak") = pNOCUGA.field("pJednostkaEwid")
+		.mark_as_child TYPEID_N5PRODUKT,pNOCUGA.idobj,"listOpakowania",1
+		.mark_as_last_child
+		.mark_end_unit
+		.field("_leave_sub") = clng(0)
+		.mark_save_now
+		.field("_with_recalc") = clng(0)
+
+		MAP_CENA_PRODUKTU(1)
+		MAP_CENA_PRODUKTU(2)
+		MAP_CENA_PRODUKTU(3)
+		MAP_CENA_PRODUKTU(4)
+		MAP_CENA_PRODUKTU(5)
+		MAP_CENA_PRODUKTU(6)
+		pNOCUGA.done
+
+	end with
+
+	Produkty_Convert2NXD = pNOCUGA.idobj
+end function
+
+function XLS_RefMapper(byref pHandler,byval strSrcType,byval varKey) : XLS_RefMapper = 0
+	select case strSrcType
+		case "Klient"
+			XLS_RefMapper = trans_.findobjid(TYPEID_N5KLIENT,"strIndeks='" +_
+				doc_.afc.convert.DoubleApostrophe(varKey) +"'")
+		case cstr(TYPEID_N5GRUPAKLIENT)
+			XLS_RefMapper = trans_.findobjid(TYPEID_N5GRUPAKLIENT,"strNazwa='" +_
+				doc_.afc.convert.DoubleApostrophe(varKey) +"'")
+		case cstr(TYPEID_N5MIEJSCOWOSC)
+			XLS_RefMapper = trans_.findobjid(TYPEID_N5MIEJSCOWOSC,"strNazwa='" +_
+				doc_.afc.convert.DoubleApostrophe(varKey) +"'")
+		case cstr(TYPEID_N5JEDNOSTKA)
+			XLS_RefMapper = trans_.findobjid(TYPEID_N5JEDNOSTKA,"strSkrot='" +_
+				doc_.afc.convert.DoubleApostrophe(varKey) +"'")
+		case cstr(TYPEID_N5GRUPAPRODUKTOW)
+			XLS_RefMapper = trans_.findobjid(TYPEID_N5GRUPAPRODUKTOW,"strNazwa='" +_
+				doc_.afc.convert.DoubleApostrophe(varKey) +"'")
+	end select
+	if XLS_RefMapper < 0 then
+		XLS_RefMapper = 0
+	end if
+	if XLS_RefMapper > 0 then
+		EmitSelfMap  pHandler,strSrcType, XLS_RefMapper
+	end if
+	XLS_RefMapper = clng(XLS_RefMapper)
+end function
+
+function do_import(byref pForeignConnection,byref oXLSIO) : do_import = false
+	dim pHM : set pHM = doc_.getmodule(60213)
+	dim pH : set pH = pHM.new_ado2nxd_handler()
+
+	dim pM60211 : set pM60211 = doc_.getmodule(60211)
+	dim pImportHolder : set pImportHolder = pM60211.new_import_nxd_2_EB_holder()
+
+	dim pSO : set pSO = doc_.createstreamobj()
+	pSO.attach "c:\from_xls.nxd"
+'	pH.set_importer pImportHolder.get_handler()
+	pImportHolder.get_handler().updateexisting = true
+	pH.required_init pForeignConnection,getref("XLS_RefMapper")
+
+	pH.start_export2stream pSO,1,"Import z Excel: " + oXLSIO.description()
+
+
+	dim pADORS
+	if oXLSIO.m_bCustomers <> "0" then
+		set pADORS = pForeignConnection.connection.execute("select * from [Klienci$]")
+		do while not pADORS.EOF
+			Klienci_Convert2NXD pH,pADORS
+			if pH.is_error() then
+				exit function
+			end if
+			pADORS.movenext
+		loop
+	end if	
+
+	if oXLSIO.m_bProducts <> "0" then
+		set pADORS = pForeignConnection.connection.execute("select * from [Produkty$]")
+		do while not pADORS.EOF
+			Produkty_Convert2NXD pH,pADORS
+			if pH.is_error() then
+				exit function
+			end if
+			pADORS.movenext
+		loop
+	end if
+
+	pH.stop_export
+	do_import = true
+end function
+
+
+
+]]>
+</script>
+
+</config>
+	<body>
+	</body>
+</page>

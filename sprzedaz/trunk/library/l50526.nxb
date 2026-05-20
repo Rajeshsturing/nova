@@ -1,0 +1,674 @@
+'//////////////////////////////////////////////////
+'// (C) 2008 NAVO				                 //
+'// Funkcje przydatne przy generowaniu raportów  //
+'// 			                                 //
+'//////////////////////////////////////////////////
+
+#ifndef LIBRARY_50526
+#define LIBRARY_50526
+
+#include "h1230.h"
+
+#define BLACK_COLOR   RGB(0,0,0)
+#define WHITE_COLOR   RGB(255,255,255)
+#define YELLOW_COLOR  RGB(255,255,150)
+#define ROW_COLOR     RGB(232,232,232)
+
+dim pModRapEngine : set pModRapEngine = doc_.getmodule(60108)
+dim g_oRep, g_oRepDict, g_oDrawRep
+
+#comment '---------------------------------------------------
+#comment 'definicja obiektu raportu (w³aœciwoœci dla kolumny)
+#comment '---------------------------------------------------
+class cObjectReport
+  public m_nNrCol           'numer kolumny na raporcie
+  public m_strNazwa         'nazwa wyœwietlana kolumny
+  public m_strFilter        'nazwa wyœwietlana filtru
+  public m_strNazwaSQL      'nazwa kolumny w liœcie 'select'
+  public m_strSelectExprSQL 'wyrazenie dla kolumny w liscie 'select'
+  public m_strFilterSQL     'wyra¿enie sql w filtrze
+  public m_strTypFilter     'T: filtr tekstowy, D: filtr typu data, C: choice
+  public m_strAscDesc       'sposób sortowania
+  public m_nCellWidth       'szerokoœæ kolumny na raportcie
+  public m_strTip           'tip obiektu
+  public m_nRowSpan         'liczba rowspan
+  public m_nColSpan         'liczba colspan
+  public m_nTypeId          'id tabeli Ÿród³owej
+  public m_nNrExFilter      'numer obiektu w tabeli filtrów
+  
+  public sub class_initialize()
+    m_nNrCol = 0
+    m_strNazwa = ""
+    m_strFilter = ""
+    m_strNazwaSQL = ""
+    m_strFilterSQL = ""
+    m_strSelectExprSQL = ""
+    m_strTypFilter = ""
+    m_strAscDesc = ""
+    m_nCellWidth = clng(0)
+    m_strTip = ""
+    m_nRowSpan = 0
+    m_nColSpan = 0
+    m_nTypeId = clng(0)
+    m_nNrExFilter = clng(-1)
+  end sub
+  
+  public sub class_terminate()   'OK
+  end sub
+  
+  '------------------------
+  'tworzy pojedynczy obiekt
+  '------------------------
+  public function createObj(nNrCol, strNazwa, strFilter, strNazwaSQL, strSelectExprSQL, strFilterSQL, strTypFilter, _
+                            strAscDesc, nCellWidth, strTip, nRowSpan, nColSpan, nTypeId)
+    dim oNewObj : set oNewObj = new cObjectReport
+    with oNewObj
+      .m_nNrCol = nNrCol
+      .m_strNazwa = strNazwa
+      .m_strFilter = strFilter
+      .m_strNazwaSQL = strNazwaSQL
+      .m_strSelectExprSQL = strSelectExprSQL
+      .m_strFilterSQL = strFilterSQL
+      .m_strTypFilter = strTypFilter
+      .m_strAscDesc = strAscDesc
+      .m_nCellWidth = clng(nCellWidth)
+      .m_strTip = strTip
+      .m_nRowSpan = nRowSpan
+      .m_nColSpan = nColSpan  
+      .m_nTypeId = nTypeId
+    end with
+    set createObj = oNewObj
+  end function
+end class
+
+
+
+#comment '---------------------------------------------------------
+#comment 'funkcje tworzenia raportu (budowanie zapytania i kursora)
+#comment '---------------------------------------------------------
+class cBuildQuery
+  public m_strSQL               'zapytanie sql
+  public m_oRS                  'kursor
+  public m_pParamArray          'parametry sta³e
+  public m_pExtraParamArray     'parametry dodatkowe
+  public m_strFrom              'from
+  public m_strJoin              'join
+  public m_strWhere             'warunki
+  public m_strGroupBy           'grupowanie
+  public m_strHaving            'warunek grupowania
+  public m_strOrderBy           'sortowanie
+  public m_nOrderByCol          'numer kolumny po której sortowaæ
+  public m_bAscDesc             'sposób sortowania
+  public m_pArrayObj            'tablica obiektów
+  public m_oRSAll               'kursor z wynikami pierwszego uruchomienia
+  public m_pSelectedArray       'tablica z wybranymi rekordami (ewentualna edycja wybranych pozycji)
+  
+  public sub class_initialize()
+    m_strSQL = ""
+    set m_oRS = nothing
+    set m_pParamArray = doc_.afc.new_navoarray()
+    set m_pExtraParamArray = doc_.afc.new_navoarray()
+    m_strFrom = ""
+    m_strJoin = ""
+    m_strWhere = ""
+    m_strGroupBy = ""
+    m_strHaving = ""
+    m_strOrderBy = ""
+    m_nOrderByCol = KOL_FIRST
+    m_bAscDesc = true
+    set m_pArrayObj = doc_.afc.new_navoarray()
+    set m_oRSAll = nothing
+    set m_pSelectedArray = doc_.afc.new_navoarray()
+  end sub
+  
+  public sub class_terminate()   'OK
+    set m_oRS = nothing
+    set m_pParamArray = nothing
+    set m_pExtraParamArray = nothing
+    set m_pArrayObj = nothing
+    set m_oRSAll = nothing
+    set m_pSelectedArray = nothing
+  end sub
+  
+  '-------------------------------------------------
+  'zwraca obiekt o danym numerze kolumny na raporcie
+  '-------------------------------------------------
+  public function getObj(byval nNumCol) : set getObj = nothing
+    dim iter
+    for iter = 0 to m_pArrayObj.upperIndex
+      if m_pArrayObj.value(iter).m_nNrCol = nNumCol then
+        set getObj = m_pArrayObj.value(iter)
+        exit function
+      end if
+    next
+  end function
+  
+  '-------------------------------------------
+  'skleja zapytanie z odpowiednimi parametrami
+  '-------------------------------------------
+  public sub strJoinQuery(byval pParamArray)
+    m_strSQL = ""
+    dim strAscDesc, iter
+    if m_bAscDesc then
+      strAscDesc = " asc"
+    else
+      strAscDesc = " desc"
+    end if
+    'zapytanie
+    for iter = 0 to m_pArrayObj.upperIndex
+      m_strSQL = m_strSQL + "'" + m_pArrayObj.value(iter).m_strNazwaSQL + "'=" + m_pArrayObj.value(iter).m_strSelectExprSQL + ","
+    next
+    'przecinek na koñcu
+    m_strSQL = Left(m_strSQL,Len(m_strSQL) - 1)
+    m_strSQL = "select " + vbNewLine + m_strSQL + vbNewLine + m_strFrom + vbNewLine + m_strJoin + vbNewLine    
+    m_strWhere = strWhere(pParamArray)
+    m_strOrderBy = "order by " + getObj(m_nOrderByCol).m_strSelectExprSQL
+    m_strSQL = m_strSQL + m_strWhere + vbNewLine + m_strGroupBy + vbNewLine + m_strHaving + vbNewLine + m_strOrderBy + strAscDesc
+  end sub
+  
+  '-------------------
+  'ralizacja zapytania
+  '-------------------
+  public sub realizeQuery(byval pParamArray, byval bFullRefresh)
+    strJoinQuery pParamArray
+    m_strSQL = pModRapEngine.query_apply_actual_param(m_strSQL,pParamArray)
+    set m_oRS = trans_.createadors(m_strSQL)
+    'zapamiêtanie wszystkich rekordów => pierwsze uruchominie
+    if bFullRefresh then
+      set m_oRSAll = m_oRS
+    end if
+  end sub
+  
+  '-----------------
+  'liczba parametrów
+  '-----------------
+  public function strWhere(byval pParamArray) : strWhere = "where "
+    dim iter
+    if not pParamArray is nothing then
+      for iter = 0 to pParamArray.upperIndex
+        strWhere = strWhere + "%" + cstr(iter + 1) + " and "
+      next      
+    end if
+    strWhere = Left(strWhere,Len(strWhere) - 5)
+  end function
+  
+  '-------------------------
+  'zmienia sposób sortowania
+  '-------------------------
+  public sub changeAscDesc
+    if m_bAscDesc then
+      m_bAscDesc = false
+    else
+      m_bAscDesc = true
+    end if
+  end sub
+  
+  '------------------------------------
+  'tworzy parametr w zale¿noœci od typu
+  '-------------------------------------
+  public function createParam(byval oRepObj) : set createParam = nothing
+    select case oRepObj.m_strTypFilter
+      case "T"
+        set createParam = createTextParam(oRepObj.m_strFilter, oRepObj.m_strFilterSQL)
+      case "D"
+        set createParam = createDateParam(oRepObj.m_strFilter, oRepObj.m_strFilterSQL)
+      case "C"
+        set createParam = createChoiceParam(oRepObj.m_strFilter, oRepObj.m_strFilterSQL, oRepObj.m_nTypeId)
+      case "Cur"
+        set createParam = createCurParam(oRepObj.m_strFilter, oRepObj.m_strFilterSQL)  
+    end select
+  end function
+  
+  '-------------------------
+  'tworzy parametr typu text
+  '-------------------------
+  public function createTextParam(byval strName, byval strNameSQL) : set createTextParam = nothing
+    set createTextParam = doc_.afc.rap.param.new_text(strName).bindexpr(strNameSQL)
+  end function
+  
+  '-------------------------
+  'tworzy parametr typu data
+  '-------------------------
+  public function createDateParam(byval strName, byval strNameSQL) : set createDateParam = nothing
+    set createDateParam = doc_.afc.rap.param.new_date_range(strName).bindexpr(strNameSQL)
+  end function 
+  
+  '-----------------------------
+  'tworzy parametr typu currency
+  '-----------------------------
+  public function createCurParam(byval strName, byval strNameSQL) : set createCurParam = nothing
+    set createCurParam = doc_.afc.rap.param.new_currency(strName).bindexpr(strNameSQL)
+  end function   
+  
+  '---------------------------
+  'tworzy parametr typu choice
+  '---------------------------
+  public function createChoiceParam(byval strName, byval strNameSQL, byval iTypeID) : set createChoiceParam = nothing
+    dim pParamChoice : set pParamChoice = doc_.afc.rap.param.new_choice(strName).bindexpr(strNameSQL)
+    doc_.afc.rap.param.init_on_enum pParamChoice, iTypeID, Mid(strNameSQL,InStr(strNameSQL,".") + 1)
+    set createChoiceParam = pParamChoice
+  end function
+  
+  '--------------------------------
+  'tworzy parametr z u¿yciem select
+  '--------------------------------
+  public function createQueryParam(byval strName, byval strNameSQL, byval strSQL)
+    dim pQueryParam: set pQueryParam= doc_.afc.rap.param.new_choice(strName).bindexpr(strNameSQL)
+    doc_.afc.rap.param.init_on_query pQueryParam, trans_ , strSQL
+    set createQueryParam = pQueryParam
+  end function
+  
+  '------------------------------
+  'zwraca true gdy wybrano rekord
+  '------------------------------
+  public function isRecord : isRecord = false
+    isRecord = m_pSelectedArray.Count <> 0
+  end function  
+  
+end class
+
+
+
+#comment '--------------------------------------------------
+#comment 'rysowanie raportu (z wykorzystaniem stronicowania)
+#comment '--------------------------------------------------
+class cDrawReport
+  
+  public m_nRange     'aktualny przedzia³
+  public m_nNumRange  'liczba przedzia³ów
+  public m_oRep
+  
+  public sub class_initialize()
+    m_nRange = 1
+    set m_oRep = nothing
+  end sub
+  
+  public sub class_terminate()   'OK
+    set m_oRep = nothing
+  end sub  
+
+  '---------------------------
+  'pojedyncza komórka nag³ówka
+  '---------------------------
+  public sub drawCellHead(byref pTB,byval iColNr, byval strColName, byval iCellWidth, byval strTip, byval iRowSpan, byval iColSpan, byval bOption)
+    pTB.newcell
+    if bOption then
+      with pTB.cell.addnew(CTRL_TYPE_PICTURE,-1)
+        .image=clng(PICTURE_CHOICE_N5PRODUKT)
+        .width=Clng(SIZE_FOR_GRID)  
+        .height=Clng(SIZE_FOR_GRID)
+        .tip = strTip
+        set .hli= doc_.createhli()
+        .hli.prop(GVAR_FUNCTIONHLI) = "filtrKol"
+        .hli.prop(200) = CLng(iColNr)
+      end with
+      with pTB.cell.addnew(CTRL_TYPE_STATICEX,-1)
+        .text = strColName
+        set .hli= doc_.createhli()
+        .hli.prop(GVAR_FUNCTIONHLI) = "sortByKol"
+        .hli.prop(200) = CLng(iColNr)
+      end with
+    else
+      pTB.cell.addnew(CTRL_TYPE_STATICEX,-1).text = strColName   
+    end if
+	if iCellWidth > 0 then
+		pTB.cell.width = CLng(iCellWidth)
+	end if
+    pTB.cell.rowspan = iRowSpan
+    pTB.cell.colspan = iColSpan    
+  end sub
+  
+  '-----------------------------------
+  'pojedyncza komórka w wierszu (text)
+  '-----------------------------------
+  public sub drawCell(byref pTB, byval strText, byval strFontName, byval nAlign, byval iTypeId, byval idObj, byval strName)
+    if iTypeId <> clng(0) then
+      dim strNrDokHLI
+      strNrDokHLI = doc_.afc.convert.Formatter("OPEN_FORM_PROXY_HLI_USAGE(" + cstr(iTypeId) + "," + cstr(idObj) + ",USAGE_VIEW)").done()
+      pTB.newcell.addtexthli cstr(strName), doc_.createhlistr(strNrDokHLI) 
+    else
+      pTB.newcell.addctrl CTRL_TYPE_STATICEX, -1
+      pTB.element.text = strText
+    end if
+    with pTB.element
+      .forecolor = BLACK_COLOR
+    end with
+	if strFontName <> "" then
+		pTB.element.fontname = strFontName
+	end if
+    pTB.cell.align = clng(nAlign)
+  end sub
+  
+  '---------------------------------------
+  'pojedyncza komórka w wierszu (currency)
+  '---------------------------------------
+  public sub drawCellCur(byref pTB, byval nCtrl, byval curValue, byval strFontName, byval nPrecision, byval nSize, byval strUnit, byval crBackColor)
+    pTB.newcell.addctrl CTRL_TYPE_CURRENCY, -1
+	  with pTB.element
+      .precision = nPrecision
+      .size = clng(nSize)
+      .unit = strUnit
+      .border = 0
+      .forecolor = BLACK_COLOR
+      if nCtrl <> clng(0) then
+        .customredirect = clng(nCtrl)
+        .transfer = page_.createtransfer("custom")
+        .backcolor = crBackColor
+      else
+        .disable = true
+      end if
+      .value = ccur(curValue)
+    end with  
+    pTB.cell.align = ALIGN_RIGHT 
+	if strFontName <> "" then
+		pTB.element.fontname = strFontName
+	end if	 
+  end sub
+  
+  '-----------------------------------
+  'pojedyncza komórka w wierszu (edit)
+  '-----------------------------------
+  public sub drawCellEdit(byref pTB, byval nCtrl, byval nSize, byval nBorder, byval strFontName, byval crBackColor)
+    pTB.newcell.addctrl CTRL_TYPE_EDIT, -1
+    with pTB.element
+      .size = nSize
+      .border = nBorder
+      .forecolor = BLACK_COLOR
+      if nCtrl <> clng(0) then
+        .customredirect = clng(nCtrl)
+        .transfer = page_.createtransfer("custom")
+        .backcolor = crBackColor
+      else
+        .disable = true
+      end if
+    end with
+	if strFontName <> "" then
+		pTB.element.fontname = strFontName
+	end if
+  end sub
+
+  '-------------------------------------
+  'pojedyncza kontrolka w wierszu (edit)
+  '-------------------------------------
+  public sub drawEdit(byref pTB, byval nCtrl, byval nSize, byval nBorder, byval strFontName, byval crBackColor)
+    pTB.addctrl CTRL_TYPE_EDIT, -1
+    with pTB.element
+      .size = nSize
+      .border = nBorder
+      .forecolor = BLACK_COLOR
+      if nCtrl <> clng(0) then
+        .customredirect = clng(nCtrl)
+        .transfer = page_.createtransfer("custom")
+        .backcolor = crBackColor
+      else
+        .disable = true
+      end if
+    end with
+	if strFontName <> "" then
+		pTB.element.fontname = strFontName
+	end if
+  end sub
+
+  '-----------------------------------
+  'pojedyncza komórka w wierszu (date)
+  '-----------------------------------
+  public sub drawCellDate(byref pTB, byval nCtrl, byval dValue, byval strFontName, byval crBackColor)
+    pTB.newcell.addctrl CTRL_TYPE_DATE, -1
+    with pTB.element
+      .border = 0
+      .forecolor = BLACK_COLOR
+      if nCtrl <> clng(0) then
+        .customredirect = clng(nCtrl)
+        .transfer = page_.createtransfer("custom")
+        .backcolor = crBackColor
+      else
+        .disable = true
+        .value = dValue
+      end if
+    end with  
+	if strFontName <> "" then
+		pTB.element.fontname = strFontName
+	end if
+    pTB.cell.align = ALIGN_LEFT
+  end sub
+  
+  '---------------------
+  'kontrolka z obrazkiem
+  '---------------------
+  public sub drawPicture(byref pTB, byval image, byval strTip, byval strFunName, byval idProp)
+    with pTB.cell.addnew(CTRL_TYPE_PICTURE,-1)
+      .image = clng(image)
+      .width = Clng(SIZE_FOR_GRID)
+      .height = Clng(SIZE_FOR_GRID)
+      .tip = strTip
+      set .hli= doc_.createhli()
+      .hli.prop(GVAR_FUNCTIONHLI) = strFunName
+      .hli.prop(100) = CLng(idProp)
+    end with
+  end sub 
+
+  '---------------------
+  'kontrolka z obrazkiem
+  '---------------------
+  public sub drawPictureSize(byref pTB, byval image, byval strTip, byval strFunName, byval idProp, byval pictureSize)
+    with pTB.cell.addnew(CTRL_TYPE_PICTURE,-1)
+      .image = clng(image)
+      .width = Clng(pictureSize)
+      .height = Clng(pictureSize)
+      .tip = strTip
+      set .hli= doc_.createhli()
+      .hli.prop(GVAR_FUNCTIONHLI) = strFunName
+      .hli.prop(100) = CLng(idProp)
+    end with
+  end sub 
+  
+  '--------
+  'przycisk
+  '--------
+  public sub drawButton(byref pTB, byval strName, byval nSize, byval strTip, byval strFunName, byval idProp)
+	drawButtonExt pTB, strName, nSize, strTip, strFunName, idProp, -1
+  end sub
+  
+  public sub drawButtonExt(byref pTB, byval strName, byval nSize, byval strTip, byval strFunName, byval idProp, byval idCtrl)
+    pTB.addctrl CTRL_TYPE_BUTTON, -1
+    with pTB.element
+      if idCtrl > clng(0) then	
+        .customredirect = clng(idCtrl)
+        .transfer = page_.createtransfer("custom")
+      end if
+      set .hli = doc_.createhli()
+      .hli.prop(GVAR_FUNCTIONHLI) = strFunName
+      .hli.prop(100) = CLng(idProp)    
+      .text = strName
+      .size = nSize
+      .tip = strTip
+      .styleitem = STYLE_BUTTON
+    end with
+    pTB.cell.keepline = true
+    pTB.cell.align = ALIGN_CENTER     
+  end sub
+  
+  '------------------
+  'liczba przedzia³ów
+  '------------------
+  public sub setRangeNr
+    dim dblNr : dblNr = m_oRep.m_oRS.recordCount/MAX_ROW_NR
+    if dblNr - Int(dblNr) > 0 then
+      m_nNumRange = Int(dblNr) + 1
+    else
+      m_nNumRange = Int(dblNr)
+    end if
+    'trans_.message 0,0,"numrange="+cstr(m_nNumRange)
+  end sub
+  
+end class
+
+
+#comment '-------------------------
+#comment 'przycisk do obs³ugi akcji
+#comment '-------------------------
+class cButton
+
+  public sub newButton(byref pTB, byval idCtrl, byval strFunName, byval strName, byval nSize, byval nAlign, byval bHLI)
+    dim pNewHli : set pNewHli = doc_.createhli()
+    if bHLI then
+      pNewHli.prop(GVAR_FUNCTIONHLI) = strFunName
+    else
+      pNewHli.prop(GVAR_FUNCTION) = strFunName
+    end if
+    pTB.addctrl CTRL_TYPE_BUTTON, -1
+    with pTB.element
+      .customredirect = clng(idCtrl)
+      .transfer = page_.createtransfer("custom")
+      set .hli = pNewHli
+      .text = strName
+      .size = nSize
+      .styleitem = STYLE_BUTTON
+    end with  
+    pTB.cell.align = nAlign    
+  end sub
+  
+end class
+
+
+
+#comment '-----------------------------------------
+#comment 's³ownik do zapamiêtania wybranych wierszy
+#comment '-----------------------------------------
+class cRepDict
+  private m_pDictionary
+
+  private sub class_initialize()
+    set m_pDictionary = CreateObject("Scripting.Dictionary")
+  end sub
+  
+  public sub class_terminate()   'OK
+    set m_pDictionary = nothing
+  end sub  
+
+  public function add(byval iRowIdent,byref oRecord)
+    if (not exists(iRowIdent)) then
+      m_pDictionary.Add iRowIdent, oRecord
+    end if
+  end function
+
+  'gdy przechowujemy obiekt
+  public function getDictObj(byval iRowIdent)
+    set getDictObj = m_pDictionary.item(iRowIdent)
+  end function
+  
+  'gdy przechowujemy pojedynczy element
+  public function getDictElem(byval iRowIdent)
+    getDictElem = m_pDictionary.item(iRowIdent)
+  end function  
+
+  public function removeDictObj(byval iRowIdent)
+    m_pDictionary.remove(iRowIdent)
+  end function
+  
+  public function removeAll
+    m_pDictionary.removeall
+  end function  
+
+  public function exists(byval iRowIdent)
+    exists = m_pDictionary.Exists(iRowIdent)
+  end function
+  
+  public function getDictionary()
+    set getDictionary = m_pDictionary
+  end function  
+end class
+
+
+'----------------------
+'inicjalizacja obiektów
+'----------------------
+sub initialObjects
+  set g_oRep = new cBuildQuery
+  set g_oRepDict = new cRepDict
+  set g_oDrawRep = new cDrawReport
+end sub
+
+'----------------------------------------
+'inicjalizacja obiektów - tylko rysowanie
+'----------------------------------------
+sub initialObjectsDraw
+  set g_oDrawRep = new cDrawReport
+end sub
+
+'---------------------------------------------------------------
+'odœwie¿ raport (wymaga zdefiniowania funkcji 'drawResultTable')
+'---------------------------------------------------------------
+function fRefresh(byval bCleanDict)
+  if bCleanDict then
+    'wyczyœæ zaznaczone elementy
+    g_oRepDict.removeAll
+  end if
+  g_oRep.realizeQuery g_oRep.m_pParamArray, true
+  if g_oRep.m_oRS.RecordCount <> 0 then
+    set g_oDrawRep.m_oRep = g_oRep
+    g_oDrawRep.setRangeNr
+    drawResultTable g_oDrawRep
+  else
+    drawBrakDanych
+  end if  
+end function
+
+'------------------------------------------------------------------------------------------------
+'dodatkowy filtr dla wybranej kolumny (wymaga zdefiniowania: 'drawResultTable', 'drawBrakDanych')
+'------------------------------------------------------------------------------------------------
+function filtrKol(byref pHLI)
+  dim nNumCol : nNumCol = pHLI.prop(200)
+  
+  'pobierz obiekt o numerze kolumny nNumCol
+  dim oCurrObj : set oCurrObj = g_oRep.getObj(nNumCol)
+  dim pExtraParam : set pExtraParam = doc_.afc.new_navoarray()
+  pExtraParam.add g_oRep.createParam(oCurrObj)
+  if pModRapEngine.show_raport_param_dialog(pExtraParam,"CREATOR_TITLE") = 0 then
+    exit function
+  end if 
+  
+  'usuñ stary parametr
+  dim iter
+  for iter = 0 to g_oRep.m_pParamArray.UpperIndex
+    if g_oRep.m_pParamArray.value(iter).ParamName = oCurrObj.m_strFilter then
+      g_oRep.m_pParamArray.Remove(iter)
+      exit for
+    end if
+  next 
+  
+  g_oRep.m_pParamArray.add pExtraParam.value(0)
+  g_oRep.realizeQuery g_oRep.m_pParamArray, false
+
+  if g_oRep.m_oRS.RecordCount <> 0 then
+    set g_oDrawRep.m_oRep = g_oRep
+    g_oDrawRep.setRangeNr
+    drawResultTable g_oDrawRep
+  else
+    drawBrakDanych
+  end if
+end function
+
+'-------------------------------------
+'wykonuje sortowanie po danej kolumnie (wymaga zdefiniowania: 'drawResultTable')
+'-------------------------------------
+function sortByKol(byref pHLI)
+  dim nNumCol : nNumCol = pHLI.prop(200)
+  g_oRep.m_nOrderByCol = nNumCol
+  g_oRep.changeAscDesc
+  g_oRep.realizeQuery g_oRep.m_pParamArray, false
+  if g_oRep.m_oRS.RecordCount <> 0 then
+    set g_oDrawRep.m_oRep = g_oRep
+    g_oDrawRep.setRangeNr
+    drawResultTable g_oDrawRep
+  end if
+end function
+
+'-------------------------------------------------------
+'cofniêcie zmian na raporcie (z wyczyszczeniem s³ownika)
+'-------------------------------------------------------
+function backChange
+  fRefresh true
+end function
+
+#endif

@@ -1,0 +1,139 @@
+'------------------------------------------------------------------------
+' (c) NAVO 2003 Ltd.
+' Spikowski Piotr
+'
+' Funkcje importu i exportu licencji (XML)
+'------------------------------------------------------------------------
+
+
+
+'------------------------------------------------------------------------
+' Eksport pakietu informacji dla serwera licencji
+'------------------------------------------------------------------------
+function export_licence(byref pSO, byval strAppType): export_licence = false
+#ifdef _DEBUG
+	'do przerobienia
+#endif
+	exit function
+	'Zainicjowanie manager'a exportu
+	dim pXMLExpManager
+	set pXMLExpManager = CXMLExportManagerStreamInfo( pSO, "Licencja;" + strAppType )
+
+	if (pXMLExpManager is nothing) then
+		exit function
+	end if
+
+		XMLExportCursor TYPEID_N5LICENCJA, "strKod='" + APP_NAME + "'", "", "", pXMLExpManager	
+		XMLExportCursor TYPEID_N5FIRMA, "", "", "", pXMLExpManager
+
+	export_licence = pXMLExpManager.SaveExportPackages()
+end function
+
+'------------------------------------------------------------------------
+'próba importu informacji licencji jendak najpierw analiza obiektu
+'informacyjnego, który powinniœmy otrzymaæ w pliku impotowo-eksportowym
+'------------------------------------------------------------------------
+function import_licence(byref pSO, byref strDescription)
+	dim pImportHelper : set pImportHelper =  doc_.getmodule(60211) 
+	import_licence = (pImportHelper.import_nxd_stream_2_EB( pSO ) = 0)
+end function
+
+#ifdef _DEBUG
+const WWW_SERVER_NAME = "KOSMA"
+#else
+const WWW_SERVER_NAME = "main.navo.com.pl"
+#endif
+
+'------------------------------------------------------------------------
+'wysyla i czeka na zwrot informacji z serwera licencji
+'strAppType - typ aplikacji - standard itd. itp.
+'------------------------------------------------------------------------
+function request_licence_over_inet(byval strAppType) : request_licence_over_inet = false
+
+	'............................................................
+	' Wyeksportuj informacje dla serwera licencji. Na podstawie
+	' tych informacji serwer NAVO sprawdza czy dana osoba ma ju¿
+	' zap³acon¹ licencje i je¿eli tak to odsy³a specjalni¹ wersjê
+	' informacji do aplikacji klienta, który chce siê w³aœnie
+	' zarejestrowaæ
+	'............................................................
+
+	dim soExp: set soExp = doc_.createstreamobj()
+	if not export_licence(soExp, strAppType) then
+		' 1, 0, "Utworzenie pakietu informacyjnego nieudane"
+		view_message 6072, 0
+		exit function
+	end if
+
+#ifdef _TEST_LOCALLY
+
+	'............................................................
+	' Test lokalny - normalnie internal_process_licence_request
+	' jest wykonywane na stronie ASP. My wykonujemy to loaklnie
+	' w celach testowych
+	'............................................................
+	dim pPM: set pPM = doc_.getmodule(60012)
+	
+	dim strXML
+	if not pPM.internal_process_licence_request(soExp, strXML) then
+		' 1, 0, "internal_process_licence_request failed"
+		view_message 6073, 0
+		exit function
+	end if
+
+	'dodaj do strumienia
+	set soExp = doc_.createstreamobj()
+	soExp.write strXML
+	strXML = ""	'wyczyœæ i zwolnij pamiêæ
+
+#else
+	
+	'pod³¹cz siê z serwerem
+	dim webtrain
+	set webtrain = createobject("navoinet.webtransfer")
+
+	'próba pod³¹czenia
+	dim nRes : nRes = webtrain.connect(WWW_SERVER_NAME,"","",false)
+	if nRes <> 0 then
+		' 1,0,"Po³¹czenie z serwerem licencji nieudane"
+		view_message 6074, 0
+		exit function
+	end if
+
+	'wyœlij nasz plik exportowy i pobierz rezultat wyslania
+	dim soResult
+	
+	on error resume next
+	set soResult = webtrain.post("ne2002users\util\getlicence_xml.asp", soExp)
+
+	if not isobject(soResult) then
+		' 1, 0, "Transfer nieudany, kod b³êdu: " + cstr(webtrain.lasterror)
+		view_message1 6075, 0, cstr(webtrain.lasterror)
+		exit function
+	end if
+	
+	'coœ dostaliœmy, zobaczymy co - robimy strumieñ
+	soExp.attach soResult
+
+#endif
+
+	'............................................................
+	' Paczka ktor¹ dostaliœmy mo¿e zawieraæ description - je¿eli 
+	' nie ma to wyœwietlamy brak
+	'............................................................
+	dim strDescription
+	strDescription = "brak"
+
+	'............................................................
+	' Analiza tego co dostaliœmy z serwera NAVO i próba importu
+	' rekordu licencji
+	'............................................................
+	if not import_licence(soExp, strDescription) then
+		' 1, 0, "¯¹danie podania licencji odrzucone. Szczegó³y: " + strDescription
+		view_message1 6076, 0, strDescription
+		exit function
+	end if
+
+	request_licence_over_inet = true
+end function
+

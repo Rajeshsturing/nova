@@ -1,0 +1,832 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+Klient osoba prywatna
+ALWAYS MANUAL
+
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1004.h"
+#include "h1201.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1203.h"
+#include "h1222.h"
+#include "h1200.h"
+#include "h1232.h"
+
+#define CTRLID_GRUPAKL					49
+
+#define CTRLID_OBROTY	60
+#define CTRLID_LIMIT	61
+#define CTRLID_INDEKS					5
+
+
+#define CTRLID_PRICE1				10
+#define CTRLID_PRICE2				11	
+#define CTRLID_PRICE3				12	
+#define CTRLID_PRICE4				13	
+#define CTRLID_PRICE5				14	
+#define CTRLID_PRICE6				15	
+
+#ifdef ENABLE_DB11
+#define CTRLID_RACH_BANK          62
+#define CTRLID_RACH_BANK_NAME1    63
+#define CTRLID_RACH_BANK_NAME2    64
+#define CTRLID_RACH_BANK_NAME3    65
+#endif
+
+#define CTRLID_BLOK_SPRZED				156
+#define CTRLID_TRIGGER					157
+
+#ifdef _SECURITY
+#define CTRLID_FAKTURA_MAIL       158
+#endif
+
+#ifdef _METROX
+#define CTRLID_WART_OPLAT         16
+#endif
+
+#ifdef _TORAL
+#define CTRLID_ANKIETA            17
+#endif
+
+#ifdef APPCONFIG_SPRZEDAZ_EMAIL_PDF_ZNACZNIK
+#define CTRLID_WYSYLKA_FAKTUR_EMAIL  21
+#endif
+
+#ifdef _HADEX
+#define CTRLID_OKRES_FAKTUROWANIA    22
+#endif
+
+#define SIZE_OBROTY	19
+#define SIZE_LIMIT	10
+
+#define FORM_SPAN		 2
+#define RCELL_SPAN		 1
+
+
+#define SECID_DOK_TOZSAM			1001
+#define SECID_CENY					1002
+#define SECID_EMAILTEL				1003
+#define SECID_SIEDZIBA				1004
+
+-->
+
+<page style='STYLE_PAGE'>
+<config>
+	<title>
+Klient osoba prywatna 
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+<typeid>TYPEID_N5KLIENT</typeid>
+<secidread>UAR_CUSTOMER_PRIV##STDR_READ</secidread>
+<secidins>UAR_CUSTOMER_PRIV##STDR_INSERT</secidins>
+<secidupd>UAR_CUSTOMER_PRIV##STDR_UPDATE</secidupd>
+<seciddel>UAR_CUSTOMER_PRIV##STDR_DELETE</seciddel>
+
+<script>
+  <![CDATA[
+'programmer's script
+
+
+'realize_publication
+#include "50518"
+
+#include "50101"
+#include "50200"
+
+'messagebox
+#include "50122"
+
+dim bEditMode:bEditMode = false
+
+dim g_bSetBlokada:g_bSetBlokada = true
+dim g_bRemoveBlokada:g_bRemoveBlokada = true
+
+#ifdef ENABLE_DB11
+dim g_strNazwaRach1: g_strNazwaRach1 = "<brak przeznaczenia>"
+dim g_strNazwaRach2: g_strNazwaRach2 = "<brak przeznaczenia>"
+dim g_strNazwaRach3: g_strNazwaRach3 = "<brak przeznaczenia>"
+#endif
+
+function blokuj_chackbox(byref container , byval bDisable )
+	dim ctrl
+	for each ctrl in container
+		ctrl.disable = bDisable	
+	next  
+end function
+
+
+function fopen
+	if not std_fopen() then
+		fopen = false
+		exit function
+	end if	
+
+	'blokada sprzedazy
+	'blokada sprzedazy
+	if not har(UAR_BLOKADA_SPRZEDAZY_SET) then
+		trans_.message 1002 , 0 , "Nie masz uprawnień do zakładania blokady sprzedaży"	
+		g_bSetBlokada = false
+	end if
+
+	if not har(UAR_BLOKADA_SPRZEDAZY_REMOVE) then
+		trans_.message 1002 , 0 , "Nie masz uprawnień do zdejmowania blokady sprzedaży"	
+		g_bRemoveBlokada = false
+	end if
+
+#ifdef ENABLE_DB11
+	getNazwaRachBank()
+#endif
+
+	section_fopen THIS_FILE
+end function
+
+
+'checkNIP
+#include "50111"
+
+function fsave
+
+#ifdef _ALMA_TREND
+  'blokada zapisu gdy pracownik dedykowany nie jest ustawiony
+  if page_.root.kli_eTyp = clng(N5KLIENT_TYP_KLIE) then
+    if page_.root.pPracownik is nothing then
+      trans_.message 7000, 0, "Pole 'Pracownik dedykowany' musi być wypełnione"
+      exit function      
+    end if
+  end if  
+#endif
+
+	if page_.root.isnew then
+		if not std_fsave() then
+			fsave = false
+			exit function
+		end if
+	else
+		if not std_fsave() then
+			fsave = false
+			exit function
+		end if
+	end if
+
+	dim bSave
+
+
+
+
+	'sprawdzanie czy nip sie nie powtarza
+	if not check_NIP() then	
+		exit function			
+	end if
+
+	bSave=std_fsave()
+
+	if not bSave then
+		section_fsave THIS_FILE
+	end if
+
+	if (bSave) then
+		if trans_.isvar(APPVAR_ADD_SENDER) then
+			if (CLng( trans_.var(APPVAR_ADD_SENDER) )=1) then
+				page_.goback
+			end if
+		end if
+	end if
+
+	fsave=bSave
+end function
+
+function fclose
+section_fclose THIS_FILE
+end function
+
+function fdelete
+	fdelete=std_fdelete()
+end function
+
+dim g_IdObject: g_IdObject = -1
+
+
+function EnableDisableAutoNum()
+
+	'Jezeli zmienil sie rekord to wylaczymy edycje uzyskana
+	'przez nacisniecie przycisku "Edit"
+	if (g_IdObject=-1) then
+		'pierwszy rekord
+		g_IdObject = page_.root.IdObj
+	else
+		if (g_IdObject<>page_.root.IdObj) then
+			'zmiala rekordu - wylaczenie edycji recznej
+			bEditMode = false
+			g_IdObject = page_.root.IdObj
+		end if
+	end if
+
+	'Teraz sprawdzamy czy numeracja jest automatyczna i ustawiamy
+	'w zaleznosci od tego odpowiedni ststus kontrolek
+	if (getglobprofileBOOL( GLOBPROF_KLIENT_AUTONUM ) and (not bEditMode)) then
+		if (not page_.root.isnew) then
+			page_.ctrl(CTRLID_INDEKS).value = page_.root.strIndeks
+		else
+			page_.ctrl(CTRLID_INDEKS).value = AUTONO_NAME
+		end if
+		page_.ctrl(CTRLID_INDEKS).disable = true
+	else
+		page_.ctrl(CTRLID_INDEKS).value = page_.root.strIndeks
+		page_.ctrl(CTRLID_INDEKS).disable = false
+	end if
+end function
+
+function c##CTRLID_INDEKS##_ongetdata(byref oCtrl): c##CTRLID_INDEKS##_ongetdata=true
+	if (not page_.root is nothing) then
+		EnableDisableAutoNum
+	end if
+end function
+
+function c##CTRLID_INDEKS##_ondataentered(ctrl, value):c##CTRLID_INDEKS##_ondataentered=true
+	page_.root.strIndeks = CStr(value)
+end function
+
+
+
+#include "50222"
+
+function foptions()
+
+	doc_.getmodule(60175).customer_preferences(page_.root.ePrywat)
+	
+	dim bAutocomplete
+	bAutocomplete=getuserprofileBOOL( USERPROF_CUSTOMER_AUTOCOMPLETE )
+
+	if (bAutocomplete) then
+		trans_.var(GVAR_CUSTOMER_AUTOCOMPLETE)=clng(1)
+		page_.root.n5klient_kopiuj_adres
+	else
+		trans_.var(GVAR_CUSTOMER_AUTOCOMPLETE)=clng(0)
+	end if
+
+	EnableDisableAutoNum
+end function
+
+
+QVE_CURRENCY_CUSTOM_PRICE(CTRLID_LIMIT,page_.root.curLimitKred,page_.root.pWalutaLimitu,1)
+QVE_CURRENCY_CUSTOM_PRICE(CTRLID_OBROTY,page_.root.curObroty,page_.root.pWaluta,1)
+
+QVE_REF_OPEN_FORM(CTRLID_GRUPAKL,pGrupaKlient)
+
+
+
+
+
+
+
+
+
+
+function c##CTRLID_PRICE1##_ongetdata(ctrl):c##CTRLID_PRICE1##_ongetdata = true
+		format_ctrl ctrl , GLOBPROF_CENA1_NAME
+end function
+function c##CTRLID_PRICE2##_ongetdata(ctrl):c##CTRLID_PRICE2##_ongetdata = true
+		format_ctrl ctrl , GLOBPROF_CENA2_NAME
+end function
+function c##CTRLID_PRICE3##_ongetdata(ctrl):c##CTRLID_PRICE3##_ongetdata = true
+		format_ctrl ctrl , GLOBPROF_CENA3_NAME
+end function
+function c##CTRLID_PRICE4##_ongetdata(ctrl):c##CTRLID_PRICE4##_ongetdata = true
+		format_ctrl ctrl , GLOBPROF_CENA4_NAME
+end function
+function c##CTRLID_PRICE5##_ongetdata(ctrl):c##CTRLID_PRICE5##_ongetdata = true
+		format_ctrl ctrl , GLOBPROF_CENA5_NAME
+end function
+function c##CTRLID_PRICE6##_ongetdata(ctrl):c##CTRLID_PRICE6##_ongetdata = true
+		format_ctrl ctrl , GLOBPROF_CENA6_NAME
+end function
+function format_ctrl(byref ctrl , byval nr)
+	ctrl.text = getglobprofile(nr)
+	if ctrl.text = "" then
+		ctrl.disable = true
+		ctrl.text = "brak"
+	end if
+end function
+
+
+
+function c##CTRLID_TRIGGER##_ongetdata(byref oCtrl): c##CTRLID_TRIGGER##_ongetdata=true
+	if not g_bSetBlokada and page_.root.kli_cBlokadaSprz = "0" then
+		blokuj_chackbox page_.ctrl(CTRLID_BLOK_SPRZED) , true
+	end if
+
+	if not g_bRemoveBlokada and page_.root.kli_cBlokadaSprz = "1" then
+		blokuj_chackbox page_.ctrl(CTRLID_BLOK_SPRZED) , true
+	end if
+
+	if g_bSetBlokada and page_.root.old_kli_cBlokadaSprz = "0" then
+		blokuj_chackbox page_.ctrl(CTRLID_BLOK_SPRZED) , false
+	end if
+
+	if g_bRemoveBlokada and page_.root.old_kli_cBlokadaSprz = "1" then
+		blokuj_chackbox page_.ctrl(CTRLID_BLOK_SPRZED) , false
+	end if
+end function
+
+#ifdef _SECURITY
+function c##CTRLID_FAKTURA_MAIL##_ongetdata(byref oCtrl) : c##CTRLID_FAKTURA_MAIL##_ongetdata = true
+  if page_.root.strTel4 <> "" then
+    oCtrl.value = clng(page_.root.strTel4)
+  else
+    oCtrl.value = clng(2)
+  end if
+end function
+
+function c##CTRLID_FAKTURA_MAIL##_ondataentered(byref oCtrl, byval newValue) : c##CTRLID_FAKTURA_MAIL##_ondataentered = true
+  page_.root.strTel4 = cstr(newValue)
+end function
+#endif
+
+#ifdef _METROX
+function c##CTRLID_WART_OPLAT##_ongetdata(byref oCtrl): c##CTRLID_WART_OPLAT##_ongetdata = true
+  if page_.root.strCecha3 = "" then
+    page_.root.strCecha3 = "0"
+  end if
+  oCtrl.value = CCur(page_.root.strCecha3)
+end function
+
+function c##CTRLID_WART_OPLAT##_ondataentered(byref oCtrl, byval newValue): c##CTRLID_WART_OPLAT##_ondataentered = true
+  if newValue < CCur(0.0) then
+    newValue = CCur(0.0)
+  end if
+  if newValue > CCur(100.0) then
+    newValue = CCur(100.0)
+  end if
+  page_.root.strCecha3 = CStr(newValue)
+end function
+#endif
+
+#ifdef _TORAL
+function GetAnkietaId(): GetAnkietaId = clng(0)
+	if page_.root.IdObj > clng(0) then
+		dim nIdAnkieta: nIdAnkieta = trans_.findobjid(TYPEID_N5ANKIETA_TORAL,"ank_pKlient = " + CStr(page_.root.IdObj))
+		if nIdAnkieta > 0 then
+			GetAnkietaId = clng(nIdAnkieta)
+		end if
+	end if
+end function 
+
+function show_ankieta()
+  if page_.root.isnew then
+    trans_.message 7000, 0, "Formularz klienta musi być najpierw zapisany."
+    exit function
+  end if
+  
+  dim nIdAnkieta: nIdAnkieta = GetAnkietaId()
+  if nIdAnkieta > 0 then
+    CreateAnkieta nIdAnkieta
+  else
+    if MessageBox("Klient nie posiada jeszcze ankiety. Czy chesz ją utworzyć?", "Ankieta", vbYesNo, vbQuestion) = vbYes then
+      CreateAnkieta 0
+    end if
+  end if
+end function
+
+function CreateAnkieta(byref nIdAnkieta)
+	dim nIdKlient: nIdKlient = page_.root.IdObj
+	dim pOpenAnkieta : set pOpenAnkieta = doc_.getmodule(60129).prepare_form_open_command(TYPEID_N5ANKIETA_TORAL,nIdAnkieta,0)
+	if pOpenAnkieta is nothing then
+		exit function
+	end if
+	dim pFormAnkieta : set pFormAnkieta = doc_.getpagehli(pOpenAnkieta)
+	if pFormAnkieta is nothing then
+		exit function
+	end if
+  
+	'gdy nowa
+	if nIdAnkieta = 0 then 
+		with pFormAnkieta.root
+			set .ank_pKlient = trans_.getobj(TYPEID_N5KLIENT, nIdKlient)
+		end with
+	end if
+
+	pFormAnkieta.domodalauto()
+end function
+
+'----------------------
+'wydruk ankiety
+'----------------------
+function wydruk_ankiety(pHLI)
+  if page_.root.isnew() then
+    trans_.message 1002 , 0 , "Formularz ankiety musi być najpierw zapisany."
+    exit function
+  end if  
+  
+  dim nMode: nMode = pHLI.prop(1)
+  dim strDPCName, nPubType
+  if nMode = 1 then
+    'normalny wydruk
+    strDPCName = "Wydruk ankiety"
+    nPubType = N5DPC_PUBTYPE_INNY_WYDRUK_ANKIETY
+  else
+    'pusty wydruk
+    strDPCName = "Wydruk ankiety pusty"
+    nPubType = N5DPC_PUBTYPE_INNY_WYDRUK_ANKIETY_PUSTY
+  end if
+  
+  'znajdź publikacje o danym typie
+  dim idDPC : idDPC = trans_.findobjid(TYPEID_N5DPC, "pub_nInnyTyp=" + CStr(nPubType))
+  if idDPC < 1 then
+	  idDPC = fire_choice_list(TYPEID_N5DPC,"Publikacja typu '" + strDPCName + "'" ,"strNazwa","pub_nInnyTyp=" + CStr(nPubType),"","")	
+	  if idDPC = 0 then
+		  exit function
+	  end if
+  end if  
+  
+  dim oHLIResult : set oHLIResult = doc_.createhli()
+  realize_publication idDPC,page_.root,true,oHLIResult
+end function
+#endif
+
+#ifdef APPCONFIG_SPRZEDAZ_EMAIL_PDF_ZNACZNIK
+function c##CTRLID_WYSYLKA_FAKTUR_EMAIL##_ongetdata(byref oCtrl) : c##CTRLID_WYSYLKA_FAKTUR_EMAIL##_ongetdata = true
+  if page_.root.strTel4 <> "" then
+    oCtrl.value = clng(page_.root.strTel4)
+  else
+    oCtrl.value = clng(2)
+  end if
+end function
+
+function c##CTRLID_WYSYLKA_FAKTUR_EMAIL##_ondataentered(byref oCtrl, byval newValue) : c##CTRLID_WYSYLKA_FAKTUR_EMAIL##_ondataentered = true
+  page_.root.strTel4 = cstr(newValue)
+end function
+#endif
+
+#ifdef _HADEX
+function c##CTRLID_OKRES_FAKTUROWANIA##_ongetdata(byref oCtrl) : c##CTRLID_OKRES_FAKTUROWANIA##_ongetdata = true
+  if page_.root.strTel3 <> "" then
+    oCtrl.value = clng(page_.root.strTel3)
+  else
+    oCtrl.value = clng(1)
+  end if
+end function
+
+function c##CTRLID_OKRES_FAKTUROWANIA##_ondataentered(byref oCtrl, byval newValue) : c##CTRLID_OKRES_FAKTUROWANIA##_ondataentered = true
+  page_.root.strTel3 = cstr(newValue)
+end function
+#endif
+
+#ifdef ENABLE_DB11
+sub getNazwaRachBank()
+  dim oFirma: set oFirma = getCurrentFirma()
+  if not oFirma is nothing then
+    with oFirma
+      if .strPrzeznaczenie1 <> "" then
+        g_strNazwaRach1 = .strPrzeznaczenie1
+      end if
+      if .strPrzeznaczenie2 <> "" then
+        g_strNazwaRach2 = .strPrzeznaczenie2
+      end if
+      if .strPrzeznaczenie3 <> "" then
+        g_strNazwaRach3 = .strPrzeznaczenie3
+      end if    
+    end with
+  end if
+  page_.ctrl(CTRLID_RACH_BANK_NAME1).value = g_strNazwaRach1
+  page_.ctrl(CTRLID_RACH_BANK_NAME2).value = g_strNazwaRach2
+  page_.ctrl(CTRLID_RACH_BANK_NAME3).value = g_strNazwaRach3
+end sub
+
+function c##CTRLID_RACH_BANK##_ongetdata(byref oCtrl) : c##CTRLID_RACH_BANK##_ongetdata = true
+    oCtrl.value = page_.root.kli_iNrRachBank
+end function
+
+function c##CTRLID_RACH_BANK##_ondataentered(byref oCtrl, byval newValue) : c##CTRLID_RACH_BANK##_ondataentered = true
+  page_.root.kli_iNrRachBank = newValue
+end function
+#endif
+
+#ifdef APPCONFIG_ADDRESSES_BY_ZIP
+QXR_GET_ADDRESSES_BY_ZIP()
+QXR_GET_ADDRESSES_BY_ZIP(SDB)
+#endif
+
+
+]]></script>
+</config>
+<header>
+</header>
+<body>
+
+XFBEGIN
+
+	QXS_BEGIN_FLAT(18, Informacje podstawowe, FORM_SPAN)
+
+    XFOPTEDITFIELD(Nazwa,40,strCecha1)
+    XFREQSKROTNAZWY
+
+		XFREQNAZWISKO
+		XFREQIMIE
+
+		<tr>
+			QXC_LABEL_REQ(Indeks,1)
+			QXC_EDIT_CUSTOM(CTRLID_INDEKS,20,1)
+		</tr>
+
+		QXR_EDIT_FIELD_REQ(NIP,-1,20,strNip,1)
+
+		QXR_EDIT_REF_OPEN_REQ(Grupa klientów,CTRLID_GRUPAKL,-1,30,PICTURE_CHOICE_N5GRUPAKLIENT,pGrupaKlient,strNazwa,CRSR_DEFAULT,RCELL_SPAN)
+		QXX_STATUS_RADIO2(eAktywny,RCELL_SPAN)
+    
+#ifdef ENABLE_DB12
+	<tr>
+    <td></td>
+    QXC_CHECK1_FIELD(-1,Czynny podatnik VAT,kli_cCzynnyPodatnikVAT,RCELL_SPAN)  
+	</tr>
+#endif    
+
+QXR_EDIT_FIELD(Hasło dostępu WWW,-1,20,strHaslo,1)
+
+#ifdef _HADEX
+	<tr>
+		QXC_LABEL(Nr umowy,1)
+    QXC_EDIT_FIELD(-1,20,strCecha1,RCELL_SPAN)
+	</tr>
+	<tr>
+		XFOPTHUMANNAMECELL(Wysłanie faktury mailem)
+		QXC_RADIO2_CUSTOM(CTRLID_WYSYLKA_FAKTUR_EMAIL,Tak,Nie,2)
+	</tr>
+	<tr>
+		QXC_LABEL(Rejon sprzedaży,1)
+    QXC_EDIT_FIELD(-1,20,strCecha2,RCELL_SPAN)
+	</tr>  
+	<tr>
+		QXC_LABEL(Adres dostawy,1)
+    QXC_EDIT_FIELD(-1,40,strCecha3,RCELL_SPAN)
+	</tr>   
+	<tr>
+		QXC_LABEL(Numer zamówienia,1)
+    QXC_EDIT_FIELD(-1,20,kli_strIndeksNaszaFirma,RCELL_SPAN)
+	</tr>
+	<tr>
+		XFOPTHUMANNAMECELL(Okres fakturowania)
+		QXC_RADIO2_CUSTOM(CTRLID_OKRES_FAKTUROWANIA,Miesiąc,Tydzień,2)
+	</tr> 
+#endif 
+
+	QXS_END_FLAT(FORM_SPAN)
+
+#ifdef _SECURITY
+XFOPTEDITFIELD(Nazwa do korespondencji,40,strCecha1)
+#endif
+
+	QXX_ADRES(6,,Adres)
+#ifdef _SECURITY
+	QXX_ADRES(SECID_SIEDZIBA,SDB,Adres do korespondencji)
+#endif
+
+XFREQSECBEG(550,Dane osobowe,2)
+	XFOPTPESEL
+	XFOPTINTEDITFIELD(Wiek,nWiek,2)
+	XFDATEFIELD(Data urodzenia,dDataUr)
+XFSECEND
+
+QXS_BEGIN_OPT(SECID_DOK_TOZSAM,Dokument tożsamości,FORM_SPAN)
+	<tr>
+		<td width='min'>
+			<t>Typ dokumentu</t>
+		</td>
+		<td>
+			<radio name='e24'>
+				<transfer mode='edit_field'>
+					<field>eTypDT</field>
+				</transfer>
+				
+				<t>Dowód osobisty</t>
+				<t>Paszport</t>
+				<t>Inny</t>
+			</radio>
+		</td>
+	</tr>
+	
+	XFOPTNUMDOKTOZ
+
+	<tr>
+		QXC_LONG_LABEL(Organ wystawiający,1)
+		QXC_EDIT_FIELD(-1,60,kli_strDTOrganWyst,RCELL_SPAN)
+	</tr>
+	QXR_DATE_FIELD(Data wystawienia,-1,kli_dDTDataWyst,RCELL_SPAN)
+
+QXS_END_OPT(FORM_SPAN)
+
+#ifdef _SECURITY
+  XFBLOCK_EMAILTEL_KLIENT(20,CTRLID_FAKTURA_MAIL)
+#else
+#ifdef _HADEX
+	QXS_BEGIN_REQ(20,NAPIS_ATF,2)
+		XFTEL1
+		XFTEL2
+		XFFAX
+		XFOPTEMAIL(E-mail,strEmail)
+		XFOPTWWW(WWW,strWWW)
+	XFSECEND
+#else
+  XFBLOCK_EMAILTEL(SECID_EMAILTEL)
+#endif  
+#endif
+
+#ifdef _TORAL
+  QXS_BEGIN_OPT(CTRLID_ANKIETA,Ankieta,FORM_SPAN)
+    <tr>
+      <td keepline='true' colspan='FORM_SPAN'>
+        QXE_BUTTON(-1,10,Pokaż ankietę,varFunction="show_ankieta")
+        QXE_BUTTON(-1,10,Drukuj pustą,varFunctionHLI="wydruk_ankiety" vn1="2")
+      </td>
+    </tr>
+  QXS_END_OPT(FORM_SPAN)
+#endif
+
+XFOPTUWAGI(30)
+XFOPTUPODOBANIA(31)
+
+
+#ifdef _SECURITY
+	XFOPTSECBEG(34,Cechy,2)		
+	XFOPTEDITFIELD(Cecha 2,40,strCecha2)	
+	XFOPTEDITFIELD(Cecha 3,40,strCecha3)	
+	XFSECEND
+#else	
+#ifdef _AMPLUS
+	XFOPTSECBEG(34,Cechy,2)		
+	XFOPTEDITFIELD(Cecha 1,40,strCecha1)
+	XFOPTEDITFIELD(Cecha 2,40,strCecha2)
+	XFSECEND
+#else
+#ifdef _TORAL
+	XFOPTSECBEG(34,Cechy,2)		
+	XFOPTEDITFIELD(Cecha 2,40,strCecha2)	
+	XFOPTEDITFIELD(Cecha 3,40,strCecha3)	
+	XFSECEND
+#else
+#ifdef _METROX
+  XFOPTSECBEG(35,Cechy,2)
+  XFOPTEDITFIELD(Cecha 1,40,strCecha1)
+  XFOPTEDITFIELD(Cecha 2,40,strCecha2)
+  XFSECEND
+#else
+#ifndef _HADEX
+  XFBLOCK_CECHY(34)
+#endif
+#endif
+#endif
+#endif
+#endif
+
+XFBLOCK_RACHBANK(39)
+
+XFOPTSECBEG(50,Finanse,2)
+
+
+<tr>
+	<td width='min'>
+		<t>Wiarygodność finansowa</t>
+	</td>
+	<td>
+		<radio name='e58' colspan='2'>
+			<transfer mode='edit_field'>
+				<field>eWiarFin</field>
+			</transfer>
+			
+			<t>Nieznana</t>
+			<t>Dobra</t>
+			<t>Przecietna</t>
+			<t>Zła</t>
+		</radio>
+	</td>
+</tr>
+
+XFOPTCURRENCY_WALUTA_FIELD(CTRLID_OBROTY,Obroty klienta,pWaluta,SIZE_OBROTY,2)
+XFOPTCURRENCY_WALUTA_FIELD(CTRLID_LIMIT,Limit kredytowy,pWalutaLimitu,SIZE_LIMIT,2)
+
+#ifdef _METROX
+	<tr>																			
+		QXC_LABEL(Wartość opłat u klienta,1)														
+		<td colspan='1'>													
+			QXE_CURRENCY_CUSTOM(CTRLID_WART_OPLAT,8,2,%)
+		</td> 
+	</tr>
+#endif
+
+	<tr>		
+		<td>
+			<t size='2' name='CTRLID_TRIGGER'>
+				<transfer mode = 'custom'/>
+			</t>
+		</td>
+		<td>
+			QXE_CHECK1_FIELD(CTRLID_BLOK_SPRZED,Blokada sprzedaży,kli_cBlokadaSprz)
+		</td>
+	</tr>
+#ifdef _ABAKUS
+  QXR_INT_FIELD(Ilość dni spóźnienia,-1,10,kli_iTerminSkonta,1)
+  QXR_CURRENCY_FIELD(Kwota zaległości,-1,20,2,PLN,kli_curWartSkonta,1)
+#endif  
+
+XFREQWALUTA	
+<tr>
+	QXC_LABEL(Domyślny sposób płatności,1)
+	QXC_EDIT_REF(-1,20,PICTURE_CHOICE_N5SPOSPLAT,pSposobPlatnosci,strNazwa,CRSR_DEFAULT,1)
+</tr>
+#ifdef _AMPLUS
+<tr>															
+	QXC_LABEL(Ilość dni terminu zalecanego,1)										
+		<td width='min' colspan='1' >
+				<edit precision='0' name='-1' size='10' style='STYLE_CTRL' unit=' dni'>	
+					<transfer mode='edit_field'>	
+					<field>strCecha3</field>	
+					</transfer>	
+				</edit>	
+		</td>
+</tr>
+#endif  
+#ifdef ENABLE_DB11
+	<tr>
+		<td width='min'>
+			QXE_LONG_LABEL(Rachunek bankowy z danych firmy)
+		</td>    
+      <td keepline='true'>
+        <radio name='CTRLID_RACH_BANK' style='STYLE_TABLE_BODY'>
+          <transfer mode='custom'>
+          </transfer>
+          <t name='CTRLID_RACH_BANK_NAME1'></t>
+          <t name='CTRLID_RACH_BANK_NAME2'></t>
+          <t name='CTRLID_RACH_BANK_NAME3'></t>
+        </radio>
+      </td>
+	</tr>  
+#endif
+XFSECEND
+XFOPTSECBEG(555,Klasyfikacje,2)
+
+<tr>
+	<td width='min'>
+		<t>Klasa klienta</t>
+	</td>
+	<td>
+		<radio name='e27' colspan='3'>
+			<transfer mode='edit_field'>
+				<field>eKlasaKlienta</field>
+			</transfer>
+			
+			<t>Mały</t>
+			<t>Średni</t>
+			<t>Duży</t>
+		</radio>
+	</td>
+</tr>
+
+XFSECEND
+
+XFOPTSECBEG(19,Pracownik dedykowany,2)
+#ifdef _AVISTA
+XFOPTREF(Pracownik dedykowany,PICTURE_CHOICE_N5PRACOWNIK,30,pPracownik,strNazwisko,CRSR_N5PRACOWNIK_WG_AKTYWNOSCI)
+#else
+XFOPTPRACOWNIKDED
+#endif
+XFSECEND
+
+
+
+	QXS_BEGIN_OPT(SECID_CENY,Polityka cenowa,FORM_SPAN)
+
+		<tr>
+			XFREQHUMANNAMECELL(Zestaw cenowy)
+		</tr>
+
+		<tr>
+			<td colspan='FORM_SPAN'>
+				<radio colspan='3'>
+					<transfer mode='edit_field'>
+						<field>kli_eZestawCenowy</field>
+					</transfer>
+						<t name='CTRLID_PRICE1'>1<transfer mode='custom'/></t>
+						<t name='CTRLID_PRICE2'>2<transfer mode='custom'/></t>
+						<t name='CTRLID_PRICE3'>3<transfer mode='custom'/></t>
+						<t name='CTRLID_PRICE4'>4<transfer mode='custom'/></t>
+						<t name='CTRLID_PRICE5'>5<transfer mode='custom'/></t>			
+						<t name='CTRLID_PRICE6'>6<transfer mode='custom'/></t>			
+						<t>aktualny</t>			
+				</radio>
+			</td>
+		</tr>
+
+	QXS_END_OPT(FORM_SPAN)
+
+XFEND
+
+</body>
+<footer>
+</footer>
+</page>

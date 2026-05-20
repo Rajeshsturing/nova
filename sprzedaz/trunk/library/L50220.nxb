@@ -1,0 +1,155 @@
+'-----------------------------------------------------------------------
+' (c) Navo 2003 Ltd.
+' CHOICE LIST
+' Spikowski Piotr
+' 
+' Zarzadzanie lista wyboru umieszczona w AFC
+'
+' void CREATECHOICELIST(byval nContainerID, byval nTypeId, byval strField, byval strWhere, byval strOrderBy, byval strJoin, byref pfnResults)
+' OBJECT CHOICELISTS()
+'-----------------------------------------------------------------------
+
+#include "h1200.h"
+#include "h1201.h"
+#include "h1240.h"
+
+#macro CHOICELIST_START(custom_redirect_id) \
+	dim g_pChoiceList \
+	set g_pChoiceList = doc_.afc.new_ChoiceListManager() \
+	g_pChoiceList.m_nCustomRedirect = CLng(custom_redirect_id) \
+	function c##custom_redirect_id##_ongetdata(byref pCtrl) \
+		c##custom_redirect_id##_ongetdata = true \
+	end function \
+	function c##custom_redirect_id##_ondataentered(pCtrl, value) \
+		dim nIdContainer \
+		nIdContainer = CLng(pCtrl.parent.parent.parent.parent.parent.ident) \
+		g_pChoiceList.edit_onchange CStr(value), nIdContainer \
+		c##custom_redirect_id##_ondataentered = true \
+	end function
+
+'-----------------------------------------------------------------------
+' Tworzenie listy wyboru dla podanego kontenera
+'-----------------------------------------------------------------------
+function CREATECHOICELIST(byval nContainerID, byval nTypeId, byval strField, byval strWhere, byval strOrderBy, byval strJoin, byref pfnResults)
+
+	if (trim(strField)="") then
+		dim pTranslate
+		set pTranslate = doc_.getmodule(60130)
+		
+		strField = pTranslate.TypeId2SearchField( nTypeId )
+	end if
+	if strOrderBy = "" then
+		strOrderBy = strField
+	end if
+
+	dim bShowAdvSearch: bShowAdvSearch = false
+    if (nTypeId = TYPEID_N5KLIENT Or _
+        nTypeId = TYPEID_N5ZADANIE Or _
+        nTypeId = TYPEID_N5DOKUMENT Or _
+        nTypeId = TYPEID_N5PRODUKT Or _
+        nTypeId = TYPEID_N5DEKRET Or _
+        nTypeId = TYPEID_N5KONTO) then
+			bShowAdvSearch = true
+	end if
+
+	g_pChoiceList.create_choice_list trans_, page_, nContainerID, nTypeId, strField, strWhere, strOrderBy, strJoin, bShowAdvSearch, pfnResults
+
+	'if (nTypeId = TYPEID_CHOICELIST or nTypeId = TYPEID_SEARCHTYPE) then
+	'	g_pChoiceList.HideButtons nContainerID, true
+	'end if
+end function
+
+'-----------------------------------------------------------------------
+' Zwraca obiekt zarz¹dzj¹cy lisami wyboru
+'-----------------------------------------------------------------------
+function CHOICELISTS()
+	set CHOICELISTS = g_pChoiceList
+end function
+
+'-----------------------------------------------------------------------
+' EVENT: Wo³ane na wejœcie do grupy
+'-----------------------------------------------------------------------
+function choicelist_go_to(byref pHli)
+	g_pChoiceList.choicelist_go_to pHli
+end function
+
+'-----------------------------------------------------------------------
+' EVENT: Wo³ane na wyjœcie z grupy
+'-----------------------------------------------------------------------
+function choicelist_go_back(byref pHli)
+	g_pChoiceList.choicelist_go_back pHli
+end function
+
+'-----------------------------------------------------------------------
+' EVENT: Wo³ane na dokonanie wyboru elementu
+'-----------------------------------------------------------------------
+function choicelist_chose(byref pHli)
+	dim nIdObj: nIdObj = CLng(pHli.prop(100))
+	dim nTypeId: nTypeId = CLng(pHli.prop(102))
+	dim nContainerID: nContainerID = Clng(pHli.prop(101))	
+	dim strCommand: strCommand = "c" + CStr(nContainerID) + "_OnChoice"
+
+	on error resume next
+
+	dim pfnEventFunction: set pfnEventFunction = nothing
+	set pfnEventFunction = GetRef(strCommand)
+
+	if (not pfnEventFunction is nothing) then
+		pfnEventFunction page_.ctrl(nContainerID), nIdObj, nTypeId
+		exit function
+	end if
+
+	strCommand = "ChoiceList_OnChoice"
+
+	set pfnEventFunction = nothing
+	set pfnEventFunction = GetRef(strCommand)
+
+	if (not pfnEventFunction is nothing) then
+		pfnEventFunction page_.ctrl(nContainerID), nIdObj, nTypeId
+		exit function
+	end if
+
+	on error goto 0
+
+end function
+
+'-----------------------------------------------------------------------
+' EVENT: Wo³ane na nacisniecie "Dodaj"
+'-----------------------------------------------------------------------
+
+dim g_bAddNew:g_bAddNew = false
+
+function choicelist_addnew(byref pHli)
+	'Pobieramy parametry
+	dim nContainerID: nContainerID = pHli.prop(101)
+	dim nTypeID: nTypeID = pHli.prop(102)
+
+	'Dokonujemy wyboru obiektu
+	dim nIdObj: nIdObj = CLng(g_pChoiceList.AddNewItem(nContainerID))
+
+	if (nIdObj>0) then
+		'Symulacja event'a - wybrano element
+		pHli.prop(100) = nIdObj
+		g_bAddNew = true
+		choicelist_chose pHli
+	end if
+end function
+
+'-----------------------------------------------------------------------
+' EVENT: Wo³ane na nacisniecie "Wyszukaj"
+'-----------------------------------------------------------------------
+function choicelist_search(byref pHli)
+	'Pobieramy parametry
+	dim nContainerID: nContainerID = pHli.prop(101)
+	dim nTypeID: nTypeID = pHli.prop(102)
+
+	'Dokonujemy wyboru obiektu
+	dim nIdObj: nIdObj = CLng(g_pChoiceList.Search(nContainerID))
+
+	if (nIdObj>0) then
+		'Symulacja event'a - wybrano element
+		pHli.prop(100) = nIdObj
+		choicelist_chose pHli
+	end if
+end function
+

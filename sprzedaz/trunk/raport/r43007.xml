@@ -1,0 +1,1028 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+	Odpalacz exploratorów
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1004.h"
+#include "h1200.h"
+#include "h1201.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1203.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1234.h"
+#include "h1240.h"
+
+-->
+<page>
+<config>
+	<title></title>
+<script>
+<![CDATA[
+
+'enum2str
+#include "50100"
+
+'harui
+#include "50101"
+
+'getcurrent
+#include "50203"
+
+'getCurrentRKS
+#include "50120"
+
+function fopen()
+
+	'w trybie wyboru nie otwieraj od razu
+	'caller wywoła prepare_and_show
+
+	if trans_.isvar(GVAR_FORMUSAGE) then
+		if trans_.var(GVAR_FORMUSAGE) = USAGE_DO_CHOICE then
+			fopen = true
+			exit function
+		end if
+	end if
+	fopen = false
+	dim nRaportType : nRaportType = trans_.var(APPVAR_RAPORT_TYPE)
+
+
+	'------ typeid (required) -----------
+	dim nTypeId 
+	if trans_.isvar(APPVAR_PARAM_TYPEID) then
+		nTypeId = trans_.var(APPVAR_PARAM_TYPEID)
+	else
+		if trans_.isvar(GVAR_TYPEID) then
+			nTypeId = trans_.var(GVAR_TYPEID)
+		else
+#ifdef _DEBUG
+			trans_.message 1,0,"Missing TYPEID in hli. See source !!"
+#endif
+			exit function
+		end if
+	end if
+	'---- idobj (optional) ---------
+	dim nIdObj
+	if trans_.isvar(APPVAR_PARAM_IDOBJ) then
+		nIdObj = trans_.var(APPVAR_PARAM_IDOBJ)
+	else
+		if trans_.isvar(GVAR_OBJECT) then
+			nIdObj = trans_.var(GVAR_OBJECT)
+		else
+			nIdObj = 0
+		end if
+	end if
+
+	'dummy here
+	dim idChoosenTypeId,idChoosenIdObj
+
+	prepare_and_show nRaportType,nTypeId,nIdObj,false,idChoosenTypeId,idChoosenIdObj
+end function
+
+function prepare_and_show(byval nRaportType,byval nTypeId,byval nIdObj,byval bDoChoice,byref idChoosenTypeid,byref idChoosenIdObj)
+
+	if not ensure_licence(nRaportType) then
+		exit function
+	end if
+
+	if not check_rights(nRaportType) then
+		exit function
+	end if
+
+	'-- configure --------
+	dim pTreeHost : set pTreeHost = select_host(nRaportType)
+	dim pPB : set pPB = prepare_pb(pTreeHost,nRaportType,bDoChoice)
+	if pPB is nothing then
+		exit function
+	end if
+	dim pTreeDef : set pTreeDef = pTreeHost.prepare_explorer(pPB)
+	fill_tree_def nRaportType,pTreeDef
+
+	pTreeHost.show pTreeDef,get_title(nRaportType),nTypeId,nIdObj
+	if bDoChoice then
+		idChoosenTypeid = pTreeHost.get_result_typeid()
+		idChoosenIdObj = pTreeHost.get_result_idobj()
+	end if
+end function
+
+'------------------------------------------------------------
+function select_host(nRaportType)
+	select case nRaportType
+	case EXPLORER_CUSTOMERS_BY_GROUPS
+		set select_host = doc_.getmodule(43006)	'simple host, todo: 2-pane host
+	case else
+		set select_host = doc_.getmodule(43006)	'simple host
+	end select
+end function
+'------------------------------------------------------------
+'
+'------------------------------------------------------------
+function check_rights(byval nRaportType) : check_rights = true
+
+	select case nRaportType
+		case EXPLORER_CUSTOMERS_BY_GROUPS
+			check_rights = HARUI(cmdid2uar(CMDID_EXPLORER_CUSTOMERS))
+		case EXPLORER_DOCUMENTS_BY_GROUPS
+			check_rights = HARUI(cmdid2uar(CMDID_EXPLORER_DOCUMENTS))
+#ifdef _ABAKUS
+			if check_rights then
+				check_rights = not HARUI_FREE(UAR_OGRANICZONY_DOSTEP_DANE_KLIENTA)
+			end if
+#endif        
+		case EXPLORER_PRODUCTS_BY_GROUPS
+			check_rights = HARUI(cmdid2uar(CMDID_EXPLORER_PRODUCTS))
+		case EXPLORER_TASKS_BY_TYPE
+			check_rights = HARUI(cmdid2uar(CMDID_EXPLORER_TASKS))
+		case EXPLORER_TASKS_BY_CUSTOMER
+			check_rights = HARUI(cmdid2uar(CMDID_EXPLORER_TASKS_BY_CUSTOMERS))
+		case EXPLORER_ACCOUNTS_HIERARCHY_PLAIN    
+			check_rights = HARUI(cmdid2uar(CMDID_EXPLORER_KONTA))
+#ifdef _ABAKUS
+			if check_rights then
+				check_rights = not HARUI_FREE(UAR_OGRANICZONY_DOSTEP_DANE_KLIENTA)
+			end if
+#endif       
+		case EXPLORER_ACCOUNTS_HIERARCHY_RICH,EXPLORER_ACCOUNTS_HIERARCHY_RICH_PARAM
+			check_rights = HARUI(cmdid2uar(CMDID_RAPORT_OBROTY_SALDA))
+#ifdef _ABAKUS
+			if check_rights then
+				check_rights = not HARUI_FREE(UAR_OGRANICZONY_DOSTEP_DANE_KLIENTA)
+			end if
+#endif          
+		case EXPLORER_COMPANY
+			check_rights = HARUI(cmdid2uar(CMDID_EXPLORER_FIRM))
+#ifdef _ABAKUS
+			if check_rights then
+				check_rights = not HARUI_FREE(UAR_OGRANICZONY_DOSTEP_DANE_KLIENTA)
+			end if
+#endif    
+		case EXPLORER_FIXED_ASSETS
+			check_rights = HARUI(cmdid2uar(CMDID_EXPLORER_SRTRW))
+#ifdef _ABAKUS
+			if check_rights then
+				check_rights = not HARUI_FREE(UAR_OGRANICZONY_DOSTEP_DANE_KLIENTA)
+			end if
+#endif        
+		case EXPLORER_SALES_AND_MAN_PROCESS
+			check_rights = HARUI(UAR_POWIAZANIA)
+	end select
+end function
+
+'------------------------------------------------------------
+
+'------------------------------------------------------------
+function ensure_licence(byval nRaportType) : ensure_licence = false
+	dim nModMask : nModMask = 0
+	select case nRaportType
+		case EXPLORER_CUSTOMERS_BY_GROUPS
+			nModMask = EB_MOD_MASK_HANDEL or EB_MOD_MASK_KONTAKT
+		case EXPLORER_DOCUMENTS_BY_GROUPS
+			nModMask = EB_MOD_MASK_KONTAKT
+		case EXPLORER_PRODUCTS_BY_GROUPS
+			nModMask = EB_MOD_MASK_HANDEL or EB_MOD_MASK_KONTAKT or EB_MOD_MASK_MAGAZYN or EB_MOD_MASK_PRODUKCJA
+		case EXPLORER_TASKS_BY_TYPE
+			nModMask = EB_MOD_MASK_KONTAKT
+		case EXPLORER_TASKS_BY_CUSTOMER
+			nModMask = EB_MOD_MASK_KONTAKT
+		case EXPLORER_ACCOUNTS_HIERARCHY_PLAIN
+			nModMask = EB_MOD_MASK_FINANSE
+		case EXPLORER_ACCOUNTS_HIERARCHY_RICH,EXPLORER_ACCOUNTS_HIERARCHY_RICH_PARAM
+			nModMask = EB_MOD_MASK_FINANSE
+		case EXPLORER_COMPANY
+			nModMask = EB_MOD_MASK_HANDEL or EB_MOD_MASK_KONTAKT or EB_MOD_MASK_FINANSE or EB_MOD_MASK_PRODUKCJA or EB_MOD_MASK_PRACOWNIK
+		case EXPLORER_FIXED_ASSETS
+			nModMask = EB_MOD_MASK_FINANSE
+		case EXPLORER_SALES_AND_MAN_PROCESS
+			nModMask = EB_MOD_MASK_HANDEL or EB_MOD_MASK_MAGAZYN or EB_MOD_MASK_PRODUKCJA
+	end select
+	if nModMask = 0 then
+		ensure_licence = true
+	else
+		ensure_licence = LicUMUI(nModMask)
+	end if
+end function
+'------------------------------------------------------------
+'------------------------------------------------------------
+'
+'------------------------------------------------------------
+function prepare_pb(byref pTreeHost,byval nRaportType,byval bDoChoice)
+	select case nRaportType
+		case EXPLORER_CUSTOMERS_BY_GROUPS
+			set prepare_pb = pTreeHost.new_custombuilder()
+		case EXPLORER_DOCUMENTS_BY_GROUPS
+			set prepare_pb = pTreeHost.new_custombuilder()
+		case EXPLORER_PRODUCTS_BY_GROUPS
+			set prepare_pb = prepare_pb_produkty(pTreeHost,nRaportType)
+		case EXPLORER_TASKS_BY_TYPE
+			set prepare_pb = pTreeHost.new_custombuilder()
+		case EXPLORER_TASKS_BY_CUSTOMER
+			set prepare_pb = pTreeHost.new_custombuilder()
+		case EXPLORER_PLSCHEMATNAL_BY_GROUP
+			set prepare_pb = pTreeHost.new_custombuilder()
+		case EXPLORER_ACCOUNTS_HIERARCHY_PLAIN
+			set prepare_pb = pTreeHost.new_custombuilder()
+		case EXPLORER_ACCOUNTS_HIERARCHY_RICH,EXPLORER_ACCOUNTS_HIERARCHY_RICH_PARAM
+			set prepare_pb = prepare_pb_zois(pTreeHost,nRaportType)
+		case EXPLORER_COMPANY
+			set prepare_pb = prepare_pb_company(pTreeHost,nRaportType)
+		case EXPLORER_FIXED_ASSETS
+			set prepare_pb = pTreeHost.new_custombuilder()
+		case EXPLORER_SALES_AND_MAN_PROCESS
+			set prepare_pb = pTreeHost.new_custombuilder()
+		case EXPLORER_PROJEKT_BY_PROTOKOL
+			set prepare_pb = pTreeHost.new_custombuilder()      
+	end select
+
+	if bDoChoice then
+		if not prepare_pb is nothing then
+			prepare_pb.set_hli_function "varFunctionHLI='on_item_selected_hli' appvarParamTypeid=%1 appvarParamIdobj=%2"
+		end if
+	end if
+
+end function
+
+#define TREE_COLSPAN 9
+
+
+sub fill_tree_def(byval nRaportType,byref pTreeDef)
+
+	select case nRaportType
+	case EXPLORER_CUSTOMERS_BY_GROUPS
+#ifdef _ABAKUS
+	if HARUI_FREE(UAR_OGRANICZONY_DOSTEP_DANE_KLIENTA) then
+		pTreeDef.add_relation TYPEID_N5GRUPAKLIENT,TYPEID_N5GRUPAKLIENT,"pGrupaNadrzedna","c.strNazwa","IdObj in (select pGrupaKlient from n5klient where IdObj in (select IdObj from n5klient where pPracownik in (select n5pracownik.idobj from n5uzytkownik inner join n5wykonawca on n5uzytkownik.pWykonawca = n5wykonawca.idobj inner join n5pracownik on n5wykonawca.wrefObiekt = n5pracownik.idobj and n5wykonawca.wrefObiekt_wrt = TYPEID_N5PRACOWNIK where n5uzytkownik.idobj = " + CStr(getCurrentUserID()) + ")))",false
+		pTreeDef.add_relation TYPEID_N5GRUPAKLIENT,TYPEID_N5KLIENT,"pGrupaKlient","c.strNazwa","IdObj in (select IdObj from n5klient where pPracownik in (select n5pracownik.idobj from n5uzytkownik inner join n5wykonawca on n5uzytkownik.pWykonawca = n5wykonawca.idobj inner join n5pracownik on n5wykonawca.wrefObiekt = n5pracownik.idobj and n5wykonawca.wrefObiekt_wrt = TYPEID_N5PRACOWNIK where n5uzytkownik.idobj = " + CStr(getCurrentUserID()) + "))",false  
+  else
+		pTreeDef.add_relation TYPEID_N5GRUPAKLIENT,TYPEID_N5GRUPAKLIENT,"pGrupaNadrzedna","c.strNazwa","",false
+		pTreeDef.add_relation TYPEID_N5GRUPAKLIENT,TYPEID_N5KLIENT,"pGrupaKlient","c.strNazwa","",false  
+  end if
+#else  
+		pTreeDef.add_relation TYPEID_N5GRUPAKLIENT,TYPEID_N5GRUPAKLIENT,"pGrupaNadrzedna","c.strNazwa","",false
+		pTreeDef.add_relation TYPEID_N5GRUPAKLIENT,TYPEID_N5KLIENT,"pGrupaKlient","c.strNazwa","",false
+#endif    
+	case EXPLORER_DOCUMENTS_BY_GROUPS
+		pTreeDef.add_relation TYPEID_N5TYPDOKUMENTU,TYPEID_N5TYPDOKUMENTU,"pTypNadrzedny","c.strNazwa","",false
+		pTreeDef.add_relation TYPEID_N5TYPDOKUMENTU,TYPEID_N5DOKUMENT,"pTypDokumentu","c.strTematDokum","",false
+	case EXPLORER_PRODUCTS_BY_GROUPS
+		pTreeDef.add_relation TYPEID_N5GRUPAPRODUKTOW,TYPEID_N5GRUPAPRODUKTOW,"pGrupaNadrzedna","c.strNazwa","",false
+		pTreeDef.add_relation TYPEID_N5GRUPAPRODUKTOW,TYPEID_N5PRODUKT,"pGrupaProd","c.strNazwa","",false
+		pTreeDef.add_list_relation TYPEID_N5PRODUKT,"listOpakowania"
+
+	case EXPLORER_TASKS_BY_TYPE
+#ifdef _ABAKUS
+	if HARUI_FREE(UAR_OGRANICZONY_DOSTEP_DANE_KLIENTA) then
+		pTreeDef.add_relation TYPEID_N5TYPDZIALANIA,TYPEID_N5TYPDZIALANIA,"pTypNadrzedny","c.strNazwa","IdObj in (select pTypDzialania from n5zadanie where pKlient in (select IdObj from n5klient where pPracownik in (select n5pracownik.idobj from n5uzytkownik inner join n5wykonawca on n5uzytkownik.pWykonawca = n5wykonawca.idobj inner join n5pracownik on n5wykonawca.wrefObiekt = n5pracownik.idobj and n5wykonawca.wrefObiekt_wrt = TYPEID_N5PRACOWNIK where n5uzytkownik.idobj = " + CStr(getCurrentUserID()) + ")))",false
+		pTreeDef.add_relation TYPEID_N5TYPDZIALANIA,TYPEID_N5ZADANIE,"pTypDzialania","c.strTemat","(pPopZadanie =0 and pNadZadanie=0) and pKlient in (select IdObj from n5klient where pPracownik in (select n5pracownik.idobj from n5uzytkownik inner join n5wykonawca on n5uzytkownik.pWykonawca = n5wykonawca.idobj inner join n5pracownik on n5wykonawca.wrefObiekt = n5pracownik.idobj and n5wykonawca.wrefObiekt_wrt = TYPEID_N5PRACOWNIK where n5uzytkownik.idobj = " + CStr(getCurrentUserID()) + "))",false
+		pTreeDef.add_relation TYPEID_N5ZADANIE,TYPEID_N5ZADANIE,"pPopZadanie","c.idobj","pKlient in (select IdObj from n5klient where pPracownik in (select n5pracownik.idobj from n5uzytkownik inner join n5wykonawca on n5uzytkownik.pWykonawca = n5wykonawca.idobj inner join n5pracownik on n5wykonawca.wrefObiekt = n5pracownik.idobj and n5wykonawca.wrefObiekt_wrt = TYPEID_N5PRACOWNIK where n5uzytkownik.idobj = " + CStr(getCurrentUserID()) + "))",false    
+  else
+		pTreeDef.add_relation TYPEID_N5TYPDZIALANIA,TYPEID_N5TYPDZIALANIA,"pTypNadrzedny","c.strNazwa","",false
+		pTreeDef.add_relation TYPEID_N5TYPDZIALANIA,TYPEID_N5ZADANIE,"pTypDzialania","c.strTemat","(pPopZadanie =0 and pNadZadanie=0)",false
+		pTreeDef.add_relation TYPEID_N5ZADANIE,TYPEID_N5ZADANIE,"pPopZadanie","c.idobj","",false 
+  end if
+#else  
+		pTreeDef.add_relation TYPEID_N5TYPDZIALANIA,TYPEID_N5TYPDZIALANIA,"pTypNadrzedny","c.strNazwa","",false
+		pTreeDef.add_relation TYPEID_N5TYPDZIALANIA,TYPEID_N5ZADANIE,"pTypDzialania","c.strTemat","(pPopZadanie =0 and pNadZadanie=0)",false
+		pTreeDef.add_relation TYPEID_N5ZADANIE,TYPEID_N5ZADANIE,"pPopZadanie","c.idobj","",false
+#endif    
+#ifdef _ABAS_INWESTYCJE
+		pTreeDef.add_relation FIXED_ZADANIA,TYPEID_N5ZADANIE,"Idobj","c.strTemat","",false
+		pTreeDef.add_relation TYPEID_N5ZADANIE,TYPEID_N5ZADANIE,"pNadZadanie","c.strTemat","",true
+		pTreeDef.add_relation TYPEID_N5ZADANIE,TYPEID_N5SPRZEDAZ,"pZadanie","c.strNrDok","",true
+		pTreeDef.add_relation TYPEID_N5ZADANIE,TYPEID_N5PLATNOSC,"pZadanie","c.strNrDok","",true
+		pTreeDef.add_relation TYPEID_N5ZADANIE,TYPEID_N5DOWODKSIEG,"wrefDokZrod","c.strNrDok","wrefDokZrod_wrt=TYPEID_N5ZADANIE",true
+		pTreeDef.add_relation TYPEID_N5ZADANIE,TYPEID_N5ZAMOWIENIE,"pZadanie","c.strNrDok","",true
+		pTreeDef.add_relation TYPEID_N5ZADANIE,TYPEID_N5ZAKUP,"pZadanie","c.strNrDok","",true
+		pTreeDef.add_relation TYPEID_N5ZADANIE,TYPEID_N5ZLECPROD,"pZadanie","c.strNrDok","",true     
+#endif    
+	case EXPLORER_TASKS_BY_CUSTOMER
+#ifdef _ABAKUS
+	if HARUI_FREE(UAR_OGRANICZONY_DOSTEP_DANE_KLIENTA) then
+		pTreeDef.add_fixed_simple_text FIXED_ZADANIA,FIXED_ZADANIA_SKOJARZONE , "Zadania skojarzone z klientami",nothing
+		pTreeDef.add_fixed_simple_text FIXED_ZADANIA,FIXED_ZADANIA_NIESKOJARZONE , "Zadania nieskojarzone",nothing
+		pTreeDef.add_relation FIXED_ZADANIA_SKOJARZONE,TYPEID_N5GRUPAKLIENT,"pGrupaNadrzedna","c.strNazwa","IdObj in (select pGrupaKlient from n5klient where IdObj in (select IdObj from n5klient where pPracownik in (select n5pracownik.idobj from n5uzytkownik inner join n5wykonawca on n5uzytkownik.pWykonawca = n5wykonawca.idobj inner join n5pracownik on n5wykonawca.wrefObiekt = n5pracownik.idobj and n5wykonawca.wrefObiekt_wrt = TYPEID_N5PRACOWNIK where n5uzytkownik.idobj = " + CStr(getCurrentUserID()) + ")))",false
+		pTreeDef.add_relation TYPEID_N5GRUPAKLIENT,TYPEID_N5KLIENT,"pGrupaKlient","c.strNazwa","%child_table%.idobj in (select pklient from n5zadanie) and IdObj in (select IdObj from n5klient where pPracownik in (select n5pracownik.idobj from n5uzytkownik inner join n5wykonawca on n5uzytkownik.pWykonawca = n5wykonawca.idobj inner join n5pracownik on n5wykonawca.wrefObiekt = n5pracownik.idobj and n5wykonawca.wrefObiekt_wrt = TYPEID_N5PRACOWNIK where n5uzytkownik.idobj = " + CStr(getCurrentUserID()) + "))",false
+		pTreeDef.add_relation TYPEID_N5KLIENT,TYPEID_N5ZADANIE,"pKlient","c.idobj","(pPopZadanie =0 and pNadZadanie=0) and pKlient in (select IdObj from n5klient where pPracownik in (select n5pracownik.idobj from n5uzytkownik inner join n5wykonawca on n5uzytkownik.pWykonawca = n5wykonawca.idobj inner join n5pracownik on n5wykonawca.wrefObiekt = n5pracownik.idobj and n5wykonawca.wrefObiekt_wrt = TYPEID_N5PRACOWNIK where n5uzytkownik.idobj = " + CStr(getCurrentUserID()) + "))",false
+		pTreeDef.add_relation TYPEID_N5ZADANIE,TYPEID_N5ZADANIE,"pPopZadanie","c.idobj","pKlient in (select IdObj from n5klient where pPracownik in (select n5pracownik.idobj from n5uzytkownik inner join n5wykonawca on n5uzytkownik.pWykonawca = n5wykonawca.idobj inner join n5pracownik on n5wykonawca.wrefObiekt = n5pracownik.idobj and n5wykonawca.wrefObiekt_wrt = TYPEID_N5PRACOWNIK where n5uzytkownik.idobj = " + CStr(getCurrentUserID()) + "))",false
+		pTreeDef.add_relation TYPEID_N5ZADANIE,TYPEID_N5ZADANIE,"pNadZadanie","c.idobj","pKlient in (select IdObj from n5klient where pPracownik in (select n5pracownik.idobj from n5uzytkownik inner join n5wykonawca on n5uzytkownik.pWykonawca = n5wykonawca.idobj inner join n5pracownik on n5wykonawca.wrefObiekt = n5pracownik.idobj and n5wykonawca.wrefObiekt_wrt = TYPEID_N5PRACOWNIK where n5uzytkownik.idobj = " + CStr(getCurrentUserID()) + "))",false
+		pTreeDef.add_relation FIXED_ZADANIA_NIESKOJARZONE,TYPEID_N5TYPDZIALANIA,"pTypNadrzedny","c.strNazwa","IdObj in (select pTypDzialania from n5zadanie where pKlient in (select IdObj from n5klient where pPracownik in (select n5pracownik.idobj from n5uzytkownik inner join n5wykonawca on n5uzytkownik.pWykonawca = n5wykonawca.idobj inner join n5pracownik on n5wykonawca.wrefObiekt = n5pracownik.idobj and n5wykonawca.wrefObiekt_wrt = TYPEID_N5PRACOWNIK where n5uzytkownik.idobj = " + CStr(getCurrentUserID()) + ")))",false
+		pTreeDef.add_relation TYPEID_N5TYPDZIALANIA,TYPEID_N5TYPDZIALANIA,"pTypNadrzedny","c.strNazwa","IdObj in (select pTypDzialania from n5zadanie where pKlient in (select IdObj from n5klient where pPracownik in (select n5pracownik.idobj from n5uzytkownik inner join n5wykonawca on n5uzytkownik.pWykonawca = n5wykonawca.idobj inner join n5pracownik on n5wykonawca.wrefObiekt = n5pracownik.idobj and n5wykonawca.wrefObiekt_wrt = TYPEID_N5PRACOWNIK where n5uzytkownik.idobj = " + CStr(getCurrentUserID()) + ")))",false
+		pTreeDef.add_relation TYPEID_N5TYPDZIALANIA,TYPEID_N5ZADANIE,"pTypDzialania","c.strTemat","(pPopZadanie =0 and pNadZadanie=0 and pKlient=0)",false  
+  else
+		pTreeDef.add_fixed_simple_text FIXED_ZADANIA,FIXED_ZADANIA_SKOJARZONE , "Zadania skojarzone z klientami",nothing
+		pTreeDef.add_fixed_simple_text FIXED_ZADANIA,FIXED_ZADANIA_NIESKOJARZONE , "Zadania nieskojarzone",nothing
+		pTreeDef.add_relation FIXED_ZADANIA_SKOJARZONE,TYPEID_N5GRUPAKLIENT,"pGrupaNadrzedna","c.strNazwa","",false
+		pTreeDef.add_relation TYPEID_N5GRUPAKLIENT,TYPEID_N5KLIENT,"pGrupaKlient","c.strNazwa","%child_table%.idobj in (select pklient from n5zadanie)",false
+		pTreeDef.add_relation TYPEID_N5KLIENT,TYPEID_N5ZADANIE,"pKlient","c.idobj","(pPopZadanie =0 and pNadZadanie=0)",false
+		pTreeDef.add_relation TYPEID_N5ZADANIE,TYPEID_N5ZADANIE,"pPopZadanie","c.idobj","",false
+		pTreeDef.add_relation TYPEID_N5ZADANIE,TYPEID_N5ZADANIE,"pNadZadanie","c.idobj","",false
+		pTreeDef.add_relation FIXED_ZADANIA_NIESKOJARZONE,TYPEID_N5TYPDZIALANIA,"pTypNadrzedny","c.strNazwa","",false
+		pTreeDef.add_relation TYPEID_N5TYPDZIALANIA,TYPEID_N5TYPDZIALANIA,"pTypNadrzedny","c.strNazwa","",false
+		pTreeDef.add_relation TYPEID_N5TYPDZIALANIA,TYPEID_N5ZADANIE,"pTypDzialania","c.strTemat","(pPopZadanie =0 and pNadZadanie=0 and pKlient=0)",false
+  end if
+#else    
+		pTreeDef.add_fixed_simple_text FIXED_ZADANIA,FIXED_ZADANIA_SKOJARZONE , "Zadania skojarzone z klientami",nothing
+		pTreeDef.add_fixed_simple_text FIXED_ZADANIA,FIXED_ZADANIA_NIESKOJARZONE , "Zadania nieskojarzone",nothing
+		pTreeDef.add_relation FIXED_ZADANIA_SKOJARZONE,TYPEID_N5GRUPAKLIENT,"pGrupaNadrzedna","c.strNazwa","",false
+		pTreeDef.add_relation TYPEID_N5GRUPAKLIENT,TYPEID_N5KLIENT,"pGrupaKlient","c.strNazwa","%child_table%.idobj in (select pklient from n5zadanie)",false
+		pTreeDef.add_relation TYPEID_N5KLIENT,TYPEID_N5ZADANIE,"pKlient","c.idobj","(pPopZadanie =0 and pNadZadanie=0)",false
+		pTreeDef.add_relation TYPEID_N5ZADANIE,TYPEID_N5ZADANIE,"pPopZadanie","c.idobj","",false
+		pTreeDef.add_relation TYPEID_N5ZADANIE,TYPEID_N5ZADANIE,"pNadZadanie","c.idobj","",false
+		pTreeDef.add_relation FIXED_ZADANIA_NIESKOJARZONE,TYPEID_N5TYPDZIALANIA,"pTypNadrzedny","c.strNazwa","",false
+		pTreeDef.add_relation TYPEID_N5TYPDZIALANIA,TYPEID_N5TYPDZIALANIA,"pTypNadrzedny","c.strNazwa","",false
+		pTreeDef.add_relation TYPEID_N5TYPDZIALANIA,TYPEID_N5ZADANIE,"pTypDzialania","c.strTemat","(pPopZadanie =0 and pNadZadanie=0 and pKlient=0)",false
+#endif
+	case EXPLORER_PLSCHEMATNAL_BY_GROUP
+		pTreeDef.add_relation TYPEID_N5PLGRUPASCHEMNAL,TYPEID_N5PLGRUPASCHEMNAL,"pGrupaNadrzedna","c.strNazwa","",false
+		pTreeDef.add_relation TYPEID_N5PLGRUPASCHEMNAL,TYPEID_N5PLSCHEMATNAL,"pGrupaSchemNal","c.strNazwa","",false
+
+	case EXPLORER_ACCOUNTS_HIERARCHY_PLAIN, EXPLORER_ACCOUNTS_HIERARCHY_RICH,EXPLORER_ACCOUNTS_HIERARCHY_RICH_PARAM
+		
+		'to_do: config according to USERPROF_PLANKONT_
+		'USERPROF_PLANKONT_AKTYWNE
+		'USERPROF_PLANKONT_BILANSOWE
+		'strona do ustawiania opcji: 20528
+
+		'len(strSymbol) < 4 = filtr na syntetykę !!
+#ifdef _DENIS
+		pTreeDef.add_relation TYPEID_N5KONTO,TYPEID_N5KONTO,"pKontoNadrz","dbo.ks_lex_order(c.strSymbol)","eAktywne = N5KONTO_AKTYWNE",false
+#else
+		pTreeDef.add_relation TYPEID_N5KONTO,TYPEID_N5KONTO,"pKontoNadrz","dbo.ks_lex_order(c.strSymbol)","",false
+#endif    
+	case EXPLORER_COMPANY
+		pTreeDef.add_fixed_simple_text TYPEID_N5FIRMA,FIXED_JO,"Jednostki organizacyjne",nothing
+		pTreeDef.add_fixed_simple_text TYPEID_N5FIRMA,FIXED_KSIEGOWOSC,"Księgowość",nothing
+		pTreeDef.add_fixed_simple_text TYPEID_N5FIRMA,FIXED_REJESTRY_DOK,"Rejestry dokumentów",nothing
+		pTreeDef.add_fixed_simple_text TYPEID_N5FIRMA,FIXED_MAGAZYNY,"Magazyny",nothing
+		pTreeDef.add_fixed_simple_text TYPEID_N5FIRMA,FIXED_PRACOWNICY,"Pracownicy",nothing
+		pTreeDef.add_fixed_simple_text TYPEID_N5FIRMA,FIXED_SRTRW,"Środki trwałe",nothing
+		
+		pTreeDef.add_fixed_simple_text FIXED_KSIEGOWOSC,FIXED_PLAN_KONT,"Plan kont", _
+			doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=THIS_FILE appvar_raport_type=EXPLORER_ACCOUNTS_HIERARCHY_PLAIN appvarParamTypeid=TYPEID_N5KONTO varNewThread=1")
+
+		pTreeDef.add_fixed TYPEID_N5JEDN_ORG,FIXED_JO_PRACOW,getref("fixeditem_prac_in_jo")
+		pTreeDef.add_fixed TYPEID_N5JEDN_ORG,FIXED_JO_SRTRW,getref("fixeditem_srtrw_in_jo")
+		
+
+		pTreeDef.add_fixed_simple_text FIXED_KSIEGOWOSC,FIXED_DZIENNIKI,"Dzienniki",nothing
+		pTreeDef.add_fixed_simple_text FIXED_KSIEGOWOSC,FIXED_LATA_KSIEGOWE,"Lata księgowe",nothing
+		pTreeDef.add_fixed FIXED_REJESTRY_DOK,FIXED_TYP_REJ,getref("fixeditem_typrej")
+		
+		pTreeDef.add_relation FIXED_JO,TYPEID_N5JEDN_ORG,"p_Jend_Org_Nadrzedna","c.strNazwa","",false
+		pTreeDef.add_relation TYPEID_N5JEDN_ORG,TYPEID_N5JEDN_ORG,"p_Jend_Org_Nadrzedna","c.strNazwa","",false
+
+
+		pTreeDef.add_relation FIXED_PLAN_KONT,TYPEID_N5KONTO,"pKontoNadrz","dbo.ks_lex_order(c.strSymbol)","",false
+		pTreeDef.add_relation TYPEID_N5KONTO,TYPEID_N5KONTO,"pKontoNadrz","dbo.ks_lex_order(c.strSymbol)","",false
+
+		pTreeDef.add_relation FIXED_JO_PRACOW,TYPEID_N5PRACOWNIK,"pJednostkaOrg","c.strNazwisko","",false
+		pTreeDef.add_relation FIXED_JO_SRTRW,TYPEID_N5SRTRW,"pMUJO","c.strNazwa","",false
+		
+		pTreeDef.add_relation FIXED_MAGAZYNY,TYPEID_N5MAGAZYN,"","c.strNazwa","",false
+		pTreeDef.add_relation FIXED_PRACOWNICY,TYPEID_N5PRACOWNIK,"","c.strNazwisko","",false
+
+		pTreeDef.add_relation FIXED_LATA_KSIEGOWE,TYPEID_N5ROKKSIEG,"","c.dDataRozp","",false
+		pTreeDef.add_relation FIXED_DZIENNIKI,TYPEID_N5REJESTRDOK,"","c.strNazwa","eTyp=N5REJESTRDOK_DZIENNIK_NORM",false
+		
+		pTreeDef.add_relation FIXED_TYP_REJ,TYPEID_N5REJESTRDOK,"eTyp","c.strNazwa","",false
+
+		pTreeDef.add_relation FIXED_SRTRW,TYPEID_N5GRUPASRTRW,"","c.strNazwa","",false
+		pTreeDef.add_relation TYPEID_N5GRUPASRTRW,TYPEID_N5GRUPASRTRW,"pGrupaNadrzedna","c.strNazwa","",false
+		pTreeDef.add_relation TYPEID_N5GRUPASRTRW,TYPEID_N5SRTRW,"pGrupa","c.strNazwa","",false
+	case EXPLORER_FIXED_ASSETS
+		pTreeDef.add_relation TYPEID_N5GRUPASRTRW,TYPEID_N5GRUPASRTRW,"pGrupaNadrzedna","c.strNazwa","",false
+		pTreeDef.add_relation TYPEID_N5GRUPASRTRW,TYPEID_N5SRTRW,"pGrupa","c.strNazwa","",false
+	case EXPLORER_SALES_AND_MAN_PROCESS
+		pTreeDef.add_relation FIXED_ZAMOWIENIE_ROOT,TYPEID_N5ZAMOWIENIE,"Idobj","c.strNrDok","",false
+		pTreeDef.add_relation FIXED_ZAKUP_ROOT,TYPEID_N5ZAKUP,"Idobj","c.strNrDok","",false
+		pTreeDef.add_relation FIXED_FAKTURA_ROOT,TYPEID_N5SPRZEDAZ,"Idobj","c.strNrDok","",false
+
+		pTreeDef.add_relation TYPEID_N5ZAMOWIENIE,TYPEID_N5SPRZEDAZ,"pZamowienie","c.strNrDok","",true
+		pTreeDef.add_relation TYPEID_N5ZAMOWIENIE,TYPEID_N5DOKMAG,"wrefDokHandl","c.strNrDok","wrefDokHandl_wrt=TYPEID_N5ZAMOWIENIE",true
+		pTreeDef.add_relation TYPEID_N5ZAMOWIENIE,TYPEID_N5ZLECPROD,"pZamowienie","c.strNrDok","",true
+		pTreeDef.add_relation TYPEID_N5ZAMOWIENIE,TYPEID_N5ZAKUP,"pZamowienie","c.strNrDok","",true
+		pTreeDef.add_relation TYPEID_N5ZAMOWIENIE,TYPEID_N5ZAMOWIENIE,"pZamowienie","c.strNrDok","",true
+
+		pTreeDef.add_relation TYPEID_N5SPRZEDAZ,TYPEID_N5SPRZEDAZ,"pPopSprzed","c.strNrDok","",true
+		pTreeDef.add_relation TYPEID_N5SPRZEDAZ,TYPEID_N5SPRZEDAZ,"pFaktura","c.strNrDok","",true
+#ifdef ENABLE_DB12
+		pTreeDef.add_relation TYPEID_N5SPRZEDAZ,TYPEID_N5SPRZEDAZ,"sprzed_pDostawa","c.strNrDok","",true
+#endif
+		pTreeDef.add_relation TYPEID_N5SPRZEDAZ,TYPEID_N5DOKMAG,"wrefDokHandl","c.strNrDok","wrefDokHandl_wrt=TYPEID_N5SPRZEDAZ",true
+
+		pTreeDef.add_relation FIXED_DOKMAG_ROOT,TYPEID_N5DOKMAG,"IdObj","c.strNrDok","",true
+		pTreeDef.add_relation TYPEID_N5DOKMAG,TYPEID_N5DOKMAG,"pDokMag","c.strNrDok","",true
+		pTreeDef.add_relation FIXED_ZLECPROD_ROOT,TYPEID_N5ZLECPROD,"Idobj","c.strNrDok","",false
+		pTreeDef.add_relation FIXED_REALPROD_ROOT,TYPEID_N5REALPROD,"IdObj","c.strNrDok","",true
+#ifdef APPCONFIG_DOSTAWA_WEGLA    
+		pTreeDef.add_relation TYPEID_N5DOKMAG,TYPEID_N5ZAMOWIENIE,"curExtra4","c.strNrDok","",true
+#endif       
+
+		pTreeDef.add_relation TYPEID_N5ZLECPROD,TYPEID_N5DOKMAG,"wrefDokHandl","c.strNrDok","wrefDokHandl_wrt=TYPEID_N5ZLECPROD",true
+		pTreeDef.add_relation TYPEID_N5ZLECPROD,TYPEID_N5REALPROD,"pZlecProd","c.strNrDok","",true
+		pTreeDef.add_relation TYPEID_N5ZLECPROD,TYPEID_N5ZLECPROD,"pNadZlec","c.strNrDok","",true
+
+		pTreeDef.add_relation TYPEID_N5ZAKUP,TYPEID_N5ZAKUP,"pPopZakup","c.strNrDok","",true
+		pTreeDef.add_relation TYPEID_N5ZAKUP,TYPEID_N5DOKMAG,"wrefDokHandl","c.strNrDok","wrefDokHandl_wrt=TYPEID_N5ZAKUP",true
+    
+	case EXPLORER_PROJEKT_BY_PROTOKOL  
+		pTreeDef.add_relation FIXED_N5PROJEKT_ABAS_ROOT,TYPEID_N5PROJEKT_ABAS,"Idobj","c.proj_strNazwa","",false
+		pTreeDef.add_relation TYPEID_N5PROJEKT_ABAS,TYPEID_N5PROTOKOL_ABAS,"prot_pProjekt","c.prot_strNrDok","",false   
+    
+	end select
+end sub
+
+function get_title(byval nRaportType)
+	select case nRaportType
+	case EXPLORER_CUSTOMERS_BY_GROUPS
+		get_title = "Klienci"
+	case EXPLORER_DOCUMENTS_BY_GROUPS
+		get_title = "Dokumenty"
+	case EXPLORER_PRODUCTS_BY_GROUPS
+		get_title = "Produkty"
+	case EXPLORER_TASKS_BY_TYPE
+		get_title = "Działania wg typów"
+	case EXPLORER_TASKS_BY_CUSTOMER
+		get_title = "Działania wg klientów"
+	case EXPLORER_PLSCHEMATNAL_BY_GROUP
+		get_title = "Schematy wg grup"
+	case EXPLORER_ACCOUNTS_HIERARCHY_PLAIN
+  	get_title = "Plan kont"
+	case EXPLORER_ACCOUNTS_HIERARCHY_RICH,EXPLORER_ACCOUNTS_HIERARCHY_RICH_PARAM
+		get_title = "Zestawienie obrotów i sald"
+	case EXPLORER_COMPANY
+		get_title = getCurrentFirma().strNazwa
+	case EXPLORER_FIXED_ASSETS
+		get_title = "Środki trwałe"
+	case EXPLORER_SALES_AND_MAN_PROCESS
+		get_title = "Proces produkcji i sprzedaży"
+	case EXPLORER_PROJEKT_BY_PROTOKOL
+		get_title = "Protokoły"    
+	end select
+end function
+
+'------------------------------------------------------------
+'produkty
+'------------------------------------------------------------
+
+function prepare_pb_produkty(byref pTreeHost,byval nRaportType)
+	dim pPB : set pPB = pTreeHost.new_custombuilder()
+	
+	'-- oblicz ile cen jest używanych
+	dim nPricesInUse : nPricesInUse = 6
+	pPB.extracols = nPricesInUse
+
+	pPB.set_extra_builder getref("produkty_tree_extra")
+
+	set prepare_pb_produkty = pPB
+end function
+
+function produkty_tree_extra(byref pFEC,byref pObject)	'pFEC - first extra cell
+	if pObject.type = TYPEID_N5OPAKOWANIE_PRODUKTU then
+
+		pFEC.align = ALIGN_RIGHT
+		pFEC.addnew(CTRL_TYPE_STATIC,-1).text = doc_.afc.display.money(pObject.curCenaNetto1,pObject.pWaluta.strSkrot)
+		pFEC.bordercolor = rgb(255,255,255)
+		set pFEC = pFEC.nextelement
+
+		pFEC.align = ALIGN_RIGHT
+		pFEC.addnew(CTRL_TYPE_STATIC,-1).text = doc_.afc.display.money(pObject.curCenaNetto2,pObject.pWaluta.strSkrot)
+		pFEC.bordercolor = rgb(255,255,255)
+		set pFEC = pFEC.nextelement
+
+		pFEC.align = ALIGN_RIGHT
+		pFEC.addnew(CTRL_TYPE_STATIC,-1).text = doc_.afc.display.money(pObject.curCenaNetto3,pObject.pWaluta.strSkrot)
+		pFEC.bordercolor = rgb(255,255,255)
+		set pFEC = pFEC.nextelement
+
+		pFEC.align = ALIGN_RIGHT
+		pFEC.addnew(CTRL_TYPE_STATIC,-1).text = doc_.afc.display.money(pObject.curCenaNetto4,pObject.pWaluta.strSkrot)
+		pFEC.bordercolor = rgb(255,255,255)
+		set pFEC = pFEC.nextelement
+
+		pFEC.align = ALIGN_RIGHT
+		pFEC.addnew(CTRL_TYPE_STATIC,-1).text = doc_.afc.display.money(pObject.curCenaNetto5,pObject.pWaluta.strSkrot)
+		pFEC.bordercolor = rgb(255,255,255)
+		set pFEC = pFEC.nextelement
+
+		pFEC.align = ALIGN_RIGHT
+		pFEC.addnew(CTRL_TYPE_STATIC,-1).text = doc_.afc.display.money(pObject.curCenaNetto6,pObject.pWaluta.strSkrot)
+		pFEC.bordercolor = rgb(255,255,255)
+		set pFEC = pFEC.nextelement
+	end if
+end function
+'------------------------------------------------------------
+'zestawienie obrotów i sald
+'------------------------------------------------------------
+#ifdef _TORAL
+#define EXTRA_COLS_ZOIS   10
+#else
+#define EXTRA_COLS_ZOIS   10
+#endif
+
+dim g_pKontoInfoMan : set g_pKontoInfoMan = nothing
+'tylko bilansowe
+dim g_pKontoInfoMan_BILANS : set g_pKontoInfoMan_BILANS = nothing
+
+#ifdef _ALMA_TREND
+'wszystkie EUR
+dim g_pKontoInfoManEUR : set g_pKontoInfoManEUR = nothing
+'tylko bilansowe EUR
+dim g_pKontoInfoMan_BILANS_EUR : set g_pKontoInfoMan_BILANS_EUR = nothing
+#endif
+
+sub compute_zois(dDateStart,dDateEnd,byref pParChoiceStatus,byref pParChoiceColums,byval idKwalifikator)
+	dim pPerf : set pPerf = doc_.performing("Trwa obliczanie ...")
+	dim pPM : set pPM  = doc_.getmodule(60159)
+	set g_pKontoInfoMan = pPM.prepare_zois(dDateStart,dDateEnd,pParChoiceStatus,nothing,pParChoiceColums,idKwalifikator)
+
+#ifdef _SECURITY
+ 	set g_pKontoInfoMan_BILANS = pPM.prepare_zois_bilans_filter(dDateStart,dDateEnd,pParChoiceStatus,nothing,pParChoiceColums,idKwalifikator,false)
+#else
+	set g_pKontoInfoMan_BILANS = pPM.prepare_zois_bilans_filter(dDateStart,dDateEnd,pParChoiceStatus,nothing,pParChoiceColums,idKwalifikator,true)
+#endif
+
+#ifdef _ALMA_TREND
+	set g_pKontoInfoManEUR = pPM.prepare_zois_bilans_filter_ex_2(dDateStart,dDateEnd,pParChoiceStatus,"",pParChoiceColums,idKwalifikator,false,"EUR")
+	set g_pKontoInfoMan_BILANS_EUR = pPM.prepare_zois_bilans_filter_ex_2(dDateStart,dDateEnd,pParChoiceStatus,"",pParChoiceColums,idKwalifikator,true,"EUR")  
+#endif
+
+end sub
+
+#define SIZE_DO_ROZEPCHANIA	12
+
+function prepare_pb_zois(byref pTreeHost,byval nRaportType)
+#ifdef _SECURITY
+    if trans_.var(GVAR_DBNAME) = "navo2002trio" then
+      if MessageBox("Czy chcesz aktualizować dane w bazie navo2002trio ", "Aktualizowanie danych...", vbYesNo, vbQuestion) = vbYes then
+        ' aktualizacja danych - pobranie z navo200 i navo2002bis na potrzeby analiz finansowych
+        dim pM60159 : set pM60159 = doc_.getmodule(60159)
+        if pM60159.wczytaj_dane_trio() then
+        end if
+      end if
+    end if
+#endif
+
+	set prepare_pb_zois = nothing
+	dim pPB : set pPB = pTreeHost.new_custombuilder()
+
+	'--- build header row
+	dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(pTreeHost.get_dest_table).section_head
+	pTB.newrow.row.styleitem = STYLE_DESC_ROW
+  
+  #ifdef _FRAM
+	with pTB.newcell.cell
+		.colspan = TREE_COLSPAN+2
+		.rowspan =2
+	end with
+	pTB.addtext "Symbol"
+  #else
+  with pTB.newcell.cell
+		.colspan = TREE_COLSPAN
+		.rowspan = 2
+	end with
+	pTB.addtext "Symbol"
+  #endif
+#ifndef _TORAL  
+	pTB.newcell.addtext("BO").cell.colspan = 2
+#else
+	pTB.newcell.addtext("BO saldo").cell.colspan = 2
+#endif
+	pTB.newcell.addtext("Obroty w okresie").cell.colspan = 2
+	pTB.newcell.addtext("Obroty narastająco").cell.colspan = 2
+	pTB.newcell.addtext("Saldo").cell.colspan = 2
+	pTB.newcell.addtext("Saldo sald").cell.colspan = 2
+	pTB.newrow.row.styleitem = STYLE_DESC_ROW
+	pTB.newcell.addtext("Wn").element.size=SIZE_DO_ROZEPCHANIA
+	pTB.newcell.addtext("Ma").element.size=SIZE_DO_ROZEPCHANIA 
+	pTB.newcell.addtext("Wn").element.size=SIZE_DO_ROZEPCHANIA
+	pTB.newcell.addtext("Ma").element.size=SIZE_DO_ROZEPCHANIA
+	pTB.newcell.addtext("Wn").element.size=SIZE_DO_ROZEPCHANIA
+	pTB.newcell.addtext("Ma").element.size=SIZE_DO_ROZEPCHANIA
+	pTB.newcell.addtext("Wn").element.size=SIZE_DO_ROZEPCHANIA
+	pTB.newcell.addtext("Ma").element.size=SIZE_DO_ROZEPCHANIA
+	pTB.newcell.addtext("Wn").element.size=SIZE_DO_ROZEPCHANIA
+	pTB.newcell.addtext("Ma").element.size=SIZE_DO_ROZEPCHANIA
+	
+
+	'--- setup presentation builder
+	pPB.extracols = EXTRA_COLS_ZOIS
+
+	pPB.set_extra_builder getref("zois_tree_extra")
+	
+	if nRaportType = EXPLORER_ACCOUNTS_HIERARCHY_RICH_PARAM then
+		dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+		dim pParamFactory: set pParamFactory = doc_.afc.rap.param
+
+		dim pParamDate : set pParamDate = doc_.afc.rap.param.new_date_range("Analizowany okres")
+		pParamArray.add pParamDate
+
+		dim pParamKwalifikator : set pParamKwalifikator = pParamFactory.new_choice("Kwalifikator")
+		pParamKwalifikator.multiple = false
+		pParamFactory.init_on_query pParamKwalifikator, trans_, _
+		"select strNazwa,idobj from n5kwalifikator union select '<dowolny>',-1 union select '<brak>', 0 order by 1"
+		pParamArray.add pParamKwalifikator
+
+		dim pDialogBuilder : set pDialogBuilder = doc_.afc.rap.new_param_dlg(pParamArray , trans_ , "Zestawienie obrotów i sald")
+		dim pSO : set pSO = doc_.createstreamobj
+		pSO.write pDialogBuilder.get_all()
+		
+		'wyświetl stronę
+		dim hli : set hli = doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE")
+		set hli.prop(GVAR_DESTPAGE) = pSO.getstream
+		set pSO = nothing
+		dim pDialogPage : set pDialogPage = doc_.getpagehli(hli)
+		dim nResult : nResult= pDialogPage.domodalauto()
+		if nResult <> 0 then
+			pDialogBuilder.update_params(pDialogPage)
+		else
+			exit function
+		end if
+		
+		'todo: na razie łata bo RapParamDateRange nie ustawia m_Last
+		pParamDate.get_where_part trans_
+		if pParamDate.mode = 1 then	'any date
+			pParamDate.first_value = getCurrentRKS().dDataRozp
+			pParamDate.last_value = getCurrentRKS().dDataZakon
+		end if
+		
+    
+    'ograniczenie do biezacego roku ksiegowego
+ 		pParamDate.get_where_part trans_
+    if pParamDate.mode = 1 then	'any date
+      pParamDate.first_value = getCurrentRKS().dDataRozp
+      pParamDate.last_value = getCurrentRKS().dDataZakon
+    end if
+    if pParamDate.mode = 5 then	'do dnia
+      pParamDate.last_value = pParamDate.first_value
+      pParamDate.first_value = getCurrentRKS().dDataRozp
+    end if
+    if pParamDate.mode = 6 then	'od dnia
+      pParamDate.last_value = getCurrentRKS().dDataZakon
+    end if
+    
+		compute_zois pParamDate.first_value, pParamDate.last_value,nothing,nothing, _
+			pParamKwalifikator.values.Value(pParamKwalifikator.first_selected)
+	else
+		
+		compute_zois getCurrentRKS().dDataRozp, trans_.var(GVAR_TODAY),nothing,nothing,-1
+	end if
+
+	'--- build footer row
+	set pTB = doc_.afc.new_tb(nothing).attach(pTreeHost.get_dest_table).section_foot
+	pTB.newrow.row.bold = true
+  #ifdef _FRAM
+  	pTB.newcell.cell.colspan = TREE_COLSPAN+1
+  #else
+  	pTB.newcell.cell.colspan = TREE_COLSPAN
+  #endif
+  
+#ifdef _ALMA_TREND
+	pTB.addtext "Suma bilansowe"
+#else
+	pTB.addtext "Suma"
+#endif  
+	
+	dim pFEC : set pFEC = pTB.newcell.cell
+	dim iter
+	for iter = 2 to EXTRA_COLS_ZOIS
+		pTB.newcell
+	next
+	
+	'zois_tree_extra_idkonto pFEC,0
+	zois_tree_extra_idkonto_EX pFEC,0,g_pKontoInfoMan_BILANS
+  
+#ifdef _ALMA_TREND
+	pTB.newrow.row.bold = true
+  pTB.newcell.cell.colspan = TREE_COLSPAN
+  pTB.addtext "Suma pozabilansowe PLN"
+	set pFEC = pTB.newcell.cell
+	for iter = 2 to EXTRA_COLS_ZOIS
+		pTB.newcell
+	next  
+  zois_tree_extra_idkonto_bezbil pFEC, 0, false 
+
+	pTB.newrow.row.bold = true
+  pTB.newcell.cell.colspan = TREE_COLSPAN
+  pTB.addtext "Suma pozabilansowe EUR"
+	set pFEC = pTB.newcell.cell
+	for iter = 2 to EXTRA_COLS_ZOIS
+		pTB.newcell
+	next  
+  zois_tree_extra_idkonto_bezbil pFEC, 0, true 
+#endif
+  
+	pTB.newrow.row.bold = true
+#ifdef _PAKART  
+	pTB.newcell.cell.colspan = TREE_COLSPAN
+#else
+	pTB.newcell.cell.colspan = TREE_COLSPAN+1
+#endif
+	with pTB.addctrl(CTRL_TYPE_BUTTON,-1).element
+		.text = "Raport"
+		'.styleitem = STYLE_BUTTON
+		.backcolor=rgb(171,190,230)
+		.backcolor2=rgb(255,255,255)
+		set .hli = doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=PAGE_RAPORT_ZAPISY_NA_KONTACH appvar_raport_type=RAPTEMPLATE_ZESTAWIENIE_OBROTOW_I_SALD")
+	end with
+#ifdef _ALMA_TREND
+	pTB.newrow
+  pTB.row.fontsize = 1
+  pTB.newcell.cell.colspan = TREE_COLSPAN+2
+  pTB.addtext "Dokument wyemitowany przez EuroBusiness 5.0"
+#endif
+#ifdef _PAKART   
+	pTB.newcell
+	with pTB.addctrl(CTRL_TYPE_BUTTON,-1).element
+		.text = "Wydruk"
+		.backcolor=rgb(171,190,230)
+		.backcolor2=rgb(255,255,255)
+		set .hli = doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=PAGE_RAPORT_ZAPISY_NA_KONTACH appvar_raport_type=RAPTEMPLATE_ZEST_OBR_I_SALD_WYDRUK_IGLOWY")
+	end with
+#endif  
+	set prepare_pb_zois = pPB
+end function
+
+private function fill_fec(byref pFEC,byref curVal,byval strUnit,byval bEvenCol)
+	with pFEC
+		.align = ALIGN_RIGHT
+		.addnew(CTRL_TYPE_STATIC,-1).text = doc_.afc.display.money(curVal,strUnit)
+		if bEvenCol then
+			.styleitem = STYLE_OPTION_PAD
+		end if
+		.bordercolor = rgb(255,255,255)
+		set fill_fec = .nextelement
+	end with
+end function
+
+
+function zois_tree_extra_idkonto(byref pFEC,byval idKonto)
+	zois_tree_extra_idkonto_EX 	pFEC , idKonto , nothing
+end function
+
+function zois_tree_extra_idkonto_bezbil(byref pFEC,byval idKonto, byval bMode)
+  dim strUnit : strUnit = ""
+  'wszystkie
+	dim pKontoInfo: set pKontoInfo = g_pKontoInfoMan.kontoinfo(idKonto)
+  'bilansowe
+  dim pKontoInfoBilas: set pKontoInfoBilas = g_pKontoInfoMan_BILANS.kontoinfo(idKonto)
+  
+  'wszyskie pozabilansowe
+  dim curBO_Wn: curBO_Wn = ccur(0)
+  dim curBO_Ma: curBO_Ma = ccur(0)
+  dim curObrO_Wn: curObrO_Wn = ccur(0)
+  dim curObrO_Ma: curObrO_Ma = ccur(0)
+  dim curObrN_Wn: curObrN_Wn = ccur(0)
+  dim curObrN_Ma: curObrN_Ma = ccur(0)
+  dim curSalN_Wn: curSalN_Wn = ccur(0)
+  dim curSalN_Ma: curSalN_Ma = ccur(0)
+  dim curSaSN_Wn: curSaSN_Wn = ccur(0)
+  dim curSaSN_Ma: curSaSN_Ma = ccur(0)
+  
+  if pKontoInfo.m_curBO_Wn - pKontoInfoBilas.m_curBO_Wn > ccur(0) then
+    curBO_Wn = pKontoInfo.m_curBO_Wn - pKontoInfoBilas.m_curBO_Wn
+  end if
+  if pKontoInfo.m_curBO_Ma - pKontoInfoBilas.m_curBO_Ma > ccur(0) then
+    curBO_Ma = pKontoInfo.m_curBO_Ma - pKontoInfoBilas.m_curBO_Ma
+  end if
+  if pKontoInfo.m_curObrO_Wn - pKontoInfoBilas.m_curObrO_Wn > ccur(0) then
+    curObrO_Wn = pKontoInfo.m_curObrO_Wn - pKontoInfoBilas.m_curObrO_Wn
+  end if  
+  if pKontoInfo.m_curObrO_Ma - pKontoInfoBilas.m_curObrO_Ma > ccur(0) then
+    curObrO_Ma = pKontoInfo.m_curObrO_Ma - pKontoInfoBilas.m_curObrO_Ma
+  end if  
+  if pKontoInfo.m_curObrN_Wn - pKontoInfoBilas.m_curObrN_Wn > ccur(0) then
+    curObrN_Wn = pKontoInfo.m_curObrN_Wn - pKontoInfoBilas.m_curObrN_Wn
+  end if 
+  if pKontoInfo.m_curObrN_Ma - pKontoInfoBilas.m_curObrN_Ma > ccur(0) then
+    curObrN_Ma = pKontoInfo.m_curObrN_Ma - pKontoInfoBilas.m_curObrN_Ma
+  end if  
+  if pKontoInfo.m_curSalN_Wn - pKontoInfoBilas.m_curSalN_Wn > ccur(0) then
+    curSalN_Wn = pKontoInfo.m_curSalN_Wn - pKontoInfoBilas.m_curSalN_Wn
+  end if   
+  if pKontoInfo.m_curSalN_Ma - pKontoInfoBilas.m_curSalN_Ma > ccur(0) then
+    curSalN_Ma = pKontoInfo.m_curSalN_Ma - pKontoInfoBilas.m_curSalN_Ma
+  end if    
+  if pKontoInfo.m_curSaSN_Wn - pKontoInfoBilas.m_curSaSN_Wn > ccur(0) then
+    curSaSN_Wn = pKontoInfo.m_curSaSN_Wn - pKontoInfoBilas.m_curSaSN_Wn 
+  end if  
+  if pKontoInfo.m_curSaSN_Ma - pKontoInfoBilas.m_curSaSN_Ma > ccur(0) then
+    curSaSN_Ma = pKontoInfo.m_curSaSN_Ma - pKontoInfoBilas.m_curSaSN_Ma
+  end if    
+  
+  'wszystkie w EUR
+  dim pKontoInfoEUR: set pKontoInfoEUR = g_pKontoInfoManEUR.kontoinfo(idKonto)
+  'bilansowe w EUR
+  dim pKontoInfoBilansEUR: set pKontoInfoBilansEUR = g_pKontoInfoMan_BILANS_EUR.kontoinfo(idKonto)
+  
+  'pozabilansowe EUR
+  dim curBO_Wn_EUR: curBO_Wn_EUR = ccur(0)
+  dim curBO_Ma_EUR: curBO_Ma_EUR = ccur(0)
+  dim curObrO_Wn_EUR: curObrO_Wn_EUR = ccur(0)
+  dim curObrO_Ma_EUR: curObrO_Ma_EUR = ccur(0)
+  dim curObrN_Wn_EUR: curObrN_Wn_EUR = ccur(0)
+  dim curObrN_Ma_EUR: curObrN_Ma_EUR = ccur(0)
+  dim curSalN_Wn_EUR: curSalN_Wn_EUR = ccur(0)
+  dim curSalN_Ma_EUR: curSalN_Ma_EUR = ccur(0)
+  dim curSaSN_Wn_EUR: curSaSN_Wn_EUR = ccur(0)
+  dim curSaSN_Ma_EUR: curSaSN_Ma_EUR = ccur(0)
+  
+  if pKontoInfoEUR.m_curBO_Wn - pKontoInfoBilansEUR.m_curBO_Wn > ccur(0) then
+    curBO_Wn_EUR = pKontoInfoEUR.m_curBO_Wn - pKontoInfoBilansEUR.m_curBO_Wn
+  end if
+  if pKontoInfoEUR.m_curBO_Ma - pKontoInfoBilansEUR.m_curBO_Ma > ccur(0) then
+    curBO_Ma_EUR = pKontoInfoEUR.m_curBO_Ma - pKontoInfoBilansEUR.m_curBO_Ma
+  end if
+  if pKontoInfoEUR.m_curObrO_Wn - pKontoInfoBilansEUR.m_curObrO_Wn > ccur(0) then
+    curObrO_Wn_EUR = pKontoInfoEUR.m_curObrO_Wn - pKontoInfoBilansEUR.m_curObrO_Wn
+  end if  
+  if pKontoInfoEUR.m_curObrO_Ma - pKontoInfoBilansEUR.m_curObrO_Ma > ccur(0) then
+    curObrO_Ma_EUR = pKontoInfoEUR.m_curObrO_Ma - pKontoInfoBilansEUR.m_curObrO_Ma
+  end if  
+  if pKontoInfoEUR.m_curObrN_Wn - pKontoInfoBilansEUR.m_curObrN_Wn > ccur(0) then
+    curObrN_Wn_EUR = pKontoInfoEUR.m_curObrN_Wn - pKontoInfoBilansEUR.m_curObrN_Wn
+  end if 
+  if pKontoInfoEUR.m_curObrN_Ma - pKontoInfoBilansEUR.m_curObrN_Ma > ccur(0) then
+    curObrN_Ma_EUR = pKontoInfoEUR.m_curObrN_Ma - pKontoInfoBilansEUR.m_curObrN_Ma
+  end if  
+  if pKontoInfoEUR.m_curSalN_Wn - pKontoInfoBilansEUR.m_curSalN_Wn > ccur(0) then
+    curSalN_Wn_EUR = pKontoInfoEUR.m_curSalN_Wn - pKontoInfoBilansEUR.m_curSalN_Wn
+  end if   
+  if pKontoInfoEUR.m_curSalN_Ma - pKontoInfoBilansEUR.m_curSalN_Ma > ccur(0) then
+    curSalN_Ma_EUR = pKontoInfoEUR.m_curSalN_Ma - pKontoInfoBilansEUR.m_curSalN_Ma
+  end if    
+  if pKontoInfoEUR.m_curSaSN_Wn - pKontoInfoBilansEUR.m_curSaSN_Wn > ccur(0) then
+    curSaSN_Wn_EUR = pKontoInfoEUR.m_curSaSN_Wn - pKontoInfoBilansEUR.m_curSaSN_Wn 
+  end if  
+  if pKontoInfoEUR.m_curSaSN_Ma - pKontoInfoBilansEUR.m_curSaSN_Ma > ccur(0) then
+    curSaSN_Ma_EUR = pKontoInfoEUR.m_curSaSN_Ma - pKontoInfoBilansEUR.m_curSaSN_Ma
+  end if     
+  
+  if bMode then
+    'pozabilansowe w EUR
+	  fill_fec fill_fec(fill_fec(fill_fec(fill_fec(fill_fec(fill_fec(fill_fec(fill_fec(fill_fec( _
+		  pFEC,curBO_Wn_EUR,strUnit,true)		_
+			  ,curBO_Ma_EUR,strUnit,false)		_
+			  ,curObrO_Wn_EUR,strUnit,true)	_
+			  ,curObrO_Ma_EUR,strUnit,false)	_
+			  ,curObrN_Wn_EUR,strUnit,true)	_
+			  ,curObrN_Ma_EUR,strUnit,false)	_
+			  ,curSalN_Wn_EUR,strUnit,true)	_
+			  ,curSalN_Ma_EUR,strUnit,false)	_
+			  ,curSaSN_Wn_EUR,strUnit,true)	_
+			  ,curSaSN_Ma_EUR,strUnit,false
+  else
+    'pozabilansowe PLN
+	  fill_fec fill_fec(fill_fec(fill_fec(fill_fec(fill_fec(fill_fec(fill_fec(fill_fec(fill_fec( _
+		  pFEC,curBO_Wn - curBO_Wn_EUR,strUnit,true)		_
+			  ,curBO_Ma - curBO_Ma_EUR,strUnit,false)		_
+			  ,curObrO_Wn - curObrO_Wn_EUR,strUnit,true)	_
+			  ,curObrO_Ma - curObrO_Ma_EUR,strUnit,false)	_
+			  ,curObrN_Wn - curObrN_Wn_EUR,strUnit,true)	_
+			  ,curObrN_Ma - curObrN_Ma_EUR,strUnit,false)	_
+			  ,curSalN_Wn - curSalN_Wn_EUR,strUnit,true)	_
+			  ,curSalN_Ma - curSalN_Ma_EUR,strUnit,false)	_
+			  ,curSaSN_Wn - curSaSN_Wn_EUR,strUnit,true)	_
+			  ,curSaSN_Ma - curSaSN_Ma_EUR,strUnit,false  
+  end if
+end function
+
+function zois_tree_extra_idkonto_EX(byref pFEC,byval idKonto , byval KontoMan)	'pFEC - first extra cell
+  dim strUnit : strUnit = ""
+	dim pKontoInfo
+	if KontoMan is nothing then
+		set pKontoInfo = g_pKontoInfoMan.kontoinfo(idKonto)
+	else
+		set pKontoInfo = KontoMan.kontoinfo(idKonto)
+	end if
+  
+#ifdef APPCONFIG_SUMA_SALDO_SALD
+	'saldo sald podsumowanie
+	if not KontoMan is nothing then
+		dim pKInfo
+		dim pCursKonta : set pCursKonta = trans_.createadors("select idobj from n5konto where pKontoNadrz = 0")
+		do while not pCursKonta.EOF
+			set pKInfo = KontoMan.kontoinfo(clng(pCursKonta(0)))
+			pKontoInfo.m_curSaSN_Wn = pKontoInfo.m_curSaSN_Wn + pKInfo.m_curSaSN_Wn
+			pKontoInfo.m_curSaSN_Ma = pKontoInfo.m_curSaSN_Ma + pKInfo.m_curSaSN_Ma
+			pCursKonta.movenext
+		loop  
+	end if
+#endif
+
+#ifdef _TORAL
+  'BO saldo
+  dim curBO_WnSal: curBO_WnSal = ccur(0)
+  dim curBO_MaSal: curBO_MaSal = ccur(0)
+  if pKontoInfo.m_curBO_Wn > pKontoInfo.m_curBO_Ma then
+    curBO_WnSal = pKontoInfo.m_curBO_Wn - pKontoInfo.m_curBO_Ma
+  end if
+  if pKontoInfo.m_curBO_Ma > pKontoInfo.m_curBO_Wn then
+    curBO_MaSal = pKontoInfo.m_curBO_Ma - pKontoInfo.m_curBO_Wn
+  end if  
+  
+	'BO saldo z podsumowaniem
+	if not KontoMan is nothing then
+		dim pKInfo
+		dim curBufBO_WnSal: curBufBO_WnSal = ccur(0.0)
+		dim curBufBO_MaSal: curBufBO_MaSal = ccur(0.0)
+		dim pCursKonta : set pCursKonta = trans_.createadors("select idobj from n5konto where pKontoNadrz = 0")
+		do while not pCursKonta.EOF
+			set pKInfo = KontoMan.kontoinfo(clng(pCursKonta(0)))
+			if pKInfo.m_curBO_Wn > pKInfo.m_curBO_Ma then
+				curBufBO_WnSal = pKInfo.m_curBO_Wn - pKInfo.m_curBO_Ma
+				curBO_WnSal = curBO_WnSal + curBufBO_WnSal
+			end if
+			if pKInfo.m_curBO_Ma > pKInfo.m_curBO_Wn then
+				curBufBO_MaSal = pKInfo.m_curBO_Ma - pKInfo.m_curBO_Wn
+				curBO_MaSal = curBO_MaSal + curBufBO_MaSal
+			end if
+			pCursKonta.movenext
+		loop  
+	end if  
+  
+	fill_fec fill_fec(fill_fec(fill_fec(fill_fec(fill_fec(fill_fec(fill_fec(fill_fec(fill_fec( _
+		pFEC,curBO_WnSal,strUnit,true)	_
+			,curBO_MaSal,strUnit,false)	_      
+			,pKontoInfo.m_curObrO_Wn,strUnit,true)	_
+			,pKontoInfo.m_curObrO_Ma,strUnit,false)	_
+			,pKontoInfo.m_curObrN_Wn,strUnit,true)	_
+			,pKontoInfo.m_curObrN_Ma,strUnit,false)	_
+			,pKontoInfo.m_curSalN_Wn,strUnit,true)	_
+			,pKontoInfo.m_curSalN_Ma,strUnit,false)	_
+			,pKontoInfo.m_curSaSN_Wn,strUnit,true)	_
+			,pKontoInfo.m_curSaSN_Ma,strUnit,false  
+#else
+	fill_fec fill_fec(fill_fec(fill_fec(fill_fec(fill_fec(fill_fec(fill_fec(fill_fec(fill_fec( _
+		pFEC,pKontoInfo.m_curBO_Wn,strUnit,true)		_
+			,pKontoInfo.m_curBO_Ma,strUnit,false)		_
+			,pKontoInfo.m_curObrO_Wn,strUnit,true)	_
+			,pKontoInfo.m_curObrO_Ma,strUnit,false)	_
+			,pKontoInfo.m_curObrN_Wn,strUnit,true)	_
+			,pKontoInfo.m_curObrN_Ma,strUnit,false)	_
+			,pKontoInfo.m_curSalN_Wn,strUnit,true)	_
+			,pKontoInfo.m_curSalN_Ma,strUnit,false)	_
+			,pKontoInfo.m_curSaSN_Wn,strUnit,true)	_
+			,pKontoInfo.m_curSaSN_Ma,strUnit,false
+#endif		
+
+end function
+
+function zois_tree_extra(byref pFEC,byref pKonto)	'pFEC - first extra cell
+	zois_tree_extra_idkonto pFEC,pKonto.idobj
+end function
+
+'------------------------------------------------------------
+'firma
+'------------------------------------------------------------
+function prepare_pb_company(byref pTreeHost,byval nRaportType)
+	dim pPB : set pPB = pTreeHost.new_custombuilder()
+	
+	set prepare_pb_company = pPB
+end function
+
+function fixeditem_prac_in_jo(byref pTSPD,nParentTypeId, nParentIdObj,byref pFixedCPRD)
+	dim pStatic : set pStatic = pTSPD.prepare_arena(true, FIXED_JO_PRACOW,nParentIdObj,0). _
+		addnew(CTRL_TYPE_STATIC,-1)
+	pStatic.text = "Pracownicy"
+
+	fixeditem_prac_in_jo = true
+end function
+
+function fixeditem_srtrw_in_jo(byref pTSPD,nParentTypeId, nParentIdObj,byref pFixedCPRD)
+	dim pStatic : set pStatic = pTSPD.prepare_arena(true, FIXED_JO_SRTRW,nParentIdObj,0). _
+		addnew(CTRL_TYPE_STATIC,-1)
+	pStatic.text = "Środki trwałe"
+
+	fixeditem_srtrw_in_jo = true
+end function
+
+
+function fixeditem_typrej(byref pTSPD,nParentTypeId, nParentIdObj,byref pFixedCPRD)
+	dim iter : iter = 1
+	dim strEnum : strEnum = ""
+	do 
+		select case iter
+		'pomijamy dzienniki
+		case N5REJESTRDOK_DZIENNIK_NORM,N5REJESTRDOK_DZIENNIK_BO,N5REJESTRDOK_DZIENNIK_BZ,N5REJESTRDOK_DZIENNIK_BZ_OSTAT
+		'noop
+		case else
+			strEnum = enum2str(TYPEID_N5REJESTRDOK, ENUMFLDNR_N5REJESTRDOK_ETYP, iter)
+			if strEnum <> "" then
+				dim pStatic : set pStatic = pTSPD.prepare_arena(true, FIXED_TYP_REJ,nParentIdObj,iter).addnew(CTRL_TYPE_STATIC,-1)
+				pStatic.text = strEnum
+			end if
+		end select
+		iter = iter + 1
+	loop while strEnum <> ""
+
+	fixeditem_typrej = true
+end function
+
+]]>
+</script>
+</config>
+	<body>
+	</body>
+</page>

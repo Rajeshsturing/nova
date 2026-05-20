@@ -1,0 +1,326 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+ustawienia COMMa
+strona pozwala podanie ustawień komunikacji COMM.
+strona odczytuje / zapisuje ustawienia w rejestrze
+użycie:
+- utwórz obiekt tej strony
+- wywołaj setup
+- wywołaj domodalauto
+
+#include "h1000.h"
+#include "h1224.h"
+#include "h1240.h"
+
+#define CTRLID_SPEED		1024
+#define CTRLID_CUSTOM_SPEED	1025
+#define ID_KOLEKTOR      34
+
+-->
+<page style='STYLE_PAGE'>
+
+<config>
+	<title>
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+<startpos>center</startpos>
+<script>
+		<![CDATA[
+
+dim g_pM60224 : set g_pM60224 = nothing
+
+function fopen() : fopen = true
+	set g_pM60224 = doc_.getmodule(60224)
+end function
+
+dim g_nPortSpeed
+dim g_strRegKey
+
+function setup( byval pageTitle , byval strRegKey)
+	page_.topelement.title = pageTitle
+	g_strRegKey = strRegKey
+  if g_strRegKey = "HKLM_KOLEKTOR_SETTINGS" then
+    page_.ctrl(ID_KOLEKTOR).hide=false
+  else
+    page_.ctrl(ID_KOLEKTOR).hide=true
+  end if
+	init
+end function
+
+function save_settings
+	get_settings().to_registry g_strRegKey
+end function
+
+function read_settings
+	dim pCommSettings : set pCommSettings = g_pM60224.new_comm_settings()
+	pCommSettings.from_registry g_strRegKey
+	set read_settings = pCommSettings
+end function
+
+function init
+	
+	' ustawienia domyślne
+	' bit 1 : port (1 ... 4)
+	' bit 2 : parzystość :
+	'	-	1 - brak		
+	'	-	2 - nieparzyste
+	'	-	3 - parzyste		
+	'	-	4 - znak		
+	'	-	5 - spacja		
+	' bit 3 : bity w bajcie (7,8,9)	
+	' bit 4 : bit stopu
+	'	-	1 - 1		
+	'	-	2 - 1,5
+	'	-	3 - 2
+	' bit 5 : predkosc (wyliczana)
+	'	-	01- 110 
+	'	-	02- 300 
+	'	-	03- 600 
+	'	-	04- 1200 
+	'	-	05- 2400 
+	'	-	06- 4800 
+	'	-	07- 9600 (Default) 
+	'	-	08- 14400 
+	'	-	09- 19200 
+	'	-	10- 28800 
+	'	-	11- 38400 
+	'	-	12- 56000 
+	'	-	13- 57600 
+	'	-	14- 115200 
+	'	-	15- 128000 
+	'	-	16- 256000 
+	'	-	17- inna
+	'bit 6 : model kolektora
+	'	-	1- CipherLab
+	'	-	2- Unitech
+	set_settings(read_settings())
+  
+end function
+'-----------------------------------------------------------------------------
+function radio2speed(byval eSpeed)
+	select case eSpeed
+		case 1		radio2speed = 110
+		case 2		radio2speed = 300			
+		case 3		radio2speed = 600
+		case 4		radio2speed = 1200
+		case 5		radio2speed = 2400
+		case 6		radio2speed = 4800
+		case 7		radio2speed = 9600
+		case 8		radio2speed = 14400
+		case 9		radio2speed = 19200
+		case 10		radio2speed = 28800
+		case 11		radio2speed = 38400
+		case 12		radio2speed = 56000
+		case 13		radio2speed = 57600
+		case 14		radio2speed = 115200
+		case 15		radio2speed = 128000
+		case 16		radio2speed = 256000
+		case 17		radio2speed = g_nPortSpeed
+	end select
+  
+end function
+'-----------------------------------------------------------------------------
+'ustawienie odpowiedniego stanu kontrolek
+function set_settings(byref pCommSettings)
+
+	page_.ctrl(20).value = clng(mid(pCommSettings.m_strPort,4,1))
+	page_.ctrl(21).value = clng(pCommSettings.m_nParity) + 1
+	page_.ctrl(22).value = clng(pCommSettings.m_nDataBits - 6)
+	page_.ctrl(23).value = clng(pCommSettings.m_nStopBits) + 1
+	'model kolektora
+	if pCommSettings.m_strModel = "CipherLab" then
+		page_.ctrl(24).value = clng(1)
+	else
+		page_.ctrl(24).value = clng(2)
+	end if
+	'metoda brutalnej siły :(
+	page_.ctrl(CTRLID_SPEED).value = clng(17)
+	g_nPortSpeed = clng(pCommSettings.m_nSpeed)
+
+
+	dim iter
+	for iter = 1 to 16
+		if radio2speed(iter) = pCommSettings.m_nSpeed then
+			page_.ctrl(CTRLID_SPEED).value = clng(iter)
+			exit for
+		end if
+	next
+	page_.ctrl(CTRLID_CUSTOM_SPEED).hide = (page_.ctrl(CTRLID_SPEED).value <> 17)
+  
+end function
+
+
+function get_settings
+	dim pCommSettings : set pCommSettings = g_pM60224.new_comm_settings()
+	pCommSettings.m_strPort = "COM" + cstr(page_.ctrl(20).value)
+	pCommSettings.m_nParity = clng(page_.ctrl(21).value) - 1
+	pCommSettings.m_nDataBits = clng(page_.ctrl(22).value + 6)
+	pCommSettings.m_nStopBits = clng(page_.ctrl(23).value) - 1
+	pCommSettings.m_nSpeed = g_nPortSpeed
+	pCommSettings.m_strModel = cstr(page_.ctrl(24).value)
+	set get_settings = pCommSettings
+end function
+
+function fok
+	save_settings
+	page_.goback
+end function
+
+function fcancel
+	page_.goback
+end function
+
+function c##CTRLID_CUSTOM_SPEED##_ongetdata(byref oCtrl): c##CTRLID_CUSTOM_SPEED##_ongetdata=true
+	oCtrl.value= clng(g_nPortSpeed)
+end function
+
+function c##CTRLID_CUSTOM_SPEED##_ondataentered(byref oCtrl, byval newValue):c##CTRLID_CUSTOM_SPEED##_ondataentered=false
+	g_nPortSpeed=CLng(newValue)	
+end function
+
+function c##CTRLID_SPEED##_ongetdata(byref oCtrl): c##CTRLID_SPEED##_ongetdata=true	
+end function
+
+function c##CTRLID_SPEED##_ondataentered(byref oCtrl, byval newValue):c##CTRLID_SPEED##_ondataentered=false	
+	if newValue <> 17 then
+		g_nPortSpeed = radio2speed(newValue)
+		page_.ctrl(CTRLID_CUSTOM_SPEED).value = clng(g_nPortSpeed)
+	end if
+	page_.ctrl(CTRLID_CUSTOM_SPEED).hide = (newValue <> 17)
+
+	c##CTRLID_SPEED##_ondataentered=true
+end function
+
+
+]]></script>
+</config>
+<header>
+</header>
+<body>
+
+<table >
+	<tbody>
+    <tr >
+      <td colspan='2'>
+        <table name='ID_KOLEKTOR'>
+          <tbody>
+            <tr>
+              <td width='2530'>
+                <text bold='true'>Model kolektora</text>
+              </td>
+              <td>
+                <radio name='c24'>
+                  <t>CipherLab</t>
+                  <t>Unitech</t>
+                </radio>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </td>
+		</tr>
+		<tr>
+			<td>
+				<text bold='true'>Port komunikacyjny</text>
+			</td>		
+			<td>
+				<radio name='c20' colspan='2'>
+					<t>COM 1</t>				
+					<t>COM 2</t>				
+					<t>COM 3</t>				
+					<t>COM 4</t>				
+				</radio>
+			</td>
+		</tr>
+
+		<tr>
+			<td>
+				<text bold='true'>Parzystość</text>
+			</td>		
+			<td>
+				<radio name='c21' colspan='2'>
+					<t>brak</t>				
+					<t>nieparzyste</t>				
+					<t>parzyste</t>				
+					<t>znak</t>				
+					<t>spacja</t>				
+				</radio>
+			</td>
+		</tr>
+
+		<tr>
+			<td>
+				<text bold='true'>Ilość bitów danych</text>
+			</td>		
+			<td>
+				<radio name='c22' colspan='3'>
+					<t>7</t>				
+					<t>8</t>				
+					<t>9</t>				
+				</radio>
+			</td>
+		</tr>
+
+		<tr>
+			<td>
+				<text bold='true'>Bit stopu</text>
+			</td>		
+			<td>
+				<radio name='c23' colspan='3'>
+					<t>1</t>				
+					<t>1,5</t>				
+					<t>2</t>				
+				</radio>
+			</td>
+		</tr>
+
+		<tr>
+			<td>
+				<text bold='true'>Prędkość</text>
+			</td>		
+			<td>
+				<radio name='CTRLID_SPEED' colspan='4'>
+					<transfer mode='custom'/>
+					<t>&nbsp;&nbsp;110</t>
+					<t>&nbsp;&nbsp;300</t> 
+					<t>&nbsp;&nbsp;600</t> 
+					<t>&nbsp;1200</t> 
+					<t>&nbsp;2400</t> 
+					<t>&nbsp;4800</t> 
+					<t>&nbsp;9600</t>
+					<t>14400</t> 
+					<t>19200</t> 
+					<t>28800</t> 
+					<t>38400</t> 
+					<t>56000</t> 
+					<t>57600</t> 
+					<t>115200</t> 
+					<t>128000</t> 
+					<t>256000</t> 			
+					<p border='0'>
+						<t>inna&nbsp;</t>
+						<intedit name='CTRLID_CUSTOM_SPEED' size='10' style='STYLE_CTRL'>
+							<transfer mode='custom'/>
+						</intedit>
+					</p>
+				</radio>
+			</td>		
+		</tr>
+		<tr>
+			<td>
+				<t/>
+			</td>
+			<td>
+			</td>
+		</tr>
+	</tbody>
+</table>
+
+XFDIALOGBUTTONS
+
+</body>
+<footer>
+</footer>
+</page>

@@ -1,0 +1,498 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1240_appvar.h"
+
+-->
+<page>
+<config>
+<script>
+<![CDATA[
+#include "50203"
+
+#define TYPEID_SPECIAL_COMMAND		1
+#define ERR_EXP_NOT_ALLOWED		-1
+#define ERR_IMPORTER_BROKE		-2
+#define DEFAULT_MATCH_MODE		 3
+
+class CNXDExportHandler
+	private m_pExportPackage 
+	private m_pExportMsg
+	private m_pObjectFilter
+	private m_fpAfterExport
+	private m_pFieldTranslator
+	private m_pPerforming
+	private m_nObjectCounter
+	private m_pImporter
+	private m_nLevel
+	private m_pTypeExportInfoDict
+	private m_oAlreadyExportedVRS
+	private m_pExportObjectTranslator
+	
+	private sub class_initialize()
+		set m_pExportPackage = doc_.system.activex("navoexpimp.exportpackage")
+		set m_pTypeExportInfoDict = doc_.system.activex("scripting.dictionary")
+
+		set m_pExportMsg = nothing
+		set m_pObjectFilter = nothing
+		set m_fpAfterExport = nothing
+		set m_pFieldTranslator = nothing
+		set m_pPerforming = nothing
+		m_nObjectCounter = 0
+		set m_pImporter = nothing
+		set m_oAlreadyExportedVRS = nothing
+		set m_pExportObjectTranslator = nothing
+		m_nLevel = 0
+	end sub
+
+	private sub class_terminate()   'OK
+		set m_pExportPackage = nothing
+		set m_pExportMsg = nothing
+		set m_pObjectFilter = nothing
+		set m_fpAfterExport = nothing
+		set m_pFieldTranslator = nothing
+		set m_pPerforming = nothing
+		set m_pImporter = nothing
+		set m_pTypeExportInfoDict = nothing
+		set m_oAlreadyExportedVRS = nothing
+		set m_pExportObjectTranslator = nothing
+	end sub
+
+	public sub start_export(byref pOutputStream,byval nMsgType,byval strInfo)
+		'inicjuj strumień
+		pOutputStream.write "<?xml version=""1.0"" encoding=""windows-1250""?>" + vbCrLf
+		'podłącz
+		m_pExportPackage.ostream pOutputStream
+		set m_pExportMsg = m_pExportPackage.newmsg()
+		
+		'wypełnij i zapisz header
+		with m_pExportMsg
+			.header("msgtype") = clng(nMsgType)
+			.header("format") = clng(NXD_MESSAGE_FORMAT)
+			.header("application_name") = trans_.var(GVAR_APPLICATION)
+#ifndef APPCONFIG_DEKLARACJE
+			if not getCurrentUser() is nothing then
+				.header("user") = getCurrentUser().strNazwa
+			end if
+#endif
+			.header("client_machine") = trans_.var(GVAR_MACHINE)
+			.header("server_machine") = trans_.var(GVAR_DBSERVER)
+			.header("server_guid") = trans_.getserverproperty(5)
+			.header("creation_date") = trans_.var(GVAR_SYSDATE)
+			.header("creation_time") = trans_.var(GVAR_SYSTIME)
+			.header("engine_version") = trans_.var(GVAR_NAVO2001VERSION)
+			.header("database_name") = trans_.var(GVAR_DBNAME)
+#ifndef APPCONFIG_DEKLARACJE
+			.header("database_app_version") = getglobprofileLong(GLOBPROF_DBVERSION)
+#endif
+			.header("description") = strInfo
+		end with
+		if m_pImporter is nothing then
+			m_pExportMsg.header.save
+		else
+			dim bBreak
+			m_pImporter.OnMessageBegin m_pExportMsg.importmessage(),bBreak
+		end if
+	end sub
+	public sub stop_export()
+		if m_pImporter is nothing then
+			m_pExportMsg.Save
+			m_pExportPackage.Save
+		else
+			dim bBreak
+			m_pImporter.OnMessageEnd m_pExportMsg,bBreak
+		end if
+	end sub
+
+	public sub set_importer(byref pImporter)
+		set m_pImporter = pImporter
+	end sub
+
+	public sub set_object_filter(byref pObjectFilter)
+		set m_pObjectFilter = pObjectFilter
+	end sub
+
+	public sub set_after_export_handler(byref fpAfterExport)
+		set m_fpAfterExport = fpAfterExport
+	end sub
+
+	public sub set_field_translator(byref pFieldTranslator)
+		set m_pFieldTranslator = pFieldTranslator
+	end sub
+
+	public sub set_export_object_translator(byref pExportObjectTranslator)
+		set m_pExportObjectTranslator = pExportObjectTranslator
+	end sub
+
+	'decyduje czy nalezy eksportować obiekt
+	public function should_export(byval nType,byval IdObj,byval nVersion)
+		should_export = not m_pExportMsg.wasobj(nType,IdObj)
+		if should_export then
+			if not m_oAlreadyExportedVRS is nothing then
+				should_export = (m_oAlreadyExportedVRS.get_item_version(nType,IdObj) < nVersion)
+			end if
+		end if
+	end function
+
+	public function new_object(byval nTypeId,byval nIdObj,byval nVersion)
+		set new_object = m_pExportMsg.newobj(nTypeId,nIdObj)
+		if not m_oAlreadyExportedVRS is nothing then
+			m_oAlreadyExportedVRS.refresh_item nTypeId,nIdObj,nVersion
+		end if
+	end function
+
+	public function new_special_object()
+		set new_special_object = m_pExportMsg.newobj(TYPEID_SPECIAL_COMMAND,m_nObjectCounter+1)
+	end function
+
+	public function export_object(byref pExportObject)
+		if m_pImporter is nothing then
+			pExportObject.save
+			export_object = true
+		else
+			dim bBreak : bBreak = false
+			m_pImporter.OnObject pExportObject,bBreak
+			export_object = not bBreak
+		end if
+	end function
+
+	'decyduje czy wolno exportować obiekt
+	public function can_export(byval nType,byval IdObj)
+		if m_pObjectFilter is nothing then
+			can_export = true
+		else
+			can_export = m_pObjectFilter(nType,IdObj)
+		end if
+	end function
+	'robi translację pola
+	public function translate(byref pSrcObj,byref pFieldDef,byref varValue)
+		if m_pFieldTranslator is nothing then
+			translate = true
+		else
+			translate = m_pFieldTranslator(pSrcObj,pFieldDef,varValue)
+		end if
+	end function
+
+	public sub hide_progress()
+		set m_pPerforming = nothing
+	end sub
+
+	public sub show_progress(strText)
+		if m_pPerforming is nothing then
+			set m_pPerforming = doc_.performing(strText)
+		else
+			m_pPerforming.text = strText
+		end if
+	end sub
+	
+	public sub on_object_exported(byref pObject,byref pExportObject)
+		m_nObjectCounter = m_nObjectCounter + 1
+		if m_nObjectCounter mod 20 = 0 then
+			show_progress "Wykesportowano: " + pObject.getobjdef.humanname + " (" + pObject.text + ")"
+		end if
+		if not m_fpAfterExport is nothing then
+			m_fpAfterExport me, pObject,pExportObject
+		end if
+	end sub
+
+	public sub enter_level()
+		m_nLevel = m_nLevel + 1
+	end sub
+	public sub leave_level()
+		m_nLevel = m_nLevel - 1
+	end sub
+	public function get_level()
+		get_level = m_nLevel
+	end function
+
+	'exports any object (smart high level function)
+	public function std_export_any_object(byval idType,byref pSrcObj)
+		if not m_pExportObjectTranslator is nothing then
+			'overrides
+			if m_pExportObjectTranslator(me,idType,pSrcObj) then
+				exit function
+			end if
+		end if
+		'stock implemenation
+		enter_level
+		'---- latka na zamienniki ---- ---- ----
+		if idType = TYPEID_N5OPAKOWANIE_PRODUKTU then
+			'-- force export parent
+			dim oRS : set oRS = trans_.createadors( _
+				"select p_idobj from vlist_n5produkt_listopakowania where c_idobj=" + cstr(pSrcObj.idobj))
+			dim idProdZam : idProdZam = clng(oRS.fields(0).value)
+			dim oProd : set oProd = trans_.getobj(TYPEID_N5PRODUKT,idProdZam)
+			std_export_any_object = std_export_top_object(me,oProd)
+			'trans_.message 0,0,"fex=" + oProd.text + "/" + cstr(oProd.idobj)
+			'-- end force export parent
+		else
+			if pSrcObj.parent is nothing then
+				std_export_any_object = std_export_top_object(me,pSrcObj)
+			else
+				std_export_any_object = std_export_top_object(me,pSrcObj.parent)
+			end if
+		end if
+		leave_level
+	end function
+
+	public property let importmode(byval nTypeId,byval nValue)
+		m_pTypeExportInfoDict.item(nTypeId) = clng(nValue)
+	end property
+
+	public property get importmode(byval nTypeId)
+		if m_pTypeExportInfoDict.exists(nTypeId) then
+			importmode = clng(m_pTypeExportInfoDict.item(nTypeId))
+		else
+			importmode = clng(DEFAULT_MATCH_MODE)
+		end if
+	end property
+end class
+
+function std_export_object_fields(byref pHandler,byref pExportObj,byref pSrcObj,byref bAnyList)
+	std_export_object_fields = 0
+	bAnyList = false
+	
+	pExportObj("_versionid") = clng(pSrcObj.versionid)
+
+	dim pStdObjDef : set pStdObjDef = doc_.stdobjdef.getobjdef(pSrcObj.type)
+	dim pFieldDef
+	dim iter : iter = 0
+
+	for each pFieldDef in pStdObjDef
+		if iter <> 0 then		'pomijamy idobj
+			select case pFieldDef.type
+			case RELT_EMBED,RELT_ENUM	'wbudowane
+				if not isobject(pSrcObj.field( iter )) then
+					dim varValue : varValue = pSrcObj.field( iter )
+					if pHandler.translate(pSrcObj,pFieldDef,varValue) then
+						pExportObj( pFieldDef.name ) = varValue
+					end if
+				end if
+			case RELT_REF		'ref
+				dim pRefObj : set pRefObj = pSrcObj.field( iter )
+				if pHandler.translate(pSrcObj,pFieldDef,pRefObj) then
+					dim idObjRef : idObjRef = clng(0)
+					if not pRefObj is nothing then
+						std_export_object_fields = pHandler.std_export_any_object(pRefObj.type,pRefObj)
+						if std_export_object_fields = ERR_EXP_NOT_ALLOWED then
+							std_export_object_fields = 0
+						else
+							idObjRef = pRefObj.idobj
+						end if
+						if (std_export_object_fields <> 0) then
+							exit function
+						end if
+					end if
+					pExportObj( pFieldDef.name ) = idObjRef
+				end if
+
+			case RELT_WILDREF:	'dzika ref
+				dim pWildRef : set pWildRef = pSrcObj.field( iter )
+				if pHandler.translate(pSrcObj,pFieldDef,pWildRef) then
+					dim idObjWildRef : idObjWildRef = clng(0)
+					if not pWildRef is nothing then
+						std_export_object_fields = pHandler.std_export_any_object(pWildRef.type,pWildRef)
+						if std_export_object_fields = ERR_EXP_NOT_ALLOWED then
+							std_export_object_fields = 0
+						else
+							idObjWildRef = pWildRef.idobj
+							pExportObj( pFieldDef.name + "_wrt") = pWildRef.type
+						end if
+						if (std_export_object_fields <> 0) then
+							exit function
+						end if
+					end if
+				end if
+				pExportObj( pFieldDef.name ) = idObjWildRef
+			case RELT_FILE		'plik
+				if (not pSrcObj.field( iter ).isEmpty()) then
+					pExportObj( pFieldDef.name + "_ext" ) = pSrcObj.field( iter ).ext
+					set pExportObj( pFieldDef.name ) = pSrcObj.field( iter )
+				end if
+			case RELT_LIST
+				bAnyList = true
+			end select
+		end if
+		iter = iter + 1
+	next
+
+end function
+
+private function std_export_top_object(byref pHandler,byref pSrcObj)
+	if not pHandler.should_export(pSrcObj.type,pSrcObj.idobj,pSrcObj.versionid) then
+		std_export_top_object = 0
+		exit function
+	end if
+	if not pHandler.can_export(pSrcObj.type,pSrcObj.idobj) then
+		std_export_top_object = ERR_EXP_NOT_ALLOWED
+		exit function
+	end if
+	dim pExportObject : set pExportObject = pHandler.new_object(pSrcObj.type,pSrcObj.idobj,pSrcObj.versionid)
+
+	if pHandler.get_level() > 1 or (pSrcObj.type = TYPEID_N5DOKMAG) or (pSrcObj.type = TYPEID_N5PLNALICZENIE) then
+		pExportObject("_enter_sub") = clng(0)
+	end if
+
+	dim bAnyList : bAnyList = false
+	std_export_top_object = std_export_object_fields(pHandler,pExportObject,pSrcObj,bAnyList)
+	if std_export_top_object <> 0 then
+		exit function
+	end if
+
+#ifdef APPCONFIG_NO_IMP_CORR
+  if pSrcObj.type = TYPEID_N5SPRZEDAZ then
+    dim id_korekta_sp:id_korekta_sp = trans_.findobjid(TYPEID_N5SPRZEDAZ , "pPopSprzed=" + cstr(pSrcObj.idobj))
+    if id_korekta_sp > 0 then
+      pExportObject("_ma_korekte_") = clng(0)      
+    end if
+  end if
+#endif
+
+	'jeśli potrzeba - issue command
+	'jeśli nie ma listy -> robimy to 'inplace'
+	if pHandler.get_level() > 1 and not bAnyList then
+		pExportObject("_save_now") = clng(0)
+		pExportObject("_leave_sub") = clng(0)
+	end if
+
+	'zablokuj save aż do zakończenia eksportu dzieci
+	if bAnyList then
+		pExportObject("_begin_unit") = clng(0)
+	end if
+
+	dim nImportMode : nImportMode = pHandler.importmode(pExportObject.typeid)
+	if nImportMode <> DEFAULT_MATCH_MODE then
+		pExportObject("_match_mode") = nImportMode
+	end if
+
+	pHandler.on_object_exported pSrcObj,pExportObject
+
+	if not pHandler.export_object(pExportObject) then
+		std_export_top_object = ERR_IMPORTER_BROKE
+		exit function
+	end if
+
+	if bAnyList then
+		std_export_top_object = std_export_lists(pHandler,pSrcObj)
+
+		set pExportObject = pHandler.new_special_object()
+		'jeśli potrzeba - issue command
+		if pHandler.get_level() > 1 or (pSrcObj.type = TYPEID_N5DOKMAG) or (pSrcObj.type = TYPEID_N5PLNALICZENIE) then
+			pExportObject("_save_now") = clng(0)
+			pExportObject("_leave_sub") = clng(0)
+		end if
+		pExportObject("_end_unit") = clng(0)
+		pHandler.export_object pExportObject
+	end if
+
+end function
+
+private function std_export_child_object(byref pHandler,byref pSrcObj,byref pParent,byval strListField,byval nLP,byval bLast)
+	if not pHandler.should_export(pSrcObj.type,pSrcObj.idobj,pSrcObj.versionid) then
+		std_export_child_object = 0
+		exit function
+	end if
+	if not pHandler.can_export(pSrcObj.type,pSrcObj.idobj) then
+		std_export_child_object = ERR_EXP_NOT_ALLOWED
+		exit function
+	end if
+
+	dim pExportObject : set pExportObject = pHandler.new_object(pSrcObj.type,pSrcObj.idobj,pSrcObj.versionid)
+	dim bAnyList : bAnyList = false
+	std_export_child_object = std_export_object_fields(pHandler,pExportObject,pSrcObj,bAnyList)
+	if std_export_child_object <> 0 then
+		exit function
+	end if
+
+	pExportObject("_parent_idobj") = clng(pParent.idobj)
+	pExportObject("_parent_type") = clng(pParent.type)
+	pExportObject("_parent_list") = cstr(strListField)
+	pExportObject("_list_lp") = clng(nLP)
+	if bLast then
+		pExportObject("_last_child") = clng(0)
+	end if
+
+#ifdef APPCONFIG_NO_IMP_CORR
+  if pSrcObj.type = TYPEID_N5POZSPRZEDAZ then
+    dim id_korekta_sp:id_korekta_sp = trans_.findobjid(TYPEID_N5SPRZEDAZ , "pPopSprzed=" + cstr(pParent.idobj))
+    if id_korekta_sp > 0 then
+      pExportObject("_parent_ma_korekte_") = clng(0)      
+    end if
+  end if
+#endif
+
+	dim nImportMode : nImportMode = pHandler.importmode(pExportObject.typeid)
+	if nImportMode <> DEFAULT_MATCH_MODE then
+		pExportObject("_match_mode") = nImportMode
+	end if
+
+	pHandler.on_object_exported pSrcObj,pExportObject
+
+	if not pHandler.export_object(pExportObject) then
+		std_export_child_object = ERR_IMPORTER_BROKE
+		exit function
+	end if
+
+	if bAnyList then
+		std_export_child_object = std_export_lists(pHandler,pSrcObj)
+	end if
+end function
+
+private function std_export_lists(byref pHandler,byref pSrcParent)
+	std_export_lists = 0
+	dim pStdObjDef : set pStdObjDef = doc_.stdobjdef.getobjdef(pSrcParent.type)
+	dim pFieldDef
+	for each pFieldDef in pStdObjDef
+		if pFieldDef.type = RELT_LIST then
+			dim pChildObj
+			dim pListField : set pListField = pSrcParent.field(pFieldDef.name)
+			dim nLP 
+			for nLP = 1 to pListField.count() - 1
+				std_export_lists =  std_export_child_object(pHandler,pListField.get(nLP),pSrcParent,pFieldDef.name,nLP,false)
+				if std_export_lists = ERR_EXP_NOT_ALLOWED then
+					std_export_lists = 0
+				end if
+				if std_export_lists <> 0 then
+					exit function
+				end if
+			next
+			if pListField.count() > 0 then
+				std_export_lists =  std_export_child_object(pHandler,pListField.get(pListField.count()),pSrcParent,pFieldDef.name,pListField.count(),true)
+				if std_export_lists = ERR_EXP_NOT_ALLOWED then
+					std_export_lists = 0
+				end if
+				if std_export_lists <> 0 then
+					exit function
+				end if
+			end if
+		end if
+	next	
+end function
+
+'--------------- useful helpers -------------------
+function std_export_cursor(byref pHandler,byref pCursor)
+	std_export_cursor = 0
+	dim pSrcObj
+	for each pSrcObj in pCursor
+		std_export_cursor = pHandler.std_export_any_object(pSrcObj.type,pSrcObj)
+		if std_export_cursor <> 0 then
+			exit function
+		end if
+	next 
+end function
+
+'--------------------------------------------------
+function new_export_handler()
+	set new_export_handler = new CNXDExportHandler
+end function
+
+
+]]>
+</script>
+
+</config>
+	<body>
+	</body>
+</page>

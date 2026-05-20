@@ -1,0 +1,517 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!-- 
+#include "h1000.h"
+#include "h1203.h"
+#include "h1231.h"
+#include "h1240.h"
+
+#comment NX_READY
+
+#macro SUMA_W_STAWCE(_sprz_,_nr_stawki_)    _sprz_.curBrutto##_nr_stawki_
+-->
+<page>
+<config>
+	<title>NX Posnet 3001</title>
+<script>
+<![CDATA[
+'nx_trace
+#include "50519"
+
+#include "50523"
+'getCurrent*
+#include "50203"
+#define NO_DUMP_POSNET_
+
+dim oFSO: set oFSO=CreateObject("Scripting.FileSystemObject")
+dim oPerf
+
+function print_paragon(byval oSprzedaz)
+	print_paragon = print_paragon_ext(oSprzedaz,true)
+end function
+
+'bMode = true (zapis do bazy), bMode = false (bez zapisu)
+function print_paragon_ext(byval oSprzedaz,byval bMode)
+	print_paragon_ext = false
+	set oPerf = doc_.performing("Trwa wydruk paragonu fiskalnego...")
+
+  dim bRemotePosnet : bRemotePosnet = (CStr(doc_.system.registry(hKey_LocalMachine , "HKLM_PATH", "RemotePosnet")) = "1")
+  if bRemotePosnet then
+    print_paragon_ext = print_paragon_remote(oSprzedaz)
+    set oPerf = nothing
+    exit function
+  end if
+  
+#ifdef _DUMP_POSNET_
+	dim strTraceFileName : strTraceFileName = replace("C:\navo_posnet_trace_" + oSprzedaz.text + ".txt","/","_")
+	NX_TRACE_START_FILE("Wydruk paragonu fiskalnego dla " + oSprzedaz.text,strTraceFileName)
+#else
+	NX_TRACE_START_STREAM("Wydruk paragonu fiskalnego dla " + oSprzedaz.text,nothing)
+#endif
+
+	dim oNXFPPosnet3001 : set oNXFPPosnet3001 = nx_.devices.new_fp_posnet3001()
+	
+#ifdef _DUMP_POSNET_
+	oNXFPPosnet3001.set_trace nx_.trace
+#endif
+
+	dim pM60224 : set pM60224 = doc_.getmodule(60224)
+	
+	pM60224.InitNoPolTable
+	
+	dim oCOMSett : set oCOMSett = pM60224.new_comm_settings()
+	oCOMSett.from_registry "HKLM_PRINTER_SETTINGS"
+
+	if oNXFPPosnet3001.init_port(oCOMSett.m_strPort,oCOMSett.m_nSpeed, _
+		oCOMSett.m_nParity,oCOMSett.m_nStopBits,oCOMSett.m_nDataBits) then
+	
+		if oNXFPPosnet3001.check_printer_ready() then
+		
+			if oNXFPPosnet3001.start_paragon() then
+
+				dim curWartosc : curWartosc = ccur(0.0)			
+				dim bNeedCancel : bNeedCancel = false
+				dim iter : iter = 1
+				dim oPozSprzedaz
+
+				for each oPozSprzedaz in oSprzedaz.listPozycje
+					if oPozSprzedaz.curCenaBrutto <= ccur(0.0) then
+						nx_.trace.fatal "FFP002","Pozycja " + cstr(iter) + ": Cena musi być dodatnia"
+						bNeedCancel = true
+						exit for
+					end if
+					if oPozSprzedaz.curWartBrutto <= ccur(0.0) then
+						nx_.trace.fatal "FFP003","Pozycja " + cstr(iter) + ": Wartość musi być dodatnia"
+						bNeedCancel = true
+						exit for
+					end if
+					dim strNazwa: strNazwa = oPozSprzedaz.pProdukt.strNazwa
+					
+					strNazwa = pM60224.NoPolishNoComma(strNazwa)
+					
+#ifdef _GRAJEWSCY
+					if oPozSprzedaz.strExtra2 <> "" then
+						strNazwa = oPozSprzedaz.strExtra2
+					end if
+#endif
+					if not oNXFPPosnet3001.write_line(iter,false, _
+						strNazwa, oPozSprzedaz.curIloscOpak, _
+						oPozSprzedaz.eVAT,oPozSprzedaz.curCenaBrutto, _
+						oPozSprzedaz.curWartBrutto, _
+						oPozSprzedaz.pProdukt.pJednostkaEwid.strSkrot,false) then
+						bNeedCancel = true
+						exit for
+					end if
+					iter = iter + 1
+					curWartosc = curWartosc + oPozSprzedaz.curWartBrutto
+				next
+			
+				if bNeedCancel then
+					oNXFPPosnet3001.cancel_paragon
+				else
+					dim eSposPlat : eSposPlat = 1	'gotowka
+					
+					if oSprzedaz.pSposobPlatnosci.eTyp = N5SPOSPLAT_KARTA then
+						eSposPlat = 2
+					end if
+
+					if oNXFPPosnet3001.finish_paragon(oSprzedaz.strNrDok, _
+							eSposPlat,curWartosc) then
+
+						if bMode then
+							'blokada przed ponownym wydrukiem
+#ifdef _ALMA_TREND
+							trans_.var(GVAR_POMIN_BLOKADE_DOK_ZAREJESTROWANE) = "1"
+#endif
+							oSprzedaz.sprzed_strNrDokFisk = oNXFPPosnet3001.get_fiscal_docnr()
+  						
+							if not trans_.saveobjects() then
+								nx_.trace.error "EFP001","Aktualizacja numerem wydruku paragonu nieudana"
+							end if 
+#ifdef _ALMA_TREND
+							trans_.var(GVAR_POMIN_BLOKADE_DOK_ZAREJESTROWANE) = "0"
+#endif              
+						end if
+
+						print_paragon_ext = true
+					else
+						oNXFPPosnet3001.cancel_paragon
+					end if
+				end if
+			end if
+
+		else
+			nx_.trace.fatal "FFP001","Drukarka fiskalna nie jest gotowa do pracy"
+		end if
+	end if
+
+	oNXFPPosnet3001.Dispose
+	set oPerf = nothing
+
+#ifndef _DUMP_POSNET_
+	NX_TRACE_SHOW_LOG(1)
+#endif
+end function
+
+'------------------------------------------------------
+'drukowanie paragonu dla faktury zaliczkowej częściowej
+'------------------------------------------------------
+function print_paragon_part(byval oSprzedaz)
+  print_paragon_part = false
+	set oPerf = doc_.performing("Trwa wydruk paragonu fiskalnego...")
+
+  dim bRemotePosnet : bRemotePosnet = (CStr(doc_.system.registry(hKey_LocalMachine , "HKLM_PATH", "RemotePosnet")) = "1")
+  if bRemotePosnet then
+    print_paragon_part = print_paragon_part_remote(oSprzedaz)
+    set oPerf = nothing
+    exit function
+  end if
+
+#ifdef _DUMP_POSNET_
+	dim strTraceFileName : strTraceFileName = replace("C:\navo_posnet_trace_" + oSprzedaz.text + ".txt","/","_")
+	NX_TRACE_START_FILE("Wydruk paragonu fiskalnego dla " + oSprzedaz.text,strTraceFileName)
+#else
+	NX_TRACE_START_STREAM("Wydruk paragonu fiskalnego dla " + oSprzedaz.text,nothing)
+#endif
+
+	dim oNXFPPosnet3001 : set oNXFPPosnet3001 = nx_.devices.new_fp_posnet3001()
+	
+#ifdef _DUMP_POSNET_
+	oNXFPPosnet3001.set_trace nx_.trace
+#endif
+
+	dim pM60224 : set pM60224 = doc_.getmodule(60224)
+	dim oCOMSett : set oCOMSett = pM60224.new_comm_settings()
+	oCOMSett.from_registry "HKLM_PRINTER_SETTINGS"
+
+	if oNXFPPosnet3001.init_port(oCOMSett.m_strPort,oCOMSett.m_nSpeed, _
+		oCOMSett.m_nParity,oCOMSett.m_nStopBits,oCOMSett.m_nDataBits) then
+	
+		if oNXFPPosnet3001.check_printer_ready() then
+		
+			if oNXFPPosnet3001.start_paragon() then
+
+				dim curWartosc : curWartosc = ccur(0.0)			
+				dim bNeedCancel : bNeedCancel = false
+				dim iter : iter = 1
+				dim i
+				dim pArraySumRate: set pArraySumRate = trans_.afc.new_navoarray()
+        
+				fillSumRate oSprzedaz, pArraySumRate
+        
+				dim strNazwaProd
+				for i = 0 to pArraySumRate.upperIndex
+					if pArraySumRate.value(i) <> ccur(0) then
+						strNazwaProd = "Zaliczka " + vat2name(i+1)
+						if not oNXFPPosnet3001.write_line(iter,false, _
+							strNazwaProd, 1, i+1, pArraySumRate.value(i), _
+							pArraySumRate.value(i), "szt" ,false) then
+							bNeedCancel = true
+							exit for
+						end if
+						iter = iter + 1
+						curWartosc = curWartosc + pArraySumRate.value(i)
+					end if
+				next
+			
+				if bNeedCancel then
+					oNXFPPosnet3001.cancel_paragon
+				else
+					dim eSposPlat : eSposPlat = 1	'gotowka
+					
+					if oSprzedaz.pSposobPlatnosci.eTyp = N5SPOSPLAT_KARTA then
+						eSposPlat = 2
+					end if
+
+					if oNXFPPosnet3001.finish_paragon(oSprzedaz.strNrDok, _
+							eSposPlat,curWartosc) then
+
+							'blokada przed ponownym wydrukiem
+#ifdef _ALMA_TREND
+							trans_.var(GVAR_POMIN_BLOKADE_DOK_ZAREJESTROWANE) = "1"
+#endif              
+							oSprzedaz.sprzed_strNrDokFisk = oNXFPPosnet3001.get_fiscal_docnr()
+  						
+							if not trans_.saveobjects() then
+								nx_.trace.error "EFP001","Aktualizacja numerem wydruku paragonu nieudana"
+							end if 
+#ifdef _ALMA_TREND
+							trans_.var(GVAR_POMIN_BLOKADE_DOK_ZAREJESTROWANE) = "0"
+#endif	
+						  print_paragon_part = true
+					else
+						oNXFPPosnet3001.cancel_paragon
+					end if
+				end if
+			end if
+
+		else
+			nx_.trace.fatal "FFP001","Drukarka fiskalna nie jest gotowa do pracy"
+		end if
+	end if
+
+	oNXFPPosnet3001.Dispose
+	set oPerf = nothing
+
+#ifndef _DUMP_POSNET_
+	NX_TRACE_SHOW_LOG(1)
+#endif
+end function
+
+'-------------------------------------------
+'wypełnia tabelę kwotami brutto w stawce vat
+'-------------------------------------------
+sub fillSumRate(oSprzedaz, pArraySumRate)
+    pArraySumRate.add oSprzedaz.curNetto0
+    pArraySumRate.add oSprzedaz.curNettoZw
+    pArraySumRate.add oSprzedaz.curNettoNp
+    pArraySumRate.add SUMA_W_STAWCE(oSprzedaz,2)    
+    pArraySumRate.add SUMA_W_STAWCE(oSprzedaz,3)
+    pArraySumRate.add SUMA_W_STAWCE(oSprzedaz,4)
+    pArraySumRate.add SUMA_W_STAWCE(oSprzedaz,7)
+    pArraySumRate.add SUMA_W_STAWCE(oSprzedaz,12)
+    pArraySumRate.add SUMA_W_STAWCE(oSprzedaz,17)
+    pArraySumRate.add SUMA_W_STAWCE(oSprzedaz,22)
+    pArraySumRate.add SUMA_W_STAWCE(oSprzedaz,5)
+    pArraySumRate.add ccur(0)
+    pArraySumRate.add SUMA_W_STAWCE(oSprzedaz,8)
+    pArraySumRate.add SUMA_W_STAWCE(oSprzedaz,23)        
+end sub
+
+function print_day_raport()
+	print_fiscal_daily_raport trans_.var(GVAR_TODAY)
+end function
+
+function print_fiscal_daily_raport(dDate)
+	NX_TRACE_START_STREAM("Wydruk fiskalnego raportu dobowego",nothing)
+
+	dim oNXFPPosnet3001 : set oNXFPPosnet3001 = nx_.devices.new_fp_posnet3001()
+	dim pM60224 : set pM60224 = doc_.getmodule(60224)
+	dim oCOMSett : set oCOMSett = pM60224.new_comm_settings()
+	oCOMSett.from_registry "HKLM_PRINTER_SETTINGS"
+
+	if oNXFPPosnet3001.init_port(oCOMSett.m_strPort,oCOMSett.m_nSpeed, _
+		oCOMSett.m_nParity,oCOMSett.m_nStopBits,oCOMSett.m_nDataBits) then
+	
+		if oNXFPPosnet3001.check_printer_ready() then
+			oNXFPPosnet3001.print_daily_report dDate
+		else
+			nx_.trace.fatal "FFP001","Drukarka fiskalna nie jest gotowa do pracy"
+		end if
+	end if
+
+	oNXFPPosnet3001.Dispose
+	NX_TRACE_SHOW_LOG(1)
+end function
+
+function print_range_raport(dDateFrom,dDateTo,iMode)
+	NX_TRACE_START_STREAM("Wydruk raportu okresowego",nothing)
+
+	dim oNXFPPosnet3001 : set oNXFPPosnet3001 = nx_.devices.new_fp_posnet3001()
+	dim pM60224 : set pM60224 = doc_.getmodule(60224)
+	dim oCOMSett : set oCOMSett = pM60224.new_comm_settings()
+	oCOMSett.from_registry "HKLM_PRINTER_SETTINGS"
+
+	if oNXFPPosnet3001.init_port(oCOMSett.m_strPort,oCOMSett.m_nSpeed, _
+		oCOMSett.m_nParity,oCOMSett.m_nStopBits,oCOMSett.m_nDataBits) then
+	
+		if oNXFPPosnet3001.check_printer_ready() then
+			oNXFPPosnet3001.print_range_raport dDateFrom,dDateTo,iMode
+		else
+			nx_.trace.fatal "FFP001","Drukarka fiskalna nie jest gotowa do pracy"
+		end if
+	end if
+
+	oNXFPPosnet3001.Dispose
+	NX_TRACE_SHOW_LOG(1)
+end function
+
+function print_paragon_remote(oSprzedaz)
+  print_paragon_remote = false
+
+	dim eSposPlat : eSposPlat = 1	'gotowka
+					
+	if oSprzedaz.pSposobPlatnosci.eTyp = N5SPOSPLAT_KARTA then
+		eSposPlat = 2
+	end if
+
+  'our OUT is remote IN and vice versa
+  
+  #ifdef _TORAL
+  dim oUser : set oUser = getCurrentUser()
+  dim strPrefix : strPrefix = "\\tsclient\C"
+  if oUser.strTelefon <> "" then
+    strPrefix = oUser.strTelefon
+  end if
+  
+  dim strOutFileName : strOutFileName = strPrefix + "\remote_posnet\in\" + replace(oSprzedaz.strNrDok,"/","_") + ".xml"
+  dim strInFileName : strInFileName= strPrefix + "\remote_posnet\out\" + replace(oSprzedaz.strNrDok,"/","_") + ".txt"
+  trans_.message 0,0, "plik wyjsciowy [" + strOutFileName + "]"
+  #else
+  dim strOutFileName : strOutFileName = "\\tsclient\C\remote_posnet\in\" + replace(oSprzedaz.strNrDok,"/","_") + ".xml"
+  dim strInFileName : strInFileName= "\\tsclient\C\remote_posnet\out\" + replace(oSprzedaz.strNrDok,"/","_") + ".txt"
+  #endif
+  
+  dim pSO : set pSO = doc_.createstreamobj()
+	pSO.attach strOutFileName
+	pSO.write "<?xml version=""1.0"" encoding=""windows-1250"" ?>" + vbCrLf
+  pSO.write "<paragon_posnet>" + vbCrLf
+  pSO.write "<nr_dokumentu>" + oSprzedaz.strNrDok + "</nr_dokumentu>" + vbCrLf
+  pSO.write "<sposob_platnosci>" + cstr(eSposPlat)+ "</sposob_platnosci>" + vbCrLf
+  
+  dim oPozSprzedaz
+  for each oPozSprzedaz in oSprzedaz.listPozycje
+				
+      pSO.write "<linia>" + vbCrLf
+      pSO.write "<towar><![CD"+ "ATA[" + oPozSprzedaz.pProdukt.strNazwa + "]"+ "]></towar>" + vbCrLf
+      pSO.write "<ilosc>" +  trans_.afc.convert.cur2sql(oPozSprzedaz.curIloscOpak)+ "</ilosc>" + vbCrLf
+      pSO.write "<vat>" + cstr(oPozSprzedaz.eVAT)+ "</vat>" + vbCrLf
+      pSO.write "<cena>" +  trans_.afc.convert.cur2sql(oPozSprzedaz.curCenaBrutto)+ "</cena>" + vbCrLf
+      pSO.write "<wartosc>" +  trans_.afc.convert.cur2sql(oPozSprzedaz.curWartBrutto) + "</wartosc>" + vbCrLf
+      pSO.write "<jm>" + oPozSprzedaz.pProdukt.pJednostkaEwid.strSkrot + "</jm>" + vbCrLf
+      pSO.write "</linia>" + vbCrLf
+  
+  next
+  pSO.write "</paragon_posnet>" + vbCrLf
+  set pSO = nothing
+  '------------------------------------------
+  dim iter 
+  for iter = 1 to 8
+    doc_.system.sleep 2250
+    if oFSO.FileExists(strInFileName) then
+      set pSO = doc_.createstreamobj()
+	    pSO.attach strInFileName
+      
+      dim arrLines : arrLines = split(pSO.getstring,vbCrLf)
+      if ubound(arrLines) > 0 then
+        if arrLines(0) <> "OK" then
+          trans_.message 0,0,"Wydruk nieudany. Sprawdź komunikaty na NAVO2012 Remote Posnet Printer"
+          exit function
+        else
+#ifdef _ALMA_TREND
+          trans_.var(GVAR_POMIN_BLOKADE_DOK_ZAREJESTROWANE) = "1"
+#endif        
+          oSprzedaz.sprzed_strNrDokFisk = arrLines(1)
+  						
+          if not trans_.saveobjects() then
+            nx_.trace.error "EFP001","Aktualizacja dokumentu numerem fiskalnym paragonu nieudana"
+          else
+#ifdef _ALMA_TREND
+            trans_.var(GVAR_POMIN_BLOKADE_DOK_ZAREJESTROWANE) = "0"
+#endif            
+            print_paragon_remote = true
+            exit function
+          end if     
+#ifdef _ALMA_TREND
+              trans_.var(GVAR_POMIN_BLOKADE_DOK_ZAREJESTROWANE) = "0"
+#endif          
+        end if
+      end if
+    else
+      oPerf.text = cstr(iter) + "- czekam na wyniki wydruku"
+    end if
+  next  
+      
+  trans_.message 0,0,"Brak wyników wydruku. Sprawdź czy NAVO2012 Remote Posnet Printer jest uruchomiony!"
+end function
+
+function print_paragon_part_remote(oSprzedaz)
+  print_paragon_part_remote = false
+	dim eSposPlat : eSposPlat = 1	'gotowka
+					
+	if oSprzedaz.pSposobPlatnosci.eTyp = N5SPOSPLAT_KARTA then
+		eSposPlat = 2
+	end if
+
+
+  
+  #ifdef _TORAL
+  dim oUser : set oUser = getCurrentUser()
+  dim strPrefix : strPrefix = "\\tsclient\C"
+  if oUser.strTelefon <> "" then
+    strPrefix = oUser.strTelefon
+  end if
+  
+  dim strOutFileName : strOutFileName = strPrefix + "\remote_posnet\in\" + replace(oSprzedaz.strNrDok,"/","_") + ".xml"
+  dim strInFileName : strInFileName= strPrefix + "\remote_posnet\out\" + replace(oSprzedaz.strNrDok,"/","_") + ".txt"
+  #else
+  dim strOutFileName : strOutFileName = "\\tsclient\C\remote_posnet\in\" + replace(oSprzedaz.strNrDok,"/","_") + ".xml"
+  dim strInFileName : strInFileName= "\\tsclient\C\remote_posnet\out\" + replace(oSprzedaz.strNrDok,"/","_") + ".txt"
+  #endif
+  
+  dim pSO : set pSO = doc_.createstreamobj()
+	pSO.attach strOutFileName
+	pSO.write "<?xml version=""1.0"" encoding=""windows-1250"" ?>" + vbCrLf
+  pSO.write "<paragon_posnet>" + vbCrLf
+  pSO.write "<nr_dokumentu>" + oSprzedaz.strNrDok + "</nr_dokumentu>" + vbCrLf
+  pSO.write "<sposob_platnosci>" + cstr(eSposPlat)+ "</sposob_platnosci>" + vbCrLf
+  
+  dim pArraySumRate: set pArraySumRate = trans_.afc.new_navoarray()
+        
+	fillSumRate oSprzedaz, pArraySumRate
+
+  dim strNazwaProd
+	dim i
+	for i = 0 to pArraySumRate.upperIndex
+		if pArraySumRate.value(i) <> ccur(0) then
+			strNazwaProd = "Zaliczka " + vat2name(i+1)
+	    
+      pSO.write "<linia>" + vbCrLf
+      pSO.write "<towar>" + strNazwaProd + "</towar>" + vbCrLf
+      pSO.write "<ilosc>" +  trans_.afc.convert.cur2sql(1.0)+ "</ilosc>" + vbCrLf
+      pSO.write "<vat>" + cstr(i+1)+ "</vat>" + vbCrLf
+      pSO.write "<cena>" +  trans_.afc.convert.cur2sql(pArraySumRate.value(i)) + "</cena>" + vbCrLf
+      pSO.write "<wartosc>" +  trans_.afc.convert.cur2sql(pArraySumRate.value(i)) + "</wartosc>" + vbCrLf
+      pSO.write "<jm>szt</jm>" + vbCrLf
+      pSO.write "</linia>" + vbCrLf  
+  	end if
+	next
+	
+  pSO.write "</paragon_posnet>" + vbCrLf
+  set pSO = nothing
+  '------------------------------------------
+  dim iter 
+  for iter = 1 to 8
+    doc_.system.sleep 2250
+    if oFSO.FileExists(strInFileName) then
+      set pSO = doc_.createstreamobj()
+	    pSO.attach strInFileName
+      
+      dim arrLines : arrLines = split(pSO.getstring,vbCrLf)
+      if ubound(arrLines) > 0 then
+        if arrLines(0) <> "OK" then
+          trans_.message 0,0,"Wydruk nieudany. Sprawdź komunikaty na NAVO2012 Remote Posnet Printer"
+          exit function
+        else
+#ifdef _ALMA_TREND
+          trans_.var(GVAR_POMIN_BLOKADE_DOK_ZAREJESTROWANE) = "1"
+#endif          
+          oSprzedaz.sprzed_strNrDokFisk = arrLines(1)
+  						
+          if not trans_.saveobjects() then
+            nx_.trace.error "EFP001","Aktualizacja dokumentu numerem fiskalnym paragonu nieudana"
+          else
+#ifdef _ALMA_TREND
+          trans_.var(GVAR_POMIN_BLOKADE_DOK_ZAREJESTROWANE) = "0"
+#endif            
+            print_paragon_remote = true
+            exit function
+          end if 
+#ifdef _ALMA_TREND
+          trans_.var(GVAR_POMIN_BLOKADE_DOK_ZAREJESTROWANE) = "0"
+#endif            
+        end if
+      end if
+    else
+      oPerf.text = cstr(iter) + "- czekam na wyniki wydruku"
+    end if
+  next  
+
+  trans_.message 0,0,"Brak wyników wydruku. Sprawdź czy NAVO2012 Remote Posnet Printer jest uruchomiony!"  
+end function
+]]>
+</script>
+</config>
+<body>
+
+</body>
+</page>

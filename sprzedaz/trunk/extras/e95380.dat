@@ -1,0 +1,387 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+RAPTEMPLATE_SPRZEDAZ_BEZ_ZALICZEK
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203_appconfig.h"
+#include "h1220.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1250.h"
+
+
+#define RAPORT_TITLE Sprzedaż bez zaliczek
+
+
+#ifdef APPCONFIG_RAPORT_BY_PROD_INX
+#define C_FIELD_FIRST_EXPR		k.strIndeks
+#define C_FIELD_SECOND_EXPR		k.strNazwa
+#else
+#define C_FIELD_FIRST_EXPR		k.strNazwa
+#define C_FIELD_SECOND_EXPR		k.strIndeks
+#endif 
+
+#define ZALICZKOWE #pom_zaliczkowe
+#define STATUS #pom_status
+
+-->
+
+<page style='36'>
+<config>
+<title>RAPORT_TITLE</title>
+<script>
+<![CDATA[
+<%
+function query()
+
+  dim strSQL
+
+  strSQL = "create table ZALICZKOWE " + vbNewLine +_
+           "( " + vbNewLine +_
+           "--faktura zaliczkowa " + vbNewLine +_
+           "strIndeks varchar(32) not null, " + vbNewLine +_
+           "strNazwa varchar(255) not null, " + vbNewLine +_
+           "IdKlient integer not null, " + vbNewLine +_
+           "dDataWyst datetime not null, " + vbNewLine +_
+           "strNrDok varchar(32) not null, " + vbNewLine +_
+	       "IdSprzed integer not null, " + vbNewLine +_
+	       "pTrans integer not null, " + vbNewLine +_
+	       "curSumaNetto decimal(12,2) not null, " + vbNewLine +_
+	       "curSumaVat decimal(12,2) not null, " + vbNewLine +_
+	       "curSumaBrutto decimal(12,2) not null, " + vbNewLine +_
+	       "--korekta " + vbNewLine +_
+	       "dDataWystKor datetime not null, " + vbNewLine +_
+	       "strNrDokKor varchar(32) not null, " + vbNewLine +_
+	       "IdSprzedKor integer not null, " + vbNewLine +_
+	       "curSumaNettoKor decimal(12,2) not null, " + vbNewLine +_
+	       "curSumaVatKor decimal(12,2) not null, " + vbNewLine +_
+	       "curSumaBruttoKor decimal(12,2) not null, " + vbNewLine +_
+	       "--końcowa " + vbNewLine +_
+	       "dDataWystKonc datetime not null, " + vbNewLine +_
+	       "strNrDokKonc varchar(32) not null, " + vbNewLine +_
+	       "IdSprzedKonc integer not null, " + vbNewLine +_
+	       "curSumaNettoKonc decimal(12,2) not null, " + vbNewLine +_
+	       "curSumaVatKonc decimal(12,2) not null, " + vbNewLine +_
+	       "curSumaBruttoKonc decimal(12,2) not null, " + vbNewLine +_
+	       "--rejestr faktur zaliczkowych " + vbNewLine +_
+	       "IdRejestr int not null " + vbNewLine +_          
+           ")"
+  trans_.execsql strSQL
+  
+  strSQL = "create table STATUS " + vbNewLine +_
+           "( " + vbNewLine +_
+           "pTrans integer not null, " + vbNewLine +_
+           "nRozliczona varchar(1) not null " + vbNewLine +_
+           ")"
+  trans_.execsql strSQL
+  
+  'dodaj faktury zaliczkowe końcowe
+  dim strData: strData = Replace(rapeng_.query_apply_actual_param("%1", pParamArray),"t_sprzed.dDataWyst","s.p_dDataWyst")
+  strSQL = "insert into ZALICZKOWE " + vbNewLine +_
+           "select '','',0,{d '1899-12-31'},'',0,max(s.p_pTransakcja),0.0,0.0,0.0,{d '1899-12-31'},'',0,0.0,0.0,0.0, " + vbNewLine +_
+           "max(s.p_ddatawyst), max(s.p_strNrDok),s.p_IdObj,sum(s.c_curwartnetto),sum(s.c_curvat),sum(s.c_curwartbrutto),0 " + vbNewLine +_
+           "from vlist_n5sprzedaz_listPozycje s " + vbNewLine +_
+           "inner join n5rejestrdok r on s.p_pRejestrDok = r.IdObj " + vbNewLine +_
+           "inner join n5klient k on s.p_pKlient = k.IdObj " + vbNewLine +_
+           "where r.eTyp = 54 and s.p_strNrDok like 'FZALK/%' " + vbNewLine +_
+           "and " + strData + " and %2 and %3 and %4 " + vbNewLine +_
+           "group by s.p_idobj"
+  strSQL = rapeng_.query_apply_actual_param(strSQL, pParamArray)           
+  trans_.execsql strSQL    
+  
+  'dodaj faktury zaliczkowe
+  strSQL = "insert into ZALICZKOWE " + vbNewLine +_
+           "select k.strIndeks,k.strNazwa,k.IdObj,s.dDataWyst,s.strNrDok,s.IdObj,s.pTransakcja, " + vbNewLine +_ 
+           "s.curSumaNetto,s.curSumaVAT,s.curSumaBrutto, " + vbNewLine +_
+           "{d '1899-12-31'},'',0,0.0,0.0,0.0, " + vbNewLine +_
+           "{d '1899-12-31'},'',0,0.0,0.0,0.0,r.IdObj " + vbNewLine +_
+           "from n5sprzedaz s " + vbNewLine +_ 
+           "inner join n5rejestrdok r on s.pRejestrDok = r.IdObj " + vbNewLine +_ 
+           "inner join n5klient k on s.pKlient = k.IdObj " + vbNewLine +_ 
+           "where r.eTyp = 54 and s.strNrDok like 'FZAL/%' and " + vbNewLine +_ 
+           "s.pTransakcja in (select pTrans from ZALICZKOWE) and %2 "
+  strSQL = rapeng_.query_apply_actual_param(strSQL, pParamArray)
+  trans_.execsql strSQL  
+
+  'dodaj korekty do faktur  
+  strData = Replace(rapeng_.query_apply_actual_param("%1", pParamArray),"t_sprzed.dDataWyst","n5sprzedaz.dDataWyst")
+  strSQL = "update ZALICZKOWE " + vbNewLine +_
+           "set dDataWystKor = n5sprzedaz.dDataWyst, " + vbNewLine +_
+           "strNrDokKor = n5sprzedaz.strNrDok, " + vbNewLine +_
+           "IdSprzedKor = n5sprzedaz.IdObj, " + vbNewLine +_
+           "curSumaNettoKor = n5sprzedaz.curSumaNetto, " + vbNewLine +_
+           "curSumaVatKor = n5sprzedaz.curSumaVAT, " + vbNewLine +_
+           "curSumaBruttoKor = n5sprzedaz.curSumaBrutto " + vbNewLine +_
+           "from n5sprzedaz " + vbNewLine +_
+           "inner join n5rejestrdok r on n5sprzedaz.pRejestrDok = r.IdObj " + vbNewLine +_
+           "where r.eTyp = 60 and n5sprzedaz.strNrDok like 'KFZAL%' " + vbNewLine +_
+           "and " + strData + vbNewLine +_
+           "and n5sprzedaz.pPopSprzed = ZALICZKOWE.IdSprzed and %2 "
+  strSQL = rapeng_.query_apply_actual_param(strSQL, pParamArray)           
+  trans_.execsql strSQL  
+
+  'status rozliczenia faktur
+  strSQL = "insert into STATUS " + vbNewLine +_ 
+           "select pTrans, " + vbNewLine +_
+           "case when max(IdSprzedKor) > 0 then " + vbNewLine +_
+           "case when (sum(curSumaBrutto) - (sum(curSumaBrutto) - sum(curSumaBruttoKor)) - sum(curSumaBruttoKonc)) = 0 then '1' else '2' end " + vbNewLine +_ 
+           "else " + vbNewLine +_
+           "case when (sum(curSumaBrutto) - sum(curSumaBruttoKonc)) <= 0 then '1' else '2' end  " + vbNewLine +_
+           "end " + vbNewLine +_
+           "from ZALICZKOWE " + vbNewLine +_ 
+           "group by pTrans"
+  trans_.execsql strSQL
+
+
+query = "select 'c_field_first'=C_FIELD_FIRST_EXPR,'c_field_second'=C_FIELD_SECOND_EXPR, " + vbNewLine +_
+" 'c_1'=10108,'c_idobj'=k.IdObj,'c_3'=t_sprzed.strNrDok,'c_4'=k.strNazwa, "+_
+" 'c_5'=10108,'c_6'=k.IdObj,'c_10'=t_sprzed.strNrDok,'c_11'=10129, "+_
+" 'c_12'=t_sprzed.IdObj,'c_13'=isnull(t_sprzed.curSumaNetto-isnull(t_orgsprz.curSumaNetto,0),0), " + vbNewLine +_
+" 'c_14'=isnull(t_sprzed.curSumaBrutto-isnull(t_orgsprz.curSumaBrutto,0),0), " + vbNewLine +_
+" 'c_15'=isnull(t_sprzed.curSumaVAT-isnull(t_orgsprz.curSumaVAT,0),0),  " + vbNewLine +_
+"'c_data_sprzed'=t_sprzed.dDataSprzed," + vbNewLine +_
+"'c_extra1'=t_sprzed.strExtra1 " + vbNewLine +_
+" from n5sprzedaz as t_sprzed " + vbNewLine +_
+" left outer join n5sprzedaz t_orgsprz on t_sprzed.ppopsprzed = t_orgsprz.idobj " + vbNewLine +_
+" inner join n5klient as k on t_sprzed.pKlient = k.IdObj " + vbNewLine +_
+" left join n5pracownik as t_prac on  k.pPracownik = t_prac.Idobj  " + vbNewLine +_
+" inner join n5grupaklient as t_2 on k.pGrupaKlient = t_2.IdObj " + vbNewLine +_
+" inner join n5rejestrdok as r on t_sprzed.pRejestrDok = r.IdObj " + vbNewLine +_
+" left outer join n5pracownik as t_handl on t_sprzed.sprzed_pHandlowiec = t_handl.idobj " + vbNewLine +_
+" where t_sprzed.pRozlVAT<>0 and %1  and  %2 and %3 and  %4  and  %5  and  %6 and EXTRA_CUSTOMER_FILTER_AND(7) and %8 " + vbNewLine +_
+" and ((r.eTyp not in (N5REJESTRDOK_FAKTURA_ZALICZKOWA,N5REJESTRDOK_FAKTURA_ZALICZKOWA_KOR)) or " + vbNewLine +_ 
+"	     (t_sprzed.strNrDok like 'FZALK%' and isnull(t_sprzed.curSumaBrutto-isnull(t_orgsprz.curSumaBrutto,0),0) = 0 and t_orgsprz.IdObj is not null) or " + vbNewLine +_
+"	     (t_sprzed.strNrDok like 'KFZALK%' and isnull(t_sprzed.curSumaBrutto-isnull(t_orgsprz.curSumaBrutto,0),0) = 0)) " + vbNewLine +_
+"union" + vbNewLine +_
+"select 'c_field_first'=max(k.strNazwa),'c_field_second'=max(k.strIndeks),'c_1'=10108,'c_idobj'=max(k.IdObj),'c_3'=max(t_sprzed.strNrDok), " + vbNewLine +_
+"'c_4'=max(k.strNazwa),'c_5'=10108,'c_6'=max(k.IdObj),'c_10'=max(t_sprzed.strNrDok),'c_11'=10129,  'c_12'=max(t_sprzed.IdObj), " + vbNewLine +_
+"'c_13'=abs((select sum(curSumaNetto) - (sum(curSumaNetto) - sum(curSumaNettoKor)) - sum(curSumaNettoKonc) from #pom_zaliczkowe where pTrans = t_sprzed.pTransakcja)), " + vbNewLine +_ 
+"'c_14'=abs((select sum(curSumaBrutto) - (sum(curSumaBrutto) - sum(curSumaBruttoKor)) - sum(curSumaBruttoKonc) from #pom_zaliczkowe where pTrans = t_sprzed.pTransakcja)), " + vbNewLine +_
+"'c_15'=abs((select sum(curSumaVat) - (sum(curSumaVat) - sum(curSumaVatKor)) - sum(curSumaVatKonc) from #pom_zaliczkowe where pTrans = t_sprzed.pTransakcja)), " + vbNewLine +_
+"'c_data_sprzed'=max(t_sprzed.dDataSprzed), " + vbNewLine +_
+"'c_extra1'=max(t_sprzed.strExtra1) " + vbNewLine +_
+"from n5sprzedaz as t_sprzed " + vbNewLine +_
+"left outer join n5sprzedaz t_orgsprz on t_sprzed.ppopsprzed = t_orgsprz.idobj " + vbNewLine +_
+"inner join n5klient as k on t_sprzed.pKlient = k.IdObj " + vbNewLine +_
+"left join n5pracownik as t_prac on  k.pPracownik = t_prac.Idobj " + vbNewLine +_
+"inner join n5grupaklient as t_2 on k.pGrupaKlient = t_2.IdObj " + vbNewLine +_
+"inner join n5rejestrdok as r on t_sprzed.pRejestrDok = r.IdObj " + vbNewLine +_
+"left outer join n5pracownik as t_handl on t_sprzed.sprzed_pHandlowiec = t_handl.idobj " + vbNewLine +_
+"where t_sprzed.pRozlVAT<>0 and %1  and  %2 and %3 and  %4  and  %5  and  %6 and EXTRA_CUSTOMER_FILTER_AND(7) and %8 " + vbNewLine +_
+"and t_sprzed.pTransakcja in (select pTrans from STATUS where nRozliczona = '1') " + vbNewLine +_
+"group by t_sprzed.pTransakcja " + vbNewLine +_
+"order by c_data_sprzed,c_10, c_3"
+
+query = rapeng_.query_apply_actual_param(query,pParamArray)
+query = Replace(query,"t_prac.strNazwisko is not null", "1=1")
+
+end function
+%>
+<%
+function default_param()
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+
+	pParamArray.add doc_.afc.rap.param.new_date_range("Data wystawienia").bindexpr("t_sprzed.dDataWyst")
+	'pParamArray.add doc_.afc.rap.param.new_text("Nazwa rejestru").bindexpr("r.strNazwa")
+	
+	dim pParamFactory2: set pParamFactory2= doc_.afc.rap.param
+	dim pParam2: Set pParam2= pParamFactory2.new_choice("Rejestr").bindexpr("r.IdObj")
+	doc_.afc.rap.param.init_on_query pParam2, trans_ ,_
+		"select strNazwa , idobj from n5rejestrdok where eTyp in (N5REJESTRDOK_FAKT_SP,N5REJESTRDOK_KOR_FAKT_SP, " +_
+		"N5REJESTRDOK_RACH,N5REJESTRDOK_KOR_RACH,N5REJESTRDOK_PARAGON,N5REJESTRDOK_KOR_PARAGON, " +_
+		"N5REJESTRDOK_FAKT_EXP,N5REJESTRDOK_KOR_FAKT_EXP,N5REJESTRDOK_KOREKTA_WDT, " +_
+		"N5REJESTRDOK_WDT,N5REJESTRDOK_FAKTURA_ZALICZKOWA,N5REJESTRDOK_FAKTURA_ZALICZKOWA_KOR) " +_	
+		"order by strNazwa "
+	pParamArray.add pParam2
+
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwa klienta").bindexpr("k.strNazwa")
+	pParamArray.add doc_.afc.rap.param.new_text("Indeks klienta").bindexpr("k.strIndeks")
+	pParamArray.add doc_.afc.rap.param.new_text("Grupa klientów").bindexpr("t_2.strNazwa")
+	pParamArray.add doc_.afc.rap.param.new_text("Pracownik dedykowany").bindexpr("t_prac.strNazwisko")
+	pParamArray.add doc_.afc.rap.param.new_text("Handlowiec").bindexpr("isnull(t_handl.strNazwisko,'')")
+	EXTRA_CUSTOMER_FILTER_PARAM(k)
+	
+	
+	set default_param = pParamArray
+end function
+%>
+<%
+function section_header_1(byref pSection,byref pRec)
+%>
+<tr userprop='propc_section_start="1" propc_section_hidden="0" propc_section_req="0"' fontsize='4'>
+	<td style='27' colspan='7'>
+		<picture name='<%so.write cstr(nSectionPicCounter)%>' tip='Zwiń' ignoresysdisable='true' image='PICTURE_SMALL_MINUS' width='SIZE_FOR_PLUS' height='SIZE_FOR_PLUS' href='vs1022="section_hideshow_hli" vn100="<%so.write cstr(nSectionPicCounter)%>"'/>
+	RXE_AUTOTEXT_LINK_FORM_CCC(c_1,c_idobj,c_field_first)
+	<t size='3'/>
+	RXE_AUTOTEXT_LINK_FORM_CCC(c_1,c_idobj,c_field_second)
+</td>
+</tr>
+<%
+nSectionPicCounter=nSectionPicCounter+1
+end function
+%>
+<%
+function section_footer_1(byref pSection)
+%>
+<tr hide='true' userprop='propc_section_end="1"'><td colspan='8' /></tr>
+<tr fontsize='4'>
+	
+	<td style='27' align='right'>
+		RXE_MONEY_VAR(pSection.counter(0).result)
+	</td>
+	<td style='27' align='right'>
+		RXE_MONEY_VAR(pSection.counter(2).result)
+	</td>	
+	<td style='27' align='right'>
+		RXE_MONEY_VAR(pSection.counter(1).result)
+	</td>
+
+</tr>
+<tr border='0'><td colspan='7' /></tr>
+<%
+end function
+%>
+<%
+function body_row(byref pSection,byref pRec)
+
+dim curWalNetto : curWalNetto = ccur(0.0) 
+dim curWalVat : curWalVat = ccur(0.0)  
+dim curWalBrutto : curWalBrutto = ccur(0.0)  
+
+if pRapExec.RecNr mod 2 = 0 then
+%>
+<tr bordercolor='white'>
+<%
+else
+%>
+<tr bordercolor='white' style='37'>
+<%
+end if
+%>
+	
+<td align='right'>RXE_LP</td>
+	<td align='right'>
+		RXE_DATE(c_data_sprzed)<t size='1'/> 
+	</td>
+	<td>
+		RXE_AUTOTEXT_LINK_FORM_CCC(c_11,c_12,c_10)
+	</td>
+	<td>
+		RXE_AUTOTEXT_LINK_FORM_CCC(c_1,c_idobj,c_4)
+	</td>
+	<td align='right'>
+		RXE_QUANTITY_CVV(c_13,"",2)
+	</td>
+	<td align='right'>
+		RXE_QUANTITY_CVV(c_15,"",2)
+	</td>	
+	<td align='right'>
+		RXE_QUANTITY_CVV(c_14,"",2)
+	</td>
+</tr><%
+end function
+%>
+<%
+function body_header(byref pSection,byref pRec)
+%>
+<table border='1'>
+<thead>
+<tr style='21'>
+	
+	<td width='min'><t>LP</t></td>
+	<td width='min'>
+		<t><![CDATA[Data operacji]]></t>
+	</td>
+	<td width='max'>
+		<text><![CDATA[Numer dokumentu]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Klient]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Wartość netto]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Wartość VAT]]></text>
+	</td>	
+	<td width='min'>
+		<text><![CDATA[Wartość brutto]]></text>
+	</td>		
+</tr>
+</thead>
+<tbody>
+<%
+end function
+%>
+<%
+function body_footer(byref pSection)
+%>
+</tbody>
+<tfoot>
+<tr style='21'>
+	<td style='27' colspan='4' />
+	<td style='27' align='right'>
+		RXE_MONEY_VAR(pRapExec.body.counter(0).result)
+	</td>
+	<td style='27' align='right'>
+		RXE_MONEY_VAR(pRapExec.body.counter(2).result)
+	</td>	
+	<td style='27' align='right'>
+		RXE_MONEY_VAR(pRapExec.body.counter(1).result)
+	</td>	
+</tr>
+</tfoot>
+</table>
+<%
+end function
+%>
+<%dim nSectionPicCounter : nSectionPicCounter = 10000000%>
+function section_hideshow_hli(byref pHLI)
+doc_.afc.formsection.section_hideshow page_, pHLI.prop(100)
+end function
+]]>
+</script>
+</config>
+<header>
+</header>
+<body>
+<p>
+RAPORT_HEADER(3,0)
+</p>
+
+<p>
+<t size='2'/>
+</p>
+
+<p><text fontsize='7'><![CDATA[RAPORT_TITLE]]></text></p><br/><br/>
+<t fontsize='6' bold='true'>Kryteria selekcji:</t><br/>
+<%
+
+dim pRapExec : set pRapExec = rapeng_.new_engine()
+with pRapExec
+	dim pParamArray : set pParamArray = default_param()
+	rapeng_.merge_params pParamArray,rapeng_.get_raport_param()
+	pRapExec.title = "RAPORT_TITLE"
+
+	if rapeng_.show_raport_param_dialog(pParamArray,"RAPORT_TITLE") <> 0 then
+		pRapExec.put_final_query query()
+		rapeng_.set_raport_param pParamArray
+    
+		.add_body_ex (getref("body_header"),getref("body_footer"),getref("body_row")).add_sumator("c_13").add_sumator("c_14").add_sumator("c_15")
+    
+		rapeng_.write_actual_param so,rapeng_.get_raport_param()
+    
+	  if not .perform then
+		  so.write "<p style='21'><t>Brak danych spełniających podane kryteria</t></p>"
+	  end if    
+
+		trans_.execsql "drop table ZALICZKOWE"
+		trans_.execsql "drop table STATUS" 
+  end if  
+end with
+%>
+</body>
+<footer>
+</footer>
+</page>

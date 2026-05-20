@@ -1,0 +1,407 @@
+#ifndef LIBRARY_MAPI_CLASS
+#define LIBRARY_MAPI_CLASS
+
+#include "50211"
+#include "50122"
+#include "50123"
+
+#define ERROR_SHARING_VIOLATION     32
+
+private function getHKLM(byval strRoot, byval strValue)
+	dim pSys
+	set pSys=doc_.system
+
+	getHKLM=pSys.registry(hKey_LocalMachine, strRoot, strValue)
+end function
+
+
+class CNavoMAPI
+
+	private m_pNavoINET
+	public m_strUserName
+	public m_strPassword
+	private pFD
+	private pInstSession
+#ifdef APPCONFIG_EMAIL_Z_SERWERA_POCZTOWEGO
+	private m_strServerName	  'serwer poczty wychodz¹cej
+	private m_nPort			  'port serwera
+	private m_bSSL			  'czy u¿ywaæ SSL
+	private m_bDefaultCred	  'czy u¿ywaæ domyœlnych poœwiadczeñ
+	private m_strEmailSender  'adres nadawcy
+	private m_strPassSender   'has³o nadawcy 
+#endif
+
+	private sub class_initialize()
+		set m_pNavoINET = nothing
+		set pFD = nothing
+		set pInstSession = nothing
+		m_strUserName = ""
+		m_strPassword = ""
+#ifdef APPCONFIG_EMAIL_Z_SERWERA_POCZTOWEGO
+		m_strServerName = ""
+		m_nPort = 0
+		m_bSSL = false
+		m_bDefaultCred = false
+		m_strEmailSender = ""
+		m_strPassSender = ""
+#endif
+	end sub
+	
+	private sub class_terminate()	'TODO
+		set pInstSession = nothing
+		set m_pNavoINET = nothing
+		set pFD = nothing
+	end sub
+
+	private function createINET(): createINET = false
+		
+		on error resume next
+		
+#ifdef APPCONFIG_EMAIL_Z_SERWERA_POCZTOWEGO
+		set m_pNavoINET = nx_.devices.new_send_mail()
+#else
+		set m_pNavoINET = createobject("navoinet.mail")
+#endif
+
+		if (err.number<>0) then
+			exit function
+		end if
+
+		on error goto 0
+
+		if (m_pNavoINET is nothing) then
+			exit function
+		end if
+
+		createINET = true
+
+	end function
+
+	private function initial_connect(): initial_connect = false
+		if not get_server_settings() then
+			exit function
+		end if
+		
+		on error resume next
+		
+		m_pNavoINET.initialize m_strServerName, m_nPort, m_bSSL, m_bDefaultCred, m_strEmailSender, m_strPassSender
+
+		if (err.number<>0) then
+			exit function
+		end if
+
+		on error goto 0
+
+		initial_connect = true
+
+	end function
+
+	'odczytaj ustawienia serwera pocztowego z globprofile
+	private function get_server_settings(): get_server_settings = false
+		dim pGlobProf: set pGlobProf = getglobprofileObj(GLOBPROF_EMAIL_SERVER_SETTINGS)
+		dim SetArray : SetArray = split(pGlobProf.Wartosc,";")
+		if ubound(SetArray) < 0 then
+			exit function
+		end if
+		if ubound(SetArray) = 5 then
+			m_strServerName = SetArray(0)
+			m_nPort = CInt(SetArray(1))
+			m_bSSL = (SetArray(2) = "1")
+			m_bDefaultCred = (SetArray(3) = "1")
+			m_strEmailSender = SetArray(4)
+			m_strPassSender = SetArray(5)
+			get_server_settings = true
+		end if
+	end function
+
+	private function Create_FSO(): Create_FSO = false
+		if (pFD is nothing) then
+			dim bOK
+			set pFD = CFileDrive( bOK )
+
+			if (not bOK) then
+				exit function
+			end if
+		end if
+
+		Create_FSO = true
+	end function
+
+	'sprawdza czy zostal wlozony dysk Navo Enterprise zawierajacy
+	'odpowiednie pliki
+	private function isNEDisc(byval strSource): isNEDisc = false
+		
+		if (not Create_FSO()) then
+			exit function
+		end if
+
+		if (not pFD.isReady(pFD.GetDriveName(strSource))) then
+			exit function
+		end if
+
+		if (not pFD.isFile(strSource+"msmapi32.ocx") or _
+		not pFD.isFile(strSource + "comcat.dll")) then
+			exit function
+		end if
+
+		isNEDisc = true
+
+	end function
+
+	private function log_(byval strNewMessage)
+		if (pInstSession is nothing) then
+			exit function
+		end if
+
+		pInstSession.addlogmsg CStr(strNewMessage)
+	end function
+
+	'Kopiuje pliki z dysku instalacyjnego NE i rejestruje je
+	private function copyINETFiles(): copyINETFiles = false
+
+		if (not Create_FSO()) then
+			exit function
+		end if
+
+		set pInstSession=nothing
+		
+		on error resume next
+		set pInstSession = createobject("navoinstall.session")
+		on error goto 0
+
+		if (pInstSession is nothing) then
+			exit function
+		end if
+
+		pInstSession.setlogname trans_.var(GVAR_APPLICATION) + " - Components Setup log.txt"
+
+		log_ "Starting MAPI installation process"
+
+		'pliki maja byc szukane w:
+		dim strSource
+		strSource = getHKLM("SOFTWARE\NAVO\NAVO2002\Setup", "MediaSource")
+		
+		if (Right(strSource, 1)<>"\") then
+			strSource = strSource + "\"
+		end if
+
+		log_ "Genuine installation source is " + CStr(strSource)
+
+		dim strSourceDrive
+		strSourceDrive=pFD.GetDriveName(strSource)
+
+		if (not isNEDisc(strSourceDrive)) then
+
+			log_ "Unable to locate installation files - " + strSource
+
+			do
+				'Beep
+				select case MessageBoxCustom("Proszê w³o¿yæ p³ytê instalacyjn¹ " + trans_.var(GVAR_APPLICATION) + " do stacji " + CStr(strSourceDrive), "Brak lub b³êdny dysk", vbYesNoCancel, vbQuestion, "OK;Anuluj;Wska¿ po³o¿enie")
+					case vbYes:
+						'OK
+
+					case vbNo:
+						'Cancel
+						exit function
+
+					case vbCancel
+						dim strNewSource
+						strNewSource=SelectFolder("c:\")
+
+						if (strNewSource<>"") then
+							if (Right(strNewSource, 1)<>"\") then
+								strNewSource = strNewSource + "\"
+							end if
+
+							if (isNEDisc(strNewSource)) then
+								strSource = strNewSource
+							end if
+
+							strNewSource = strNewSource + "components\other\"
+
+							if (isNEDisc(strNewSource)) then
+								strSource = strNewSource
+							end if
+						end if
+
+				end select
+			loop until (isNEDisc(strSource))
+		end if
+
+		log_ "Installation file will be copied from " + strSource
+
+		dim strSystemDirectory
+		strSystemDirectory = CStr(doc_.system.sysdir) + "\"
+
+		log_ "The System directory was located - " + strSystemDirectory
+
+		dim bFileInUse: bFileInUse = false
+
+		log_ "Preparing to install msmapi32.ocx from " + strSource+"msmapi32.ocx"
+
+		if (not pInstSession.installfile(strSource+"msmapi32.ocx", strSystemDirectory+"msmapi32.ocx")) then
+			if (CLng(pInstSession.lasterror)=ERROR_SHARING_VIOLATION) then
+				bFileInUse = true
+			else
+				MessageBox "Nie uda³o siê skopiowanie pliku msmapi32.ocx", "Nie skopiowano", vbOKOnly, vbInformation
+				exit function
+			end if
+		end if
+
+		log_ "msmapi32.ocx is installed"
+
+		log_ "Preparing to install comcat.dll from " + strSource + "comcat.dll"
+		
+		if (not pInstSession.installfile(strSource+"comcat.dll", strSystemDirectory+"comcat.dll")) then
+			if (CLng(pInstSession.lasterror)=ERROR_SHARING_VIOLATION) then
+				bFileInUse = true
+			else
+				MessageBox "Nie uda³o siê skopiowanie pliku comcat.dll", "Nie skopiowano", vbOKOnly, vbInformation
+				exit function
+			end if
+		end if
+
+		log_ "comcat.dll is installed"
+
+		bFileInUse = (bFileInUse or pInstSession.anyinuse)
+
+		if (bFileInUse) then
+			
+			log_ "Some files are in use! Restart is required!"
+
+			MessageBox "Komponenty zosta³y zaktualizowane. Nale¿y zrestartowaæ komputer aby zmiany by³y widoczne.", "Wymagany restart", vbOKOnly, vbInformation
+			exit function
+		end if
+
+		copyINETFiles = true
+	end function
+
+	private function installINET(): installINET = false
+
+
+		if (not Create_FSO()) then
+			exit function
+		end if
+
+		dim strSystemDirectory
+		strSystemDirectory = CStr(doc_.system.sysdir) + "\"
+
+		if (not copyINETFiles()) then
+			exit function
+		end if
+
+		'Mamy pliki - przechodzimy do procesu rejestracji
+		dim nRegRes : nRegRes = doc_.system.registerdll(strSystemDirectory + "msmapi32.ocx")
+		if nRegRes <> 0 then
+
+			log_ "Unable to regiter " + strSystemDirectory + "msmapi32.ocx"
+
+			MessageBox "Nie uda³o siê zarejestrowaæ komponentów.", "Nie zarejestrowano", vbOKOnly, vbInformation
+			exit function
+		end if
+
+		log_ "msmapi32.ocx is registered."
+
+		'Zarejestruj licencje
+		doc_.system.registry(hKey_ClassesRoot, "Licenses\899B3E80-6AC6-11cf-8ADB-00AA00C00905","") = "wjsjjjlqmjpjrjjjvpqqkqmqukypoqjquoun"
+
+		log_ "The Licence key for msmapi32.ocx is written."
+
+		installINET = createINET()
+		
+		if (not installINET) then
+
+			log_ "Unable to start INET. Something goes wrong! It's necessary to install it by hand!"
+
+			if MessageBox("Nie uda³o siê uruchomiæ zainstalowanych komponentów MAPI. Chcesz zainstalowaæ je rêcznie.", "Instalowaæ rêcznie?", vbYesNo, vbQuestion)=vbYes then
+				doc_.system.shellopen "control.exe", "", "appwiz.cpl,@0,2"
+			end if
+		end if
+	end function
+
+	public function connect(): connect=false
+		
+		'nie udalo sie stworzyc obiektu
+		'podejmujemy probe instalacji MAPI
+		if (not createINET()) then
+			
+			'Instalacja komponentow
+#ifdef APPCONFIG_EMAIL_Z_SERWERA_POCZTOWEGO
+			MessageBox "Nie uda³o sie pod³¹czyæ do programu pocztowego.", "Brak komponentów", vbOKOnly, vbInformation
+			exit function
+#else
+			if MessageBox("Nie uda³o sie pod³¹czyæ do programu pocztowego. Czy chcesz zainstalowaæ teraz odpowiednie komponenty i spróbowaæ jeszcze raz?", "Brak komponentów", vbYesNo, vbQuestion)=vbYes then
+				if (not installINET()) then
+					exit function
+				end if
+			else
+				exit function
+			end if
+#endif
+		end if
+
+#ifdef APPCONFIG_EMAIL_Z_SERWERA_POCZTOWEGO
+		'inicjalizacja po³¹czenia
+		if not initial_connect() then
+			MessageBox "Nie uda³o siê zainicjowaæ po³¹czenia z serwerem poczty wychodz¹cej.", "Inicjalizacja po³¹czenia", vbOKOnly, vbInformation
+			exit function			
+		end if
+#else
+		if (not m_pNavoINET.connect(m_strUserName, m_strPassword)) then
+			MessageBox "Nie uda³o siê zalogowaæ do programu pocztowego.", "Logowanie", vbOKOnly, vbInformation
+			exit function
+		end if
+#endif
+
+		connect = true
+
+	end function
+
+	public function connect_and_download()
+		connect_and_download = false
+		'nie udalo sie stworzyc obiektu
+		'podejmujemy probe instalacji MAPI
+		if (not createINET()) then
+			
+			'Instalacja komponentow
+#ifdef APPCONFIG_EMAIL_Z_SERWERA_POCZTOWEGO
+			MessageBox "Nie uda³o sie pod³¹czyæ do programu pocztowego.", "Brak komponentów", vbOKOnly, vbInformation
+			exit function
+#else
+			if MessageBox("Nie uda³o sie pod³¹czyæ do programu pocztowego. Czy chcesz zainstalowaæ teraz odpowiednie komponenty i spróbowaæ jeszcze raz?", "Brak komponentów", vbYesNo, vbQuestion)=vbYes then
+				if (not installINET()) then
+					exit function
+				end if
+			else
+				exit function
+			end if
+#endif
+
+		end if
+
+#ifdef APPCONFIG_EMAIL_Z_SERWERA_POCZTOWEGO
+		'inicjalizacja po³¹czenia
+		if not initial_connect() then
+			MessageBox "Nie uda³o siê zainicjowaæ po³¹czenia z serwerem poczty wychodz¹cej.", "Inicjalizacja po³¹czenia", vbOKOnly, vbInformation
+			exit function			
+		end if
+#else
+
+		if (not m_pNavoINET.download(m_strUserName, m_strPassword)) then
+			MessageBox "Nie uda³o siê zalogowaæ do programu pocztowego.", "Logowanie", vbOKOnly, vbInformation
+			exit function
+		end if
+#endif
+
+		connect_and_download = true
+	end function
+
+	public function getMAIL()
+		set getMAIL = m_pNavoINET
+	end function
+
+end class
+
+
+#endif
+

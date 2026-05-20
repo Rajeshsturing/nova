@@ -1,0 +1,470 @@
+#include "h1000"
+#include "h1240"
+
+#comment -------------------------------------------------------------------
+#comment Zestawienie obrotów i sald
+#comment 
+#comment SLIM - w¹ski wydruk
+
+#comment TOPM - skip # lines at top
+#comment LEFTM - left margin (# chars)
+#comment RIGHTM - right margin (#chars)
+#comment COLS - numer of columns (total, including margins)
+#comment PAGELINES - number of lines on page
+
+
+#define TOPM			0
+#define LEFTM			0
+#define RIGHTM			0
+#define PAGELINES		63
+#ifdef SLIM
+#define COLS			130
+#define CUR_COL_WIDTH	9
+#else
+#define COLS			190
+#define CUR_COL_WIDTH	12
+#endif
+#comment -------------------------------------------------------------------
+
+
+<%
+
+#comment ' obliczanie zois
+dim g_pPM : set g_pPM  = doc_.getmodule(60159)
+dim g_pRapEng : set g_pRapEng = doc_.getmodule(60108)
+dim g_pKontoInfoMan : set g_pKontoInfoMan = nothing
+dim g_pParamDate : set g_pParamDate = nothing
+dim g_pParamSymbol : set g_pParamSymbol = nothing
+dim g_strADOQuery : g_strADOQuery = ""
+
+dim g_arrGroupSum(10)
+dim g_arrTotalSum(10)
+
+#comment '-------------------------------
+#comment 'acquire parameters
+#comment '-------------------------------
+function aqcuire_params : aqcuire_params = false
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+
+	set g_pParamSymbol = doc_.afc.rap.param.new_text("Symbol").bindexpr("t_konto.strSymbol")
+	pParamArray.add g_pParamSymbol
+
+	set g_pParamDate = doc_.afc.rap.param.new_date_range("Data ksiêgowania").bindexpr("dDataKsieg")
+	pParamArray.add g_pParamDate
+	
+	if g_pRapEng.show_raport_param_dialog(pParamArray,"Zestawienie obrotów i sald") = 0 then
+		exit function
+	end if
+	
+	g_strADOQuery = g_pRapEng.query_apply_actual_param(query(), pParamArray)
+
+	aqcuire_params = true
+end function
+
+function query()
+query = "select " +_
+"'c_symbol'=t_konto.strSymbol,'c_nazwa'=t_konto.strNazwa,'c_idkonto'=t_konto.idobj, " +_
+"'c_skrot'=t_jedn.strSkrot,'c_prec'=t_jedn.nDokladnosc,'c_bilans'=t_konto.eBilans " +_
+"from n5konto as t_konto " +_
+"inner join n5jednostka as t_jedn on t_konto.pJednostka = t_jedn.IdObj " +_
+"where len(t_konto.strSymbol)=3 and %1 order by dbo.ks_lex_order(t_konto.strSymbol) "
+end function
+
+class cgenerator
+#comment '-------------------------------
+#comment ' document header
+#comment '-------------------------------
+	private sub generate_header()
+		page.set_cpi 15
+		page.rwriteat COLS-RIGHTM,text2ibmlatin2(util_.Firma_Miasto + "," +  fulldate(trans_.var(GVAR_TODAY)))
+		nl
+		nl
+		page.writeat LEFTM,text2ibmlatin2(util_.Firma_Nazwa)
+		nl
+		page.writeat LEFTM,text2ibmlatin2(util_.JO_Adres)
+		nl
+		nl
+		page.double_width true
+		page.double_height true
+		page.writeat LEFTM, text2ibmlatin2("Zestawienie obrotów i sald")
+		page.double_height false
+		page.double_width false
+		nl
+		page.writeat LEFTM,text2ibmlatin2("konta z zakresu " + g_pParamSymbol.get_desc()+ ", za okres " + g_pParamDate.get_desc())
+		nl
+		page.set_cpi 15	
+	end sub
+
+#comment '-------------------------------
+#comment ' document footer
+#comment '-------------------------------
+private sub generate_footer()
+
+end sub
+#comment '-------------------------------
+#comment ' positions (table)
+#comment '-------------------------------
+	private sub generate_table_header()
+		page.set_cpi 15
+		
+		hline1 : nl
+		'----------------------
+		m_oPozTW.write 1, "Symbol"
+		page.writeat m_oPozTW.get_pos(1) + 8, "Nazwa"
+		
+		m_oPozTW.write	3, "Bilans otwarcia"
+		m_oPozTW.write	5, text2ibmlatin2("Obroty bie¿¹ce")
+		m_oPozTW.write	7, text2ibmlatin2("Obroty narastaj¹co")
+		m_oPozTW.write	9, "Suma sald"
+		m_oPozTW.write	11, "Per saldo"
+		nl
+		hline1 : nl
+		'----------------------
+		m_oPozTW.write	3, "Wn"
+		m_oPozTW.write	4, "Ma"
+		
+		m_oPozTW.write	5, "Wn"
+		m_oPozTW.write	6, "Ma"
+		
+		m_oPozTW.write	7, "Wn"
+		m_oPozTW.write	8, "Ma"
+
+		m_oPozTW.write	9, "Wn"
+		m_oPozTW.write	10, "Ma"
+
+		m_oPozTW.write	11, "Wn"
+		m_oPozTW.write	12, "Ma"
+		nl
+	
+		hline2 : nl
+	end sub
+	private sub generate_table()
+		m_bInTable = true
+		generate_table_header
+		
+		'----------------------
+		dim iter
+		for iter = 0 to 9 		
+			g_arrGroupSum(iter)=ccur(0.0)
+			g_arrTotalSum(iter)=ccur(0.0)
+		next
+		'----------------------
+		'open cursor
+		dim oRecordSet : set oRecordSet = trans_.createadors(g_strADOQuery)
+		dim strLastGroup : strLastGroup = ""
+		dim bNonEmptyGroup : bNonEmptyGroup = false
+		do while not oRecordSet.EOF 
+			dim strGroup : strGroup = left(cstr(oRecordSet("c_symbol")),1)
+			if strGroup <> strLastGroup then
+				if strLastGroup <> "" then
+					'write sub-total for non-empty group
+					if bNonEmptyGroup then
+						generate_subtotal
+					end if
+					'reset
+					for iter = 0 to 9 		
+						g_arrGroupSum(iter)=ccur(0.0)
+					next
+				end if
+				strLastGroup = strGroup
+				bNonEmptyGroup = false
+			end if
+			if generate_table_line(oRecordSet) then
+				bNonEmptyGroup = true
+			end if
+			oRecordSet.MoveNext
+		loop
+		generate_total
+		m_bInTable = false
+		nl
+		page.writeat LEFTM,"******************** KONIEC WYDRUKU *************************"
+		nl		
+	end sub
+
+	public function generate_table_line(byref oRecord) : generate_table_line = false
+	
+		dim pKontoInfo : set pKontoInfo = g_pKontoInfoMan.kontoinfo(clng(oRecord("c_idkonto")))
+
+		if pKontoInfo.m_curObrN_Wn <> 0.0 or pKontoInfo.m_curObrN_Ma <> 0.0 or _
+		   pKontoInfo.m_curBO_Wn <> 0.0 or pKontoInfo.m_curBO_Ma <> 0.0 then
+		
+			m_oPozTW.write 1, text2ibmlatin2(cstr(oRecord("c_symbol")))
+			m_oPozTW.box   2, text2ibmlatin2(left(cstr(oRecord("c_nazwa")),199))
+			
+			m_oPozTW.rwrite	3,money(pKontoInfo.m_curBO_Wn)
+			m_oPozTW.rwrite	4,money(pKontoInfo.m_curBO_Ma)
+			
+			m_oPozTW.rwrite	5,money(pKontoInfo.m_curObrO_Wn)
+			m_oPozTW.rwrite	6,money(pKontoInfo.m_curObrO_Ma)
+			
+			m_oPozTW.rwrite	7,money(pKontoInfo.m_curObrN_Wn)
+			m_oPozTW.rwrite	8,money(pKontoInfo.m_curObrN_Ma)
+
+			m_oPozTW.rwrite	9,money(pKontoInfo.m_curSalN_Wn)
+			m_oPozTW.rwrite	10,money(pKontoInfo.m_curSalN_Ma)
+
+			m_oPozTW.rwrite	11,money(pKontoInfo.m_curSaSN_Wn)
+			m_oPozTW.rwrite	12,money(pKontoInfo.m_curSaSN_Ma)
+			nl
+			generate_table_line = true
+		end if
+
+		g_arrGroupSum(0)=g_arrGroupSum(0)+pKontoInfo.m_curBO_Wn
+		g_arrTotalSum(0)=g_arrTotalSum(0)+pKontoInfo.m_curBO_Wn
+
+		g_arrGroupSum(1)=g_arrGroupSum(1)+pKontoInfo.m_curBO_Ma
+		g_arrTotalSum(1)=g_arrTotalSum(1)+pKontoInfo.m_curBO_Ma
+
+		g_arrGroupSum(2)=g_arrGroupSum(2)+pKontoInfo.m_curObrO_Wn
+		g_arrTotalSum(2)=g_arrTotalSum(2)+pKontoInfo.m_curObrO_Wn
+				
+		g_arrGroupSum(3)=g_arrGroupSum(3)+pKontoInfo.m_curObrO_Ma
+		g_arrTotalSum(3)=g_arrTotalSum(3)+pKontoInfo.m_curObrO_Ma
+
+		g_arrGroupSum(4)=g_arrGroupSum(4)+pKontoInfo.m_curObrN_Wn
+		g_arrTotalSum(4)=g_arrTotalSum(4)+pKontoInfo.m_curObrN_Wn
+
+		g_arrGroupSum(5)=g_arrGroupSum(5)+pKontoInfo.m_curObrN_Ma
+		g_arrTotalSum(5)=g_arrTotalSum(5)+pKontoInfo.m_curObrN_Ma
+
+		g_arrGroupSum(6)=g_arrGroupSum(6)+pKontoInfo.m_curSalN_Wn
+		g_arrTotalSum(6)=g_arrTotalSum(6)+pKontoInfo.m_curSalN_Wn
+
+		g_arrGroupSum(7)=g_arrGroupSum(7)+pKontoInfo.m_curSalN_Ma
+		g_arrTotalSum(7)=g_arrTotalSum(7)+pKontoInfo.m_curSalN_Ma
+		
+		g_arrGroupSum(8)=g_arrGroupSum(8)+pKontoInfo.m_curSaSN_Wn
+		g_arrTotalSum(8)=g_arrTotalSum(8)+pKontoInfo.m_curSaSN_Wn
+
+		g_arrGroupSum(9)=g_arrGroupSum(9)+pKontoInfo.m_curSaSN_Ma
+		g_arrTotalSum(9)=g_arrTotalSum(9)+pKontoInfo.m_curSaSN_Ma
+	end function
+		
+	'write group subtotal sum
+	public sub generate_subtotal()
+		hline1 : nl
+		m_oPozTW.write 1, "G."
+		dim iter
+		for iter = 0 to 9
+			m_oPozTW.rwrite	3+iter,money(g_arrGroupSum(iter))
+		next		
+		 nl : hline2 : nl
+	end sub
+	'write total sum
+	public sub generate_total()
+		hline2 : nl
+		m_oPozTW.write 1, "SU"
+		dim iter
+		for iter = 0 to 9
+			m_oPozTW.rwrite	3+iter,money(g_arrTotalSum(iter))
+		next		
+		 nl : hline1 : nl
+	end sub
+		
+	public sub generate_body()
+		page.condensed true
+		
+		'acquire parameters
+		if not aqcuire_params() then
+			exit sub
+		end if
+		set g_pKontoInfoMan = g_pPM.prepare_zois(g_pParamDate.first_value, g_pParamDate.last_value,nothing,g_pParamSymbol,nothing,-1)
+
+		'-- generate
+		m_iPageNr = 1
+		page.footer_line = PAGELINES
+		newlines TOPM
+		'--- define columns ---
+		set m_oPozTW = new ctabwriter : m_oPozTW.init Me
+		
+		m_oPozTW.make_col 1,4	'symbol konta
+		m_oPozTW.make_col 2,45	'nazwa konta
+		
+		m_oPozTW.make_col 3,CUR_COL_WIDTH	'bo-wn
+		m_oPozTW.make_col 4,CUR_COL_WIDTH	'bo-ma
+		
+		m_oPozTW.make_col 5,CUR_COL_WIDTH	'obr-bm-ma
+		m_oPozTW.make_col 6,CUR_COL_WIDTH	'obr-bm-ma
+		
+		m_oPozTW.make_col 7,CUR_COL_WIDTH	'obr-nar-ma
+		m_oPozTW.make_col 8,CUR_COL_WIDTH	'obr-nar-ma
+		
+		m_oPozTW.make_col 9,CUR_COL_WIDTH	'saldo-ma
+		m_oPozTW.make_col 10,CUR_COL_WIDTH	'saldo-ma
+
+		m_oPozTW.make_col 11,CUR_COL_WIDTH	'per-saldo-ma
+		m_oPozTW.make_col 12,CUR_COL_WIDTH	'per-saldo-ma
+		
+		generate_header
+		generate_table
+		generate_footer
+	end sub
+
+	public sub on_page_footer()
+		'no-op
+	end sub
+#comment '-------------------------------------------------------------------
+#comment '-- common part (version 1)
+#comment '-------------------------------------------------------------------
+
+	public sub init(byref oESC)
+		set m_oESC = oESC
+	end sub 
+
+	public property get page
+		set page = m_oESC.page
+	end property
+
+#comment '-------------------------------------------------------------------
+#comment 'print iCount empty lines
+#comment '-------------------------------------------------------------------
+	private sub newlines(iCount)
+		if iCount > 0 then
+			page.nextline
+			iCount = iCount - 1
+			do while iCount > 0
+				page.newline
+				iCount = iCount - 1
+			loop
+		end if
+	end sub
+
+	private sub nl
+		newlines 1
+	end sub
+
+#comment '-------------------------------------------------------------------
+#comment 'print horizontal separator
+#comment '-------------------------------------------------------------------
+	private sub hline_ex(iFrom,iCount,cChar)
+		page.writeat iFrom,string(iCount,cChar)
+	end sub
+
+	private sub hline1
+		hline_ex LEFTM,COLS-LEFTM-RIGHTM,"-"
+	end sub
+	
+	private sub hline2
+		hline_ex LEFTM,COLS-LEFTM-RIGHTM,"="
+	end sub
+
+#comment '-------------------------------------------------------------------
+#comment ' formatting helpers
+#comment '-------------------------------------------------------------------
+	private function fulldate(dData)
+		fulldate = doc_.afc.display.fulldate(dData)
+	end function
+	private function money(curValue)
+		if curValue = ccur(0.0) then
+			money = "-"
+		else
+	#ifdef SLIM
+			money = cstr(curValue)
+	#else
+			money = doc_.afc.display.money(curValue,"")
+	#endif
+		end if
+	end function
+	private function qty_unit(curValue,pUnit)
+		qty_unit = qty(curValue,pUnit.strSkrot,pUnit.nDokladnosc-1)
+	end function
+	private function qty(curValue,strUnit,iPrec)
+		qty = doc_.afc.display.quantity(curValue,strUnit,iPrec)
+	end function
+
+	private function text2ibmlatin2(strText)
+		text2ibmlatin2 = ""
+		
+		dim iter,cChar
+		for iter = 1 to len(strText)
+			cChar = mid(strText,iter,1)
+			select case cChar
+			case "¥"
+				text2ibmlatin2 = text2ibmlatin2 + "A"
+			case "Æ"
+				text2ibmlatin2 = text2ibmlatin2 + "C"
+			case "Ê"
+				text2ibmlatin2 = text2ibmlatin2 + "E"
+			case "£"
+				text2ibmlatin2 = text2ibmlatin2 + "L"
+			case "Ñ"
+				text2ibmlatin2 = text2ibmlatin2 + "N"
+			case "Ó"
+				text2ibmlatin2 = text2ibmlatin2 + "O"
+			case "Œ"
+				text2ibmlatin2 = text2ibmlatin2 + "S"
+			case ""
+				text2ibmlatin2 = text2ibmlatin2 + "Z"
+			case "¯"
+				text2ibmlatin2 = text2ibmlatin2 + "Z"
+			case "¹"
+				text2ibmlatin2 = text2ibmlatin2 + "a"
+			case "æ"
+				text2ibmlatin2 = text2ibmlatin2 + "c"
+			case "ê"
+				text2ibmlatin2 = text2ibmlatin2 + "e"
+			case "³"
+				text2ibmlatin2 = text2ibmlatin2 + "l"
+			case "ñ"
+				text2ibmlatin2 = text2ibmlatin2 + "n"
+			case "ó"
+				text2ibmlatin2 = text2ibmlatin2 + "o"
+			case "œ"
+				text2ibmlatin2 = text2ibmlatin2 + "s"
+			case "Ÿ"
+				text2ibmlatin2 = text2ibmlatin2 + "z"
+			case "¿"
+				text2ibmlatin2 = text2ibmlatin2 + "z"
+			case else
+				text2ibmlatin2 = text2ibmlatin2 + cChar
+			end select
+		next
+
+	end function
+
+#comment '-------------------------------------------------------------------
+#comment ' members
+#comment '-------------------------------------------------------------------
+	private m_oESC
+	private m_oPozTW
+	private m_bInTable
+	private m_iPageNr
+end class
+
+class ctabwriter
+	public sub init(byref oGenerator)
+		set m_oGenerator = oGenerator
+		m_oTabs(0) = LEFTM
+	end sub
+
+	public sub make_col(iCol,iWidth)
+		m_oTabs(iCol) = iWidth
+	end sub
+	public sub write(iCol,strText)
+		m_oGenerator.page.writeat get_pos(iCol),strText
+	end sub
+	public sub rwrite(iCol,strText)
+		m_oGenerator.page.rwriteat get_pos(iCol+1)-1,strText
+	end sub
+	public sub box(iCol,strText)
+		m_oGenerator.page.box get_pos(iCol),m_oTabs(iCol),strText
+	end sub
+
+	public function get_pos(iCol)
+		dim iPos : iPos = 0
+		dim iter
+		for iter = 0 to iCol - 1
+			iPos = iPos + m_oTabs(iter) + 1
+		next
+		get_pos = iPos
+	end function
+
+	private m_oTabs(50)
+	private m_oGenerator
+end class
+
+dim oGenerator : set oGenerator = new cgenerator
+oGenerator.init esc_
+esc_.set_callback oGenerator
+oGenerator.generate_body
+%>

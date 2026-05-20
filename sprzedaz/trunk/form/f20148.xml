@@ -1,0 +1,968 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+Dowód księgowy
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1222.h"
+#include "h1228.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1230.h"
+
+#define INCLUDE_BULID_CHOICELIST_TRANSAKCJA
+
+
+#define CTRLID_NUMDOK				1
+#define CTRLID_REJDOK				2
+#define CTRLID_LBL_DOK_ZROD			3
+#define CTRLID_UZYTKREJ				4
+#define CTRLID_GRID_POZYCJE			5
+#define CTRLID_MAKE_FOOT_TRIGGER	6
+#define CTRLID_AUTO_INFO			7
+#define CTRLID_ZAKSIEGUJ			8
+#define CTRLID_OPERATIONS_ROW		9
+#define CTRLID_NR_DZIENNIK			10
+#define CTRLID_UWAGI				11
+#define CTRLID_UZYTKMODYF			12
+#define CTRLID_DATA_KSIEG			13
+#define CTRLID_DATA_REJE			14
+#define CTRLID_DOK_ZRODLOWY 15
+#define CTRLID_IMG_DOK_ZRODLOWY 16
+
+
+#define CTRLID_KWOTA_WN				101
+#define CTRLID_KWOTA_MA				102
+#define CTRLID_STUB_TRANSAKCJA		104
+
+#ifdef ENABLE_DB13
+#define CTRLID_OPERATIONS_ROW2		105
+#endif
+
+
+#define CTRLID_TRANS_VAT  106
+
+#define SECID_PODSTAWOWE			1001
+#define SECID_POZYCJE				1002
+#define SECID_UWAGI					1003
+#define SECID_REJESTRACJA			1004
+
+#define FORM_SPAN					  4
+#define RCELL_SPAN					  3
+
+
+#define LP_COLUMN_KONTO					2
+
+#comment przelaczniki
+#comment DKF_TITLE
+#comment DKF_SHOW_DOK_ZROD
+#comment DKF_SHOW_DATA_KSIEG
+#comment DKF_GOFIRST
+
+#if appvar_rejestr_typ = N5REJESTRDOK_DZIENNIK_NORM
+#define DKF_TITLE	Dowód księgowy
+#define DKF_SHOW_DOK_ZROD
+#define DKF_SHOW_DATA_KSIEG
+#endif
+
+#if appvar_rejestr_typ = N5REJESTRDOK_DZIENNIK_BO
+#define DKF_TITLE	Bilans otwarcia
+#define DKF_GOFIRST
+#endif
+
+#if appvar_rejestr_typ = N5REJESTRDOK_DZIENNIK_BZ
+#define DKF_TITLE	Wstępny bilans zamknięcia
+#define DKF_GOFIRST
+#endif
+
+#if appvar_rejestr_typ = N5REJESTRDOK_DZIENNIK_BZ_OSTAT
+#define DKF_TITLE	Ostateczny bilans zamknięcia
+#define DKF_GOFIRST
+#endif
+
+#ifdef _ALMA_TREND
+#define SHOW_IMPORT_BUTON
+#define TEXT_FIELD_SEPARATOR    ";"
+#define SKIP_LINES 0
+#define SKIP_FIELDS 1
+#endif
+#ifdef _SECURITY
+#define SHOW_IMPORT_BUTON
+#define TEXT_FIELD_SEPARATOR    vbTab
+#define SKIP_LINES 0
+#define SKIP_FIELDS 0
+#endif
+-->
+
+<page style='STYLE_PAGE'>
+<config>
+	<title>
+DKF_TITLE
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+<typeid>TYPEID_N5DOWODKSIEG</typeid>
+<script>
+  <![CDATA[
+'nx_trace
+#include "50519"
+
+'section_*
+#include "50222"
+
+'qve_*
+#include "50200"
+
+
+'operations row
+#include "50128"
+
+'getCurrentRKS
+#include "50120"
+
+'Bulid_Choicelist_Transakcja_Row
+#include "50634"
+
+'selectfile
+#include "50123"
+#include "50126"
+
+function fsearch()
+	dim pSearchChoice : set pSearchChoice = doc_.getmodule(60115)
+	pSearchChoice.addAdditionalWhere "N5DOWODKSIEG.pRejestrDok=" + CStr(page_.root.pRejestrDok.idobj)
+	fsearch = pSearchChoice.std_search(page_)
+	set pSearchChoice = nothing
+end function
+
+private sub rebuild_configuration
+	dim pConfigObject : set pConfigObject = nothing
+	dim pConfigModule : set pConfigModule = nothing
+#ifdef ENABLE_DB13
+	rebuild_operation_buttons_n_2 page_.root.pRejestrDok,CTRLID_OPERATIONS_ROW, CTRLID_OPERATIONS_ROW2, pConfigObject, pConfigModule , 1 , 7, 6
+#else   
+	rebuild_operation_buttons page_.root.pRejestrDok,CTRLID_OPERATIONS_ROW, pConfigObject, pConfigModule
+#endif  
+end sub
+
+function cust_operation_hli(byref pHLI)
+	std_cust_operation_hli pHLI,page_.root.pRejestrDok,page_.root,page_
+end function
+
+
+function fopen()
+
+	if not std_fopen() then
+		fopen = false
+		exit function
+	end if
+
+	section_fopen THIS_FILE
+
+#ifdef DKF_GOFIRST
+	if not page_.cursoriter is nothing then
+		page_.root.ignore=true
+		silent_ffirst()		
+	end if
+#endif
+	rebuild_configuration
+	fopen = true
+end function
+
+
+function foptions
+	FORCE_REALOAD_OBJECT(page_.root.pRejestrDok)
+
+	if doc_.getmodule(60175).dok_rej_preferences(page_.root.pRejestrDok.idobj,TYPEID_N5SPRZEDAZ) then
+		
+		FORCE_REALOAD_OBJECT(page_.root.pRejestrDok)
+
+		'apply settings
+		rebuild_configuration
+	end if
+end function
+
+
+function fclose
+	section_fclose THIS_FILE
+end function
+
+function fsave()
+	NX_TRACE_START_STREAM("Zachowanie danych",nothing)
+
+	dim hli:set hli = doc_.createhlistr("varFunctionHLI='cust_operation_hli' vn1='STD_OPERATION_FSAVE'")
+	std_cust_operation_hli hli,page_.root.pRejestrDok,page_.root,page_
+
+	fsave = not trans_.isdirty()
+
+	NX_TRACE_SHOW_LOG(1)
+end function
+
+function fdelete()
+	NX_TRACE_START_STREAM("Usuwanie danych",nothing)
+	
+	fdelete = std_fdelete()
+	
+	NX_TRACE_SHOW_LOG(1)
+end function
+
+QVE_NRDOK_FROM_REJESTR(CTRLID_NUMDOK,pRejestrDok,strNrDok)
+QVX_REJESTR_DOK(CTRLID_REJDOK)
+QVE_REF_OPEN_FORM(CTRLID_LBL_DOK_ZROD,wrefDokZrod)
+QVX_WPROWADZIL_MODYFIKOWAL(CTRLID_UZYTKREJ,CTRLID_UZYTKMODYF,pUzytRej,dk_pUzytModyf)
+
+function c##CTRLID_TRANS_VAT##_ongetdata(oCtrl, iRow) : c##CTRLID_TRANS_VAT##_ongetdata = true
+
+if page_.root.listDekret.exists(iRow) then
+  dim oDekret : set oDekret = page_.root.listDekret.get(iRow)
+  oCtrl.value = left(oDekret.dek_strExtras, 1)
+end if
+
+end function
+
+function c##CTRLID_TRANS_VAT##_ondataentered(oCtrl, iRow, vValue)
+
+if page_.root.listDekret.exists(iRow) then
+  dim oDekret : set oDekret = page_.root.listDekret.get(iRow)
+  oDekret.dek_strExtras = oCtrl.value + mid(oDekret.dek_strExtras, 1)
+end if
+
+end function
+
+#macro VBG_KWOTA_DEKRETU_HANDLERS_IOW(_ctrl_,_field_)							\
+function c##_ctrl_##_ongetdata(pCtrl,row): c##_ctrl_##_ongetdata = true		\
+if row<>1 then \
+    if page_.root.listDekret.exists(row)  then \
+      if page_.root.listDekret.get(row).strOpis = "" then \
+        page_.root.listDekret.get(row).strOpis = page_.root.listDekret.get(row-1).strOpis \
+      end if  \
+    end if \
+end if \
+	dim strTip : strTip = ""												\
+	if page_.root.listDekret.exists(row) then								\
+		dim pObj:set pObj = page_.root.listDekret.get(row)					\
+		if pObj.cAuto = N5_DEKRET_AUTO then											\
+			pCtrl.disable = true											\			
+			disable_konto pCtrl , true										\
+		else																\
+			pCtrl.disable = false											\	
+			disable_konto pCtrl , false										\
+		end if																\
+		if not pObj is nothing then											\
+			pCtrl.value = ccur(pObj._field_)								\
+			if pObj.pKonto is nothing then									\
+				pCtrl.unit = ""												\
+				pCtrl.precision = clng(2)									\
+			else															\
+				pCtrl.unit = pObj.pKonto.pJednostka.strSkrot				\
+				pCtrl.precision = pObj.pKonto.pJednostka.nDokladnosc - 1	\
+				strTip = pObj.pKonto.strNazwa								\
+			end if															\
+			pCtrl.parent.parent.cell(2).element(2).tip = strTip				\
+			exit function													\
+		end if																\
+	end if																	\
+	pCtrl.value = ccur(0)													\
+	pCtrl.precision = clng(0)												\
+end function																\
+function c##_ctrl_##_ondataentered(ctrl, row, value)						\
+	if page_.root.listDekret.exists(row) then								\
+		dim pObj:set pObj = page_.root.listDekret.get(row)					\
+		if not pObj is nothing then											\
+			pObj._field_ = ccur(value)										\
+			c##_ctrl_##_ondataentered = true								\
+			exit function													\
+		end if																\
+	end if \
+	dim pNewPos : set pNewPos = page_.root.listDekret.AddNew()				\
+	pNewPos._field_ = ccur(value)											\
+	c##_ctrl_##_ondataentered = true										\
+end function
+
+
+#macro VBG_KWOTA_DEKRETU_HANDLERS(_ctrl_,_field_)							\
+function c##_ctrl_##_ongetdata(pCtrl,row): c##_ctrl_##_ongetdata = true		\
+	dim strTip : strTip = ""												\
+	if page_.root.listDekret.exists(row) then								\
+		dim pObj:set pObj = page_.root.listDekret.get(row)					\
+		if pObj.cAuto = N5_DEKRET_AUTO then											\
+			pCtrl.disable = true											\			
+			disable_konto pCtrl , true										\
+		else																\
+			pCtrl.disable = false											\	
+			disable_konto pCtrl , false										\
+		end if																\
+		if not pObj is nothing then											\
+			pCtrl.value = ccur(pObj._field_)								\
+			if pObj.pKonto is nothing then									\
+				pCtrl.unit = ""												\
+				pCtrl.precision = clng(2)									\
+			else															\
+				pCtrl.unit = pObj.pKonto.pJednostka.strSkrot				\
+				pCtrl.precision = pObj.pKonto.pJednostka.nDokladnosc - 1	\
+				strTip = pObj.pKonto.strNazwa								\
+			end if															\
+			pCtrl.parent.parent.cell(2).element(2).tip = strTip				\
+			exit function													\
+		end if																\
+	end if																	\
+	pCtrl.value = ccur(0)													\
+	pCtrl.precision = clng(0)												\
+end function																\
+function c##_ctrl_##_ondataentered(ctrl, row, value)						\
+	if page_.root.listDekret.exists(row) then								\
+		dim pObj:set pObj = page_.root.listDekret.get(row)					\
+		if not pObj is nothing then											\
+			pObj._field_ = ccur(value)										\
+			c##_ctrl_##_ondataentered = true								\
+			exit function													\
+		end if																\
+	end if \
+	dim pNewPos : set pNewPos = page_.root.listDekret.AddNew()				\
+	pNewPos._field_ = ccur(value)											\
+	c##_ctrl_##_ondataentered = true										\
+end function
+
+
+function disable_konto(byval pCtrl , bDisable)
+	'pobranie komórki z kontrolkami do wyboru konta
+	dim cell:Set cell = pCtrl.parent.parent.cell(LP_COLUMN_KONTO)
+	dim ctrl
+	'zablokowanie lub odblokowanie wszystkich
+	for each ctrl in cell
+		ctrl.disable = bDisable
+	next	
+end function
+
+#ifndef _IOW
+  VBG_KWOTA_DEKRETU_HANDLERS(CTRLID_KWOTA_WN,curWn)
+  VBG_KWOTA_DEKRETU_HANDLERS(CTRLID_KWOTA_MA,curMa)
+#else
+  VBG_KWOTA_DEKRETU_HANDLERS_IOW(CTRLID_KWOTA_WN,curWn)
+  VBG_KWOTA_DEKRETU_HANDLERS_IOW(CTRLID_KWOTA_MA,curMa)
+#endif
+
+function c##CTRLID_MAKE_FOOT_TRIGGER##_ongetdata(pCtrl)
+
+	make_grid_tfoot
+	dim bZaksiegowane : bZaksiegowane = (page_.root.eStatus = N5_DEKRET_STATUS_ZAKS)
+	page_.ctrl(CTRLID_ZAKSIEGUJ).hide = bZaksiegowane
+#ifdef _IOW	
+	page_.ctrl(CTRLID_GRID_POZYCJE).disable = bZaksiegowane
+	page_.ctrl(CTRLID_UZYTKMODYF).disable = bZaksiegowane
+	page_.ctrl(CTRLID_UZYTKREJ).disable = bZaksiegowane
+  #ifdef DKF_SHOW_DATA_KSIEG
+	  page_.ctrl(CTRLID_DATA_KSIEG).disable = bZaksiegowane
+  #endif
+  page_.ctrl(CTRLID_DATA_REJE).disable = bZaksiegowane
+  
+	page_.ctrl(CTRLID_OPERATIONS_ROW).disable = false
+	page_.ctrl(CTRLID_UWAGI).disable = bZaksiegowane
+	page_.ctrl(CTRLID_REJDOK).disable = bZaksiegowane
+#else
+  page_.ctrl(CTRLID_NUMDOK).disable = bZaksiegowane
+#ifdef DKF_SHOW_DOK_ZROD  
+  page_.ctrl(CTRLID_DOK_ZRODLOWY).disable = bZaksiegowane
+  page_.ctrl(CTRLID_IMG_DOK_ZRODLOWY).disable = bZaksiegowane
+#endif  
+	page_.ctrl(CTRLID_GRID_POZYCJE).disable = bZaksiegowane
+	page_.ctrl(CTRLID_UZYTKMODYF).disable = bZaksiegowane
+	page_.ctrl(CTRLID_UZYTKREJ).disable = bZaksiegowane
+  #ifdef DKF_SHOW_DATA_KSIEG
+	  page_.ctrl(CTRLID_DATA_KSIEG).disable = bZaksiegowane
+  #endif
+  page_.ctrl(CTRLID_DATA_REJE).disable = bZaksiegowane
+	page_.ctrl(CTRLID_OPERATIONS_ROW).disable = false
+	page_.ctrl(CTRLID_UWAGI).disable = bZaksiegowane
+	page_.ctrl(CTRLID_REJDOK).disable = bZaksiegowane
+#endif
+	page_.cmdenabled CMD_SAVEFORM,   not bZaksiegowane
+	page_.cmdenabled CMD_DELETEFORM, not bZaksiegowane
+end function
+
+
+function c##CTRLID_NR_DZIENNIK##_ongetdata(pCtrl)
+	pCtrl.value = page_.root.text
+end function
+
+dim nLastChangeNr : nLastChangeNr = -1
+dim nLastChangeIdObj : nLastChangeIdObj = 0
+
+function make_grid_tfoot
+
+	if nLastChangeIdObj <> page_.rootidobj then
+		nLastChangeNr = -1	'reset
+		nLastChangeIdObj = page_.rootidobj
+	end if
+	dim pSumator : set pSumator = page_.root.n5dowodksieg_get_sumator()
+	
+	'check if need update
+	if pSumator.get_change_nr() <=  nLastChangeNr then
+		exit function
+	end if
+	
+	nLastChangeNr = pSumator.get_change_nr() 
+
+	dim pTableFoot:set pTableFoot = page_.ctrl(CTRLID_GRID_POZYCJE).footer
+	
+	dim pTB : set pTB = doc_.afc.new_tb(page_).attach(page_.ctrl(CTRLID_GRID_POZYCJE)).section_foot.removeall
+
+	dim iter : iter = 0
+
+	dim idUnit, curSumaWn, curSumaMa, nRef
+	do while pSumator.get_value(iter,idUnit,curSumaWn,curSumaMa,nRef) 
+		if nRef > 0 then
+			pTB.newrow
+			pTB.row.styleitem = STYLE_GRID_FOOTER
+			dim strUnit
+			if idUnit <> 0 then
+				strUnit = trans_.getobj(TYPEID_N5JEDNOSTKA,idUnit).strSkrot
+			else
+				strUnit = "<brak>"
+			end if
+			pTB.newcell
+			with pTB.newcell.cell
+				.colspan = 2
+				.styleitem = STYLE_PAGE
+				.borderwidth = 1
+				.border = 1
+			end with      
+#ifdef _ALMA_TREND
+      dim curSumaWnBil, curSumaMaBil, curSumaWnPozBil, curSumaMaPozBil
+      pSumator.get_value_bil iter,idUnit,curSumaWnBil,curSumaMaBil,nRef
+      pSumator.get_value_pozbil iter,idUnit,curSumaWnPozBil,curSumaMaPozBil,nRef
+   
+			pTB.newcell.addtext("Suma bil ("+strUnit+")")      
+#else
+			pTB.newcell.addtext("Suma ("+strUnit+")")
+#endif
+
+			pTB.newcell.addctrl CTRL_TYPE_STATIC , -1
+			pTB.cell.align = ALIGN_RIGHT
+			with pTB.element
+				.align = ALIGN_RIGHT
+#ifdef _ALMA_TREND
+				.text = doc_.afc.display.money(curSumaWnBil,strUnit)
+#else
+				.text = doc_.afc.display.money(curSumaWn,strUnit)
+#endif        
+				.size = 12
+				.border = 0
+			end with
+
+			pTB.newcell.addctrl CTRL_TYPE_STATIC , -1
+			pTB.cell.align = ALIGN_RIGHT
+			with pTB.element
+				.align = ALIGN_RIGHT
+#ifdef _ALMA_TREND        
+				.text = doc_.afc.display.money(curSumaMaBil,strUnit)
+#else
+				.text = doc_.afc.display.money(curSumaMa,strUnit)
+#endif
+				.size = 12
+				.border = 0
+			end with
+			with pTB.newcell.cell
+#ifdef ENABLE_DB14              
+				.colspan = 3
+#else        
+				.colspan = 2
+#endif
+				.styleitem = STYLE_PAGE
+				.borderwidth = 1
+				.border = 1
+			end with
+      
+#ifdef _ALMA_TREND
+			pTB.newrow
+			pTB.row.styleitem = STYLE_GRID_FOOTER
+			pTB.newcell
+			with pTB.newcell.cell
+				.colspan = 2
+				.styleitem = STYLE_PAGE
+				.borderwidth = 1
+				.border = 1
+			end with 
+			pTB.newcell.addtext("Suma pozbil ("+strUnit+")")        
+			pTB.newcell.addctrl CTRL_TYPE_STATIC , -1
+			pTB.cell.align = ALIGN_RIGHT
+			with pTB.element
+				.align = ALIGN_RIGHT
+				.text = doc_.afc.display.money(curSumaWnPozBil,strUnit)
+				.size = 12
+				.border = 0
+			end with  
+      
+			pTB.newcell.addctrl CTRL_TYPE_STATIC , -1
+			pTB.cell.align = ALIGN_RIGHT
+			with pTB.element
+				.align = ALIGN_RIGHT   
+				.text = doc_.afc.display.money(curSumaMaPozBil,strUnit)
+				.size = 12
+				.border = 0
+			end with
+			with pTB.newcell.cell
+				.colspan = 2
+				.styleitem = STYLE_PAGE
+				.borderwidth = 1
+				.border = 1
+			end with      
+#endif
+      
+		end if
+	
+		iter = iter + 1
+	loop
+end function
+
+
+function c##CTRLID_AUTO_INFO##_ongetdata(byref oCtrl): c##CTRLID_AUTO_INFO##_ongetdata=true
+	dim strInfo
+	if page_.root.cAuto = N5_DEKRET_AUTO then
+		strInfo = "automatyczny"
+	else
+		strInfo = "ręczny"
+	end if
+	strInfo = strInfo + "; Status: "
+	if page_.root.eStatus = N5_DEKRET_STATUS_BUFOR then
+		strInfo = strInfo + "bufor"
+	else
+		strInfo = strInfo + "zaksięgowany"
+	end if
+	oCtrl.text = strInfo
+end function
+
+function zaksieguj_dowod
+
+	dim eOldStatus : eOldStatus = page_.root.eStatus
+	page_.root.eStatus = clng(N5_DEKRET_STATUS_ZAKS)
+	if not fsave() then
+		page_.root.eStatus = eOldStatus
+	end if
+end function
+
+function automat_przeksiegowan
+	dim choice:choice = fire_choice_list(TYPEID_N5SCHEMATDEKR,"Automaty przeksięgowań","strNazwa","pRejestrDok="+cstr(page_.root.pRejestrDok.idobj),"","")
+	if choice = 0 then
+		exit function
+	end if
+	dim pSchemat: set pSchemat = trans_.getobj(TYPEID_N5SCHEMATDEKR,choice)
+	dim bOK
+	trans_.autorollback false
+	pSchemat.n5schematdekr_run nothing,page_.root,bOK
+end function
+
+function copy_dowod
+	if not fsave() then
+		exit function
+	end if
+
+	doc_.postcommand doc_.afc.convert.formatter(" OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5DOWODKSIEG,0,USAGE_VIEW) appvar_pop_dow_ksieg=%1 appvar_dziennik_dk=%2 ") _
+		.add(page_.root.idobj).add(page_.root.pRejestrDok.idobj).done()
+end function
+
+function storno_dowod
+	if not fsave() then
+		exit function
+	end if
+
+	doc_.postcommand doc_.afc.convert.formatter(" OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5DOWODKSIEG,0,USAGE_VIEW) appvar_pop_dow_ksieg=%1 appvar_dziennik_dk=%2 ") _
+		.add(-page_.root.idobj).add(page_.root.pRejestrDok.idobj).done()
+end function
+
+function import_from_txt_file
+
+	dim strPath
+  strPath=SelectFile("c:\", "*.txt", "")
+
+	if (len(strPath)=0) then
+	  exit function
+	end if
+
+	dim pStream : set pStream = doc_.createstreamobj()
+	pStream.attach  strPath
+  dim strTxt : strTxt = pStream.getstring()
+  dim arrLines : arrLines = split(strTxt,vbCrLf)
+  dim iLine
+  '0-th line -> header
+  
+  for iLine = 1+SKIP_LINES to UBound(arrLines)
+    dim arrFields : arrFields = split(arrLines(iLine), TEXT_FIELD_SEPARATOR)
+    if UBound(arrFields) >= 3+SKIP_FIELDS then
+      dim strKonto  '[0]
+      dim curWinien '[1]
+      dim curMa     '[2]
+      dim strOpis   '[3]
+    
+      strKonto = trim(arrFields(0+SKIP_FIELDS))
+      curWinien = Str2Cur(replace(replace(arrFields(1+SKIP_FIELDS)," ",""),"""",""))
+      curMa= Str2Cur(replace(replace(arrFields(2+SKIP_FIELDS)," ",""),"""",""))
+      strOpis = replace(arrFields(3+SKIP_FIELDS),"""","")
+    
+      dim idKonto : idKonto = trans_.findobjid(TYPEID_N5KONTO, "strSymbol='"+ doc_.afc.convert.str2SQL(strKonto)+ "'")
+      if idKonto <= 0 then
+        trans_.message 0,0,"Nie znaleziono konta o symbolu " + strKonto
+        'exit function
+      end if
+      if page_.root.listDekret.count() < iLine-SKIP_LINES then
+        page_.root.listDekret.addnew()
+      end if
+    
+      dim oDekret
+      set oDekret = page_.root.listDekret.get(iLine-SKIP_LINES)
+      if idKonto > 0 then
+        set oDekret.pKonto = trans_.getobj(TYPEID_N5KONTO, idKonto)
+      end if
+      oDekret.curWn = curWinien
+      oDekret.curMa = curMa
+      oDekret.strOpis = strOpis
+    end if
+  next
+  
+end function
+
+function c##CTRLID_KWOTA_WN##_oncmdlist(pCtrl,nRow,pCmdList)
+	doc_.getmodule(60278).cmdlist_add_wyrownanie_dow_ksieg page_.root,nRow,pCmdList,"set_kwotawn", true
+end function
+
+function c##CTRLID_KWOTA_MA##_oncmdlist(pCtrl,nRow,pCmdList)
+	doc_.getmodule(60278).cmdlist_add_wyrownanie_dow_ksieg page_.root,nRow,pCmdList,"set_kwotama", false
+end function
+
+function set_kwotawn(byref pHLI)
+	dim nRow : nRow = pHLI.prop(1)
+	dim curKwota : curKwota = pHLI.prop(2)
+	if page_.root.listDekret.exists(nRow) then
+		page_.root.listDekret.get(nRow).curWn = curKwota
+	end if
+end function
+
+function set_kwotama(byref pHLI)
+	dim nRow : nRow = pHLI.prop(1)
+	dim curKwota : curKwota = pHLI.prop(2)
+	if page_.root.listDekret.exists(nRow) then
+		page_.root.listDekret.get(nRow).curMa = curKwota
+	end if
+end function
+
+function c##CTRLID_STUB_TRANSAKCJA##_onsuggquery(byref pEditCtrl,nRow,byval strEnteredVal,byref strWhere,byref strOrder,byref strJoin)
+
+	dim pPos:set pPos = nothing
+	if page_.root.listDekret.exists(nRow) then
+		set pPos = page_.root.listDekret.get(nRow)
+	else
+		exit function
+	end if
+
+	dim strPodmiotPart
+	if not pPos.pKonto is nothing then
+		if not pPos.pKonto.wrefPodmiotRozrach is nothing then
+			strPodmiotPart = "(n5transakcja.wrefPodmiot=" + cstr(pPos.pKonto.wrefPodmiotRozrach.idobj) + " and n5transakcja.wrefPodmiot_wrt=" + cstr(pPos.pKonto.wrefPodmiotRozrach.type) + ")"
+			if strWhere <> "" then
+				strWhere = strWhere + " and " + strPodmiotPart
+			else
+				strWhere = strPodmiotPart
+			end if
+		end if
+	end if
+
+end function
+
+function przenies_do_bufora
+	if not fsave() then
+		exit function
+	end if
+end function
+
+#ifdef APPCONFIG_AUTOMAT_PRZEKSIEGOWAN
+function automat_przeksiegowan_toral()
+  dim pModRapEngine : set pModRapEngine = doc_.getmodule(60108)
+  dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+  pParamArray.add doc_.afc.rap.param.new_text("Z kont").bindexpr("strSymbol")
+  pParamArray.add doc_.afc.rap.param.new_text("Na konto").bindexpr("strSymbol")
+  
+  if pModRapEngine.show_raport_param_dialog(pParamArray,"Wybór kont") = 0 then
+    exit function
+  end if
+  
+  'wybór kont z których ma być robione przeksięgowanie
+  dim strSQL: strSQL = "select IdObj from n5konto where eAnalit = N5KONTO_ANALITYCZNE and %1 order by strSymbol"
+  strSQL = pModRapEngine.query_apply_actual_param(strSQL,pParamArray)
+  
+  'wybór konta na które ma być robione przeksięgowanie
+  dim strWhere: strWhere = "%2"
+  strWhere = pModRapEngine.query_apply_actual_param(strWhere,pParamArray)
+  dim nIdKonto: nIdKonto = trans_.findobjid(TYPEID_N5KONTO,strWhere)
+  if nIdKonto <= 0 then
+    trans_.message 7000, 0, "Należy wybrać tylko jedno konto docelowe."
+    exit function
+  end if  
+  
+  dim pKontoWyn: set pKontoWyn = trans_.getobj(TYPEID_N5KONTO,nIdKonto)
+  
+  dim pPM : set pPM  = doc_.getmodule(60159)
+  dim pKontoInfoMan: set pKontoInfoMan = pPM.prepare_zois(getCurrentRKS().dDataRozp, trans_.var(GVAR_TODAY),nothing,nothing,nothing,-1)   
+  dim oRS : set oRS = trans_.createadors(strSQL)
+  
+  dim pPerf : set pPerf = doc_.performing("Trwa tworzenie dekretów...")
+  do while not oRS.EOF 
+    dim pKontoInfo: set pKontoInfo = pKontoInfoMan.kontoinfo(clng(oRS("IdObj")))
+    dim pKonto: set pKonto = trans_.getobj(TYPEID_N5KONTO,clng(oRS("IdObj")))
+    
+    if pKontoInfo.m_curSalN_Wn > ccur(0.0) or pKontoInfo.m_curSalN_Ma > ccur(0.0) then
+      'strona Wn
+      if pKontoInfo.m_curSalN_Wn > ccur(0.0) then
+        with page_.root.listDekret.addnew()
+          set .pKonto = pKonto
+          .curMa = pKontoInfo.m_curSalN_Wn
+          .eTyp = clng(N5_DEKRET_TYP_NORMALNY)
+          .strOpis = "Przeksięg. na wynik finansowy"
+        end with
+        with page_.root.listDekret.addnew()
+          set .pKonto = pKontoWyn
+          .curWn = pKontoInfo.m_curSalN_Wn
+          .eTyp = clng(N5_DEKRET_TYP_NORMALNY)
+          .strOpis = "Przeksięg. na wynik finansowy " + pKonto.strSymbol
+        end with
+      end if
+      
+      'strona Ma
+      if pKontoInfo.m_curSalN_Ma > ccur(0.0) then
+        with page_.root.listDekret.addnew()
+          set .pKonto = pKonto
+          .curWn = pKontoInfo.m_curSalN_Ma
+          .eTyp = clng(N5_DEKRET_TYP_NORMALNY)
+          .strOpis = "Przeksięg. na wynik finansowy"
+        end with
+        with page_.root.listDekret.addnew()
+          set .pKonto = pKontoWyn
+          .curMa = pKontoInfo.m_curSalN_Ma
+          .eTyp = clng(N5_DEKRET_TYP_NORMALNY)
+          .strOpis = "Przeksięg. na wynik finansowy " + pKonto.strSymbol
+        end with
+      end if      
+    end if
+    
+    oRS.moveNext
+  loop  
+  set pPerf = nothing
+end function
+#endif
+
+
+
+]]></script>
+</config>
+<header>
+</header>
+<body>
+<p border='0'>
+
+QXF_BEGIN
+	QXS_BEGIN_FLAT(SECID_PODSTAWOWE,Informacje podstawowe,FORM_SPAN)
+
+	QXR_INFO_CUSTOM(Sposób utworzenia:&nbsp;,CTRLID_AUTO_INFO,FORM_SPAN)
+
+		QXR_SEPARATOR(FORM_SPAN)
+
+		<tr>
+			<!-- 1-sza kolumna zawiera grid - zaznaczamy tu max -->
+#ifdef _IOW
+
+#else			
+			<td width='max'><t bold='true'>Numer w dzienniku</t></td>
+			<td keepline='true'>
+				<t name='CTRLID_NR_DZIENNIK' size='10'>
+					<transfer mode='custom' />
+				</t>
+			</td>
+#endif
+#ifdef DKF_SHOW_DATA_KSIEG
+			QXC_LABEL_REQ(Data księgowania,1)
+			QXC_DATE_FIELD(CTRLID_DATA_KSIEG,dDataKsieg,1)
+#else
+			<td colspan='2' />
+#endif
+		</tr>
+		<tr>
+
+			QXC_LABEL_REQ(Numer dokumentu,1)
+			QXC_EDIT_CUSTOM(CTRLID_NUMDOK,32,1)
+
+			QXC_LABEL_REQ(Data rejestracji,1)
+			QXC_DATE_FIELD(CTRLID_DATA_REJE,dDataRej,1)
+		</tr>
+
+#ifdef DKF_SHOW_DOK_ZROD
+#ifndef _IOW
+	<tr>
+    QXC_LABEL_OPEN(CTRLID_LBL_DOK_ZROD,Dokument źródłowy,1)
+#ifdef _FRAM
+    QXC_EDIT_WILDREF_EX(CTRLID_DOK_ZRODLOWY,40,PICTURE_WYBOR,wrefDokZrod,strNrDok;strNrDok;strTemat;idobj;strNrDok;strNrDok;strNrDok,pRejestrDok not in (select IdObj from n5rejestrdok where eTyp in (N5REJESTRDOK_DOSTAWA, N5REJESTRDOK_KOR_DOSTAWA));;;;;;,RCELL_SPAN,CTRLID_IMG_DOK_ZRODLOWY)
+#else
+    QXC_EDIT_WILDREF_EX(CTRLID_DOK_ZRODLOWY,40,PICTURE_WYBOR,wrefDokZrod,strNrDok;strNrDok;strTemat;idobj;strNrDok;strNrDok;strNrDok,;;;;;;,RCELL_SPAN,CTRLID_IMG_DOK_ZRODLOWY)
+#endif    
+  </tr>
+#endif
+#endif
+
+	QXS_END_FLAT(FORM_SPAN)
+	QXS_BEGIN_FLAT(SECID_POZYCJE,Pozycje,FORM_SPAN)
+		<tr>
+			<td colspan='FORM_SPAN'>
+				<grid name='CTRLID_GRID_POZYCJE' style='STYLE_TABLE'>
+					<transfer mode='grid_list'>
+						<field>listDekret</field>
+					</transfer>
+					<thead style='STYLE_TABLE_HEADER'>
+						<tr>
+							<td width='min'><t>LP</t></td>
+							<td width='min'><t>Konto(Symbol)</t></td>
+							<td width='min'><t>Konto(nazwa)</t></td>
+#ifdef _IOW
+							<td width='min'><t>Nr faktury</t></td>
+							<td width='min'><text>Kwota winien</text></td>
+							<td width='min'><text>Kwota ma</text></td>
+							<td width='min'><text>Transakcja</text></td>              
+							<td width='min'><text>VAT</text></td>
+#else
+							<td width='max'><t>Opis dekretu</t></td>
+							<td width='min'><text>Kwota winien</text></td>
+							<td width='min'><text>Kwota ma</text></td>
+							<td width='min'><text>Transakcja</text></td>
+#ifdef ENABLE_DB14              
+							<td width='min'><text>VAT</text></td>
+#endif
+							<td width='min'><text>Kwalifikator</text></td>
+#endif
+						</tr>
+					</thead>
+					
+					<tbody style='STYLE_TABLE_BODY'>
+						<tr>
+							SXC_LP
+							<td keepline='true'>
+								SXE_PICTURE_ACTION(-1,PICTURE_CHOICE_N5KONTO,varFunctionHLI="std_choose_element_list_hli" vs1="listDekret" vs2="pKonto" vs3="eAnalit=N5KONTO_ANALITYCZNE and eAktywne=N5KONTO_AKTYWNE" vs4="",)
+								<edit width='max' border='0' size='18' style='STYLE_CTRL'>
+									<transfer mode='row_edit_ref'>
+										<field>pKonto</field>
+										<searchfield>strSymbol</searchfield>
+										<cursor>CRSR_N5KONTO_ANALIT_AKTYW</cursor>
+									</transfer>
+								</edit>
+							</td>
+							<td keepline='true'>
+								SXE_PICTURE_ACTION(-1,PICTURE_CHOICE_N5KONTO,varFunctionHLI="std_choose_element_list_hli" vs1="listDekret" vs2="pKonto" vs3="eAnalit=N5KONTO_ANALITYCZNE and eAktywne=N5KONTO_AKTYWNE" vs4="strNazwa",)
+								<edit width='max' border='0' size='18' style='STYLE_CTRL'>
+									<transfer mode='row_edit_ref'>
+										<field>pKonto</field>
+										<searchfield>strNazwa</searchfield>
+										<cursor>CRSR_N5KONTO_ANALIT_AKTYW</cursor>
+									</transfer>
+								</edit>
+							</td>
+#ifdef _IOW
+							XG_EDIT_CELL(-1,strOpis,28)
+							SXC_CURRENCY_CUSTOM(CTRLID_KWOTA_WN,15,2,)
+							SXC_CURRENCY_CUSTOM(CTRLID_KWOTA_MA,15,2,)
+							<td width='max' keepline='true' rowspan='1' colspan='1'>						
+								SXE_PICTURE_ACTION(-1,PICTURE_CHOICE_N5TRANSAKCJA,varFunctionHLI="std_choice_lst_cq_hli" vs1="pTransakcja" vs2="strSymTrans" vn3="CTRLID_STUB_TRANSAKCJA" vs4="listDekret" vs5="Bulid_Choicelist_Transakcja_Row" ,Wybór z listy)
+								SXE_EDIT_REF_CQ(CTRLID_STUB_TRANSAKCJA,18,pTransakcja,strSymTrans)											
+							</td>
+#ifdef ENABLE_DB14              
+              <td>
+                SXE_CHECKBOX_FIELD_CUSTOM(CTRLID_TRANS_VAT,)
+              </td>
+#endif              
+#else
+							XG_EDIT_CELL(-1,strOpis,28)
+							SXC_CURRENCY_CUSTOM(CTRLID_KWOTA_WN,15,2,)
+							SXC_CURRENCY_CUSTOM(CTRLID_KWOTA_MA,15,2,)
+
+							<td width='max' keepline='true' rowspan='1' colspan='1'>						
+								SXE_PICTURE_ACTION(-1,PICTURE_CHOICE_N5TRANSAKCJA,varFunctionHLI="std_choice_lst_cq_hli" vs1="pTransakcja" vs2="strSymTrans" vn3="CTRLID_STUB_TRANSAKCJA" vs4="listDekret" vs5="Bulid_Choicelist_Transakcja_Row" ,Wybór z listy)
+#ifdef _FRAM
+								SXE_EDIT_REF(CTRLID_STUB_TRANSAKCJA,18,pTransakcja,strSymTrans,CRSR_N5TRANSAKCJA_WG_SYMBOLU_BEZ_DOSTAW)
+#else
+								SXE_EDIT_REF_CQ(CTRLID_STUB_TRANSAKCJA,18,pTransakcja,strSymTrans)											
+#endif                
+							</td>
+              #ifdef ENABLE_DB14
+              <td>
+                SXE_CHECKBOX_FIELD_CUSTOM(CTRLID_TRANS_VAT,)
+              </td>
+#endif
+							XG_REF_CELL_ELEMENT(PICTURE_CHOICE_ELEMENT,14,pKwalifikator,strNazwa,CRSR_N5KWALIFIKATOR_WG_NAZWY,,listDekret)
+#endif
+						</tr>	
+					</tbody>
+					
+					<tfooter style='STYLE_TABLE_BODY'>
+					</tfooter>
+				</grid>
+			</td>
+		</tr>
+		<tr>			
+			QXX_WPROWADZIL_MODYFIKOWAL(CTRLID_UZYTKREJ,CTRLID_UZYTKMODYF,pUzytRej,dk_pUzytModyf,2)
+			<td colspan='2'>
+				<t name='CTRLID_MAKE_FOOT_TRIGGER' >
+					<transfer mode='custom' />		
+				</t>
+			</td>
+		</tr>
+		QXR_TEXT_REF_OPEN(Dziennik,CTRLID_REJDOK,-1,25,pRejestrDok,strNazwa,RCELL_SPAN)
+	QXS_END_FLAT(FORM_SPAN)
+
+	QXS_MULTILINE(SECID_UWAGI,CTRLID_UWAGI,strOpis,Opis,FORM_SPAN)
+
+	QXS_BEGIN_FLAT(SECID_REJESTRACJA,Operacje,FORM_SPAN)
+		<tr name='CTRLID_ZAKSIEGUJ'>
+#ifdef _FRAM
+			<td>
+				<button ignoresysdisable='true' style='STYLE_BUTTON' href='varFunction="przenies_do_bufora"'>Przenieś do bufora</button>
+			</td>			
+#else
+			QXC_BUTTON(-1,0,Zaksięguj,varFunction="zaksieguj_dowod",1)
+#endif
+			QXC_BUTTON(-1,0,Uruchom automat przeksięgowań,varFunction="automat_przeksiegowan",1)
+			<td>
+				<button ignoresysdisable='true' style='STYLE_BUTTON' href='varFunction="copy_dowod"'>Utwórz kopię</button>
+			</td>
+
+			<td>
+				<button ignoresysdisable='true' style='STYLE_BUTTON' href='varFunction="storno_dowod"'>Utwórz storno</button>
+#ifdef APPCONFIG_AUTOMAT_PRZEKSIEGOWAN
+				QXE_BUTTON(-1,0,Automat przeksięgowań,varFunction="automat_przeksiegowan_toral")
+#endif
+			</td>
+		</tr>
+#ifdef _FRAM		
+		<tr align='right'>
+			QXC_BUTTON(-1,0,Zaksięguj,varFunction="zaksieguj_dowod",5)
+		</tr>
+#else
+#endif
+#ifdef SHOW_IMPORT_BUTON
+    <tr>
+      <td>
+        <button ignoresysdisable='true' style='STYLE_BUTTON' href='varFunction="import_from_txt_file"'>Wczytaj z pliku</button>
+      </td>
+    </tr>
+#endif      
+	QXS_END_FLAT(FORM_SPAN)
+
+#ifdef ENABLE_DB13
+	QXX_OPERATIONS_12(CTRLID_OPERATIONS_ROW,CTRLID_OPERATIONS_ROW2,FORM_SPAN)
+#else
+	QXX_OPERATIONS(CTRLID_OPERATIONS_ROW,FORM_SPAN)
+#endif  
+
+QXF_END
+</p>
+</body>
+<footer>
+</footer>
+</page>
+

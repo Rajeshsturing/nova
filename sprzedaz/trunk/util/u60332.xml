@@ -1,0 +1,1166 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1203_appconfig.h"
+#include "h1003.h"
+#include "h1200.h"
+#include "h1201.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+
+#comment Funkcje pomocnicze dla projektu ECWS
+
+-->
+<page>
+  <config>
+    <script>
+
+      <![CDATA[
+
+
+'kantor
+#include "50523"
+
+
+'rabaty
+#include "50524"
+
+
+'srvDate
+#include "50126"
+
+'HARUI_PRICE
+#include "50101"
+
+'nx_get_globprofile_obj
+#include "50203"
+#include "50122"
+
+'--------------------------------
+'tworzy nowego klienta w systemie
+'--------------------------------
+function createClient(oClient): createClient = false
+  
+  if checkClientData(oClient) then  
+    trans_.var(APPVAR_KLIENT_TYPE) = clng(oClient.ePrywat)
+    dim pKlient: set pKlient = trans_.newobj(TYPEID_N5KLIENT)
+    with pKlient
+      .strNazwa = oClient.strNazwa
+      .strImie = oClient.strImie
+      .strNazwisko = oClient.strNazwisko
+      .strSkrot = oClient.strSkrot
+      .strNIP = oClient.strNIP
+      set .pGrupaKlient = getGrupaKlient(oClient.strNazwaGrupy)
+      .strUlica = oClient.strUlica
+      .strNrDomu = oClient.strNrDomu
+      .strNrLokalu = oClient.strNrLokalu
+      .strKod = oClient.strKod
+      set .pMiejscowosc = getMiejscowosc(oClient.strMiejscowosc)
+      .strEmail = oClient.strEmail
+      .strTel1 = oClient.strTel1
+      .strTel2 = oClient.strTel2
+      .strTel3 = oClient.strTel3
+      .strTel4 = oClient.strTel4
+      .strFax = oClient.strFax  
+      '.strCecha1 = oClient.strCecha1
+      '.strCecha2 = oClient.strCecha2
+      '.strCecha3 = oClient.strCecha3
+      .ePrywat = CLng(oClient.ePrywat)
+    end with    
+    'messagebox "ok", "Zakończono wysyłanie", vbOKOnly, vbInformation
+    if not trans_.saveobjects() then          
+      exit function
+    end if
+  else
+     'messagebox "sprawdzilem klienta i mi sie nie podoba", "Zakończono wysyłanie", vbOKOnly, vbInformation
+    exit function
+  end if
+  createClient = true
+end function
+
+'------------------------------------------------------------
+'sprawdza poprawność wprowadzonych danych dla obiektu klienta
+'------------------------------------------------------------
+function checkClientData(byVal oClient): checkClientData = false
+  'indeks klienta => automatyczna numeracja
+  dim strWart: strWart = nx_get_globprofile_value(GLOBPROF_KLIENT_AUTONUM)
+  if strWart <> "1" then
+    exit function
+  end if
+  'pola wymagane
+  if oClient.strNazwa = "" then
+    exit function
+  end if
+  if oClient.strSkrot = "" and oClient.ePrywat = N5KLIENT_FIRMA then
+    exit function
+  end if
+  if oClient.ePrywat <> N5KLIENT_OSOBAPRYWATNA and oClient.ePrywat <> N5KLIENT_FIRMA then
+    exit function
+  end if  
+  if oClient.strNazwaGrupy <> "" then
+    dim idGrupa: idGrupa = trans_.findobjid(TYPEID_N5GRUPAKLIENT,"strNazwa = '" + oClient.strNazwaGrupy + "'")
+    if idGrupa = clng(0) then
+      exit function
+    end if
+  else
+    exit function
+  end if
+  if oClient.strNIP = "" then
+    exit function
+  end if
+  if oClient.strUlica = "" then
+    exit function
+  end if  
+  if oClient.strNrDomu = "" then
+    exit function
+  end if  
+  if oClient.strKod = "" then
+    exit function
+  end if
+  if oClient.strMiejscowosc <> "" then
+    dim idMiejsc: idMiejsc = trans_.findobjid(TYPEID_N5MIEJSCOWOSC,"strNazwa = '" + oClient.strMiejscowosc + "'")
+    if idMiejsc = clng(0) then
+      exit function
+    end if
+  else
+    exit function
+  end if
+  if oClient.strEmail = "" then
+    exit function
+  end if  
+  if oClient.strTel1 = "" then
+    exit function
+  end if
+  checkClientData = true
+end function
+
+'----------------------------
+'zwraca obiekt grupy klientów
+'----------------------------
+function getGrupaKlient(byval strNazwaGrupy): set getGrupaKlient = nothing
+  dim idGrupa: idGrupa = trans_.findobjid(TYPEID_N5GRUPAKLIENT,"strNazwa = '" + strNazwaGrupy + "'")
+  if idGrupa > clng(0) then
+    set getGrupaKlient = trans_.getobj(TYPEID_N5GRUPAKLIENT,idGrupa)
+  end if
+end function
+
+'--------------------------
+'zwraca obiekt miejscowości
+'--------------------------
+function getMiejscowosc(byval strMiejscowosc): set getMiejscowosc = nothing
+  dim idMiejsc: idMiejsc = trans_.findobjid(TYPEID_N5MIEJSCOWOSC,"strNazwa = '" + strMiejscowosc + "'")
+  if idMiejsc > clng(0) then
+    set getMiejscowosc = trans_.getobj(TYPEID_N5MIEJSCOWOSC,idMiejsc)
+  end if
+end function
+
+'-----------------
+'tworzy zamówienie
+'-----------------
+function putOrder(byval intClientID, oOrderLine, oOrderInfo): putOrder = -1
+  dim idRejDok, idSposPlat
+  'sprawdzamy klienta
+  if trans_.findobjid(TYPEID_N5KLIENT,"IdObj = " + CStr(intClientID)) <= 0 then
+    exit function
+  end if
+  
+  'sprawdzamy rejestr
+  idRejDok = getRejByNazwa(oOrderInfo.strRejestrDok)
+  if idRejDok <= 0 then
+    exit function
+  end if
+
+  'sprawdzamy sposób płatności
+  idSposPlat = getSposPlatByNazwa(oOrderInfo.strSposobPlat)
+  if idSposPlat <= 0 then
+    exit function
+  end if
+  
+  trans_.var(APPVAR_REJESTR_TYP) = N5REJESTRDOK__ZAM_OBCE
+  trans_.var(APPVAR_REJESTR_DOKUMENTOW) = idRejDok
+  
+  dim oZam: set oZam = trans_.newobj(TYPEID_N5ZAMOWIENIE)
+  with oZam
+    set .pKlient = trans_.getobj(TYPEID_N5KLIENT,intClientID)
+    set .pSposobPlatnosci = trans_.getobj(TYPEID_N5SPOSPLAT,idSposPlat)
+    .dDataWyst = oOrderInfo.dDataWyst
+    .dDataReal = oOrderInfo.dDataReal
+    .strUwagi = oOrderInfo.strUwagi
+  end with
+  
+
+  dim oElem, oProd, oOpak, oPos, iter
+  for each oElem in oOrderLine  
+    if oElem.intIdProdukt > clng(0) and oElem.intIdOpakowanie > clng(0) and ccur(oElem.decIlosc) > ccur(0) and ccur(oElem.decCenaZaSztuke) > ccur(0) then
+      set oProd = trans_.getobj(TYPEID_N5PRODUKT,oElem.intIdProdukt)
+      if oProd is nothing then
+        exit function
+      end if            
+      dim nLP: nLP = oProd.listOpakowania.findonid(clng(oElem.intIdOpakowanie))
+      if nLP > clng(0) then
+        set oOpak = oProd.listOpakowania.get(nLP)
+      else
+        exit function
+      end if
+      set oPos = oZam.listPozycje.addnew()
+      set oPos.pProdukt = oProd
+      set oPos.pOpak = oOpak
+      oPos.curIloscOpak = ccur(oElem.decIlosc)
+      oPos.curCenaBazowaNettoWal = ccur(oElem.decCenaZaSztuke)
+    end if
+  next
+  if not trans_.saveobjects() then
+    exit function
+  end if
+  
+  putOrder = oZam.idObj
+end function
+
+'------------------------------------
+'zwraca idobj rejestru o danej nazwie
+'------------------------------------
+function getRejByNazwa(byval strRejestrDok): getRejByNazwa = clng(0)
+  getRejByNazwa = trans_.findobjid(TYPEID_N5REJESTRDOK,"strNazwa = '" + CStr(strRejestrDok) + "'")
+end function
+
+'---------------------------------------------
+'zwraca idobj sposobu płatności o danej nazwie
+'---------------------------------------------
+function getSposPlatByNazwa(byval strRejestrDok): getSposPlatByNazwa = clng(0)
+  getSposPlatByNazwa = trans_.findobjid(TYPEID_N5SPOSPLAT,"strNazwa = '" + CStr(strRejestrDok) + "'")
+end function
+
+'--------------------------------------------
+'zwraca dane o produktach w postaci recordset
+'--------------------------------------------
+function getProductList(oView, oSort, oSearch)
+  'pobranie aktywnych magazynów
+  dim strstrQuery, strSubstrQuery: strSubstrQuery = ""
+  strstrQuery = "select IdObj,strNazwa from n5magazyn where mag_eAktywny = N5PRODUKT_AKTYWNY"
+  dim oRSMag: set oRSMag = trans_.createadors(strstrQuery)
+  
+  dim strRec
+  dim iter: iter = 1
+  do while not oRSMag.EOF
+    strRec = "'idMagazyn" + CStr(iter) + "'=" + CStr(oRSMag(0).value) + "," + vbNewLine + "'strMagazynNazwa" + CStr(iter) + "'='" + CStr(oRSMag(1).value) + "'," + vbNewLine +_
+             "'intStan" + CStr(iter) + "'=(select isnull(cast(sum(gms_curIlosc) as int),cast(0 as int)) from n5gmstan where gms_pProd = vl.p_idobj and gms_pOpak = vl.c_idobj and gms_pMag = " + CStr(oRSMag(0).value) + ")"
+    strSubstrQuery = strSubstrQuery + strRec
+    if iter < oRSMag.recordCount then
+      strSubstrQuery = strSubstrQuery + "," + vbNewLine
+    end if
+    iter = iter + 1
+    oRSMag.movenext
+  loop
+  
+  strstrQuery = _
+  "select * from " + vbNewLine +_
+  "(select 'longRowNumber'=(cast(row_number() over (order by vl.p_strindeks) as int)), " + vbNewLine +_
+  "'c_prod_idobj'=vl.p_idobj, " + vbNewLine +_
+  "'intIdOpakowanie'=vl.c_idobj, " + vbNewLine +_
+  "'strIndeks'=vl.p_strindeks, " + vbNewLine +_
+  "'strNazwaProduktu'=vl.p_strnazwa, " + vbNewLine +_
+  "'strGrupaProduktow'=gr.strNazwa, " + vbNewLine +_  
+  "'floCenaDetaNetto'=vl.c_curcenanetto1, " + vbNewLine +_
+  "'floCenaDetaBrutto'=vl.c_curcenabrutto1, " + vbNewLine +_
+  "'floCenaHurt1Netto'=vl.c_curcenanetto2, " + vbNewLine +_
+  "'floCenaHurt1Brutto'=vl.c_curcenabrutto2, " + vbNewLine +_
+  "'floCenaHurt2Netto'=vl.c_curcenanetto3, " + vbNewLine +_
+  "'floCenaHurt2Brutto'=vl.c_curcenabrutto3, " + vbNewLine +_
+  "'floCenaDeta4Netto'=vl.c_curcenanetto4, " + vbNewLine +_
+  "'floCenaDeta4Brutto'=vl.c_curcenabrutto4, " + vbNewLine +_
+  "'floCenaHurt5Netto'=vl.c_curcenanetto5, " + vbNewLine +_
+  "'floCenaHurt5Brutto'=vl.c_curcenabrutto5, " + vbNewLine +_
+  "'floCenaHurt6Netto'=vl.c_curcenanetto6, " + vbNewLine +_
+  "'floCenaHurt6Brutto'=vl.c_curcenabrutto6, " + vbNewLine +_
+  "'strVat'=vl.p_evat, " + vbNewLine +_
+  "'strRodzaj'=vl.p_erodzaj, " + vbNewLine +_  
+  "'strOpis'=vl.p_stropis, " + vbNewLine +_
+  "'strCecha1'=vl.p_strcecha1, " + vbNewLine +_
+  "'strCecha2'=vl.p_strcecha2, " + vbNewLine +_
+  "'strCecha3'=vl.p_strcecha3, " + vbNewLine +_ 
+  "'strNazwaOpakowania'=vl.c_strnazwa, " + vbNewLine +_
+  "'strJednOpakowania'=j.strSkrot, " + vbNewLine +_
+  "'intIDGrupaProd'=vl.p_pgrupaprod, " + vbNewLine +_
+  "'eStatus'=vl.p_eaktywny, " + vbNewLine +_
+  "'strNazwaProduktuForeign'=vl.p_strnazwamiedzynarodowa, " + vbNewLine +_
+  "'strIndeksProduktuZamiennika'=isnull((select op.p_strindeks from vlist_n5produkt_listOpakowania op where op.c_idobj = vl.c_pzamiennik),'brak'), " + vbNewLine +_
+  "'lp'=vl.coll_lp, " + vbNewLine +_
+  + strSubstrQuery + vbNewLine +_
+#ifdef ENABLE_DB11_F
+  ", 'strAltInx1'= isnull((select strIndeks from n5produkt where idobj=vl.p_prod_pZamiennik1),'--')" +_
+#endif
+  "from vlist_n5produkt_listOpakowania vl " + vbNewLine +_
+  "	inner join n5grupaproduktow gr on vl.p_pgrupaprod = gr.idobj " + vbNewLine +_
+  "	inner join n5jednostka j on vl.c_pJednOpak = j.idobj " + vbNewLine
+  
+  if oSearch.strSearchBy <> "notuse" then
+  
+    strstrQuery = strstrQuery + "where " 
+    
+    if oSearch.strSearchType <> "ONE" then
+      strstrQuery = strstrQuery + " " 
+    else
+      strstrQuery = strstrQuery + " = " 
+    end if
+    
+    strstrQuery = strstrQuery + oSearch.strSearchPattern + vbNewLine
+    
+  end if  
+  
+  strstrQuery = strstrQuery +_
+  ") as prod " + vbNewLine
+  
+  if oView.strViewType <> "all" then
+    strstrQuery = strstrQuery +_
+    "where longRowNumber between " + CStr(oView.intPoczatek) + " and " + CStr(oView.intKoniec) + vbNewLine
+  end if 
+  
+  strstrQuery = strstrQuery +_
+  "order by " + oSort.strKryterium + oSort.strPorzadek
+  
+  trans_.message 0, 0, strstrQuery
+  
+  set getProductList = trans_.createadors(strstrQuery)
+  
+end function
+
+
+'---------------------------------------------
+'Grzegorz Trawiński
+'Funkcja zwraca dane o produktach w postaci recordset,
+'na podstawie podanych indeksow produktow
+'--------------------------------------------
+function getSelectedProductList(arrProduct)
+  'pobranie aktywnych magazynów
+  dim strstrQuery, strSubstrQuery: strSubstrQuery = ""
+  strstrQuery = "select IdObj,strNazwa from n5magazyn where mag_eAktywny = N5PRODUKT_AKTYWNY"
+  dim oRSMag: set oRSMag = trans_.createadors(strstrQuery)
+  
+  dim strRec
+  dim iter: iter = 1
+  do while not oRSMag.EOF
+    strRec = "'idMagazyn" + CStr(iter) + "'=" + CStr(oRSMag(0).value) + "," + vbNewLine + "'strMagazynNazwa" + CStr(iter) + "'='" + CStr(oRSMag(1).value) + "'," + vbNewLine +_
+             "'intStan" + CStr(iter) + "'=(select isnull(cast(sum(gms_curIlosc) as int),cast(0 as int)) from n5gmstan where gms_pProd = vl.p_idobj and gms_pOpak = vl.c_idobj and gms_pMag = " + CStr(oRSMag(0).value) + ")"
+    strSubstrQuery = strSubstrQuery + strRec
+    if iter < oRSMag.recordCount then
+      strSubstrQuery = strSubstrQuery + "," + vbNewLine
+    end if
+    iter = iter + 1
+    oRSMag.movenext
+  loop
+  
+  strstrQuery = _
+  "select * from " + vbNewLine +_
+  "(select 'longRowNumber'=(cast(row_number() over (order by vl.p_strindeks) as int)), " + vbNewLine +_
+  "'c_prod_idobj'=vl.p_idobj, " + vbNewLine +_
+  "'intIdOpakowanie'=vl.c_idobj, " + vbNewLine +_
+  "'strIndeks'=vl.p_strindeks, " + vbNewLine +_
+  "'strNazwaProduktu'=vl.p_strnazwa, " + vbNewLine +_
+  "'strGrupaProduktow'=gr.strNazwa, " + vbNewLine +_  
+  "'floCenaDetaNetto'=vl.c_curcenanetto1, " + vbNewLine +_
+  "'floCenaDetaBrutto'=vl.c_curcenabrutto1, " + vbNewLine +_
+  "'floCenaHurt1Netto'=vl.c_curcenanetto2, " + vbNewLine +_
+  "'floCenaHurt1Brutto'=vl.c_curcenabrutto2, " + vbNewLine +_
+  "'floCenaHurt2Netto'=vl.c_curcenanetto3, " + vbNewLine +_
+  "'floCenaHurt2Brutto'=vl.c_curcenabrutto3, " + vbNewLine +_
+  "'floCenaDeta4Netto'=vl.c_curcenanetto4, " + vbNewLine +_
+  "'floCenaDeta4Brutto'=vl.c_curcenabrutto4, " + vbNewLine +_
+  "'floCenaHurt5Netto'=vl.c_curcenanetto5, " + vbNewLine +_
+  "'floCenaHurt5Brutto'=vl.c_curcenabrutto5, " + vbNewLine +_
+  "'floCenaHurt6Netto'=vl.c_curcenanetto6, " + vbNewLine +_
+  "'floCenaHurt6Brutto'=vl.c_curcenabrutto6, " + vbNewLine +_
+  "'strVat'=vl.p_evat, " + vbNewLine +_
+  "'strRodzaj'=vl.p_erodzaj, " + vbNewLine +_  
+  "'strOpis'=vl.p_stropis, " + vbNewLine +_
+  "'strCecha1'=vl.p_strcecha1, " + vbNewLine +_
+  "'strCecha2'=vl.p_strcecha2, " + vbNewLine +_
+  "'strCecha3'=vl.p_strcecha3, " + vbNewLine +_ 
+  "'strNazwaOpakowania'=vl.c_strnazwa, " + vbNewLine +_
+  "'strJednOpakowania'=j.strSkrot, " + vbNewLine +_  
+  "'intIDGrupaProd'=vl.p_pgrupaprod, " + vbNewLine +_
+  "'eStatus'=vl.p_eaktywny, " + vbNewLine +_
+  "'strNazwaProduktuForeign'=vl.p_strnazwamiedzynarodowa, " + vbNewLine +_
+  "'strNazwaZamiennika'=isnull((select op.strnazwa from n5opakowanie_produktu op where op.idobj = vl.c_pzamiennik),'brak'), " + vbNewLine +_
+  "'lp'=vl.coll_lp, " + vbNewLine +_  
+  + strSubstrQuery + vbNewLine +_
+  "from vlist_n5produkt_listOpakowania vl " + vbNewLine +_
+  "	inner join n5grupaproduktow gr on vl.p_pgrupaprod = gr.idobj " + vbNewLine +_
+  "	inner join n5jednostka j on vl.c_pJednOpak = j.idobj " + vbNewLine 
+  
+  strstrQuery = strstrQuery +_
+  " where "
+  
+  dim oElem
+  for each oElem in arrProduct    
+    strstrQuery = strstrQuery +_
+    "vl.p_strindeks = '" + cStr(oElem) + "' or "    
+  next
+  
+  strstrQuery = Left(strstrQuery, Len(strstrQuery)-3)  
+  
+  strstrQuery = strstrQuery +_
+  ") as prod " + vbNewLine  
+  
+  set getSelectedProductList = trans_.createadors(strstrQuery)
+  
+end function
+
+
+
+'---------------------------------------------
+'Grzegorz Trawiński
+'Funkcja testowa
+'---------------------------------------------
+function EBTest(byval intNumber): EBTest = ""
+  EBTest = "Jeżeli widzisz ten napis, oznacza to, że EuroBuisness 5.0 " +_
+           "działa poprawnie. Liczba, która została podana to: " + CStr(intNumber) + "."
+end function
+
+
+'---------------------------------------------
+'Grzegorz Trawiński
+'Pobór cen dla klienta
+'---------------------------------------------
+function get_cena(byval intClientId, byval intProductId, byval intOpakId, byval cena, byval n, byval bResInNetto): get_cena = ccur(cena)
+	dim curValue
+	dim pClient, pProdukt, pOpak
+  dim curDummy
+  dim nLP
+  
+  if intClientId > clng(0) and intProductId > clng(0) and intOpakId > clng(0) then
+    set pClient = trans_.getobj(TYPEID_N5KLIENT,intClientID)
+	  if not pClient is nothing  then
+		  set pProdukt = trans_.getobj(TYPEID_N5PRODUKT , clng(intProductId))
+      
+      nLP = pProdukt.listOpakowania.findonid(clng(intOpakId))
+      if nLP > clng(0) then
+        set pOpak = pProdukt.listOpakowania.get(nLP)
+      else
+        exit function
+      end if
+      
+		  if nx_compute_price(pClient, pProdukt, pOpak, trans_.var(GVAR_TODAY),1.00, n, _
+			  nothing, bResInNetto, curDummy, curValue) then
+			  get_cena = curValue
+		  end if
+      
+    end if
+  end if   
+end function
+
+'messagebox "ok1", "Zakończono wysyłanie", vbOKOnly, vbInformation
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+' ECWS3 
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+function ecws3_is_alive(byval iTestValue)
+  ecws3_is_alive = iTestValue
+end function
+
+function ecws_get_trans()
+  dim oTrans : set oTrans = trans_.get_this()
+  set ecws_get_trans = oTrans
+end function
+
+function ecws3_init(byval strUser,byval strPassword)
+  ecws3_init = doc_.getmodule(60121).remote_system_init(strUser, strPassword)
+end function
+
+function ecws3_open_recordset(strQuery)
+	set ecws3_open_recordset = trans_.createadors(strQuery)
+end function
+
+function ecws3_exec_sql(strSQL)
+  trans_.execsql strSQL
+end function
+
+function ecws3_save_document(oDocument) : ecws3_save_document = "001: Cannot save - reason unknown"
+  dim pSubTrans: set pSubTrans = trans_.createsubtran()	
+	
+  select case oDocument.DocumentType  
+  case "SI"   'Sales Invoice
+    ecws3_save_document = ecws3_save_sales_invoice(oDocument)
+  case "SO","QR", "PO"   'Sales Order, "Quote Request", "Purchase Order"
+    ecws3_save_document = ecws3_save_order(oDocument)
+  case "GI", "GR", "IGR","IGI", "MOV"   'Good Issued Note,Good Received Note
+    ecws3_save_document = ecws3_save_store_doc(oDocument)  
+  case "CR", "CD" 'Cash receipt, Cash Disbursement
+    ecws3_save_document = ecws3_save_cash_doc(oDocument)  
+  end select
+end function
+
+function ecws3_resolve_customer(CustomerID, CustomerCode) : ecws3_resolve_customer = clng(0)
+
+  dim idCustomer
+
+  if trim(cstr(CustomerID)) <> "" then
+    idCustomer = trans_.findobjid(TYPEID_N5KLIENT, "IdObj=" + trim(cstr(CustomerID)))
+    if idCustomer > 0 then
+      ecws3_resolve_customer = idCustomer
+      exit function
+    end if
+  end if
+ 
+  if trim(CustomerCode) <> "" then
+    idCustomer = trans_.findobjid(TYPEID_N5KLIENT, "strIndeks='" + cstr(CustomerCode) + "'")
+    if idCustomer > 0 then
+      ecws3_resolve_customer = idCustomer
+      exit function
+    end if
+  end if
+   
+end function
+
+function ecws3_resolve_store(StoreID, StoreName) : ecws3_resolve_store = clng(0)
+
+  dim idStore
+
+  if trim(StoreID) <> "" then
+    idStore = trans_.findobjid(TYPEID_N5MAGAZYN, "IdObj=" + cstr(StoreID))
+    if idStore > 0 then
+      ecws3_resolve_store = idStore
+      exit function
+    end if
+  end if
+ 
+  if trim(StoreName) <> "" then
+    idStore = trans_.findobjid(TYPEID_N5MAGAZYN, "strNazwa='" + cstr(StoreName) + "'")
+    if idStore > 0 then
+      ecws3_resolve_store = idStore
+      exit function
+    end if
+  end if
+   
+end function
+
+function ecws3_resolve_city(CityName)
+  ecws3_resolve_city = trans_.findobjid(TYPEID_N5MIEJSCOWOSC, "strNazwa='" + trim(cstr(CityName)) + "'")
+end function
+
+function ecws3_resolve_product(ProductID, ProductCode) : ecws3_resolve_product = clng(0)
+  
+  dim idProduct
+
+  if trim(cstr(ProductID)) <> "" then
+    idProduct = trans_.findobjid(TYPEID_N5PRODUKT, "IdObj=" + cstr(ProductID))
+    if idProduct > 0 then
+      ecws3_resolve_product = idProduct
+      exit function
+    end if
+  end if
+    
+  if trim(cstr(ProductCode)) <> "" then
+    idProduct = trans_.findobjid(TYPEID_N5PRODUKT, "strIndeks='" + cstr(ProductCode)+"'")
+    if idProduct > 0 then
+      ecws3_resolve_product = idProduct
+      exit function
+    end if
+  end if
+  
+end function
+
+function ecws3_resolve_product_group(ProductGroupID, ProductGroupName) : ecws3_resolve_product_group = clng(0)
+  
+  dim idProductGroup
+
+  if trim(cstr(ProductGroupID)) <> "" then
+    idProductGroup = trans_.findobjid(TYPEID_N5GRUPAPRODUKTOW, "IdObj=" + cstr(ProductGroupID))
+    if idProductGroup > 0 then
+      ecws3_resolve_product_group = idProductGroup
+      exit function
+    end if
+  end if
+    
+  if trim(cstr(ProductGroupName)) <> "" then
+    idProductGroup = trans_.findobjid(TYPEID_N5GRUPAPRODUKTOW, "strNazwa='" + cstr(ProductGroupName)+"'")
+    if idProductGroup > 0 then
+      ecws3_resolve_product_group = idProductGroup
+      exit function
+    end if
+  end if
+  
+end function
+
+function ecws3_save_product(oProduct) : ecws3_save_product = "001: Cannot save - reason unknown"
+  dim idProduct : idProduct = ecws3_resolve_product(oProduct.ID, oProduct.Code)
+  if idProduct < 0 then
+    ecws3_save_product = "003: Found many products. Cannot update."
+    exit function
+  end if
+  
+  dim oEBProduct
+  if idProduct = 0 then 
+      set oEBProduct = trans_.newobj(TYPEID_N5PRODUKT)
+  else
+    set oEBProduct = trans_.getobj(TYPEID_N5PRODUKT, idProduct)
+  end if
+  
+  dim idUnit : idUnit = trans_.findobjid(TYPEID_N5JEDNOSTKA, "strSkrot='" + trim(oProduct.UnitAbbr) + "'")
+  
+  if idUnit <= 0 then
+      ecws3_save_product = "003: Unit " + cstr(oProduct.UnitAbbr) + " not found. Cannot save"
+      exit function
+    end if
+    
+  dim idProductGroup : idProductGroup  = ecws3_resolve_product_group(oProduct.ProductGroupID, oProduct.ProductGroupName)
+  
+  if idProductGroup <= 0 then
+      ecws3_save_product = "004: Product group " + cstr(oProduct.ProductGroupName) + " not found. Cannot save"
+      exit function
+    end if
+    
+  with oEBProduct
+    .strNazwa = oProduct.Name
+    .strIndeks = oProduct.Code
+    set .pGrupaProd = trans_.getobj(TYPEID_N5GRUPAPRODUKTOW, idProductGroup)
+    set .pJednostkaEwid = trans_.getobj(TYPEID_N5JEDNOSTKA, idUnit)
+    
+    .strCecha1 = trim(cstr(oProduct.Property1))
+    .strCecha2 = trim(cstr(oProduct.Property2))
+    .strCecha3 = trim(cstr(oProduct.Property3))
+    
+  end with
+  
+  if not trans_.saveobjects() then
+    ecws3_save_product = "007: Cannot save product (business rule)"
+    exit function
+  end if
+  
+  ecws3_save_product = "000:" + cstr(oEBProduct.IdObj) + ":" + oEBProduct.strIndeks
+  
+end function
+
+function ecws3_save_customer(oCustomer) : ecws3_save_customer = "001: Cannot save - reason unknown"
+  dim idCustomer : idCustomer = ecws3_resolve_customer(oCustomer.ID, oCustomer.Code)
+  
+  if idCustomer < 0 then
+    ecws3_save_customer = "003: Found many customers. Cannot update."
+    exit function
+  end if
+  
+  dim oEBCustomer
+  if idCustomer = 0 then
+    if trim(oCustomer.NIP) = "" then
+      trans_.var(APPVAR_KLIENT_TYPE) = N5KLIENT_OSOBAPRYWATNA
+    else
+      trans_.var(APPVAR_KLIENT_TYPE) = N5KLIENT_FIRMA
+    end if
+   
+    set oEBCustomer = trans_.newobj(TYPEID_N5KLIENT)
+  else
+    set oEBCustomer = trans_.getobj(TYPEID_N5KLIENT, idCustomer)
+  end if
+  dim idCity : idCity = ecws3_resolve_city(oCustomer.City)
+  if idCity <= 0 then
+    idCity = ecws3_resolve_city("nieznana")
+  end if
+  
+  with oEBCustomer
+    oEBCustomer.strNazwa = oCustomer.Name
+    if trans_.var(APPVAR_KLIENT_TYPE) = N5KLIENT_OSOBAPRYWATNA then
+      oEBCustomer.strNazwisko = oCustomer.Name
+      oEBCustomer.strImie = "."
+    end if
+    
+    oEBCustomer.strSkrot = oCustomer.Code
+    oEBCustomer.strIndeks = oCustomer.Code
+    oEBCustomer.strNIP = oCustomer.NIP
+    oEBCustomer.strUlica = oCustomer.Street
+    oEBCustomer.strKod = oCustomer.ZIPCode
+    oEBCustomer.strTel1 = oCustomer.Phone
+    oEBCustomer.strEmail = oCustomer.Email
+    
+    set oEBCustomer.pMiejscowosc = trans_.getobj(TYPEID_N5MIEJSCOWOSC, idCity)
+    set oEBCustomer.pGrupaKlient = trans_.getobj(TYPEID_N5GRUPAKLIENT, trans_.findobjid(TYPEID_N5GRUPAKLIENT, "strNazwa='autorejestracja'"))
+    oEBCustomer.strCecha3 = oCustomer.ExternalID
+  end with
+  
+  if not trans_.saveobjects() then
+    ecws3_save_customer = "007: Cannot save customer (business rule)"
+    exit function
+  end if
+  
+  ecws3_save_customer = "000:" + cstr(oEBCustomer.IdObj) + ":" + oEBCustomer.strIndeks
+  
+end function
+
+function ecws3_save_order(oOrderData): ecws3_save_order = "001: Cannot save - reason unknown"
+ 
+  '------------- find customer -------------
+  dim idCustomer : idCustomer = ecws3_resolve_customer(oOrderData.CustomerID, oOrderData.CustomerCode)
+  if idCustomer <= 0 then
+    ecws3_save_order = "003: Customer not found. Cannot save"
+    exit function
+  end if
+
+  dim oCustomer
+  set oCustomer = trans_.getobj(TYPEID_N5KLIENT, idCustomer)
+  
+ '------------- find payment rule -------------
+  dim idPayment 
+  dim oPayment
+
+  set oPayment = oCustomer.pSposobPlatnosci
+  if oPayment is nothing then
+    idPayment = trans_.findobjid(TYPEID_N5SPOSPLAT, "strNazwa='" + oOrderData.PaymentRule + "'")
+    if idPayment <= 0 then
+      ecws3_save_order = "003: Payment rule name " + oOrderData.PaymentRule + " not found. Cannot save"
+      exit function
+    end if
+    set oPayment = trans_.getobj(TYPEID_N5SPOSPLAT, idPayment)
+  end if
+
+
+  '------------- find/create order -------------
+  dim idOrder
+  dim oOrder
+  dim bNewOrder  : bNewOrder = false
+    
+  if oOrderData.DocumentNumber = "" or left(oOrderData.DocumentNumber, 1) = "#"  then
+    'check register for new orders
+    dim idRegister : idRegister = getRejByNazwa(oOrderData.RegisterName)
+    if idRegister <= 0 then
+      ecws3_save_order = "004: Register named " + oOrderData.RegisterName + " not found. Cannot insert new order"
+      exit function
+    end if
+    select case oOrderData.DocumentType 
+    case "SO"
+      trans_.var(APPVAR_REJESTR_TYP) = N5REJESTRDOK__ZAM_OBCE
+    case "PO"
+      trans_.var(APPVAR_REJESTR_TYP) = N5REJESTRDOK__ZAM_WLASNE
+    case "QR"
+      trans_.var(APPVAR_REJESTR_TYP) = N5REJESTRDOK_ZAP_OFERTOWE_OBCE
+    end select
+   
+    trans_.var(APPVAR_REJESTR_DOKUMENTOW) = idRegister
+ 
+    set oOrder = trans_.newobj(TYPEID_N5ZAMOWIENIE)
+    oOrder.strNrDok = mid(oOrderData.DocumentNumber, 2)
+    bNewOrder = true
+  else
+    idOrder = trans_.findobjid(TYPEID_N5ZAMOWIENIE, "strNrDok = '" + oOrderData.DocumentNumber + "'")
+    if idOrder <= 0 then
+      ecws3_save_order = "002: Order " + oOrderData.DocumentNumber + " not found. Cannot save"
+      exit function
+    end if
+    set oOrder = trans_.getobj(TYPEID_N5ZAMOWIENIE, idOrder)
+  end if
+ 
+  '------------- update order -------------
+  set oOrder.pKlient = oCustomer
+  set oOrder.pSposobPlatnosci = oPayment
+  oOrder.dDataWyst = oOrderData.IssueDate
+  oOrder.dDataReal = oOrderData.CompletitionDate
+  oOrder.strUwagi = oOrderData.Notes
+  'oOrder.strExtra1 = trim(cstr(oOrderData.Property1))
+  'oOrder.strExtra2 = trim(cstr(oOrderData.Property2))
+
+  oOrder.zam_strNrDokObcy = oOrderData.PartnerDocumentNumber
+
+#ifdef _IOW
+
+  if oOrderData.AllowPartialSO then
+    oOrder.zam_cKomplet = "1"
+  else
+    oOrder.zam_cKomplet = "0"
+  end if
+ 
+  if oOrderData.DeliveryModeID <> "" then
+    set oOrder.zam_pSposobDostawy = trans_.getobj(TYPEID_N5SPOSDOST, clng(oOrderData.DeliveryModeID))
+  end if
+  
+#endif
+  '-------------update order lines --------
+  dim iLine : iLine = 1
+  dim oOrderLineData
+  dim oOrderLine
+  
+  for each oOrderLineData in oOrderData.ArrLines
+    if oOrder.listPozycje.exists(iLine) then
+      set oOrderLine = oOrder.listPozycje.get(iLine)
+    else
+      set oOrderLine = oOrder.listPozycje.addnew()
+    end if
+    
+    '---- find product
+    dim idProduct : idProduct = ecws3_resolve_product(oOrderLineData.ProductID, oOrderLineData.ProductCode)
+    if idProduct <= 0 then
+      ecws3_save_order = "004: Product at line " + cstr(iLine) + " not found. Cannot save"
+      exit function
+    end if
+    
+    set oOrderLine.pProdukt = trans_.getobj(TYPEID_N5PRODUKT, idProduct)
+    
+    if ccur(oOrderLineData.Quantity) < ccur(0.0) then
+       ecws3_save_order = "005: Quantity must be positive at line " + cstr(iLine) + ". Cannot save"
+      exit function
+    end if
+    
+    oOrderLine.curIloscOpak = ccur(oOrderLineData.Quantity)
+    
+    if ccur(oOrderLineData.UnitPriceNettoDocCur) < ccur(0.0) then
+      ecws3_save_order = "006: Unit Price must be non-negative at line " + cstr(iLine) + ". Cannot save"
+      exit function
+    end if
+    
+#ifdef _TANDEM_BAITS
+      oOrderLine.curCenaBazowaBruttoWal = ccur(oOrderLineData.UnitPriceBruttoDocCur)
+      oOrderLine.curRabat = ccur(10.0)
+#else
+
+    '--- use default when not supplied
+    if ccur(oOrderLineData.UnitPriceNettoDocCur) > ccur(0.0) then
+      oOrderLine.curCenaBazowaNettoWal = ccur(oOrderLineData.UnitPriceNettoDocCur)
+    end if
+ #endif
+   
+    iLine = iLine + 1
+  next
+  
+  '------- remove exceeding positions ------
+  do while oOrder.listPozycje.count() >= iLine
+    oOrder.listPozycje.delete(oOrder.listPozycje.count())
+  loop 
+
+  if not trans_.saveobjects() then
+    ecws3_save_order = "007: Cannot save order (business rule)"
+    exit function
+  end if
+
+#ifdef _IOW
+  if bNewOrder and oOrderData.DocumentType = "SO" then
+      dim oM60226  : set oM60226 = doc_.getmodule(60226)
+      dim bRezRes: bRezRes = oM60226.utworz_dokmag_z_dokhandl_automat(oOrder, N5REJESTRDOK_REZERWACJE, 0, 0, oOrder.pRejestrDok.wrefParam2.idobj)
+  end if
+#endif
+  
+  ecws3_save_order = "000:" + cstr(oOrder.IdObj) + ":" + oOrder.strNrDok
+  
+end function
+
+function ecws3_save_sales_invoice(oDocument): ecws3_save_sales_invoice = "001: Cannot save - reason unknown"
+ 
+  '------------- find customer -------------
+  dim idCustomer : idCustomer = ecws3_resolve_customer(oDocument.CustomerID, oDocument.CustomerCode)
+  if idCustomer <= 0 then
+    ecws3_save_sales_invoice = "003: Customer not found. Cannot save"
+    exit function
+  end if
+
+  dim oCustomer
+  set oCustomer = trans_.getobj(TYPEID_N5KLIENT, idCustomer)
+  
+ '------------- find payment rule -------------
+  dim idPayment 
+  dim oPayment
+
+  set oPayment = oCustomer.pSposobPlatnosci
+  if oPayment is nothing then
+    idPayment = trans_.findobjid(TYPEID_N5SPOSPLAT, "strNazwa='" + oDocument.PaymentRule + "'")
+    if idPayment <= 0 then
+      ecws3_save_sales_invoice = "003: Payment rule name " + oDocument.PaymentRule + " not found. Cannot save"
+      exit function
+    end if
+    set oPayment = trans_.getobj(TYPEID_N5SPOSPLAT, idPayment)
+  end if
+
+  '------------- find/create Invoice -------------
+  dim idInvoice
+  dim oInvoice
+    
+  if oDocument.DocumentNumber = ""  or left(oDocument.DocumentNumber, 1) = "#" then
+    'check register for new orders
+    dim idRegister : idRegister = getRejByNazwa(oDocument.RegisterName)
+    if idRegister <= 0 then
+      ecws3_save_sales_invoice = "004: Register named " + oDocument.RegisterName + " not found. Cannot insert new invoice"
+      exit function
+    end if
+    trans_.var(APPVAR_REJESTR_TYP) = N5REJESTRDOK_FAKT_SP
+    trans_.var(APPVAR_REJESTR_DOKUMENTOW) = idRegister
+ 
+    set oInvoice = trans_.newobj(TYPEID_N5SPRZEDAZ)
+    oInvoice.strNrDok = mid(oDocument.DocumentNumber, 2)
+ else
+    idInvoice = trans_.findobjid(TYPEID_N5SPRZEDAZ, "strNrDok = '" + oDocument.DocumentNumber + "'")
+    if idInvoice <= 0 then
+      ecws3_save_sales_invoice = "002: Invoice " + oDocument.DocumentNumber + " not found. Cannot save"
+      exit function
+    end if
+    set oInvoice = trans_.getobj(TYPEID_N5SPRZEDAZ, idInvoice)
+  end if
+ 
+
+  '------------- update Invoice -------------
+  set oInvoice.pKlient = oCustomer
+  set oInvoice.pSposobPlatnosci = oPayment
+  oInvoice.dDataWyst = oDocument.IssueDate
+  oInvoice.strUwagi = oDocument.Notes
+
+  oInvoice.strExtra1 = trim(cstr(oDocument.property1))
+  oInvoice.strExtra2 = trim(cstr(oDocument.property2))
+      
+  '-------------update order lines --------
+  dim iLine : iLine = 1
+  dim oDocumentLine
+  dim oInvoiceLine
+  
+  for each oDocumentLine in oDocument.ArrLines
+    if oInvoice.listPozycje.exists(iLine) then
+      set oInvoiceLine = oInvoice.listPozycje.get(iLine)
+    else
+      set oInvoiceLine = oInvoice.listPozycje.addnew()
+    end if
+    
+    '---- find product
+    dim idProduct : idProduct = ecws3_resolve_product(oDocumentLine.ProductID, oDocumentLine.ProductCode)
+    if idProduct <= 0 then
+      ecws3_save_sales_invoice = "004: Product at line " + cstr(iLine) + " not found. Cannot save"
+      exit function
+    end if
+    
+    set oInvoiceLine.pProdukt = trans_.getobj(TYPEID_N5PRODUKT, idProduct)
+    
+    if ccur(oDocumentLine.Quantity) < ccur(0.0) then
+       ecws3_save_sales_invoice = "005: Quantity must be positive at line " + cstr(iLine) + ". Cannot save"
+      exit function
+    end if
+    
+    oInvoiceLine.curIloscOpak = ccur(oDocumentLine.Quantity)
+    
+    if ccur(oDocumentLine.UnitPriceNettoDocCur) < ccur(0.0) then
+      ecws3_save_sales_invoice = "006: Unit Price must be non-negative at line " + cstr(iLine) + ". Cannot save"
+      exit function
+    end if
+    
+    '--- use default when not supplied
+    if ccur(oDocumentLine.UnitPriceNettoDocCur) > ccur(0.0) then
+      oInvoiceLine.curCenaBazowaNettoWal = ccur(oDocumentLine.UnitPriceNettoDocCur)
+    end if
+    
+    iLine = iLine + 1
+  next
+
+  '------- remove exceeding positions ------
+  do while oInvoice.listPozycje.count() >= iLine
+    oInvoice.listPozycje.delete(oInvoice.listPozycje.count())
+  loop 
+
+  if not trans_.saveobjects() then
+    ecws3_save_sales_invoice = "007: Cannot save sales invoice (business rule)"
+    exit function
+  end if
+  
+  ecws3_save_sales_invoice = "000:" + cstr(oInvoice.IdObj) + ":" + oInvoice.strNrDok
+  
+end function
+
+function ecws3_save_store_doc(oDocument): ecws3_save_store_doc = "001: Cannot save - reason unknown"
+ 
+    '------------- find customer -------------
+    dim oCustomer : set oCustomer = nothing
+    
+    select case oDocument.DocumentType  
+    case "GI", "GR"
+      dim idCustomer : idCustomer = ecws3_resolve_customer(oDocument.CustomerID, oDocument.CustomerCode)
+    
+      if idCustomer <= 0 then
+        ecws3_save_store_doc = "003: Customer/Supplier not found. Cannot save"
+        exit function
+      end if
+      
+      set oCustomer = trans_.getobj(TYPEID_N5KLIENT, idCustomer)
+      
+    end select
+  '------------- find/create Store Doc -------------
+  dim idStoreDoc
+  dim oStoreDoc
+    
+  if oDocument.DocumentNumber = "" or left(oDocument.DocumentNumber, 1) = "#" then
+    'check register for new orders
+    dim idRegister : idRegister = getRejByNazwa(oDocument.RegisterName)
+    if idRegister <= 0 then
+      ecws3_save_store_doc = "004: Register named " + oDocument.RegisterName + " not found. Cannot insert new store document"
+      exit function
+    end if
+    
+    select case oDocument.DocumentType  
+    case "GI"   'Good Issued Note
+      trans_.var(APPVAR_REJESTR_TYP) = clng(N5REJESTRDOK__WZ)
+    case "GR"   'Good Received Note
+      trans_.var(APPVAR_REJESTR_TYP) = clng(N5REJESTRDOK__PZ)
+    case  "IGR"
+      trans_.var(APPVAR_REJESTR_TYP) = clng(N5REJESTRDOK__PW)
+    case "IGI"
+      trans_.var(APPVAR_REJESTR_TYP) = clng(N5REJESTRDOK__RW)
+    case "MOV"  
+      trans_.var(APPVAR_REJESTR_TYP) = clng(N5REJESTRDOK__MM)
+    end select
+    
+    trans_.var(APPVAR_REJESTR_DOKUMENTOW) = idRegister
+ 
+    set oStoreDoc = trans_.newobj(TYPEID_N5DOKMAG)
+    oStoreDoc.strNrDok = mid(oDocument.DocumentNumber, 2)
+    
+    'since 16.03.23.0
+    oStoreDoc.nNumOper = clng(oDocument.StoreOperationNumber)
+    
+  else
+    idStoreDoc = trans_.findobjid(TYPEID_N5DOKMAG, "strNrDok = '" + oDocument.DocumentNumber + "'")
+    if idStoreDoc <= 0 then
+      ecws3_save_store_doc = "002: Store document " + oDocument.DocumentNumber + " not found. Cannot save"
+      exit function
+    end if
+    set oStoreDoc = trans_.getobj(TYPEID_N5DOKMAG, idStoreDoc)
+  end if
+  
+
+  '------------- resolve stores -------------
+  dim idStore
+  dim oStore
+    select case oDocument.DocumentType  
+    case "GI", "IGI", "MOV"   'Good Issued Note
+      idStore = ecws3_resolve_store(oDocument.SourceStoreID, oDocument.SourceStoreName)
+      if idStore <= 0 then
+        ecws3_save_store_doc = "003: Store not found. Cannot save"
+        exit function
+      end if
+      set oStoreDoc.pMagZrod = trans_.getobj(TYPEID_N5MAGAZYN, idStore)
+    end select
+    
+    select case oDocument.DocumentType  
+    case "GR","IGR", "MOV"   'Good Received Note
+      idStore = ecws3_resolve_store(oDocument.DestinationStoreID, oDocument.DestinationStoreName)
+      if idStore <= 0 then
+        ecws3_save_store_doc = "003: Store not found. Cannot save"
+        exit function
+      end if
+      set oStoreDoc.pMagDocel = trans_.getobj(TYPEID_N5MAGAZYN, idStore)
+    end select
+
+  '------------- update StoreDoc -------------
+  set oStoreDoc.pKlient = oCustomer
+  oStoreDoc.dDataWyst = oDocument.IssueDate
+  oStoreDoc.strUwagi = oDocument.Notes
+  
+  oStoreDoc.strExtra1 = trim(cstr(oDocument.property1))
+  oStoreDoc.strExtra2 = trim(cstr(oDocument.property2))
+   
+  '-------------update StoreDoc lines --------
+  dim iLine : iLine = 1
+  dim oDocumentLine
+  dim oStoreDocLine
+  
+  for each oDocumentLine in oDocument.ArrLines
+    if oStoreDoc.listPozycje.exists(iLine) then
+      set oStoreDocLine = oStoreDoc.listPozycje.get(iLine)
+    else
+      set oStoreDocLine = oStoreDoc.listPozycje.addnew()
+    end if
+    
+    '---- find product
+    dim idProduct : idProduct = ecws3_resolve_product(oDocumentLine.ProductID, oDocumentLine.ProductCode)
+    if idProduct <= 0 then
+      ecws3_save_store_doc = "004: Product at line " + cstr(iLine) + " not found. Cannot save"
+      exit function
+    end if
+    
+    set oStoreDocLine.pProdukt = trans_.getobj(TYPEID_N5PRODUKT, idProduct)
+    
+    if ccur(oDocumentLine.Quantity) < ccur(0.0) then
+       ecws3_save_store_doc = "005: Quantity must be positive at line " + cstr(iLine) + ". Cannot save"
+      exit function
+    end if
+    
+    oStoreDocLine.curIloscOpak = ccur(oDocumentLine.Quantity)
+    
+    if ccur(oDocumentLine.UnitPriceNettoDocCur) < ccur(0.0) then
+      ecws3_save_store_doc = "006: Unit Price must be non-negative at line " + cstr(iLine) + ". Cannot save"
+      exit function
+    end if
+    
+    '--- use default when not supplied
+    if ccur(oDocumentLine.UnitPriceNettoDocCur) > ccur(0.0) then
+      oStoreDocLine.curCenaMag = ccur(oDocumentLine.UnitPriceNettoDocCur)
+    end if
+    
+    iLine = iLine + 1
+  next
+
+  '------- remove exceeding positions ------
+  do while oStoreDoc.listPozycje.count() >= iLine
+    oStoreDoc.listPozycje.delete(oStoreDoc.listPozycje.count())
+  loop 
+  
+  oStoreDoc.cInternalAllowChanges = "1"
+  
+ if not trans_.saveobjects() then
+    ecws3_save_store_doc = "007: Cannot save store document due some business rule."
+    exit function
+  end if
+  
+  ecws3_save_store_doc = "000:" + cstr(oStoreDoc.IdObj) + ":" + oStoreDoc.strNrDok
+  
+end function
+
+function ecws3_save_cash_doc(oDocument)
+  ecws3_save_store_doc = "999: not implemented"
+end function
+
+function ecws3_get_price(oPriceRequest) : ecws3_get_price = ccur(-9999.99)
+  dim idCustomer : idCustomer = ecws3_resolve_customer(oPriceRequest.CustomerID, oPriceRequest.CustomerCode)
+  dim idProduct : idProduct = ecws3_resolve_product(oPriceRequest.ProductID, oPriceRequest.ProductCode)
+  
+  dim oEBCustomer : set oEBCustomer = nothing
+  if idCustomer > 0 then
+    set oEBCustomer = trans_.getobj(TYPEID_N5KLIENT, idCustomer)
+    if oPriceRequest.PriceListNr = -1 then
+      oPriceRequest.PriceListNr = oEBCustomer.kli_eZestawCenowy
+    end if
+  end if
+
+  if oPriceRequest.PriceListNr = -1 then
+    oPriceRequest.PriceListNr = 1
+  end if
+ 
+  dim oEBProduct : set oEBProduct = trans_.getobj(TYPEID_N5PRODUKT , idProduct)
+  dim oEBOpak : set oEBOpak = oEBProduct.listOpakowania.get(1)
+      
+  dim curPrice, curDummy
+  
+	if nx_compute_price(oEBCustomer, oEBProduct, oEBOpak, trans_.var(GVAR_TODAY), 1.00, oPriceRequest.PriceListNr, _
+    nothing, not oPriceRequest.Brutto, curDummy, curPrice) then
+    ecws3_get_price = curPrice
+  end if
+  
+end function
+
+function ecws3_get_invoice_as_pdf(byval idSprzedaz)
+  trans_.var(3223) = clng(1)
+  dim oM60151: set oM60151 = doc_.getmodule(60151)
+  dim oSprzedaz: set oSprzedaz = trans_.getobj(TYPEID_N5SPRZEDAZ, idSprzedaz)
+  
+  dim strDPC : strDPC = "Faktura VAT do PDF"
+  
+  select case oSprzedaz.pRejestrDok.eTyp
+  case N5REJESTRDOK_KOR_FAKT_SP
+    strDPC = "Faktura VAT korekta do PDF"
+  case N5REJESTRDOK_FAKT_EXP
+    strDPC = "Faktura zagraniczna do PDF"
+  case N5REJESTRDOK_WDT
+    strDPC = "WDT do PDF"
+  case N5REJESTRDOK_KOREKTA_WDT
+    strDPC = "WDT korekta do PDF"
+  end select
+  
+  dim idDPC : idDPC = trans_.findobjid(TYPEID_N5DPC, "strNazwa='" + strDPC + "'")
+  
+  dim strFileName
+  ecws3_get_invoice_as_pdf = oM60151.create_pdf(oSprzedaz, idDPC, strFileName, false)
+end function
+
+]]>
+
+    </script>
+  </config>
+</page>

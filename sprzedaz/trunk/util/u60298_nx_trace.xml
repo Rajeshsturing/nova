@@ -1,0 +1,175 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+#include "h1000.h"
+
+#comment NX_READY
+
+NX_TRACE_HELPER - wsparcie dla nx_trace
+
+
+-->
+<page>
+<config>
+<script>
+<![CDATA[
+#include "50518"
+
+#comment '-----------------------------------------------------------------------
+#comment ' holder do startowania / zatrzymywania subtrace
+#comment '-----------------------------------------------------------------------
+
+class cnx_subtrace_holder
+  private bDisposed
+
+	private m_oNXSubTrace
+	private m_oSinkStream
+	private m_strFileName
+	
+	private sub class_initialize()
+	  bDisposed = false
+
+    set m_oNXSubTrace = nothing
+		set m_oSinkStream = nothing
+		m_strFileName = ""
+	end sub
+	private sub class_terminate()   'TODO
+		manual_done()
+	end sub
+	public sub init(byval strSubTraceName,byref oSink,byval strFileName)
+		set m_oSinkStream = oSink
+		if not oSink is nothing then
+			oSink.seektoend
+		end if
+		m_strFileName = strFileName
+		set m_oNXSubTrace = nx_.trace.start(strSubTraceName,oSink)
+	end sub
+	public property get highest_error_class
+		highest_error_class = nx_.trace.highest_error_class
+	end property
+	public property get name
+		name = m_oNXSubTrace.name
+	end property
+  
+  public function manual_done()
+    if not bDisposed then
+      bDisposed = true
+      
+    if not m_oNXSubTrace is nothing then
+			m_oNXSubTrace.stop
+		end if
+		if not m_oSinkStream is nothing and m_strFileName <> "" then
+			m_oSinkStream.save m_strFileName
+		end if
+		set m_oNXSubTrace = nothing
+
+		if not m_oSinkStream is nothing then
+			m_oSinkStream.rewind
+		end if
+
+		set manual_done = m_oSinkStream
+		set m_oSinkStream = nothing
+      
+    end if
+  end function
+  
+	public function done()
+    set done = manual_done()
+	end function
+
+	public function get_results_as_page(byval iErrorClass,byref oResultStream)
+		if highest_error_class >= iErrorClass then
+			get_results_as_page = true
+			doc_.parsexml nx_.nxtrace2page(oResultStream,0,0),done()
+		else
+			get_results_as_page = false
+		end if
+	end function
+
+	public function get_results_as_txt(byval iErrorClass,byref oResultStream)
+		get_results_as_txt = (highest_error_class >= iErrorClass)
+		doc_.parsexml nx_.nxtrace2page(oResultStream,0,1),done()
+	end function
+end class
+
+#comment '-----------------------------------------------------------------------
+#comment ' nowy sub-trace (bez zapisywania wynikow do pliku)
+#comment '-----------------------------------------------------------------------
+
+function new_nxsubtrace(byval strSubTraceName,byref oStream)
+	dim oNXSH : set oNXSH = new cnx_subtrace_holder
+	oNXSH.init strSubTraceName,oStream,""
+	set new_nxsubtrace = oNXSH
+end function
+
+#comment '-----------------------------------------------------------------------
+#comment ' nowy sub-trace (z zapisniem wynikow do pliku)
+#comment '-----------------------------------------------------------------------
+
+function new_nxsubtrace_file(byval strSubTraceName,byref oSink,byval strFileName)
+	dim oStream
+	
+	if oSink is nothing then
+		set oStream = doc_.createstreamobj()
+	else
+		set oStream = oSink
+	end if
+
+	dim oNXSH : set oNXSH = new cnx_subtrace_holder
+	oNXSH.init strSubTraceName,oStream,strFileName
+	set new_nxsubtrace_file = oNXSH
+end function
+
+#comment '-----------------------------------------------------------------------
+#comment ' wyswietl strone z wynikami, ale tylko gdy sa zdarzenia o klasie iErrorClass lub
+#comment ' wyzszej
+#comment '-----------------------------------------------------------------------
+sub show_log_page(byval iErrorClass,byref oNXSH)
+	if trans_.isvar(COMMON_VAR_UISTYLE) then
+		'trans_.message 1002 , 0 , "COMMON_VAR_UISTYLE " + cstr(clng(trans_.var(COMMON_VAR_UISTYLE)))
+		if clng(trans_.var(COMMON_VAR_UISTYLE)) <> clng(1) then	
+			exit sub
+		end if
+	else
+		'trans_.message 1002 , 0 , "no COMMON_VAR_UISTYLE "
+	end if
+	
+	dim oXMLResultStream : set oXMLResultStream = doc_.createstreamobj()
+	
+	if oNXSH.get_results_as_page(iErrorClass,oXMLResultStream) then
+		dim pPage : set pPage = doc_.getpagehli(asp_form_hli(20219,doc_.createhli(),oXMLResultStream))
+		pPage.domodalauto()
+
+	end if
+end sub
+
+#comment '-----------------------------------------------------------------------
+#comment ' wyslij maila z wynikami, ale tylko gdy sa zdarzenia o klasie iErrorClass lub
+#comment ' wyzszej
+#comment '-----------------------------------------------------------------------
+sub send_mail_raport(byval iErrorClass,byref oNXSH,byval strRecipentAddr)
+	dim oXMLResultStream : set oXMLResultStream = doc_.createstreamobj()
+	dim strTraceName : strTraceName = oNXSH.name
+	if oNXSH.get_results_as_page(iErrorClass,oXMLResultStream) then
+		dim pM60299 : set pM60299 = doc_.getmodule(60299)
+		pM60299.nx_send_mail_internal_1_att strRecipentAddr, _
+			"Raport wykonania " + strTraceName,"","Raport",oXMLResultStream
+	end if
+end sub
+
+#comment '-----------------------------------------------------------------------
+#comment ' zapisz wyniki w logu TXT
+#comment '-----------------------------------------------------------------------
+function save_txt_log(iErrorClass,strFileName,byref oNXSH)
+	dim oTXTResultStream : set oTXTResultStream = doc_.createstreamobj()
+	oTXTResultStream.attach strFileName
+	oTXTResultStream.seektoend
+	save_txt_log = oNXSH.get_results_as_txt(iErrorClass,oTXTResultStream) 
+end function
+
+]]>
+
+</script>
+</config>
+	<body>
+	</body>
+</page>

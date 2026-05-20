@@ -1,0 +1,202 @@
+#ifndef _L50111_NXB_
+#define _L50111_NXB_
+
+function check_NIP():check_NIP = false
+	'sprawdzanie czy nip sie nie powtarza
+	if page_.root.strNip<> "" then
+		dim id:id = trans_.findobjid(TYPEID_N5KLIENT,"strNip like'"+cstr(page_.root.strNip)+"' and idobj<>"+cstr(page_.root.idobj))
+		if id<>0 then'znaleziono cos
+			if not MessageBoxAndForget("W bazie istnieje ju¿ klient o takim samym numerze NIP jak w³aœnie wprowadzono. Czy mimo tego zapisaæ dane?", "Zapisano dane", vbYesNo, vbQuestion , USERPROF_MSGBOX_DOUBLE_NIP)=vbYes then
+				trans_.message 1002 , 0 , "Powtarzaj¹cy siê numer NIP - nie mo¿na zapisaæ danych."
+				exit function
+			end if
+		end if
+	end if
+	check_NIP = true
+end function
+
+function query_default_receptura_for_wyrob(byval idProduktWyrob,byval idOpakWyrob, _
+	byref idReceptura,byref curIloscWyrobu)
+	
+	query_default_receptura_for_wyrob = false
+	
+	dim pCursor : set pCursor = trans_.createadors( _
+		"select top 1 p_idobj,c_curiloscopak from vlist_n5recepta_listwyrob where c_pprodukt=" +_
+			cstr(idProduktWyrob) + " and c_popak=" + cstr(idOpakWyrob) +" order by p_idobj")
+	
+	if not pCursor.EOF then
+		idReceptura = clng(pCursor("p_idobj"))
+		curIloscWyrobu = ccur(pCursor("c_curiloscopak"))
+
+		query_default_receptura_for_wyrob = true
+	end if
+
+end function
+
+function query_default_receptura_for_wyrob_ex(byval idProduktWyrob,byval idOpakWyrob, _
+	byref idReceptura,byref curIloscWyrobu,byval strWhere)
+	
+	query_default_receptura_for_wyrob_ex = false
+	
+	dim pCursor : set pCursor = trans_.createadors( _
+		"select top 1 p_idobj,c_curiloscopak from vlist_n5recepta_listwyrob where c_pprodukt=" +_
+			cstr(idProduktWyrob) + " and c_popak=" + cstr(idOpakWyrob) +" and " + strWhere + " order by p_idobj")
+	
+	if not pCursor.EOF then
+		idReceptura = clng(pCursor("p_idobj"))
+		curIloscWyrobu = ccur(pCursor("c_curiloscopak"))
+
+		query_default_receptura_for_wyrob_ex = true
+	end if
+
+end function
+
+'-------------------------------------------------------
+'tworzy obiekty: województwo, powiat, gmina, miejscowoœæ
+'-------------------------------------------------------
+function create_address(byref oAdres, byref pWoj, byref pPow, byref pGmi, byref pMie)	
+	'województwo
+	if Trim(oAdres.TopAdminUnitName) <> "" then
+		set pWoj = create_woj(Trim(oAdres.TopAdminUnitName))
+		
+		'powiat w województwie
+		if Trim(oAdres.SubAdminUnitName) <> "" and not pWoj is nothing then
+			set pPow = create_pow(Trim(oAdres.SubAdminUnitName), pWoj.IdObj)
+			
+			'gmina w powiecie
+			if Trim(oAdres.BaseAdminUnitName) <> "" and not pWoj is nothing and not pPow is nothing then
+				set pGmi = create_gmi(Trim(oAdres.BaseAdminUnitName), pWoj.IdObj, pPow.IdObj)
+				
+				'miejscowoœæ w gminie
+				if Trim(oAdres.LocalityName) <> "" and not pWoj is nothing and not pPow is nothing and not pGmi is nothing then
+					set pMie = create_mie(Trim(oAdres.LocalityName), pWoj.IdObj, pPow.IdObj, pGmi.IdObj)
+				end if					
+			end if				
+		end if		
+	end if
+end function
+
+'------------------------------
+'tworzy lub pobiera województwo
+'------------------------------
+function create_woj(byval strName): set create_woj = nothing
+	dim idObj
+	idObj = trans_.findobjid(TYPEID_N5WOJEWODZTWO, "UPPER(strNazwa) = '" + UCASE(strName) + "'")
+
+	if (idObj = 0) then
+		dim pSubTrans
+		set pSubTrans = trans_.createsubtran()
+
+		dim pWoj
+		set pWoj = trans_.newobj(TYPEID_N5WOJEWODZTWO)
+		pWoj.strNazwa = strName
+		dim idKraj: idKraj = trans_.findobjid(TYPEID_N5KRAJ, "strSkrot='PL'")
+		if idKraj > clng(0) then
+			set pWoj.pKraj = trans_.getobj(TYPEID_N5KRAJ, idKraj)
+			idObj = pWoj.idobj
+
+			if (not trans_.saveobjects()) then
+				set pWoj = nothing
+				set pSubTrans = nothing
+				exit function
+			end if
+		end if
+
+		set pWoj = nothing
+		set pSubTrans = nothing
+	end if
+
+	set create_woj = trans_.getobj(TYPEID_N5WOJEWODZTWO, idObj)
+end function
+
+'-------------------------
+'tworzy lub pobiera powiat
+'-------------------------
+function create_pow(byval strName, byval idWoj): set create_pow = nothing
+	dim idObj
+	idObj = trans_.findobjid(TYPEID_N5POWIAT, "UPPER(pow_strNazwa) = '" + UCASE(strName) + "'")
+
+	if (idObj = 0) then
+		dim pSubTrans
+		set pSubTrans = trans_.createsubtran()
+
+		dim pPow
+		set pPow = trans_.newobj(TYPEID_N5POWIAT)
+		pPow.pow_strNazwa = strName
+		set pPow.pow_pWojewodztwo = trans_.getobj(TYPEID_N5WOJEWODZTWO, idWoj)
+		idObj = pPow.idobj
+
+		if (not trans_.saveobjects()) then
+			set pPow = nothing
+			set pSubTrans = nothing
+			exit function
+		end if
+
+		set pPow = nothing
+		set pSubTrans = nothing
+	end if
+	set create_pow = trans_.getobj(TYPEID_N5POWIAT, idObj)
+end function
+
+'------------------------
+'tworzy lub pobiera gminê
+'------------------------
+function create_gmi(byval strName, byval idWoj, byval idPow): set create_gmi = nothing
+	dim idObj
+	idObj = trans_.findobjid(TYPEID_N5GMINA, "UPPER(gmi_strNazwa) = '" + UCASE(strName) + "'")
+
+	if (idObj = 0) then
+		dim pSubTrans
+		set pSubTrans = trans_.createsubtran()
+
+		dim pGmi
+		set pGmi = trans_.newobj(TYPEID_N5GMINA)
+		pGmi.gmi_strNazwa = strName
+		set pGmi.gmi_pWojewodztwo = trans_.getobj(TYPEID_N5WOJEWODZTWO, idWoj)
+		set pGmi.gmi_pPowiat = trans_.getobj(TYPEID_N5POWIAT, idPow)
+		idObj = pGmi.idobj
+
+		if (not trans_.saveobjects()) then
+			set pGmi = nothing
+			set pSubTrans = nothing
+			exit function
+		end if
+
+		set pGmi = nothing
+		set pSubTrans = nothing
+	end if
+	set create_gmi = trans_.getobj(TYPEID_N5GMINA, idObj)
+end function
+
+'------------------------------
+'tworzy lub pobiera miejscowosc
+'------------------------------
+function create_mie(byval strName, byval idWoj, byval idPow, byval idGmi): set create_mie = nothing
+	dim idObj
+	idObj = trans_.findobjid(TYPEID_N5MIEJSCOWOSC, "UPPER(strNazwa) = '" + UCASE(strName) + "'")
+
+	if (idObj = 0) then
+		dim pSubTrans
+		set pSubTrans = trans_.createsubtran()
+
+		dim pMie
+		set pMie = trans_.newobj(TYPEID_N5MIEJSCOWOSC)
+		pMie.strNazwa = strName
+		set pMie.pWojewodztwo = trans_.getobj(TYPEID_N5WOJEWODZTWO, idWoj)
+		set pMie.mie_pPowiat = trans_.getobj(TYPEID_N5POWIAT, idPow)
+		set pMie.mie_pGmina = trans_.getobj(TYPEID_N5GMINA, idGmi)
+		idObj = pMie.idobj
+
+		if (not trans_.saveobjects()) then
+			set pMie = nothing
+			set pSubTrans = nothing
+			exit function
+		end if
+
+		set pMie = nothing
+		set pSubTrans = nothing
+	end if
+	set create_mie = trans_.getobj(TYPEID_N5MIEJSCOWOSC, idObj)
+end function
+
+#endif

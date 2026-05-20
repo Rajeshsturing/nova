@@ -1,0 +1,840 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1231.h"
+#include "h1240.h"
+
+#define PAGE_FORM_IF_CHOICE_PLATNOSC			20330
+#comment UWAGA!!! To samo w 10150
+#define OPERATION_MODE_PRZENUMEROWANIE			100
+#define LOCAL_VAR_OPERATION_MODE				300
+
+-->
+<page>
+<config>
+
+<script>
+<![CDATA[
+
+'MessageBox
+#include "50122"
+
+'funkcja automatycznie przyporządkuje transakcje dla płatności
+'wg zasady 'najpierw najstarsze' "FIFO"
+'rezultaty:
+'0 - nieudane (np. brak danych)
+'1 - częściowo, pozostały nieskojarzone
+'2 - wszystko skojarzone
+function pl_auto_assign_transaction(byref pPlatnosc,byval strSymbolTran)
+	pl_auto_assign_transaction = 0
+	'warunki początkowe
+
+	if (pPlatnosc.wrefPodmiot is nothing) then 
+		exit function
+	end if
+
+	'funkcja działa na wartościach bezwzględnych, dlatego potrzebny jest mnożnik (znak liczby)
+	'który przekszałaca wartość bezwględną na wartość docelową
+	dim cOperator
+	dim curFactorAndMode
+	
+	'wpłata
+	if pPlatnosc.pRejestrDok.eTyp = N5REJESTRDOK_KOMPENSATY then
+		cOperator = "<>"
+		curFactorAndMode = ccur(0.0)
+	else
+		if pPlatnosc.curKwotaPodm > ccur(0.0) then
+			cOperator = ">"
+			curFactorAndMode = ccur(1.0)
+		else
+			cOperator = "<"
+			curFactorAndMode = ccur(-1.0)
+		end if
+	end if
+  
+#ifdef _IOW
+  cOperator = "<>"
+#endif
+
+	'przygotuje WHERE - wyznacz możliwe transakcje
+	dim strWhere : strWhere = trans_.afc.convert.formatter( _
+		"(wrefPodmiot_wrt=%1) and (wrefPodmiot=%2) and (curWn %3 curMa)") _
+		.add(cstr(pPlatnosc.wrefPodmiot.type)).add(cstr(pPlatnosc.wrefPodmiot.idobj)) _
+		.add(cOperator).done()	
+	
+	if strSymbolTran <> "" then
+		strWhere = strWhere + " and (strSymTrans like '%" + trans_.afc.convert.str2SQL(strSymbolTran) + "%'"
+	end if	
+	
+	if pPlatnosc.pRejestrDok.eTyp = N5REJESTRDOK_KOMPENSATY then
+		strWhere = strWhere + " and n5transakcja.pWaluta=" + cstr(pPlatnosc.pRejestrDok.wrefParam1.idobj)
+	end if
+		
+	'usuwa stare pozycje
+	dim idPlatnosc : idPlatnosc = pPlatnosc.idobj
+	dim curStoreKwotaPodm : curStoreKwotaPodm = pPlatnosc.curKwotaPodm
+	pPlatnosc.curKwotaPodm = ccur(0.0)
+	pPlatnosc.cInternalAllowZero = "1"
+	pPlatnosc.listPozycje.deleteall
+
+	if not pPlatnosc.isnew() then
+		set pPlatnosc = nothing
+		'todo: wymyślić aby nie trzeba było commit
+		if not trans_.saveobjects() then
+			exit function
+		end if
+		set pPlatnosc = trans_.getobj(TYPEID_N5PLATNOSC,idPlatnosc)
+	end if
+
+	'odtwórz
+	pPlatnosc.curKwotaPodm = curStoreKwotaPodm
+	pPlatnosc.cInternalAllowZero = "0"
+
+		dim pTransCursorPom: set pTransCursorPom = trans_.createrawcursor(TYPEID_N5TRANSAKCJA,strWhere, "dDataRozp, IdObj", "")
+
+' kompensata sprawdz czy wieksza kwota jest po stronie WN czy MA (sprzedaz, zakup dla klienta)
+' gdy WN > MA wtedy do query  dodaje eType = 1 czyli zobowiazania ma wypisac wszystkie a naleznosci tak dlugo wypisuje az bilans bedzie na 0 
+	if pPlatnosc.pRejestrDok.eTyp = N5REJESTRDOK_KOMPENSATY then
+		dim pTransSumowanie
+		dim ccursumaWn				: ccursumaWn = ccur(0)
+		dim ccursumaMa				: ccursumaMa = ccur(0)
+		dim ccursumaMniejsza	: ccursumaMniejsza = ccur(0)
+		dim bStronaWiekszaWn
+			for each pTransSumowanie in pTransCursorPom
+					if pTransSumowanie.etyp = 2 then
+							ccursumaWn = ccursumaWn + (pTransSumowanie.curWn - pTransSumowanie.curMa)
+					else
+							ccursumaMa = ccursumaMa + (pTransSumowanie.curMa -pTransSumowanie.curWn)
+					end if
+			next
+			
+			dim strWhereNalLubZob
+			if ccursumaWn > ccursumaMa then
+				strWhereNalLubZob = " and eTyp = '1' "
+				ccursumaMniejsza = ccursumaMa
+				bStronaWiekszaWn = true
+			else
+				strWhereNalLubZob = " and eTyp = '2' "
+				ccursumaMniejsza = ccursumaWn
+				bStronaWiekszaWn = false
+			end if
+		strWhere = strWhere + strWhereNalLubZob
+	end if
+
+  dim pTransCursor : set pTransCursor = trans_.createrawcursor(TYPEID_N5TRANSAKCJA,strWhere, "dDataRozp, IdObj", "")
+
+  'wypełnij
+  dim pTrans, pPozPlatnosc
+  dim bKompen:bKompen = false
+#ifdef _IOW
+    dim kwotaPodm : kwotaPodm = curFactorAndMode * pPlatnosc.curKwotaPodm
+    dim pPopTrans : set pPopTrans = nothing
+    if curFactorAndMode <> ccur(0) then
+      for each pTrans in pTransCursor
+        if pPopTrans is nothing then
+          if (pTrans.curWn - pTrans.curMa) * curFactorAndMode <= kwotaPodm then
+            set pPozPlatnosc = pPlatnosc.listPozycje.addnew()
+            set pPozPlatnosc.pTransakcja = pTrans
+            kwotaPodm = kwotaPodm - (pTrans.curWn - pTrans.curMa) * curFactorAndMode
+          else
+            set pPopTrans = pTrans
+          end if
+        else
+          if (pPopTrans.curWn - pPopTrans.curMa) * curFactorAndMode + (pTrans.curWn - pTrans.curMa) * curFactorAndMode <= kwotaPodm then
+            'dodaj poprzednią
+            set pPozPlatnosc = pPlatnosc.listPozycje.addnew()
+            set pPozPlatnosc.pTransakcja = pPopTrans
+            kwotaPodm = kwotaPodm - (pPopTrans.curWn - pPopTrans.curMa) * curFactorAndMode
+            'dodaj aktualną
+            set pPozPlatnosc = pPlatnosc.listPozycje.addnew()
+            set pPozPlatnosc.pTransakcja = pTrans
+            kwotaPodm = kwotaPodm - (pTrans.curWn - pTrans.curMa) * curFactorAndMode
+          else
+            'rozliczanie częściowe
+            'dodaj poprzednią
+            set pPozPlatnosc = pPlatnosc.listPozycje.addnew()
+            set pPozPlatnosc.pTransakcja = pPopTrans
+            pPozPlatnosc.curPozKwotaPodm = kwotaPodm * curFactorAndMode - (pTrans.curWn - pTrans.curMa)
+            'dodaj aktualną (rozlicz w całości)
+            set pPozPlatnosc = pPlatnosc.listPozycje.addnew()
+            set pPozPlatnosc.pTransakcja = pTrans
+            pPozPlatnosc.curPozKwotaPodm = (pTrans.curWn - pTrans.curMa)
+            exit for
+          end if
+        end if
+      next
+    end if
+#else
+		for each pTrans in pTransCursor
+			if curFactorAndMode <> ccur(0.0) then
+				if curFactorAndMode * pPlatnosc.curSumaPozPodm >= curFactorAndMode * pPlatnosc.curKwotaPodm then
+					exit for
+				end if
+			end if
+			set pPozPlatnosc = pPlatnosc.listPozycje.addnew()
+			set pPozPlatnosc.pTransakcja = pTrans
+		next
+#endif    
+    
+	'''''
+	' dla kompensaty wypisuje pozostale dokumenty az do zbilansowania
+		if pPlatnosc.pRejestrDok.eTyp = N5REJESTRDOK_KOMPENSATY then
+			if not (ccursumaWn = ccur(0) or ccursumaMa = ccur(0)) then
+				if bStronaWiekszaWn  then
+						strWhere = Replace(strWhere,"eTyp = '1'","eTyp = '2'")  'zamien w zapytaniu eTyp na przeciwny
+				else
+						strWhere = Replace(strWhere,"eTyp = '2'","eTyp = '1'")	'
+				end if
+			pPlatnosc.curKwotaPodm = ccur(0)
+			pPlatnosc.curSumaPozPodm = ccur(0)
+								set pTransCursor = nothing
+								set pTransCursor = trans_.createrawcursor(TYPEID_N5TRANSAKCJA,strWhere, "dDataRozp, IdObj", "")	' nowy kursor z nowym typem przeciwnym do poprzedniego
+						bKompen = true
+						for each pTrans in pTransCursor
+								if bStronaWiekszaWn then
+									if ccursumaMniejsza - (pTrans.curWn- pTrans.curMa) > 0 then
+										set pPozPlatnosc = pPlatnosc.listPozycje.addnew()
+										set pPozPlatnosc.pTransakcja = pTrans
+										ccursumaMniejsza = ccursumaMniejsza - (pTrans.curWn - pTrans.curMa)
+									else
+										set pPozPlatnosc = pPlatnosc.listPozycje.addnew()
+										set pPozPlatnosc.pTransakcja = pTrans
+										pPozPlatnosc.curPozKwotaPodm =  ccursumaMniejsza										'pTrans.curMa = pTrans.curWn - ccursumaMniejsza	' nie moge przypisywac do transakcji bo to bedzie zrobione po zapisie, ja moge tylko wpisywac napozycje
+										
+										exit for
+									end if
+								else
+									if ccursumaMniejsza - (pTrans.curMa - pTrans.curWn)> 0 then
+										set pPozPlatnosc = pPlatnosc.listPozycje.addnew()
+										set pPozPlatnosc.pTransakcja = pTrans
+										ccursumaMniejsza = ccursumaMniejsza - (pTrans.curMa - pTrans.curWn)
+									else	
+										set pPozPlatnosc = pPlatnosc.listPozycje.addnew()
+										set pPozPlatnosc.pTransakcja = pTrans
+										pPozPlatnosc.curPozKwotaPodm =  -ccursumaMniejsza  										'pTrans.curWn = pTrans.curMa - ccursumaMniejsza  'p.w. analogiczny blok tylko ze dla Wn
+										
+										exit for
+									end if
+								end if
+						next
+							pPlatnosc.curKwotaPodm = ccur(0)
+							pPlatnosc.curSumaPozPodm = ccur(0)
+		else
+			trans_.message 2000,0, "Brak zobowiązań / należności dla jednej ze stron."
+		end if
+	end if 
+
+
+
+if bKompen=false then
+	'dodaj końcówke
+	if curFactorAndMode <> ccur(0.0) then
+		if curFactorAndMode * pPlatnosc.curSumaPozPodm < curFactorAndMode * pPlatnosc.curKwotaPodm then
+			set pPozPlatnosc = pPlatnosc.listPozycje.addnew()
+			pPozPlatnosc.curPozKwotaTrans = curFactorAndMode * (pPlatnosc.curKwotaPodm - pPlatnosc.curSumaPozPodm)
+		end if
+	else
+		'w przypadku kompensat, poprawiaj od konca, aby sie bilansowalo
+		dim iter : iter = pPlatnosc.listPozycje.count
+		do while iter >= 1
+			set pPozPlatnosc = pPlatnosc.listPozycje.get(iter)
+			if sgn(pPozPlatnosc.curPozKwotaPodm) <> sgn(pPlatnosc.curSumaPozPodm) then
+				exit do
+			end if
+			if abs(pPozPlatnosc.curPozKwotaPodm) > abs(pPlatnosc.curSumaPozPodm) then
+				pPozPlatnosc.curPozKwotaPodm = pPozPlatnosc.curPozKwotaPodm - pPlatnosc.curSumaPozPodm
+				nx_.trace.info "IPI004", "Skorygowano transakcję: " + pPozPlatnosc.pTransakcja.text
+				exit do
+			else
+				nx_.trace.info "IPI003", "Pominięto transakcję niemożliwą do skompensowania: " + pPozPlatnosc.pTransakcja.text
+				pPlatnosc.listPozycje.delete iter
+				iter = iter - 1
+			end if
+		loop
+	end if
+end if
+	'generuj tekst opisu
+	dim pPozycja
+	dim strText : strText = ""
+	for each pPozycja in pPlatnosc.listPozycje
+		if not pPozycja.pTransakcja is nothing then
+			if strText <> "" then
+				strText = strText + ", "	
+			end if
+			strText = strText + pPozycja.pTransakcja.strSymTrans
+		end if
+	next
+	pPlatnosc.strOpis = left(strText,128)
+
+	pl_auto_assign_transaction = 2
+end function
+
+'------------------------------------------------
+' funkcja przenumerowuje wszystkie operacje w rejestrze
+'------------------------------------------------
+
+function reorder_platnosc_all_new(byval idRej, byval dDataOp)
+	dim rs_before,rs_after,perf
+
+	dim sub_trans:set sub_trans = trans_.createsubtran()
+
+		set perf = doc_.performing ("Trwa przygotowywanie odpowiedniej kolejności dokumentów ..... ")
+    
+    dim strQuery
+#ifdef APPCONFIG_REGIST_NUMBER_DATE
+    strQuery = "select idobj from n5platnosc where pRejestrDok=" + cstr(idRej) + " and dDataOper >= " +_
+               trans_.afc.convert.date2SQL(dDataOp) + " order by nNumOper desc"
+#else
+    strQuery = "select idobj from n5platnosc where pRejestrDok=" + cstr(idRej) + " order by nNumOper desc"
+#endif
+
+		set rs_before = trans_.createadors(strQuery)
+		dim plat
+
+		'-- nie sprawdzamy w tej fazie --
+		trans_.var(GVAR_OPERATION_MODE) = clng(OPERATION_MODE_IMPORT)
+		trans_.var(LOCAL_VAR_OPERATION_MODE) = clng(OPERATION_MODE_PRZENUMEROWANIE)
+
+		while not rs_before.EOF
+			set plat = trans_.getobj(TYPEID_N5PLATNOSC,clng(rs_before.fields("idobj")))
+			perf.text = "Trwa przygotowywanie odpowiedniej kolejnosci dokumentów ..... " + plat.text
+			plat.nNumOper = (-1) * plat.nNumOper			
+			rs_before.movenext
+
+			if not trans_.save then
+				trans_.discard
+				exit function
+			end if
+
+		wend
+		set perf = nothing
+
+
+		set perf = doc_.performing ("Trwa numerowanie dokumentów ..... ")
+
+#ifdef APPCONFIG_REGIST_NUMBER_DATE
+    strQuery = "select idobj from n5platnosc where pRejestrDok = " + cstr(idRej) + " and dDataOper >= " +_
+               trans_.afc.convert.date2SQL(dDataOp) + " order by dDataOper,sign(curKwotaPodm) desc,IdObj"
+#else
+    strQuery = "select idobj from n5platnosc where pRejestrDok=" + cstr(idRej) + " order by dDataOper,sign(curKwotaPodm) desc,IdObj"
+#endif
+		set rs_after = trans_.createadors(strQuery)
+		dim plat_after
+		dim pRejDok : set pRejDok = trans_.getobj(TYPEID_N5REJESTRDOK,idRej)
+		pRejDok.nParam3 = clng(1)
+
+		'-- ale sprawdzamy w tej fazie --
+		trans_.var(GVAR_OPERATION_MODE) = clng(OPERATION_MODE_NORMAL)
+
+		
+		while not rs_after.EOF
+			set plat_after = trans_.getobj(TYPEID_N5PLATNOSC,clng(rs_after.fields("idobj")))
+			perf.text = "Trwa numerowanie dokumentów ..... " + plat_after.text
+#ifdef ENABLE_DB11_PLATNOSCI_FIFO
+			if not plat_after.n5platnosc_PrzenNumOper() then
+				exit function
+			end if
+#else
+			if not plat_after.n5platnosc_GenerateNumOper() then
+				exit function
+			end if
+#endif      
+			rs_after.movenext
+
+			if not trans_.save() then
+				trans_.discard
+				exit function
+			end if
+		wend
+
+		set perf = nothing
+
+
+		set perf = doc_.performing ("Trwa zapis danych ..... ")
+		reorder_platnosc_all_new = trans_.saveobjects()
+		if not  reorder_platnosc_all_new then
+			trans_.discard
+			set perf = nothing
+			exit function
+		end if
+		set perf = nothing
+
+
+	set sub_trans = nothing	
+	
+end function
+
+'----------------------------------------------------------------------------
+' funkcja przenumerowuje wszystkie operacje w rejestrach kasowych i bankowych
+'----------------------------------------------------------------------------
+function reorder_platnosc_all_kasa_bank
+
+  dim pPlatnosc
+  dim strQuery : strQuery = "select 'id_plat'=p.idobj from n5platnosc p inner join n5rejestrdok r on p.pRejestrDok = r.idobj " +_ 
+                            "where r.eTyp in (N5REJESTRDOK_KASOWY,N5REJESTRDOK_BANKOWY) order by p.dDataOper,sign(p.curKwotaPodm) desc,p.IdObj"
+              
+  dim oRS : set oRS = trans_.createadors(strQuery)
+  if oRS.RecordCount <> 0 then
+    'pozwalaj na wstawianie ujemnych numerów operacji
+    dim idGlobProf : idGlobProf = trans_.findobjid(10010,"Indeks = " + CStr(GLOBPROF_GMPT_ARCHIVE_BORDER))
+    if idGlobProf > 0 then
+      'pobierz max numer operacji platnosci
+      dim nMaxNumer : nMaxNumer = CLng(0)
+      dim oRSOp : set oRSOp = trans_.createadors("select 'nr_oper'=max(nNumOper) from n5platnosc")
+      do while not oRSOp.EOF
+        nMaxNumer = CLng(oRSOp("nr_oper"))
+        exit do
+      loop
+      if nMaxNumer > 0 then
+        dim pGlobProf : set pGlobProf = trans_.getobj(10010,idGlobProf)
+        pGlobProf.Wartosc = CStr(-nMaxNumer-10)
+        if (not trans_.saveobjects()) then
+          trans_.message 7000, 0, "Przenumerowanie niudane"
+          trans_.discard
+		      exit function
+	      end if        
+      else
+        trans_.message 7000, 0, "Przenumerowanie niudane"
+        trans_.discard
+        exit function        
+      end if
+    else
+      trans_.message 7000, 0, "Przenumerowanie niudane"
+      trans_.discard
+      exit function
+    end if  
+    
+		'wyłączenie kontroli stanów ujemnych
+		trans_.var(GVAR_OPERATION_MODE) = clng(OPERATION_MODE_IMPORT)
+		trans_.var(LOCAL_VAR_OPERATION_MODE) = clng(OPERATION_MODE_PRZENUMEROWANIE)
+
+    dim pPerf : set pPerf = doc_.performing("")
+    dim iLicznik : iLicznik = 1
+    'odwrócenie znaku numeracji
+    do while not oRS.EOF
+      pPerf.text = "Trwa przygotowywanie dokumentów: " + CStr(iLicznik) + " z " + CStr(oRS.RecordCount)
+      set pPlatnosc = trans_.getobj(TYPEID_N5PLATNOSC,clng(oRS("id_plat")))
+      if pPlatnosc.nNumOper > 0 then
+        pPlatnosc.nNumOper = (-1) * pPlatnosc.nNumOper
+        if (not trans_.saveobjects()) then
+          set pPerf = nothing
+          trans_.discard
+		      exit function
+	      end if
+      end if
+      oRS.movenext
+      iLicznik = iLicznik + 1
+    loop
+
+    'przenumerowywanie numerów operacji - kolejne numery (GLOBPROF_PLATNOSC_NUMER)
+    oRS.movefirst
+    iLicznik = 1
+    do while not oRS.EOF
+      pPerf.text = "Trwa numerowanie dokumentów: " + CStr(iLicznik) + " z " + CStr(oRS.RecordCount)
+      set pPlatnosc = trans_.getobj(TYPEID_N5PLATNOSC,clng(oRS("id_plat")))
+			if not pPlatnosc.n5platnosc_PrzenNumOper() then
+				exit function
+			end if
+	    if (not trans_.saveobjects()) then
+        set pPerf = nothing
+        trans_.discard
+		    exit function
+	    end if
+      iLicznik = iLicznik + 1
+      oRS.movenext      
+    loop
+
+		'włączenie kontroli stanów ujemnych
+		trans_.var(GVAR_OPERATION_MODE) = clng(OPERATION_MODE_NORMAL)
+
+    set pPerf = nothing
+    pGlobProf.Wartosc = CStr(0)
+    if (not trans_.saveobjects()) then
+      exit function
+    end if
+    MessageBox "Operacja zakończona powodzeniem", "Przenumerowanie operacji płatności", vbOKOnly, vbInformation
+  else
+    trans_.message 7000, 0, "Brak dokumentów platności"
+    exit function
+  end if	
+  
+end function
+
+function reorder_dok_zakupu(idRej, dDataWyst, strNrDokOut): reorder_dok_zakupu = false
+  dim nRok: nRok = year(dDataWyst)
+  dim nMies: nMies = month(dDataWyst)
+  
+  dim strWhere: strWhere = ""
+  if dDataWyst <> trans_.afc.globals.nulldate() then
+    strWhere = " and year(z.dDataWyst) = " + CStr(nRok) + " and month(z.dDataWyst) = " + CStr(nMies)
+  end if
+  
+  dim strQuery, oRS
+  strQuery = "select z.idobj from n5zakup z " + vbNewLine +_
+	           "inner join n5klient d on z.pDostawca = d.idobj " + vbNewLine +_ 
+             "where pRejestrDok = " + CStr(idRej) + strWhere + vbNewLine +_
+             "order by z.dDataWyst,d.strNazwa"
+  set oRS = trans_.createadors(strQuery)  
+  
+  if oRS.RecordCount <> 0 then
+    dim strMessage
+    if strWhere <> "" then
+      strMessage = "wystawionych po dacie: " + CStr(nRok) + "-" + Mid(CStr(100 + nMies),2,2) + "-01"
+    else
+      strMessage = "w rejestrze bieżącym"
+    end if
+    if MessageBox("Operacja spowoduje przenumerowanie wszystkich dokumentów "  + strMessage + ". Czy kontynuować?", "Numerowanie dokumentów zakupu", vbYesNo, vbQuestion) <> vbYes then
+      exit function
+    end if  
+  
+    dim oZakup
+    dim pPerf: set pPerf = doc_.performing("")
+    dim nLP: nLP = 1
+    
+    'dopisanie gwiazdki na początku
+    do while not oRS.EOF
+      pPerf.text = "Trwa przygotowywanie dokumentów: " + CStr(cint((nLP/oRS.RecordCount)*100)) + "%"
+      set oZakup = trans_.getobj(TYPEID_N5ZAKUP,clng(oRS(0).value))
+      strNrDokOut = oZakup.strNrDok
+      oZakup.strNrDok = "*" + oZakup.strNrDok
+      if not trans_.saveobjects() then 
+        set pPerf = nothing
+        trans_.discard
+        exit function
+      end if
+      oRS.movenext
+      nLP = nLP + 1
+    loop 
+
+    'numerowanie od początku
+    oRS.movefirst  
+    dim nCurMonth: nCurMonth = clng(0)
+    dim nNr: nNr = 1
+    nLP = 1
+    do while not oRS.EOF
+      pPerf.text = "Trwa numerowanie dokumentów: " + CStr(cint((nLP/oRS.RecordCount)*100)) + "%"
+      set oZakup = trans_.getobj(TYPEID_N5ZAKUP,clng(oRS(0).value))
+      'gdy zmieni się miesiąć numeracja od 0001
+      if nCurMonth <> Month(oZakup.dDataWyst) then
+        nCurMonth = Month(oZakup.dDataWyst)
+        nNr = 1
+      end if
+      strNrDokOut = oZakup.strNrDok
+      oZakup.strNrDok = getNextNum(oZakup,nNr)
+      if not trans_.saveobjects() then
+        set pPerf = nothing
+        trans_.discard
+        exit function
+      end if
+      oRS.movenext
+      nNr = nNr + 1
+      nLP = nLP + 1
+    loop     
+
+    set pPerf = nothing
+    dim pRejDok : set pRejDok = trans_.getobj(TYPEID_N5REJESTRDOK,idRej)    
+    pRejDok.nLicznik = pRejDok.n5rejestrdok_get_licznik_for_db(nNr)
+    if not trans_.saveobjects() then
+    end if
+    reorder_dok_zakupu = true
+    
+    MessageBox "Operacja zakończona powodzeniem", "Przenumerowanie dokumentów zakupu", vbOKOnly, vbInformation
+  else
+    trans_.message 7000, 0, "Brak dokumentów zakupu w okresie " + CStr(nRok) + "-" + Mid(CStr(100 + nMies),2,2) + " dla wybranego rejestru."
+    reorder_dok_zakupu = true
+    exit function  
+  end if
+end function
+
+function getNextNum(oZakup, nNr): getNextNum = oZakup.strNrDok
+  'usunięcie gwiazdki
+  dim strNumerDok: strNumerDok = Replace(oZakup.strNrDok,"*","")
+  dim iPos: iPos = InStr(Instr(strNumerDok,"/")+1,strNumerDok,"/") 'drugie wystąpienie slash
+  if iPos > 0 then
+    strNumerDok = Left(strNumerDok,iPos)
+  end if
+  if nNr < 10000 then
+    'wypełnij zerami
+    strNumerDok = strNumerDok + CStr(Month(oZakup.dDataWyst)) + "/" + Mid(CStr(10000 + nNr),2,4)
+  else
+    'cały numer
+    strNumerDok = strNumerDok + CStr(Month(oZakup.dDataWyst)) + "/" + cstr(nNr)
+  end if  
+  getNextNum = strNumerDok
+end function
+
+
+'ta funkcja jest niepoprawna - uzywac tej wyzej
+function reorder_platnosc_all(byval idRej)
+	reorder_platnosc_all = false
+	dim strQuery : strQuery = "pRejestrDok="+ cstr(idRej)
+	dim pCursor : set pCursor = trans_.createrawcursor(TYPEID_N5PLATNOSC,strQuery, "dDataOper,sign(curKwotaPodm) desc,IdObj" , "")
+	dim pRejDok : set pRejDok = trans_.getobj(TYPEID_N5REJESTRDOK,idRej)
+	
+	'reset numerator
+	pRejDok.nParam3 = clng(1)
+	dim pPlatnosc
+	for each pPlatnosc in pCursor
+		if not pPlatnosc.n5platnosc_GenerateNumOper() then
+			exit function
+		end if
+	next
+	reorder_platnosc_all = true
+end function
+
+#ifdef NEXTVERSION
+function pl_lookup_transaction(byref pPlatnosc, byval strSymbolTran, byval bAuto, byref bShowQuestion, byref bAutoSkip, byref bInLoop): pl_lookup_transaction=vbNo
+	
+	'REV:KB:TODO: należy zaktualizować związku ze zmianą w n5platnosc
+	'Transakcja jest trzymana w pozycji płatności
+	'należy się zastanowić nad funkcjonalnością
+	exit function
+
+	dim pTransaction
+	set pTransaction=nothing
+
+	dim pPageSuggest
+	dim nChoice
+	dim strPodmiot
+
+		if pPlatnosc.wrefPodmiot is nothing then 
+			strPodmiot = " nieznanego płatnika "
+		else 
+			select case pPlatnosc.wrefPodmiot.type
+				case TYPEID_N5KLIENT
+					'strPodmiot = " klienta: " + cstr(pPlatnosc.wrefPodmiot.strNazwa)
+					strPodmiot = cstr(pPlatnosc.wrefPodmiot.strNazwa) + " (KLIENT)"
+				case TYPEID_N5INSTYTUCJA
+					'strPodmiot = " instytucję: " + cstr(pPlatnosc.wrefPodmiot.strNazwa)
+					strPodmiot = cstr(pPlatnosc.wrefPodmiot.strNazwa) + " (INSTYTUCJA)"
+				case TYPEID_N5PRACOWNIK
+					'strPodmiot = " pracownika: " + cstr(pPlatnosc.wrefPodmiot.strImie) + " " + cstr(pPlatnosc.wrefPodmiot.strNazwisko)
+					strPodmiot = cstr(pPlatnosc.wrefPodmiot.strImie) + " " + cstr(pPlatnosc.wrefPodmiot.strNazwisko) + " (PRACOWNIK)"
+			end select
+			
+		end if 
+		
+		dim strOpis:strOpis = ""
+		if trim(pPlatnosc.strOpis) = "" then 
+			strOpis = "(brak opisu)"
+		else 
+			strOpis = pPlatnosc.strOpis
+		end if 
+		
+		dim txt:txt = "Płatność z dnia " + doc_.afc.display.fulldate(pPlatnosc.dDataOper ) + " dokonana przez " + cstr(strPodmiot) +_
+		" na kwotę: " + cstr(pPlatnosc.curKwota) + " " + cstr(pPlatnosc.pWaluta.strSkrot) +_
+		" z opisem: " + "'" + cstr(strOpis) + "'"
+
+
+	if (not bAuto) then 
+		
+		'tryb ręczny - pokazuj wszystkie transakcje
+		set pPageSuggest=doc_.getmodule(43001)
+
+		dim strPodmiotWhere: strPodmiotWhere = ""
+		if (not pPlatnosc.wrefPodmiot is nothing) then
+			strPodmiotWhere = "wrefPodmiot=" + CStr(pPlatnosc.wrefPodmiot.idobj) + " and wrefPodmiot_wrt=" + CStr(pPlatnosc.wrefPodmiot.type)
+		end if
+
+		pPageSuggest.prepare_choice_list TYPEID_N5TRANSAKCJA, "Transakcje", "strSymTrans", strPodmiotWhere, "strSymTrans", "", nothing
+		pPageSuggest.setDescription txt
+		'co wybrano
+		pl_lookup_destory_performing
+		nChoice = pPageSuggest.domodalauto()
+		pl_lookup_restore_performing
+
+		'user przerwal proces przypisywania transakcji
+		if (nChoice=0) then 
+			exit function
+		end if 
+
+		'transakcja do przypisania
+		set pTransaction=trans_.getobj(TYPEID_N5TRANSAKCJA, nChoice)
+
+	else 
+		
+		'tryb polautomatyczny - najpierw wyszukaj grupe
+		'podejrzanych transakcji a jezeli jedna to wybierz
+		'ja automatycznie
+
+		'pPlatnosc
+
+		dim wrefPodmiot, wrefPodmiot_wrt
+		wrefPodmiot=0: wrefPodmiot_wrt=0
+
+		if (not pPlatnosc.wrefPodmiot is nothing) then 
+			wrefPodmiot=pPlatnosc.wrefPodmiot.IdObj
+			wrefPodmiot_wrt=pPlatnosc.wrefPodmiot.type
+		end if 
+
+		dim strWhereTrans
+		
+		strWhereTrans = _
+		"wrefPodmiot=" + CStr(wrefPodmiot) + " and wrefPodmiot_wrt=" + CStr(wrefPodmiot_wrt) + _
+		" and ( (curWn > curMa" + _
+		" and " + trans_.afc.convert.cur2sql( pPlatnosc.curKwota ) + " > 0 )" + _
+		" or (curWn < curMa " + _
+		" and " + trans_.afc.convert.cur2sql( pPlatnosc.curKwota ) + " < 0" + _
+		"))" '+ _
+		'" and " + _
+		'"(dDataRozp <= " + doc_.afc.convert.date2SQL( pPlatnosc. dDataOper ) + ")"
+
+		'opis zapytania:
+		'musi się zgadzać podmiot
+		'pTransakcja. wrefPodmiot = pPlatnosc.wrefPodmiot
+		'
+		'jest  niedopłata, a płatność jest wpływem
+		'(pTransakcja.curWn > pTransakcja.curMa and pPlatnosc. curKwota > 0
+		'
+		'jest  nadpłata, a płatność jest wydatkiem
+		'pTransakcja.curWn < pTransakcja.curMa and pPlatnosc. curKwota < 0)
+		'
+		'-zapłata następuje po sprzedaży
+		'(pTransakcja. dDataRozp <= pPlatnosc. dDataOper)
+
+		dim nIdTrans
+		nIdTrans=trans_.findobjid(TYPEID_N5TRANSAKCJA, strWhereTrans)
+
+		if (nIdTrans>0) then 
+
+			'jest odkladnie jedna transakcja - wybieramy ja
+			set pTransaction=trans_.getobj(TYPEID_N5TRANSAKCJA, nIdTrans)
+		
+		elseif (nIdTrans=0) then 
+			
+			'jeżeli wybrano skip - wyjdź z funkcji
+			if bAutoSkip then 
+				exit function
+			end if
+			
+			'nie ma transakcji - dodatkowe pytanie czy chce wybrac
+			'z innego zbioru transakcji
+
+			if bShowQuestion then 
+				dim strData:strData = doc_.afc.display.fulldate(pPlatnosc.dDataOper) 
+				dim strKwota:strKwota = cstr(pPlatnosc.curKwota) + " " + cstr(pPlatnosc.pWaluta.strSkrot)
+				
+				dim pNewHli2: set pNewHli2=doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=PAGE_FORM_IF_CHOICE_PLATNOSC")
+				dim pUserPage2: set pUserPage2=doc_.getpagehli(pNewHli2)
+				
+				pUserPage2.init_form strData, cstr(strPodmiot), strKwota , cstr(strOpis), bInLoop
+
+				pl_lookup_destory_performing
+				dim nRes:nRes = pUserPage2.domodalauto()
+				pl_lookup_restore_performing
+				select case nRes
+					case 0 'VAR_NIE_PRZYPISUJ
+						pl_lookup_transaction = vbNO
+						bShowQuestion = true
+						bAutoSkip = false
+						exit function
+					case 1 'VAR_NIE_PRZYPISUJ_WSZYSTKIE
+						pl_lookup_transaction = vbNO
+						bShowQuestion = false
+						bAutoSkip = true
+						exit function
+					case 2 'VAR_POKAZ_LISTE
+						pl_lookup_transaction = vbYes
+						bShowQuestion = true
+						bAutoSkip = false
+					case 3 'VAR_POKAZ_LISTE_WSZYSTKIE
+						pl_lookup_transaction = vbYes
+						bShowQuestion = false
+						bAutoSkip = false
+				end select
+			end if 
+			
+			set pNewHli2 = nothing
+			set pUserPage2 = nothing
+	
+			'probujemy wskazac transakcje z calego zbioru
+			'transakcji - wolamy siebie w trubie recznym
+			'pl_lookup_transaction=pl_lookup_transaction(pPlatnosc, false, false)
+			pl_lookup_transaction = pl_lookup_transaction(pPlatnosc, "", false, false, false, false)
+									
+			exit function
+
+		else 
+			'Jest więcej, więc szukamy transakcji o zadanym numerze 
+			if trim(strSymbolTran)<>"" then 
+				dim SQL:SQL = strWhereTrans + " and strSymTrans = '" + strSymbolTran + "'"
+				dim nIdTrans2
+				nIdTrans2=trans_.findobjid(TYPEID_N5TRANSAKCJA, SQL)
+				
+				if nIdTrans2 > clng(0) then 
+					dim pTransaction2:set pTransaction2 = trans_.getobj(TYPEID_N5TRANSAKCJA, nIdTrans2)
+					if not pTransaction2 is nothing then 
+						'Jeżeli znalazł jedną - podstaw
+						set pPlatnosc.pTransakcja=pTransaction2
+						pl_lookup_transaction=vbYes
+						exit function
+					end if 
+				end if 
+			end if 
+			
+			'Jest wiecej transakcji - trzeba dokonac wyboru
+			if(bShowQuestion) then
+				set pPageSuggest=doc_.getmodule(43001)
+				pPageSuggest.prepare_choice_list TYPEID_N5TRANSAKCJA, "Transakcje", "strSymTrans", strWhereTrans, "strSymTrans", "", nothing
+				pPageSuggest.setDescription txt
+						
+				'co wybrano
+				pl_lookup_destory_performing
+				nChoice = pPageSuggest.domodalauto()
+				pl_lookup_restore_performing
+			else
+				pl_lookup_transaction = vbNo
+				exit function
+			end if
+
+			'user przerwal proces przypisywania transakcji
+			if (nChoice=0) then 
+				exit function
+			end if 
+
+			'transakcja do przypisania
+			set pTransaction=trans_.getobj(TYPEID_N5TRANSAKCJA, nChoice)
+
+		end if 
+
+	end if 
+
+	'Jezeli jest jakas transakcja do przypisania
+	'obojetnie z jakiego trybu - UWAGA ! my nie
+	'robimy zapisow tylko podstawienie
+	if (not pTransaction is nothing) then '1
+		set pPlatnosc.pTransakcja=pTransaction
+		pl_lookup_transaction=vbYes
+	end if 
+end function
+
+'Dla importu danych - nieszczenie i przywracanie performinga
+private function pl_lookup_destory_performing()
+	on error resume next
+
+	dim pFunctionPointer: set pFunctionPointer = nothing
+	set pFunctionPointer = GetRef("Export_DestroyPerforming")
+
+	if (not pFunctionPointer is nothing) then
+		pFunctionPointer nothing
+	end if
+end function
+
+private function pl_lookup_restore_performing()
+	on error resume next
+
+	dim pFunctionPointer: set pFunctionPointer = nothing
+	set pFunctionPointer = GetRef("Export_CreatePerforming")
+
+	if (not pFunctionPointer is nothing) then
+		pFunctionPointer nothing, "Analiza danych"
+	end if
+end function
+#endif
+
+]]>
+</script>
+</config>
+</page>

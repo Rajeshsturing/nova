@@ -1,0 +1,566 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+RAPTEMPLATE_TRANSAKCJE_LISTA
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1250.h"
+
+#define RAPORT_TITLE #*vs1
+
+#define INDENT_SPAN		9
+#define FULL_SPAN		10
+
+'vs1  - tytuł
+'vn2  - nNalZob (bitwise, 1=należności, 2=zobowiązania)
+
+
+#ifdef APPCONFIG_RAPORT_BY_PROD_INX
+#define C_FIELD_KL_FIRST_EXPR		t_klient.strIndeks
+#define C_FIELD_KL_SECOND_EXPR		t_klient.strNazwa
+#define C_FIELD_KL_FIRST_HUMANNAME Indeks
+#define C_FIELD_KL_SECOND_HUMANNAME Nazwa
+#else
+#define C_FIELD_KL_FIRST_EXPR		t_klient.strNazwa
+#define C_FIELD_KL_SECOND_EXPR		t_klient.strIndeks
+#define C_FIELD_KL_FIRST_HUMANNAME		Nazwa
+#define C_FIELD_KL_SECOND_HUMANNAME	Indeks
+#endif
+
+#define CTRLID_BODY_FOOTER      1
+#define CTRLID_SECTION_CHECKBOX 2
+#define CTRLID_ROW_CHECKBOX     3
+
+#macro RXE_T_LINK_FORM_VVV(_type_val_,_idobj_,_val_)	\
+<t href='<%so.write rapeng_.href_open_form_proxy(_type_val_,_idobj_)%>'><![CDATA[<%so.write cstr(_val_)%>]]></t>
+
+
+#ifdef ENABLE_DB14
+#define TRF_SHOW_KWOTA_VAT  1
+#endif
+
+#ifndef TRF_SHOW_KWOTA_VAT
+#define TRF_SHOW_KWOTA_VAT  0
+#endif
+
+-->
+<page style='36'>
+<config>
+<title>RAPORT_TITLE</title>
+<script>
+<![CDATA[
+
+#include "50514"
+
+VB_PRINT_PORTRAIT_GRAYSCALE
+VB_PRINTPREV_PORTRAIT_GRAYSCALE
+
+<%
+function query()
+
+#ifdef _TORAL
+  dim strWhere: strWhere = ""
+  dim strFiltrRozl: strFiltrRozl = ""
+  'gdy wszystkie
+  if trans_.var(3) = 2 then
+    strFiltrRozl = " %2"
+    strWhere = "where %1 and %3 and %4 and %5 and %6 and %7 and %8 and %9 and %10 and %12 and EXTRA_CUSTOMER_FILTER_AND(13) and %14 "
+  else
+    strFiltrRozl = "%10 "
+    strWhere = "where %1 and %2 and %3 and %4 and %5 and %6 and %7 and %8 and %9 and %11 and EXTRA_CUSTOMER_FILTER_AND(12) and %13 "
+  end if
+#endif
+
+query = "select 'c_field_first'= CASE max(t_trans.wrefPodmiot_wrt) " +_
+" WHEN TYPEID_N5KLIENT THEN max(C_FIELD_KL_FIRST_EXPR) " +_ 
+" WHEN TYPEID_N5PRACOWNIK THEN max(t_prac.strNazwisko) " +_ 
+" WHEN TYPEID_N5INSTYTUCJA THEN max(t_inst.strNazwa) " +_
+" WHEN TYPEID_N5BANK THEN max(t_bank.strNazwa) " +_
+" WHEN TYPEID_N5FIRMA THEN max(t_firma.strSkrot) " +_
+" ELSE '' END , " +_
+"'c_field_second'= CASE max(t_trans.wrefPodmiot_wrt) " +_
+" WHEN TYPEID_N5KLIENT THEN max(C_FIELD_KL_SECOND_EXPR) " +_ 
+" WHEN TYPEID_N5PRACOWNIK THEN max(t_prac.strNazwisko) " +_ 
+" WHEN TYPEID_N5INSTYTUCJA THEN max(t_inst.strNazwa) " +_
+" WHEN TYPEID_N5BANK THEN max(t_bank.strNazwa) " +_
+" WHEN TYPEID_N5FIRMA THEN max(t_firma.strSkrot) " +_
+" ELSE '' END , " +_
+" 'idTrans'=t_trop.trop_pTransakcja, " +_
+"'c_datarozp'=max(t_trans.dDataRozp),'c_datawym'=max(t_trans.dDataWym), " +_
+"'c_podmiot_type'= max(t_trans.wrefPodmiot_wrt),'c_podmiot_idobj'=max(t_trans.wrefPodmiot), " +_
+"'c_symb'=max(t_trans.strSymTrans),'c_trans_idobj'=max(t_trans.IdObj), " +_
+"'c_waluta'=max(t_waluta.strSkrot),'c_prec'=3,'c_typ'=max(t_trans.eTyp), " +_
+"'c_wntrans'=sum(t_trop.trop_curWn),'c_matrans'= sum(t_trop.trop_curMa),'c_saldotrans'=sum(t_trop.trop_curWn-t_trop.trop_curMa), " +_
+"'c_wnewid'=sum(t_trop.trop_curWnEwid),'c_maewid'=sum(t_trop.trop_curMaEwid),'c_saldoewid'=sum(t_trop.trop_curWnEwid-t_trop.trop_curMaEwid) " +_
+#if TRF_SHOW_KWOTA_VAT = 1
+",'c_wnvat'=sum(t_trop.trop_curWnVAT),'c_mavat'=sum(t_trop.trop_curMaVAT),'c_saldovat'=sum(t_trop.trop_curWnVAT-t_trop.trop_curMaVAT) " +_
+#endif
+"from n5transakcja_operacja as t_trop " +_
+"inner join n5transakcja as t_trans on t_trop.trop_pTransakcja = t_trans.idobj " +_
+#ifdef _RAFTEX
+"left join N5TABELA as TABELA on TABELA.pTransakcja = t_trans.idobj " +_
+"left join n5rejestrdok as t_rejdok on t_rejdok.idobj = TABELA.pRejestrDok " +_
+#endif
+"left outer join n5klient as t_klient on t_trans.wrefPodmiot = t_klient.IdObj AND t_trans.wrefPodmiot_wrt = 10108 " +_
+"left outer join n5grupaklient as t_gr_klient on t_klient.pGrupaKlient = t_gr_klient.IdObj AND t_trans.wrefPodmiot_wrt = 10108 "+_
+"left outer join n5pracownik as t_prac on t_trans.wrefPodmiot = t_prac.IdObj AND t_trans.wrefPodmiot_wrt = 10109 " +_
+"left outer join n5instytucja as t_inst on t_trans.wrefPodmiot = t_inst.IdObj AND t_trans.wrefPodmiot_wrt = 10105 " +_
+"left outer join n5bank as t_bank on t_trans.wrefPodmiot = t_bank.IdObj AND t_trans.wrefPodmiot_wrt = 10104 " +_
+"left outer join n5firma as t_firma on t_trans.wrefPodmiot = t_firma.IdObj AND t_trans.wrefPodmiot_wrt = TYPEID_N5FIRMA " +_
+"inner join n5jednostka as t_waluta on t_trans.pWaluta = t_waluta.IdObj " +_
+"left outer join n5pracownik as t_handlowiec on t_trans.trn_pHandlowiec = t_handlowiec.idobj " +_
+#ifdef _RAFTEX
+"where %1 and %2 and %3 and %4 and %5 and %6 and %7 and %8 and %9 and %11 and EXTRA_CUSTOMER_FILTER_AND(12) and %13 and %14 " +_
+#else
+#ifdef _TORAL
+strWhere + vbNewLine +_
+#else
+#ifdef _SECURITY
+"where %1 and %2 and %3 and %4 and %5 and %6 and %7 and %8 and %9 and %11 and EXTRA_CUSTOMER_FILTER_AND(12) and (%13 or " +_
+"(t_trop.trop_dDataOp > [saldo_na_dzien] and t_trop.trop_pTransakcja in " +_
+"(select c_prat_ptransakcja from vlist_n5sprzedaz_sprzed_listRata where p_ptransakcja in " +_
+"(select trop_pTransakcja from n5transakcja_operacja where trop_dDataOp <= [saldo_na_dzien] and trop_curWn = 0 and trop_curMa = 0))))  " +_
+#else
+"where %1 and %2 and %3 and %4 and %5 and %6 and %7 and %8 and %9 and %11 and EXTRA_CUSTOMER_FILTER_AND(12) and %13 " +_
+#endif
+#endif
+#endif
+"and t_trans.IdObj not in (select pTransakcja from n5sprzedaz where pRejestrDok in (select IdObj from n5rejestrdok where eTyp in (N5REJESTRDOK_DOSTAWA,N5REJESTRDOK_KOR_DOSTAWA))) " +_
+"and t_trans.wrefPodmiot_wrt = 10108 group by t_trop.trop_ptransakcja " +_
+#ifdef _TORAL
+strFiltrRozl + vbNewLine +_
+#else
+"%10 " +_
+#endif
+"order by c_field_first,c_datarozp "
+
+end function
+%>
+
+
+<%
+function default_param()
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+
+	'pParamArray.add doc_.afc.rap.param.new_text("Indeks klienta").bindexpr("t_klient.strIndeks")
+	'pParamArray.add doc_.afc.rap.param.new_text("Nazwisko pracownika").bindexpr("t_prac.strNazwisko")
+	'pParamArray.add doc_.afc.rap.param.new_currency("Kwota").bindexpr("t_trans.curWnEwid")
+
+	'tylko dla przeterminowanych
+	'if trans_.var(2) and 1 then
+		'pParamArray.add doc_.afc.rap.param.new_currency("Liczba dni").bindexpr("DATEDIFF(day, t_trans.dDataWym, GETDATE ( ) )")
+	'end if
+
+
+	'set default_param = pParamArray
+end function
+%>
+
+<%
+function write_actual_param(byref pActualParam)
+dim iter
+dim bAnyWritten : bAnyWritten = false
+if not pActualParam is nothing then
+for iter = 0 to pActualParam.upperIndex
+if pActualParam.value(iter).get_desc() <> "" then 
+bAnyWritten = true
+	so.write "<t size='5' /><text fontsize='4'><![CD"+"ATA[" + pActualParam.value(iter).get_desc() + "]"+"]></text><br/>"
+end if
+next
+end if
+if not bAnyWritten then 
+	so.write "<t fontsize='4'>brak</t><br/>"
+end if
+	so.write "<br/>"
+end function
+%>
+<%
+function section_header_1(byref pSection,byref pRec)
+%>
+<tr userprop='propc_section_start="1" propc_section_hidden="0" propc_section_req="0" RXF_START_SUM(nSectionPicCounter)' fontsize='4'>
+	<td style='27' colspan='4'>
+		<picture name='<%so.write cstr(nSectionPicCounter)%>' tip='Zwiń' ignoresysdisable='true' image='PICTURE_SMALL_MINUS' width='SIZE_FOR_PLUS' height='SIZE_FOR_PLUS' href='vs1022="section_hideshow_hli" vn100="<%so.write cstr(nSectionPicCounter)%>"'/>
+	  RXF_CHECKBOX_SUM(CTRLID_SECTION_CHECKBOX)
+    RXE_AUTOTEXT_LINK_FORM_CCC(c_podmiot_type,c_podmiot_idobj,c_field_first)
+  </td>
+<td style='27' colspan='FULL_SPAN'>
+	RXE_AUTOTEXT_LINK_FORM_CCC(c_podmiot_type,c_podmiot_idobj,c_field_second)
+	
+	<% dim pPodmiot
+		set pPodmiot = trans_.getobj(pRec("c_podmiot_type"),pRec("c_podmiot_idobj"))
+		if pPodmiot.type = TYPEID_N5KLIENT then
+	%>
+		<t size='5' />
+		<t><![CDATA[<%so.write "tel:" + pPodmiot.strTel1%>]]></t>
+	<%
+		end if
+	%>
+</td>
+</tr>
+<% 	if pPodmiot.type = TYPEID_N5KLIENT then
+%>
+<tr fontsize='4'>
+	<td style='27' colspan='4' />
+	<td style='27' colspan='FULL_SPAN'>
+		<text><![CDATA[<%
+			dim strAdresPodm
+			strAdresPodm = pPodmiot.strUlica + " " + pPodmiot.strNrDomu
+			if pPodmiot.strNrLokalu <> "" then
+				strAdresPodm = strAdresPodm + "/" + pPodmiot.strNrLokalu
+			end if
+			strAdresPodm = strAdresPodm + vbCrLf + pPodmiot.strKod + " " + pPodmiot.pMiejscowosc.strNazwa
+			so.write strAdresPodm
+			%>]]></text>
+	</td>
+</tr>
+<%
+	end if
+%>
+
+<%
+  RXF_COUNTER_SUM
+end function
+%>
+<%
+function section_footer_1(byref pSection)
+  dim colspan: colspan = INDENT_SPAN
+#ifdef _HJORT
+  if trans_.var(2) = 2 then
+    colspan = colspan + 1
+  end if
+#endif
+%>
+<tr fontsize='4' RXF_END_SUM(nSectionPicCounter,2)>
+	<td style='27' colspan='<% so.write CStr(colspan) %>' />
+	<td style='27' align='right'>
+    RXF_CUR_PROP_SUM(7001,pSection.counter(0).result,)
+	</td>
+	<td style='27' align='right'>
+		RXF_CUR_PROP_SUM(7002,pSection.counter(1).result,)
+	</td>
+#if TRF_SHOW_KWOTA_VAT = 1
+    <td style='27' colspan='2' />
+#endif
+  </tr>
+<% RXF_COUNTER_SUM %>
+<tr border='0'><td colspan='FULL_SPAN' /></tr>
+<tr hide='true'><td colspan='FULL_SPAN' /></tr>
+<%
+end function
+%>
+<%
+function body_row(byref pSection,byref pRec)
+#ifdef _HJORT
+  if trans_.var(2) = 2 then
+    dim idZakup
+    dim strNrDok: strNrDok = ""
+    idZakup = trans_.findobjid(TYPEID_N5ZAKUP,"pTransakcja = " + CStr(pRec("idTrans").value))
+    if idZakup > clng(0) then
+      strNrDok = trans_.getobj(TYPEID_N5ZAKUP,idZakup).strNrDok
+    end if
+  end if
+#endif
+%>
+<tr bordercolor='white' userprop='RXF_START_SUM(nSectionPicCounter)
+<%
+	 if trans_.var(2) and 1 then
+%>    
+    RXF_ROW_PROP_SUM(7001,ccur(pRec("c_wnewid").value))
+<% else %>    
+    RXF_ROW_PROP_SUM(7001,ccur(pRec("c_maewid").value))
+<% end if %>    
+    RXF_ROW_PROP_SUM(7002,ccur(pRec("c_saldoewid").value))' 
+<%
+if pRapExec.RecNr mod 2 <> 0 then
+	so.write " style='37' "
+end if
+if cdate(pRec("c_datawym")) < cdate(dSaldo) then
+	so.write " forecolor='red' "
+end if
+%>
+>
+	<td bordercolor='transparent' width='min'><t>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</t></td>
+  <td>
+    RXF_CHECKBOX_SUM(CTRLID_ROW_CHECKBOX)
+  </td>
+	<td align='right'>RXE_LP</td>
+	<td>
+		RXE_T_LINK_FORM_VCC(TYPEID_N5TRANSAKCJA,c_trans_idobj,c_symb)
+	</td>
+#ifdef _HJORT
+  <% if trans_.var(2) = 2 then %>
+	<td>
+    RXE_T_LINK_FORM_VVV(TYPEID_N5ZAKUP,idZakup,strNrDok)
+	</td>    
+  <% end if %>  
+#endif
+	<td>
+		RXE_DATE(c_datarozp)
+	</td>
+	<td>
+		RXE_DATE(c_datawym)
+	</td>
+	<td align='right'>
+		<t><%
+if cdate(pRec("c_datawym")) < cdate(dSaldo) then
+	so.write cstr(cdate(dSaldo) - cdate(pRec("c_datawym")) )
+end if
+%></t>
+	</td>
+	<td align='right'>
+	<%
+	if trans_.var(2) and 1 then
+	%>
+		RXE_QUANTITY_CCC(c_wntrans,c_waluta,c_prec)
+	<%
+	else
+	%>
+		RXE_QUANTITY_CCC(c_matrans,c_waluta,c_prec)
+	<%
+	end if
+	%>
+	</td>
+	<td align='right'>
+		RXE_QUANTITY_CCC(c_saldotrans,c_waluta,c_prec)
+	</td>
+	<td align='right'>
+	<%
+	if trans_.var(2) and 1 then
+	%>
+		RXE_QUANTITY_CVV(c_wnewid,"",2)
+	<%
+	else
+	%>
+		RXE_QUANTITY_CVV(c_maewid,"",2)
+	<%
+	end if
+	%>
+	</td>
+	<td align='right'>
+		RXE_QUANTITY_CVV(c_saldoewid,"",2)
+	</td>
+#if TRF_SHOW_KWOTA_VAT = 1
+  <td align='right'>
+    <%
+	if trans_.var(2) and 1 then
+      %>
+      RXE_QUANTITY_CVV(c_wnvat,"",2)
+      <%
+	else
+        %>
+        RXE_QUANTITY_CVV(c_mavat,"",2)
+        <%
+	end if
+    %>
+  </td>
+  <td align='right'>
+    RXE_QUANTITY_CVV(c_saldovat,"",2)
+  </td>
+#endif
+  </tr>
+<%
+end function
+%>
+<%
+function body_header(byref pSection,byref pRec)
+'so.write "<p backcolor='yellow'><text><![CD"+"ATA["+pRapExec.get_final_query() + "]"+"]></text></p><br/>" 
+%>
+<table border='1'>
+<thead>
+<tr style='21'>
+	<td bordercolor='transparent' width='min' rowspan='2'><t>&nbsp;</t></td>
+  <td rowspan='2'></td>
+	<td width='min' rowspan='2'><t>LP</t></td>
+	<td width='max' rowspan='2'>
+		<text><![CDATA[Symbol transakcji]]></text>
+	</td>
+#ifdef _HJORT
+  <% if trans_.var(2) = 2 then %>
+	<td width='max' rowspan='2'>
+		<text><![CDATA[Numer dokumentu]]></text>
+	</td>    
+  <% end if %>
+#endif    
+	<td width='min' rowspan='2'>
+		<text><![CDATA[Data rozpoczęcia]]></text>
+	</td>
+	<td width='min' rowspan='2'>
+		<text><![CDATA[Data wymagalności]]></text>
+	</td>
+	<td width='min' rowspan='2'>
+		<text><![CDATA[L. dni spóź nienia]]></text>
+	</td>
+	<td width='min' colspan='2'>
+		<text><![CDATA[W walucie transakcji]]></text>
+	</td>
+	<td width='min' colspan='2'>
+		<text><![CDATA[W walucie ewidencji]]></text>
+	</td>
+#if TRF_SHOW_KWOTA_VAT = 1
+	<td width='min' colspan='2'>
+		<text><![CDATA[VAT]]></text>
+	</td>
+#endif 
+  </tr>
+<tr style='21'>
+	<td width='min'>
+		<text><![CDATA[Wartość]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Saldo]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Wartość]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Saldo]]></text>
+	</td>
+#if TRF_SHOW_KWOTA_VAT = 1
+	<td width='min'>
+		<text><![CDATA[Wartość]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Saldo]]></text>
+	</td>
+#endif
+
+</tr>
+</thead>
+<tbody>
+<%
+end function
+%>
+<%
+function body_footer(byref pSection)
+  dim colspan: colspan = INDENT_SPAN
+#ifdef _HJORT
+  if trans_.var(2) = 2 then
+    colspan = colspan + 1
+  end if
+#endif
+%>
+</tbody>
+<tfoot>
+<tr style='21' name='CTRLID_BODY_FOOTER'>
+	<td style='27' colspan='<% so.write CStr(colspan) %>' />
+	<td style='27' align='right'>
+    RXF_CUR_PROP_SUM(7001,pRapExec.body.counter(0).result,)
+	</td>
+	<td style='27' align='right'>
+    RXF_CUR_PROP_SUM(7002,pRapExec.body.counter(1).result,)
+	</td>
+#if TRF_SHOW_KWOTA_VAT = 1
+    <td style='27' colspan='2' />
+#endif
+  </tr>
+</tfoot>
+</table>
+<%
+end function
+%>
+
+
+
+<%dim nSectionPicCounter : nSectionPicCounter = 10000000%>
+function section_hideshow_hli(byref pHLI)
+doc_.afc.formsection.section_hideshow page_, pHLI.prop(100)
+end function
+
+'gdy pierwsze uruchomienie raportu => ustaw checkbox na 1
+dim bCheckBox : bCheckBox = true
+
+RXF_CTRL_CHECKBOX_SUM(CTRLID_SECTION_CHECKBOX,bCheckBox,false)
+RXF_CTRL_CHECKBOX_SUM(CTRLID_ROW_CHECKBOX,bCheckBox,true)
+
+]]>
+</script>
+</config>
+<header>
+</header>
+<body>
+<p>
+RAPORT_HEADER(3,1)	
+</p>
+<p>
+<t size='2'/>
+</p>
+<p><text fontsize='7'><![CDATA[RAPORT_TITLE]]></text></p><br/><br/>
+<t fontsize='5' bold='true'>Kryteria selekcji to:</t><br/>
+<%
+
+dim dSaldo: dSaldo = trans_.afc.globals.nulldate()
+
+dim pRapExec : set pRapExec = rapeng_.new_engine()
+with pRapExec
+
+
+	dim pSectionX 
+	set pSectionX = .add_body_ex(getref("body_header"),getref("body_footer"),getref("body_row"))
+	if trans_.var(2) and 1 then
+		pSectionX.add_sumator("c_wnewid")
+	else
+		pSectionX.add_sumator("c_maewid")
+	end if
+	pSectionX.add_sumator("c_saldoewid")
+	set pSectionX = .add_group_section(0,getref("section_header_1"),getref("section_footer_1"))
+	if trans_.var(2) and 1 then
+		pSectionX.add_sumator("c_wnewid")
+	else
+		pSectionX.add_sumator("c_maewid")
+	end if
+	pSectionX.add_sumator("c_saldoewid")
+'if .prepare("RAPORT_TITLE",rapeng_.get_raport_param(),default_param(),query()) then
+
+if .prepare("RAPORT_TITLE",rapeng_.get_raport_param(),rapeng_.get_raport_param(),query()) then  
+%>
+<%
+	write_actual_param rapeng_.get_raport_param()
+	
+#ifdef ENABLE_DB11
+  .ReplaceQueryParam "t_trop.trop_dDataOp =","t_trop.trop_dDataOp <="
+#endif	
+  
+#ifdef _TORAL
+  if trans_.var(3) = 2 then
+    dSaldo = rapeng_.get_raport_param().value(13).first_value
+    .ReplaceQueryParam "(stan_rozl IN ('1','2'))",""
+    .ReplaceQueryParam "(stan_rozl = '1')","having sum(t_trop.trop_curWnEwid - t_trop.trop_curMaEwid) = 0"
+    .ReplaceQueryParam "(stan_rozl = '2')","having sum(t_trop.trop_curWnEwid - t_trop.trop_curMaEwid) <> 0"
+  else
+    dSaldo = rapeng_.get_raport_param().value(12).first_value  
+  end if
+#else
+  dSaldo = rapeng_.get_raport_param().value(12).first_value  
+#endif
+
+#ifdef _SECURITY
+  .ReplaceQueryParam "[saldo_na_dzien]",trans_.afc.convert.date2SQL(dSaldo)
+#endif
+  
+#ifdef _RAFTEX  
+	if trans_.var(2) and 1 then
+	.ReplaceQueryParam "N5TABELA","n5sprzedaz"
+	.ReplaceQueryParam "TABELA","t_sprzedaz"
+	else
+	.ReplaceQueryParam "N5TABELA","n5zakup"
+	.ReplaceQueryParam "TABELA","t_zakup"
+	end if  
+#endif  
+  
+	if not .perform then
+	so.write "<p style='21'><t>Brak danych spełniających podane kryteria</t></p>"
+	end if
+%>
+<%
+end if
+end with
+%>
+</body>
+<footer>
+</footer>
+</page>
+        

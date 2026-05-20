@@ -1,0 +1,867 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+interfejs modułu
+	create_config_object(pRejestr)
+
+interfejs obiektu "config"
+	
+	void load_from_string(byref strConfig)
+	function save_to_string
+	[property] string operation_name(nOperNr)
+	show_config_page(nOperNr)
+	perform_operation(nOperNr,byref pObject)
+	void init_with_defaults(nTypRej)
+
+moduł operacji dla obiektu : n5zakup
+
+ZAKUP
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1222.h"
+#include "h1224.h"
+
+#define SECID_ALL	1
+
+#define FORM_SPAN	2
+#define RCELL_SPAN	1
+
+#define CTRLID_DPC_1		101
+#define CTRLID_DPC_2		102
+#define CTRLID_CREATE_TASK	103
+
+#define CTRLID_PIC_DPC_1	104
+#define CTRLID_PIC_DPC_2	105
+
+#define CTRLID_PZ_MODE		106
+#define CTRLID_KASA_MODE	107
+#define CTRLID_KOREKTA		108	
+#define CTRLID_ZPZ			109
+#define CTRLID_CREATE_BR	110
+
+
+#define CTRLID_DPC_1_PREVIEW	111
+#define CTRLID_DPC_2_PREVIEW	112
+
+#ifdef ENABLE_DB13
+#define COUNT_OPERATIONS	13
+#define COUNT_OPERATIONS_INX	14
+#else
+#define COUNT_OPERATIONS	7
+#define COUNT_OPERATIONS_INX	8
+#endif
+
+
+#define INCLUDE_BULID_CHOICELIST_ROW_DOKUMENT_HANDLOWY
+#define INCLUDE_BULID_CHOICELIST_ROW_WZ_MULTIPLE
+
+
+#define BTN_ANULUJ		0
+#define BTN_ZASTAP		-200
+#define BTN_DOPISZ		-300
+
+
+-->
+<page style='STYLE_PAGE' width='10000'>
+<config>
+<startpos>center</startpos>
+<script>
+<![CDATA[
+#include "50200"
+'qxx_publication
+#include "50217"
+'realize publication
+#include "50518"
+'wylicz_rozbicie
+#include "50103"
+
+'BulidDokumentRow_KLIENT
+#include "50634"
+
+'MessageBox
+#include "50122"
+
+class cn5zakup_oper_config
+	public m_strName
+	public m_cCreateTask
+	public m_ePZMode
+	public m_eKasaMode
+	public m_cKorekta
+	public m_cZPZ
+	public m_cCreateBR
+	
+	public m_idObjDPC_1
+	public m_idObjDPC_2
+
+	public m_eTypRej
+	
+	public sub class_initialize()
+		m_strName = ""
+		m_cCreateTask = "0"
+		m_ePZMode = clng("1")	'no operation
+		m_idObjDPC_1 = 0	'no DP to perform
+		m_idObjDPC_2 = 0	'no DP to perform
+		m_eKasaMode = "0" 'no operation
+		m_cKorekta = "0"
+		m_cZPZ = "0"
+		m_cCreateBR = "0"
+	end sub
+
+
+	public property get is_empty()		
+		is_empty =	(m_cCreateTask = "0") and _
+					(clng(m_ePZMode) = clng(1)) and _
+					(clng(m_eKasaMode) = clng(0)) and _
+					(m_cZPZ = "0") and _
+					(m_cKorekta = "0") and _
+					(m_idObjDPC_1 = clng(0)) and _
+					(m_idObjDPC_2 = clng(0)) and _
+					(m_cCreateBR = "0")
+	end property
+
+	public sub load_from_string(byref strConfig)
+		dim aItems : aItems = split(strConfig, vbTab)
+
+		if ubound(aItems) > 6 then
+			m_strName		= aItems(0)
+			m_ePZMode		= cstr(aItems(1))
+			m_cCreateTask	= left(aItems(2),1)
+			m_idObjDPC_1	= clng(aItems(3))
+			m_idObjDPC_2	= clng(aItems(4))
+			m_eKasaMode		= cstr(aItems(5))
+			m_cKorekta		= cstr(aItems(6))
+			m_cZPZ		= cstr(aItems(7))
+		end if
+
+		if ubound(aItems) > 7 then
+			m_cCreateBR		= cstr(aItems(8))
+		end if
+
+	end sub
+	
+	public function save_to_string
+		save_to_string = doc_.afc.convert.formatter("%1"+vbTab+"%2"+vbTab+"%3"+vbTab+"%4"+vbTab+"%5"+vbTab+"%6"+vbTab+"%7"+vbTab+"%8"+vbTab+"%9") _
+			(m_strName)(cstr(m_ePZMode))(cstr(m_cCreateTask))(cstr(m_idObjDPC_1))(cstr(m_idObjDPC_2))(cstr(m_eKasaMode))(cstr(m_cKorekta))(cstr(m_cZPZ))(cstr(m_cCreateBR)).done()
+	end function
+
+	public sub show_config_page
+		dim pPage : set pPage = doc_.getpagehli("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=THIS_FILE")
+
+		pPage.topelement.title = "Konfiguracja operacji """ + m_strName + """"
+
+		pPage.ctrl(CTRLID_PZ_MODE).value = clng(m_ePZMode)
+		pPage.ctrl(CTRLID_CREATE_TASK).value = m_cCreateTask
+		pPage.ctrl(CTRLID_KASA_MODE).value = cstr(m_eKasaMode)
+		pPage.ctrl(CTRLID_KOREKTA).value = cstr(m_cKorekta)
+		pPage.ctrl(CTRLID_ZPZ).value = cstr(m_cZPZ)
+		pPage.ctrl(CTRLID_CREATE_BR).value = cstr(m_cCreateBR)
+		'todo: otwieranie i wybór
+
+#ifdef _DEBUG
+		trans_.message 7000 , 0 , "dorobić publikacje dla faktury zakupu"
+#endif	
+'		select case 	
+'		dim strPubType : strPubType = "N5DPC_PUBTYPE_ZAKUP"
+
+
+		dim strPubType : strPubType = ""
+		select case m_eTypRej
+			case N5REJESTRDOK_FAKT_ZAK
+				strPubType = "N5DPC_PUBTYPE_ZAKUP"
+			case N5REJESTRDOK_KOR_FAKT_ZAK
+				strPubType = "N5DPC_PUBTYPE_ZAKUP_KOREKTA"
+			case N5REJESTRDOK_KOR_FAKT_IMP
+				strPubType = "N5DPC_PUBTYPE_ZAKUP_IMPORT_KOREKTA"
+			case N5REJESTRDOK_FAKT_IMP
+				strPubType = "N5DPC_PUBTYPE_ZAKUP_IMPORT"
+			case N5REJESTRDOK_FAKT_ZAK_RR
+				strPubType = "N5DPC_PUBTYPE_FAKTURA_RR"
+			case N5REJESTRDOK_KOR_FAKT_ZAK_RR
+				strPubType = "N5DPC_PUBTYPE_FAKTURA_RR_KOREKTA"
+			case N5REJESTRDOK_WNT,N5REJESTRDOK_IMPORT_USLUG
+				strPubType = "N5DPC_PUBTYPE_WNT"
+			case N5REJESTRDOK_KOREKTA_WNT,N5REJESTRDOK_KOR_IMPORT_USLUG
+				strPubType = "N5DPC_PUBTYPE_WNT_KOREKTA"
+		end select
+		
+		setup_choose_dpc_pic pPage,CTRLID_PIC_DPC_1,CTRLID_DPC_1_PREVIEW,CTRLID_DPC_1,m_idObjDPC_1,strPubType
+		setup_choose_dpc_pic pPage,CTRLID_PIC_DPC_2,CTRLID_DPC_2_PREVIEW,CTRLID_DPC_2,m_idObjDPC_2,strPubType
+		setup_choose_dpc_label pPage,CTRLID_DPC_1,abs(m_idObjDPC_1)
+		setup_choose_dpc_label pPage,CTRLID_DPC_2,abs(m_idObjDPC_2)
+		setup_choose_dpc_preview pPage , CTRLID_DPC_1_PREVIEW , m_idObjDPC_1 
+		setup_choose_dpc_preview pPage , CTRLID_DPC_2_PREVIEW , m_idObjDPC_2 
+
+		if pPage.domodalauto() = CMD_CHOICE then
+			m_ePZMode = pPage.ctrl(CTRLID_PZ_MODE).value
+			m_cCreateTask = pPage.ctrl(CTRLID_CREATE_TASK).value
+			m_idObjDPC_1 = get_choosen_dpc(pPage,CTRLID_PIC_DPC_1,CTRLID_DPC_1_PREVIEW)
+			m_idObjDPC_2 = get_choosen_dpc(pPage,CTRLID_PIC_DPC_2,CTRLID_DPC_2_PREVIEW)
+			m_eKasaMode = pPage.ctrl(CTRLID_KASA_MODE).value
+			m_cKorekta = pPage.ctrl(CTRLID_KOREKTA).value
+			m_cZPZ = pPage.ctrl(CTRLID_ZPZ).value
+			m_cCreateBR = pPage.ctrl(CTRLID_CREATE_BR).value
+		end if
+	end sub
+	public sub perform_operation(byref pObject , byref pPage)
+		perform_operation_on_config	Me, pObject , pPage
+	end sub
+end class
+
+class cn5zakup_dok_config
+private m_aOperations(COUNT_OPERATIONS_INX)
+	public m_eTypRej
+
+
+	public sub setTypeRej(eTypRej)
+		m_eTypRej = eTypRej
+		dim i
+		for i = 0 to COUNT_OPERATIONS
+			m_aOperations(i).m_eTypRej = m_eTypRej
+		next
+	end sub
+	
+	public sub class_initialize()
+		dim i
+		for i = 0 to COUNT_OPERATIONS
+			set m_aOperations(i) = new cn5zakup_oper_config
+		next
+	end sub
+
+	public function is_empty(byval nNumOper)		
+		dim pOperConf:set pOperConf = m_aOperations(nNumOper)
+		is_empty =	pOperConf.is_empty
+	end function
+
+	public sub init_with_defaults(nTypRej)
+
+		setTypeRej nTypRej
+
+		dim i
+		for i = 0 to COUNT_OPERATIONS
+			set m_aOperations(i) = new cn5zakup_oper_config
+		next
+
+		m_aOperations(1).m_strName = "Wydruk zamówienia obcego"
+		'todo: wyszukanie publikacji: m_aOperations(1).m_idObjDPC_1
+
+	end sub
+
+	public sub load_from_string(byref strConfig)
+		dim aItems : aItems = split(strConfig, REJDOK_CONG_SEPARATOR)
+		dim i 
+		dim last : last = ubound(aItems)
+		if last > COUNT_OPERATIONS then
+			last = COUNT_OPERATIONS
+		end if
+		for i = 0 to last
+			m_aOperations(i).load_from_string aItems(i)
+		next
+	end sub
+	
+	public function save_to_string
+		dim strTotal : strTotal = ""
+		dim i
+		for i = 0 to COUNT_OPERATIONS
+			strTotal = strTotal + m_aOperations(i).save_to_string() + REJDOK_CONG_SEPARATOR
+		next
+		save_to_string = strTotal
+	end function
+
+	public property get operation_name(byval nOperNr)
+		operation_name = m_aOperations(nOperNr).m_strName
+	end property
+	public property let operation_name(byval nOperNr,byref strName)
+		m_aOperations(nOperNr).m_strName = strName
+	end property
+
+	public sub show_config_page(byval nOperNr)
+		m_aOperations(nOperNr).show_config_page
+	end sub
+	public sub perform_operation(nOperNr,byref pObject,byref pPage)
+#ifdef _DEBUG
+		trans_.message 1002 , 0 , "DEBUG: " + cstr(operation_name(nOperNr))
+#endif
+		m_aOperations(nOperNr).perform_operation pObject , pPage
+	end sub
+end class
+
+function create_config_object(byref pRejestr)
+	dim pNewConfig : set pNewConfig = new cn5zakup_dok_config
+	pNewConfig.m_eTypRej = pRejestr.eTyp
+	pNewConfig.setTypeRej pRejestr.eTyp
+	set create_config_object = pNewConfig
+end function
+
+
+'--------------------------- config page ------------------
+function fok
+	page_.result = CMD_CHOICE
+	page_.goback
+end function
+
+
+function fcancel
+	page_.goback
+end function
+
+'--------------------------- perform operation ------------------
+private sub perform_operation_on_config(byref pConfig,byref pZakup , byref pPage)
+
+#ifdef _ALMA_TREND
+  if isProdMaszyna(pZakup) and pZakup.strExtra2 = "" then
+    trans_.message 7000, 0, "Na pozycji dokumentu występuje produkt będący maszyną. Należy wpisać numer zamówienia dla tej maszyny."
+    exit sub
+  end if
+#endif
+
+	if not pPage.std_fsave_external_with_saveobjects() then
+		exit sub
+	end if
+	
+	if not make_task_on_zakup(pConfig.m_cCreateTask,pZakup,pPage) then
+		exit sub
+	end if
+	
+	if not make_publication_on_zakup(pConfig.m_idObjDPC_1,pZakup,pPage) then
+		exit sub
+	end if
+
+	if not make_publication_on_zakup(pConfig.m_idObjDPC_2,pZakup,pPage) then
+		exit sub
+	end if
+	
+	if not make_pz_on_zakup(pConfig.m_ePZMode,pZakup,pPage) then
+		exit sub
+	end if
+	
+	if not make_kpkw_on_zakup(pConfig.m_eKasaMode,pZakup,pPage) then
+		exit sub
+	end if
+	
+	if not create_korekta(pConfig.m_cKorekta,pZakup,pPage) then
+		exit sub
+	end if	
+
+
+	if not fill_zakup_from_pz(pConfig.m_cZPZ,pZakup,pPage) then
+		exit sub
+	end if
+	
+	
+	if not make_bpbr_on_zakup(pConfig.m_cCreateBR,pZakup,pPage) then
+		exit sub
+	end if	
+ 
+end sub
+
+#ifdef _ALMA_TREND
+'zwraca true gdy na pozycji dokumentu występuje maszyna
+function isProdMaszyna(byref pZakup): isProdMaszyna = false
+  dim pPoz
+  for each pPoz in pZakup.listPozycje
+    if not pPoz.pProdukt is nothing then
+      if Mid(pPoz.pProdukt.strIndeks,2,1) = "O" then
+        isProdMaszyna = true
+        exit function
+      end if
+    end if
+  next
+end function
+#endif
+
+
+private function make_kpkw_on_zakup(eKasaMode,byref pZakup , byref pPage) : make_kpkw_on_zakup = false
+	if eKasaMode = "1" then
+		eKasaMode = clng(2)
+	else
+		eKasaMode = clng(1)
+	end if
+	make_kpkw_on_zakup = doc_.getmodule(60153).make_platnosc_on_dokhandl(eKasaMode, pZakup , pPage , N5REJESTRDOK_KASOWY)
+end function
+
+
+
+private function make_bpbr_on_zakup(cMode,byref pZakup , byref pPage) : make_bpbr_on_zakup = false	
+	if cMode = "1" then
+		cMode = clng(2)
+	else
+		cMode = clng(1)		
+	end if
+	make_bpbr_on_zakup = doc_.getmodule(60153).make_platnosc_on_dokhandl(cMode, pZakup , pPage , N5REJESTRDOK_BANKOWY)
+end function
+
+
+
+
+
+private function make_pz_on_zakup(ePZMode,byref pZakup,byref pPage) : make_pz_on_zakup = true
+
+	#ifdef APPCONFIG_INTG_POROW_DOK
+		if (ePZMode<>1) then
+			dim pModule_pz : set pModule_pz = doc_.getmodule(60317)
+			make_pz_on_zakup = pModule_pz.modul_sterujacy_ZAKUP_PZ(pPage,0)
+			trans_.var(APPVAR_REJESTR_TYP) = pZakup.pRejestrDok.eTyp
+			trans_.var(APPVAR_REJESTR_DOKUMENTOW) = pZakup.pRejestrDok.idobj
+		else
+			make_pz_on_zakup = doc_.getmodule(60226).dh2dm_exchange(ePZMode,pPage,0)
+			trans_.var(APPVAR_REJESTR_TYP) = pZakup.pRejestrDok.eTyp
+			trans_.var(APPVAR_REJESTR_DOKUMENTOW) = pZakup.pRejestrDok.idobj
+		end if
+	#else
+    dim oM60226 : set oM60226 = doc_.getmodule(60226)
+    
+#ifdef _TANDEM_BAITS    
+	if ePZMode <> "5" then
+		oM60226.set_send_to_navo2002_bis_mode true
+	else
+		'PZ na bazie handlowej navo2002
+		ePZMode = "2"
+	end if
+#endif
+
+		make_pz_on_zakup = oM60226.dh2dm_exchange(ePZMode, pPage, 0)
+    
+		trans_.var(APPVAR_REJESTR_TYP) = pZakup.pRejestrDok.eTyp
+		trans_.var(APPVAR_REJESTR_DOKUMENTOW) = pZakup.pRejestrDok.idobj
+	#endif
+
+
+end function
+
+
+private function make_task_on_zakup(cCreateTask,byref pZakup,byref pPage) : make_task_on_zakup = true
+	
+	if cCreateTask = "0" then
+		exit function
+	end if
+
+	if not pPage.std_fsave_external_with_saveobjects() then
+		make_task_on_zakup = false
+		exit function
+	end if
+
+	UnderConstruction
+end function
+
+
+function fill_pz_from_zakup(byref pPZ,byval idZakup) : fill_pz_from_zakup = false
+
+	dim pZakup : set pZakup = trans_.getobj(TYPEID_N5ZAKUP,idZakup)
+	set pPZ.wrefDokHandl = pZakup
+
+	'TODO - czy zastępowac informacje???
+	set pPZ.pKlient = pZakup.pDostawca
+	set pPZ.pKlient_JO = pZakup.pDostawca_JO	
+
+	'jeśli nie jest ustawiony magazyn domyślny
+	if pPZ.pMagDocel is nothing then
+		'to go trzeba wybrać
+		dim idMag : idMag  = fire_choice_list_disable_add(TYPEID_N5MAGAZYN ,"Wybierz magazyn przyjęcia","","eTyp=N5TYPMAG_PODSTAWOWY","","")
+		if idMag = 0 then
+			exit function
+		else
+			set pPZ.pMagDocel = trans_.getobj(TYPEID_N5MAGAZYN, idMag)		
+		end if
+	end if
+	
+	'potem przejeżdzamy wszystkie pozycje Zakupy
+	dim pPozycja
+	for each pPozycja in pZakup.listPozycje
+		if pPozycja.pProdukt.eRodzaj = N5PRODUKT_TOWAR then
+			fill_pozdokmag_from_pozzakup pPZ.listPozycje, pPozycja
+		end if
+	next
+
+	fill_pz_from_zakup = true
+end function
+
+
+private function fill_pozdokmag_from_pozzakup(byref lista, byref pSrcPoz)
+	dim pDestPoz
+	set pDestPoz = lista.AddNew()
+	set pDestPoz.pProdukt = pSrcPoz.pProdukt
+	set pDestPoz.pOpak = pSrcPoz.pOpak
+
+	dim curOutputIlosc1,curOutputCena1,curOutputIlosc2,curOutputCena2
+
+	'wyliczenie rozbicia
+	wylicz_rozbicie pSrcPoz.curIloscOpak , pSrcPoz.curWartNetto , _ 
+					curOutputIlosc1 , curOutputCena1 , curOutputIlosc2 , curOutputCena2 , _ 
+					pSrcPoz.pOpak.pJednOpak.nDokladnosc-1
+
+	pDestPoz.curIloscOpak = curOutputIlosc1
+	pDestPoz.curCenaMag = curOutputCena1
+
+	if curOutputIlosc2 <> 0  then
+		set pDestPoz = lista.AddNew()
+		set pDestPoz.pProdukt = pSrcPoz.pProdukt
+		set pDestPoz.pOpak = pSrcPoz.pOpak
+		pDestPoz.curIloscOpak = curOutputIlosc2
+		pDestPoz.curCenaMag = curOutputCena2			
+	end if
+
+end function
+
+
+
+private function make_publication_on_zakup(idObjDPC,byref pZakup,byref pPage) : make_publication_on_zakup = true
+
+	if idObjDPC = 0 then
+		exit function
+	end if
+
+	if not pPage.std_fsave_external_with_saveobjects() then
+		make_publication_on_zakup = false
+		exit function
+	end if
+
+	if is_email_publication(idObjDPC) then
+	'luki zakupy 60196
+
+	
+	dim pM60153: set pM60153=doc_.getmodule(60153)
+	pm60153.choose_mail pZakup.idobj,pZakup.pDOstawca.idobj,pZakup.type
+			
+			if pM60153.get_g_sStrMail="" then
+				MessageBox  "Nie wysłano maila ... ","Informacja...", vbOKOnly, vbInformation 
+			else
+				dim adresyEmail:adresyEmail=pM60153.get_g_sStrMail
+				make_publication_on_zakup = realize_email_publication(abs(idObjDPC),pZakup,adresyEmail,pZakup.text,nothing)
+			end if
+	else
+		make_publication_on_zakup = (realize_publication(abs(idObjDPC),pZakup,idObjDPC>0,nothing) = 0)
+	end if
+
+end function
+
+
+
+
+
+function create_korekta(cKorekta, byref pFaktura, byref pPage):create_korekta = true
+
+	if cKorekta = "0" then
+		exit function
+	end if
+	
+	create_korekta = false
+	
+	if not pPage.std_fsave_external_with_saveobjects() then
+		exit function
+	end if
+
+	dim pUtil:set pUtil = doc_.getmodule(60226)
+
+	create_korekta = pUtil.create_korekta (pFaktura , 0)
+
+end function
+
+
+function BuildPZRow_Dostawca(byref pTableBuilder, byref pHli, byref pObj, byval strName)
+	if (pHli is nothing) then
+		'Budowanie nagłówka
+		clear_choice()'dzieki temu wybor bedzie dotyczyl TYLKO tego co widoczne
+		pTableBuilder.addtext "Numer dokumentu"
+#ifdef _ABAKUS
+		pTableBuilder.newcell.addtext "Numer dokumentu obcego"
+#endif
+	else
+		if (not pObj is nothing) then
+		
+			'checkbox
+			pTableBuilder.addctrl CTRL_TYPE_CHECKBOX, -1
+			pTableBuilder.element.border = 0
+			pTableBuilder.element.addnew(CTRL_TYPE_STATIC,-1).text = ""
+#ifdef _AMPLUS
+      g_bChecked = false
+#endif
+			if g_bChecked then
+				pTableBuilder.element.value = "1"			
+			else
+				pTableBuilder.element.value = "0"			
+			end if
+
+			'dodajemy do tabilcy odpoeidni obiekt
+			dim pWZCtrl:set pWZCtrl = new CObjsCheckbox
+			set pWZCtrl.m_pCtrl = pTableBuilder.element
+			pWZCtrl.m_nIdObj = pObj.idobj
+			pCtrls.add pWZCtrl						
+			
+			pTableBuilder.addtexthli pObj.strNrDok , doc_.createhlistr( _
+				doc_.afc.convert.formatter(" OPEN_FORM_PROXY_HLI_USAGE(%1,%2,%3) ").add(CStr(pObj.type)).add(CStr(pObj.idobj)).add(cstr(USAGE_VIEW)).done())
+			pTableBuilder.element.tip = "Pokaż szczegóły"
+#ifdef _ABAKUS
+			pTableBuilder.newcell.addtext pObj.strExtra1
+#endif
+		else			
+			'Budowanie grupy
+			BuildPZRow_Dostawca = false
+			exit function
+		end if
+	end if
+	BuildPZRow_Dostawca = true
+end function
+
+'wypelnienie zakupu pozycjami z PZ
+
+function fill_zakup_from_pz(cFillFromPZ,byref pZakup , byref pPage) : fill_zakup_from_pz = false
+
+	if cFillFromPZ = "0" then
+		fill_zakup_from_pz = true
+		exit function
+	end if
+
+
+
+	'najpierw wybierzemy sobie klienta
+	dim idCustomer
+	dim idCustomerJO
+
+	if pZakup.pDostawca is nothing then
+		idCustomer = fire_choice_list( TYPEID_N5KLIENT, "Wybór dostawcy", "strNazwa", " idobj in (select pKlient from n5dokmag where nTypDok = N5REJESTRDOK__PZ and wrefDokHandl_wrt <> TYPEID_N5ZAKUP )","","")
+		if idCustomer > 0 then
+			set pZakup.pDostawca	= trans_.getobj(TYPEID_N5KLIENT , idCustomer )
+		else
+			exit function
+		end if
+	else
+		idCustomer = pZakup.pDostawca.idobj
+	end if
+
+
+
+	if not pZakup.pDostawca_JO is nothing then
+		idCustomerJO = pZakup.pDostawca_JO.idobj
+	else		
+		'wybierzemy jednostke organizacyjną jezeli klinet jakies posiada...
+		idCustomerJO = trans_.findobjid(TYPEID_N5_KLIENT_JEDN_ORG, "pKlient=" + cstr(idCustomer) )
+		if idCustomerJO <> 0 then
+			idCustomerJO = fire_choice_list( TYPEID_N5_KLIENT_JEDN_ORG, "Wybór jednostki organizacyjnej klienta", "strNazwa", "pKlient=" + cstr(idCustomer) ,"","")	
+			if idCustomerJO > 0 then
+				set pZakup.pDostawca_JO	= trans_.getobj(TYPEID_N5_KLIENT_JEDN_ORG , idCustomerJO )
+			end if
+		end if
+	end if
+
+
+
+
+	if pZakup.pDostawca is nothing then
+		trans_.message 1002 , 0 , "Nie wskazano dostawcy."
+		exit function
+	end if
+
+
+	'TODO - pytac jak sie silnik poprawi!
+	if pZakup.listPozycje.count() > 0 then
+		if not trans_.saveobjects() then
+			exit function
+		end if
+	end if
+
+
+	dim idZakup:idZakup = pZakup.idObj
+	dim idZam:idZam = 0
+
+	dim pSubTrans:set pSubTrans = trans_.createsubtran()		
+		dim pFaktura:set pFaktura = trans_.getobj(TYPEID_N5ZAKUP , idZakup)
+		'szukamy WZ dla tego samego klienta (jo) i nie skojarzonych z zadna faktura
+		dim idPZ
+		dim strWhere:strWhere = "(nTypDok=N5REJESTRDOK__PZ) and ( wrefDokHandl_wrt <> TYPEID_N5ZAKUP  ) and (pKlient="+cstr(idCustomer)+") and (pKlient_JO ="+cstr(idCustomerJO)+")"
+
+		'zabawa z listą - trzeba ją troche zmodyfikować
+		dim choicelist:set choicelist = get_choicelist()
+		choicelist.prepare_choice_list TYPEID_N5DOKMAG ,"Wybierz PZ","",strWhere,"","", getref("BuildPZRow_Dostawca")
+		choicelist.hide_buttons(true)
+		choicelist.multiple
+		choicelist.hide_buttons_ok_cancel
+    
+		dim oSelBtn:set oSelBtn = choicelist.get_custom_container().addnew(CTRL_TYPE_BUTTON, -1)
+		oSelBtn.styleitem = STYLE_BUTTON
+		set hli = doc_.createhlistr("varFunctionHLI=check_all")
+		set hli.prop(345) = getref("set_check_all")
+		set oSelBtn.hli = hli
+		oSelBtn.text = "Wszystko" 
+        
+		dim oUnselBtn:set oUnselBtn = choicelist.get_custom_container().addnew(CTRL_TYPE_BUTTON, -1)
+		oUnselBtn.styleitem = STYLE_BUTTON
+		set hli = doc_.createhlistr("varFunctionHLI=uncheck_all")
+		set hli.prop(345) = getref("set_check_all")
+		set oUnselBtn.hli = hli
+		oUnselBtn.text = "Nic"     
+    
+		choicelist.get_custom_container().addnew CTRL_TYPE_PARAGRAPH,-1    
+
+		dim pButton:set pButton = choicelist.get_custom_container().addnew(CTRL_TYPE_BUTTON, -1)
+		pButton.styleitem = STYLE_BUTTON
+		dim hli:set hli = doc_.createhlistr("varFunctionHLI=f_custom_result vn1='BTN_ZASTAP'")
+		set pButton.hli = hli
+		pButton.text = "Zastąp" 
+
+		set pButton = choicelist.get_custom_container().addnew(CTRL_TYPE_BUTTON, -1)
+		pButton.styleitem = STYLE_BUTTON		
+		set hli = doc_.createhlistr("varFunctionHLI=f_custom_result vn1='BTN_DOPISZ'")
+		set pButton.hli = hli
+		pButton.text = "Dopisz" 
+
+
+		set pButton = choicelist.get_custom_container().addnew(CTRL_TYPE_BUTTON, -1)
+		pButton.styleitem = STYLE_BUTTON
+		set hli = doc_.createhlistr("varFunctionHLI=f_custom_result vn1='BTN_ANULUJ'")
+		set pButton.hli = hli
+		pButton.text = "Anuluj" 			
+
+		idPZ = choicelist.domodalauto()
+
+		if idPZ = BTN_ANULUJ then
+			exit function
+		end if
+
+		if idPZ = BTN_ZASTAP then
+			pFaktura.listPozycje.deleteall()
+		end if
+
+		if pFaktura.listPozycje.count() = 0 then
+			pFaktura.curSumaWal = ccur(0)
+			pFaktura.curSumaOplatyZagr = ccur(0)
+			pFaktura.curSumaAkcyza = ccur(0)
+			pFaktura.curSumaOplatyKraj = ccur(0)
+			pFaktura.curSumaClo = ccur(0)
+		end if
+
+
+		'dim bMarza:bMarza = pCheckbox.value = "1"
+		'tu sprawdzamy czy mozemy pobrac ceny z dostaw
+		if not doc_.getmodule(60253).gm_ensure_accuracy_ui(true) then
+			'baza nie jest 'naprawiona'
+			trans_.message 1002 , 0 , "Nie da się pobrać cen dostawy - proszę najpierw skorzystać z opcji naprawy bazy danych. Wykryto braki na magazynach"
+			exit function
+		end if
+
+		'i tu pętelka....
+
+		'pobieramy tablicę transakcji spełniających wyżej określone kryterium
+		dim pPZIdArray:set pPZIdArray = get_choice()
+		dim iter
+		dim pPZ
+		'iterujemy się po nich i dla tych, które zaznaczyliśmy naliczamy notę
+		for iter = 0 to pPZIdArray.UpperIndex
+			if pPZIdArray.value(iter).generate then
+				idPZ = pPZIdArray.value(iter).id
+					
+					'*******************************************
+					'właściwa akcja
+					set pPZ = trans_.getobj(TYPEID_N5DOKMAG , idPZ)
+
+					dim poz_pz,poz_zakup
+					for each poz_pz in pPZ.listPozycje
+						' wyszukujemy takiej samej pozycji lub dodajemy nową jesli nie ma
+						set poz_zakup = pFaktura.listPozycje.addnew()
+						poz_zakup.n5pozzakup_fill_from_pozdokmag(poz_pz)
+					next
+          
+					'kojarzymy dokumenty Zamówienie -> Faktura
+					if not pPZ.wrefDokHandl is nothing then
+						if pPZ.wrefDokHandl.type = TYPEID_N5ZAMOWIENIE and idZam = 0 then
+							idZam = pPZ.wrefDokHandl.idobj
+							set pFaktura.pZamowienie = trans_.getobj(TYPEID_N5ZAMOWIENIE,idZam)
+						end if
+					end if
+          
+					'kojarzymy dokumenty PZ -> Faktura
+					set pPZ.wrefDokHandl = pFaktura
+
+			end if
+
+		next
+
+		dim bSaved:bSaved = trans_.saveobjects()
+
+		if not bSaved then			
+			trans_.discard
+		end if
+
+		set pSubTrans = nothing
+
+	pPage.updateview
+	if bSaved then
+		pPage.enableedit = false
+	end if
+
+	fill_zakup_from_pz = bSaved
+
+end function
+
+
+
+'---------------------------------------------------------------------------------
+
+'-----------------------------------------------
+function set_check_all(byval bCheck)
+  dim oArray : set oArray = get_choice()
+  dim iIter
+  for iIter = 0 to oArray.UpperIndex
+    oArray.value(iIter).select_item bCheck
+  next
+end function
+'-----------------------------------------------
+
+]]>
+</script>
+</config>
+<body>
+	
+
+QXF_BEGIN
+	QXS_BEGIN_FLAT(SECID_ALL,Konfiguracja,FORM_SPAN)
+		<tr>
+			QXX_CHOOSE_PUBLICATION(CTRLID_DPC_1,CTRLID_PIC_DPC_1,CTRLID_DPC_1_PREVIEW,1)
+		</tr>		
+
+		<tr>
+			QXX_CHOOSE_PUBLICATION(CTRLID_DPC_2,CTRLID_PIC_DPC_2,CTRLID_DPC_2_PREVIEW,1)
+		</tr>
+		
+		QXR_SEPARATOR(2)
+
+
+		<tr>
+			QXC_LABEL(Przyjęcie towaru,1)
+			<td>
+				<radio width='max' name='CTRLID_PZ_MODE'>
+					<t>bez PZ</t>				
+					<t>wypełnij, zapisz i pokaż PZ</t>				
+					<t>wypełnij i zapisz PZ</t>				
+					<t>wypełnij, zapisz i wydrukuj PZ</t>
+#ifdef _TANDEM_BAITS
+					<t>wypełnij, zapisz i pokaż PZ (na bazie handlowej)</t>
+#endif
+				</radio>
+			</td>
+		</tr>
+
+		QXR_LABELED_CHECK(CTRLID_ZPZ,,Wypełnij z PZ)
+		QXR_LABELED_CHECK(CTRLID_KASA_MODE,,Wypełnij i pokaż KW)
+		QXR_LABELED_CHECK(CTRLID_CREATE_BR,,Wypełnij i pokaż BR)
+		QXR_LABELED_CHECK(CTRLID_KOREKTA,,Utwórz korektę)
+
+
+		#comment - na razie ukryty
+		QXR_LABELED_CHECK_HIDE(CTRLID_CREATE_TASK,,Zapamiętaj zdarzenie,true)
+
+				
+		QXR_SEPARATOR(FORM_SPAN)
+
+	QXS_END_FLAT(FORM_SPAN)
+QXF_END
+
+XFDIALOGBUTTONS
+
+</body>
+</page>

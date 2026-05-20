@@ -1,0 +1,235 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1001.h"
+#include "h1004.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1240.h"
+
+#define CTRLID_ZAMOWIENIA_TABLE 101
+-->
+<page style='STYLE_PAGE'>
+<config>
+	<title>
+	Nowe zamówienia obce
+	</title>
+<startpos>center</startpos>
+<iid>THIS_FILE</iid>
+<script>
+<![CDATA[
+#include "50629"
+
+'chooserejestrdok
+#include "50517"
+
+'MessageBox
+#include "50122"
+
+'HARUI
+#include "50101"
+#include "50203"
+
+dim nIdRejestr: nIdRejestr = clng(0)
+dim pIdZamArray: set pIdZamArray = doc_.afc.new_navoarray()
+
+function fopen()
+
+	dim bSilent:bSilent = true
+	if trans_.isvar(1) then
+		bSilent = false
+	end if
+
+  'pobierz rejestr oraz czas
+  dim nCzas: nCzas = clng(0)
+  
+  dim pGlobProfIdRej : set pGlobProfIdRej = nx_get_globprofile_obj(GLOBPROF_ID_REJESTR_ZAMOWIEN)
+  if not pGlobProfIdRej is nothing then
+    if pGlobProfIdRej.Wartosc <> cstr(0) then
+      nIdRejestr = clng(pGlobProfIdRej.Wartosc)
+    end if
+  end if
+  
+  dim pGlobProfCzas : set pGlobProfCzas = nx_get_globprofile_obj(GLOBPROF_CZAS_POWIADOMIEN)
+  if not pGlobProfCzas is nothing then
+    if pGlobProfCzas.Wartosc <> cstr(0) then
+      nCzas = clng(pGlobProfCzas.Wartosc)
+    end if
+  end if  
+  
+  if not (nIdRejestr > clng(0) and nCzas > clng(0)) then
+    fopen = false
+    exit function
+  end if
+
+	'sprawdz uprawnienia użytkownika do rejestru
+  dim pRejestrDok: set pRejestrDok = trans_.getobj(TYPEID_N5REJESTRDOK,nIdRejestr)
+	if bSilent then
+		if not HOR(STDR_READ,pRejestrDok.type,pRejestrDok.idobj) then
+			fopen = false
+			exit function
+		end if
+	else
+		if not HORUI(STDR_READ,pRejestrDok.type,pRejestrDok.idobj) then
+			fopen = false
+			exit function
+		end if
+	end if
+
+	if not find_page_on_iid(THIS_FILE) is nothing then
+		fopen = false
+		doc_.postcommand("varCmd=CMD_REFRESH gvar_page_iid=THIS_FILE")
+		exit function
+	end if
+  
+	fopen = prepare_content()
+	if trans_.isvar(1) and not fopen then
+		MessageBox "Brak nowych zamówień", "Sprawdzenie nowych zamówień", vbOKOnly, vbInformation
+	end if
+end function
+
+function frefresh()
+	prepare_content
+end function
+
+'--------------------------------------
+'zapamiętuje Id zamówienia do odłożenia
+'--------------------------------------
+function GetIdZam(): GetIdZam = "(1=1)"
+  dim iter
+  dim strIdZam: strIdZam = ""
+  for iter = 0 to pIdZamArray.upperIndex
+    strIdZam = strIdZam + CStr(pIdZamArray.value(iter)) + ","
+  next
+  if strIdZam <> "" then
+    GetIdZam = "IdObj not in (" + strIdZam + "0)"
+  end if
+end function
+
+'-------------------------------
+'wyświetl listę nowych zamówień
+'-------------------------------
+function prepare_content() : prepare_content = false
+
+  dim strWhere 
+  strWhere = trans_.afc.convert.Formatter("" +_
+  " pRejestrDok = %1 and dDataWyst <= %2 and zam_eWaznoscZam = 1 and %3")_
+  .add(nIdRejestr) _
+  .add(trans_.afc.convert.date2SQL(CDate(trans_.var(GVAR_SYSDATE)))) _
+  .add(GetIdZam()) _
+  .done()
+
+  dim oTB: set oTB = doc_.afc.new_tb(page_).attach(page_.ctrl(CTRLID_ZAMOWIENIA_TABLE)).removeall
+
+  dim pCursor: set pCursor = trans_.createrawcursor(TYPEID_N5ZAMOWIENIE, strWhere, "dDataWyst" , "")
+  if not pCursor.exists(1) then
+	  exit function
+  end if
+
+  dim pZamowienie
+  dim iter : iter = 1
+  for each pZamowienie in pCursor
+	  oTB.newrow
+	  if iter mod 2 = 0 then
+		  oTB.row.styleitem = STYLE_ROW_EVEN
+	  end if
+	  set oTB.newcell.addtext(pZamowienie.strNrDok).element.hli = _
+		  doc_.createhlistr( doc_.afc.convert.formatter("OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5ZAMOWIENIE,%1,USAGE_VIEW) ") _
+		  .add(pZamowienie.idobj).done())
+    oTB.newcell.addtext trans_.afc.display.fulldate(pZamowienie.dDataWyst)      
+      
+	  oTB.newcell
+	  if not pZamowienie.pKlient is nothing then
+		  oTB.addtext pZamowienie.pKlient.text
+	  end if
+
+	  with oTB.newcell.addctrl(CTRL_TYPE_BUTTON, -1).element
+		  .text = "Zamknij"
+		  .styleitem = STYLE_BUTTON
+		  set .hli = doc_.createhlistr("varFunctionHLI='zamknij_zamowienie_on_hli' vn1=" + cstr(pZamowienie.idobj))
+	  end with
+    
+	  with oTB.newcell.addctrl(CTRL_TYPE_BUTTON, -1).element
+		  .text = "Odłóż"
+		  .styleitem = STYLE_BUTTON
+		  set .hli = doc_.createhlistr("varFunctionHLI='odloz_zamowienie_on_hli' vn1=" + cstr(pZamowienie.idobj))
+	  end with    
+	  iter = iter + 1
+  next
+	
+  prepare_content = true
+end function
+
+'--------------------------------------
+'zamyka powiadomienie i odświeża raport
+'--------------------------------------
+function zamknij_zamowienie_on_hli(byref pHLI)
+	zamknij_zamowienie_on_id clng(pHLI.prop(1))
+	frefresh
+end function
+
+'---------------------------------------
+'odkłada powiadomienie i odświeża raport
+'---------------------------------------
+function odloz_zamowienie_on_hli(byref pHLI)
+	odloz_zamowienie_on_id clng(pHLI.prop(1))
+	frefresh
+end function
+
+'---------------------------------
+'zamyka powiadomienie o zamówieniu
+'---------------------------------
+function zamknij_zamowienie_on_id(byval idZamowienie): zamknij_zamowienie_on_id = true
+	if idZamowienie > clng(0) then
+    dim pZam: set pZam = trans_.getobj(TYPEID_N5ZAMOWIENIE,idZamowienie)
+    pZam.zam_eWaznoscZam = clng(2)
+    zamknij_zamowienie_on_id = trans_.saveobjects()	
+  end if
+end function
+
+'--------------------------------------------
+'odkłada zamówienie do ponownego wyświetlenia
+'--------------------------------------------
+function odloz_zamowienie_on_id(byval idZamowienie)
+  if idZamowienie > clng(0) then
+    pIdZamArray.add idZamowienie
+  end if
+end function
+
+
+]]>
+</script>
+
+</config>
+
+<header>
+</header>
+<body>
+<table name='CTRLID_ZAMOWIENIA_TABLE'>
+	<thead>
+		<tr style='STYLE_TABLE_HEADER'>
+      <td>
+        <t>Numer dokumentu</t>
+      </td>
+      <td>
+        <t>Data</t>
+      </td>
+			<td width='5000'>
+				<t>Klient</t>
+			</td>
+			<td>
+				<t>Zamknij</t>
+			</td>
+			<td>
+				<t>Odłóż</t>
+			</td>
+		</tr>
+	</thead>
+	<tbody border='1' style='STYLE_TABLE_BODY_RAPORT'>
+	</tbody>
+</table>
+</body>
+</page>

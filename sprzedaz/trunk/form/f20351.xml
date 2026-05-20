@@ -1,0 +1,255 @@
+<?xml version="1.0" encoding="windows-1250"?>
+#include "h1000.h"
+#include "h1001.h"
+#include "h1002.h"
+#include "h1004.h"
+#include "h1201.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1200.h"
+#include "h1220.h"
+#include "h1232.h"
+#include "h1224.h"
+
+#define CTRL_RKS	100
+#define CTRL_JO		101
+#define CTRL_DATA	102
+#define CTRL_WYK	103
+
+<page style='STYLE_PAGE'>
+
+<config>
+	<title>
+	Zmiana parametrów bieżących
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+
+<startpos>center</startpos>
+<secidread>CMDID_ZMIEN_PARAMETRY##STDR_READ</secidread>
+
+<script><![CDATA[
+
+#include "50120"
+#include "50126"
+#include "50203"
+#include "50516"
+#include "50200"
+#include "50101"
+
+dim rks
+dim jo
+dim today
+dim wyk
+dim ok:ok = false
+
+function fopen:fopen = std_fopen()
+#ifdef _ABAKUS
+	if HARUI_FREE(UAR_OGRANICZONY_DOSTEP_DANE_KLIENTA) then
+    fopen = false
+    exit function
+  end if
+#endif 
+
+	dim idrks:idrks = trans_.var(GVAR_ROKKSIEG)
+	if idrks < 1 then
+		set rks = nothing
+	else
+		set rks = trans_.getobj(TYPEID_N5ROKKSIEG , idrks )
+	end if
+
+	dim idjo
+	if trans_.isvar(GVAR_CURR_JO) then
+		idjo = trans_.var(GVAR_CURR_JO)
+	else
+		idjo = 0
+		trans_.var(GVAR_CURR_JO) = clng(0)
+	end if
+
+	if idjo < 1 then
+		set jo = nothing
+	else
+		set jo = trans_.getobj(TYPEID_N5JEDN_ORG , idjo )
+	end if
+
+	today = trans_.var(GVAR_TODAY)
+
+	set wyk = getCurrentWykonawca()
+end function
+
+function c##CTRL_RKS##_ongetdata(byref oCtrl): c##CTRL_RKS##_ongetdata=true
+	if rks is nothing then
+		oCtrl.text = "<brak>"
+	else
+		oCtrl.text = rks.text
+	end if	
+end function
+
+
+function c##CTRL_JO##_ongetdata(byref oCtrl): c##CTRL_JO##_ongetdata=true
+	if jo is nothing then
+		oCtrl.text = "<brak>"
+	else
+		oCtrl.text = jo.text
+	end if	
+end function
+
+function c##CTRL_DATA##_ongetdata(byref oCtrl): c##CTRL_DATA##_ongetdata=true	
+	oCtrl.value = cdate(today)
+end function
+
+function c##CTRL_DATA##_ondataentered(byref oCtrl , newValue): c##CTRL_DATA##_ondataentered=true
+	today = oCtrl.value
+end function
+
+function c##CTRL_WYK##_ongetdata(byref oCtrl): c##CTRL_WYK##_ongetdata=true	
+	if wyk is nothing then
+		oCtrl.text = "<brak>"
+	else
+		oCtrl.text = wyk.text
+	end if
+end function
+
+
+function change_rok
+	dim id:id = changeRKS(false)
+	if id > 0 then
+		set rks = trans_.getobj(TYPEID_N5ROKKSIEG , id )
+		if srvDate > rks.dDataZakon then			
+			today = rks.dDataZakon
+		else
+			if srvDate < rks.dDataRozp then
+				today = rks.dDataRozp
+			else
+				today = srvDate
+			end if			
+		end if
+	end if
+end function
+
+
+function change_jo()
+	dim choice : choice = fire_choice_list( TYPEID_N5JEDN_ORG , "" ,"","" ,"",""	)
+	if choice <> 0 then
+		set jo = trans_.getobj(TYPEID_N5JEDN_ORG , choice )
+	end if
+end function
+
+function change_wyk()
+	dim choice : choice = fire_choice_list( TYPEID_N5WYKONAWCA , "Bieżący wykonawca" ,"strIndeks","" ,"",""	)
+	if choice <> 0 then
+		set wyk = trans_.getobj(TYPEID_N5WYKONAWCA , choice )
+	end if
+end function
+
+
+function save_settings(): save_settings = false
+	if (rks is nothing) then
+		view_message 6243, 0
+		exit function
+	end if
+
+	if (today < rks.dDataRozp or today > rks.dDataZakon) then
+		view_message 6245, 0
+		exit function
+	end if
+
+	if (jo is nothing) then
+		view_message 6244, 0
+		exit function
+	end if
+
+	trans_.var(GVAR_TODAY) = today
+	trans_.var(GVAR_CURR_JO) = jo.idobj
+
+	dim user:set user = getCurrentUser()
+	set user.pWykonawca = wyk
+	
+	'Ustaw bieżący rok księgowy
+	setCurrentRKS(rks.idobj)
+	
+	save_settings = trans_.saveobjects()
+end function
+
+function strSystemDate
+	strSystemDate = trans_.afc.display.fulldate(today)
+end function
+
+function fok()
+	if save_settings() then
+		page_.result = CMD_CHOICE
+		page_.goback
+	end if
+end function
+
+function called_from_init()
+end function
+
+function fcancel
+	page_.goback
+end function
+
+
+]]></script>
+</config>
+<header>
+</header>
+<body>
+
+<table>
+	<tbody>
+		<tr>
+			<td width='min'>
+				<t bold='true' href='varFunction="change_rok"'>Bieżący rok księgowy</t>
+			</td>		
+			<td keepline='true'>
+				<edit disable='true' name='c##CTRL_RKS' size='30'>
+					<transfer mode='custom'/>					
+				</edit>
+			</td>
+		</tr>
+
+		<tr>
+			<td  width='min'>
+				<t bold='true' href='varFunction="change_jo"'>Bieżąca jednostka organizacyjna</t>
+			</td>		
+			<td keepline='true'>
+				<edit disable='true' name='c##CTRL_JO' size='30'>
+					<transfer mode='custom'/>					
+				</edit>
+			</td>
+		</tr>
+
+		<tr>
+			<td width='min'>
+				<t href='varFunction="change_wyk"'>Bieżący wykonawca</t>
+			</td>		
+			<td keepline='true'>
+				<edit disable='true' name='c##CTRL_WYK' size='30'>
+					<transfer mode='custom'/>					
+				</edit>
+			</td>
+		</tr>
+
+		<tr>
+			<td width='min'>
+				<t bold='true'>Domyślna data</t>
+			</td>		
+			<td keepline='true'>
+				<date name='d##CTRL_DATA' style='STYLE_CTRL'>
+					<transfer mode='custom'/>
+				</date>
+			</td>
+		</tr>
+
+
+	</tbody>
+</table>
+
+
+XFDIALOGBUTTONS
+
+</body>
+</page>

@@ -1,0 +1,773 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+
+Lista wyboru
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1200.h"
+#include "h1201.h"
+#include "h1220.h"
+#include "h1222.h"
+
+#define MIN_CTRL_INDEX	100
+#define MIN_ELEM_SHOW	100
+
+#define MAX_ELEMS		100
+
+#define GVAR_IDOBJ_VAR	1
+
+#define ID_MORE_RESULTS 50
+
+
+-->
+
+
+<page style='STYLE_PAGE'>
+<config>
+	<title>
+Lista wyboru
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+<typeid>TYPEID_CHOICELIST</typeid>
+<script><![CDATA[
+
+
+#include "50209"
+#include "50122"
+#include "50200"
+
+dim pHS1 : set pHS1 = createobject("navocomutil.hyperset")
+dim g_pOrder : set g_pOrder = nothing   
+dim g_tab:set g_tab = nothing
+
+dim changed		'czy dane w hypersecie byly zmienione
+dim selected	'czy byla dokonywana selekcja z kontrolek
+dim deleted		'czy lista byla usunueta (??? problemy ???)
+
+#include "50203"
+
+
+'przygotowanie formularza i danych przy przejscu do nowego rekordu
+' - zaladowanie listy do hypersetu
+' - wyczyszczenie tabeli ktora wyswietla dane
+' - ustawienie zmiennych 
+function prepare()
+
+	
+	set g_tab = doc_.afc.new_tb(page_).attach(page_.ctrl(5000)).section_body.removeall	
+
+
+	if page_.root.eDynamic = N5CHOICELIST_DYNAMIC_ZACHOWAJ then ' todo - do poprawienia
+		set g_pOrder = trans_.afc.new_navoarray()
+	end if
+
+	page_.root.choicelist_load_choicelist pHS1 ', true , g_pOrder
+
+	'dim pBodyTable : set pBodyTable=page_.ctrl(5000).body
+	'pBodyTable.removeall()
+	
+	changed=false
+	selected=false
+	deleted=false
+end function
+
+
+'rzeczy robione przy opuszczaniu aktualnego rekordu
+' - jezeli uzytkownik dokonywal selkcj na kontrolkach to filtrowanie hypersetu
+' - jezeli zostaly dokonane jakiekolwiek zmianiy to zapis hypersetu do listy
+function leave()
+	if selected=true then
+		select_checked_elems()
+	end if
+
+	if changed then
+		page_.root.choicelist_save_choicelist pHS1 , g_pOrder
+	end if
+
+	page_.ctrl(5000).hide=true
+end function
+
+
+function fnext()
+	leave()
+	fnext = std_fnext()
+	prepare()
+end function
+
+function fprev()
+	leave()
+	fprev = std_fprev()
+	prepare()
+end function
+
+function ffirst()
+	leave()
+	ffirst = std_ffirst()
+	prepare()
+end function
+
+function flast()
+	leave()
+	flast = std_flast()
+	prepare()
+end function
+
+function fback()
+	leave()
+	fback=std_fback()
+end function
+
+function fnew(): fnew=false
+	leave()
+	fnew=std_fnew()
+	prepare()
+end function
+
+function fsave
+	leave()
+	changed=false
+	selected=false
+	deleted=false
+	fsave=std_fsave()
+end function
+
+'jedynie wyswietla to co zostalo zaladowane
+function printlist()
+
+	if page_.root.eDynamic = N5CHOICELIST_DYNAMIC_ZACHOWAJ then
+		clear_order_table pHS1 , g_pOrder
+	end if
+
+	set g_tab = doc_.afc.new_tb(page_).attach(page_.ctrl(5000)).section_body.removeall	
+
+	if (not exists_hs_element(pHS1) ) then
+		MessageBox "Lista nie zawiera żadnych elementów" , "Brak pozycji", vbOKOnly, vbInformation
+		exit function
+	end if
+
+	dim pElem,n,pObj
+	n=0
+'	dim i,pRow,pBodyTable
+'	set pBodyTable=page_.ctrl(5000).body
+'	pBodyTable.removeall()
+
+	if deleted=false then
+		if page_.root.eDynamic = N5CHOICELIST_DYNAMIC_ZACHOWAJ then
+			filltablefromHS_order pHS1, 1, MAX_ELEMS , g_pOrder
+		else
+			filltablefromHS pHS1, 1, MAX_ELEMS
+		end if
+		selected=true
+	end if
+
+	page_.ctrl(5000).hide=false
+end function
+
+function moreResults()
+
+	dim pBodyTable
+	set pBodyTable=page_.ctrl(5000).body
+
+	if page_.root.eDynamic = N5CHOICELIST_DYNAMIC_ZACHOWAJ then
+		filltablefromHS_order pHS1, _
+			page_.ctrl(ID_MORE_RESULTS).userprop.prop(100), _
+			MAX_ELEMS , g_pOrder
+	else
+		filltablefromHS pHS1, _
+			page_.ctrl(ID_MORE_RESULTS).userprop.prop(100), _
+			MAX_ELEMS
+	end if
+
+
+	selected=true
+end function
+
+'zdarzenia nacisniecia przycisku wyczyszczenia listy
+function clearlist()
+
+	if (exists_hs_element(pHS1)) then
+		if MessageBox("Lista wybory zawiera elementy. Jesteś pewien, że chcesz ją wyczyścić?", "Wyczyścić listę?", vbYesNo, vbQuestion)<>vbYes then
+			exit function
+		end if
+	end if
+
+	'usuniecie zawartości listy
+	pHS1.empty()
+	while page_.root.listElement.exists(1)
+		page_.root.listElement.delete(1)
+	wend
+	
+	'wyczyszczenie tabeli wyswietlającej dane
+	dim pBodyTable : set pBodyTable=page_.ctrl(5000).body
+	pBodyTable.removeall()
+	
+	'ustawienie zmiennych
+	changed=true	'lista została zmieniona
+	deleted=true	'zostala usunięta (???)
+	selected=false	'nie dokonano selekcji
+
+	page_.ctrl(5000).hide=true
+end function
+
+dim pOperacjeKontener
+
+'kontener wizzarda dla sumy, iloczyny i różnicy
+class COperacjaContainer
+	public nTypOperacji		'1-suma 2-iloczyn 3-różnica
+	public strOperacji
+	public pListaB			'nowo wybrany zbior
+	public pListaA			'aktualny zbior
+	public nTypeId			
+
+	private sub Class_Initialize()
+		nTypOperacji=clng(1)
+		strOperacji=""
+		set pListaB=nothing
+		nTypeId=page_.root.nTypeId
+
+		set pListaA=page_.root
+	end sub
+
+end class
+
+function WizzardRun()
+	set pOperacjeKontener=new COperacjaContainer
+
+	dim pWizzard
+	set pWizzard=CWizzard(false)
+
+	pWizzard.add_step 20316
+	pWizzard.add_step 20318
+	pWizzard.add_step 20317
+	pWizzard.add_step 20319
+
+	pWizzard.add_container pOperacjeKontener
+
+	pWizzard.run
+end function
+
+function onPageExit(pWizzardPage)
+	onPageExit=PAGE_DEFAULT
+	
+	select case ( pWizzardPage.m_nPage )
+		case 20318
+			if (pWizzardPage.m_pContainer.pListaB is nothing) then
+				MessageBox "Musisz wybrać listę wyboru (zbiór) B" , "Wybór", vbOKOnly, vbInformation
+				onPageExit=PAGE_DONOTEXIT
+			end if
+	end select
+
+end function
+
+function onWizzardComplete(pWizzardPage): onWizzardComplete=false
+
+	dim pListB
+	dim pHS2
+  
+	dim pOrder:set pOrder = nothing 
+	if page_.root.eDynamic = N5CHOICELIST_DYNAMIC_ZACHOWAJ then ' todo - do poprawienia
+		set pOrder = trans_.afc.new_navoarray()
+	end if
+
+	set pListB = trans_.getobj(TYPEID_CHOICELIST,pWizzardPage.m_pContainer.pListaB.IdObj)
+	set pHS2=createobject("navocomutil.hyperset")
+	pListB.choicelist_load_choicelist pHS2 ', false , pOrder
+
+	
+
+	dim strOperacja
+
+	select case pWizzardPage.m_pContainer.nTypOperacji
+		case 1 'suma
+			select_checked_elems()	'selekcja z kontrolek
+			set pHS1 = pHS1.or(pHS2)'suma hypersetów
+			strOperacja="sumy"
+			dim iter
+			if not pOrder is nothing then
+				for iter = 0 to pOrder.UpperIndex()
+					g_pOrder.add pOrder.value(iter)
+				next
+			end if
+
+		case 2 'iloczyn
+			set pHS1 = pHS1.and(pHS2)
+			strOperacja="iloczynu"
+
+		case 3 'roznica
+			set pHS1 = pHS1.minus(pHS2)
+			strOperacja="roznicy"
+
+	end select
+
+	'clear_order_table pHS1 , g_pOrder
+
+	changed=true
+	selected=false
+	deleted=false
+
+	pWizzardPage.m_pPage.activate
+	MessageBox "Operacja " + strOperacja + " na listach wyboru została wykonana." , "Operacja wykonana", vbOKOnly, vbInformation
+
+	dim pBodyTable : set pBodyTable=page_.ctrl(5000).body
+	pBodyTable.removeall()
+	printlist()
+
+	onWizzardComplete=true
+end function
+
+function fopen()
+
+	page_.topelement.title="Lista wyboru - " + CStr( doc_.stdobjdef.getobjdef(page_.root.nTypeID).HumanName )
+
+	page_.ctrl(5000).hide=true
+	
+	'ustawiamy userprop by pamietac na jakim elemencie
+	'skonczylismy wyswietlanie
+	set page_.ctrl(ID_MORE_RESULTS).userprop=doc_.createhli()
+	page_.ctrl(ID_MORE_RESULTS).userprop.prop(100)=CLng(0)
+
+	if not page_.root.isnew then
+		prepare()
+	end if
+end function
+
+function countVisibleElems()
+	countVisibleElems=(page_.ctrl(ID_MORE_RESULTS).userprop.prop(100)-1)
+end function
+
+function filllist()
+
+	if page_.root.eDynamic = N5CHOICELIST_DYNAMIC_ZACHOWAJ then
+		clear_order_table pHS1 , g_pOrder
+	end if
+
+	'wybieramy jeden z raportow dla danego typu obiektow
+	dim strSQLWhere,nIdObj,pPM 
+	strSQLWhere = "ResultTypeId = " + CStr(page_.root.nTypeId)
+	
+	trans_.var(APPVAR_SEARCH_TYPEID) = page_.root.nTypeID ' to gdyby komus zachcialo dodawac sie nowego raportu :)
+	trans_.var(APPVAR_SEARCH_KIND) = "S"
+
+	nIdObj = fire_choice_list(TYPEID_SEARCHTYPE,"Sposób wypełniania","Nazwa",strSQLWhere,"","")	
+
+	'wyswietlamy raport
+	if nIdObj>0 then 'jesli zostal jakis wybrany
+
+		dim i,pSearchTypeObj
+		set pSearchTypeObj = trans_.getObj(TYPEID_SEARCHTYPE,nIdObj)
+		if pSearchTypeObj is nothing then
+			exit function ' jest lock i nie mozemy go dostac...
+		end if
+
+		set pPM = doc_.getmodule(60114)
+		dim strButtons: strButtons = "Wypełnij listę"
+		dim strColumns, strJoin, strWhere, strOrderBy, strGroupBy, strDescription, strIds
+
+		' pobierz kryteria wyszukiwania
+		dim nRes: nRes = pPM.get_search_filter_result(pSearchTypeObj, strButtons, strColumns, strJoin, strWhere, strOrderBy, strGroupBy, strDescription, strIds)
+		if nRes<>1 then exit function
+
+		dim pPM60115
+		set pPM60115 = doc_.getmodule(60115)
+	
+		'tworzymy kursor i wrzucamy dane z niego do listy
+		dim cursor,pCr,pElem
+		set cursor = trans_.createrawcursor (page_.root.nTypeId, strWhere,strOrderBy, pPM60115.trim_first_join(strJoin) )
+		for each pCr in cursor
+			pHS1.add page_.root.nTypeId , pCr.IdObj
+			if page_.root.eDynamic = N5CHOICELIST_DYNAMIC_ZACHOWAJ then
+				g_pOrder.add clng(pCr.IdObj)
+			end if
+			changed=true
+			selected=false
+			deleted=false
+		next
+	end if
+
+end function
+
+'wyswietlanie zawartosci  z zachowaniwm kolejnnosci
+'tablica pOrder zawiera elementy w kolejnosci takiej jak 
+'w liscie
+function filltablefromHS_order(pHS,  byval nStartElem, byval nOfElems , byval pOrder)
+
+	clear_order_table pHS , pOrder
+
+	dim pHS_printed : set pHS_printed = createobject("navocomutil.hyperset")
+
+	dim ii,hi,lo,iCtrl,p
+	iCtrl =  MIN_CTRL_INDEX 
+
+	dim i,pObj,pHli
+
+	'if g_tab is nothing then
+	'	set g_tab = doc_.afc.new_tb(page_).attach(page_.ctrl(5000)).section_body.removeall
+	'end if
+
+	p = count_hs_elems(pHS)
+
+	i = 1
+
+	dim iter
+	for iter=0 to pOrder.UpperIndex()
+		if (i>=nStartElem) then
+
+			if pHS.exists(page_.root.nTypeId , clng(pOrder.value(iter)) ) and not pHS_printed.exists(page_.root.nTypeId , clng(pOrder.value(iter)) ) then ' teraz sprawdzimy czy istnieje element w hs i nie zostal juz wydrukowany...
+
+				pHS_printed.add page_.root.nTypeId,clng(pOrder.value(iter))
+
+				set pObj = trans_.getobj(page_.root.nTypeId,clng(pOrder.value(iter)))
+				g_tab.newrow
+					
+				if (i mod 2) = 0 then
+					g_tab.row.styleitem = STYLE_ROW_EVEN
+				end if
+
+
+				set pHli = doc_.createhli()
+				pHli.prop(GVAR_IDOBJ_VAR) = pObj.idObj
+				page_add_checkbox g_tab , pObj.text , iCtrl + i
+				page_.ctrl(iCtrl + i).value="1"
+				set page_.ctrl(iCtrl + i).userprop = pHli
+
+			end if
+
+		end if
+		
+		i=i+1
+		if (i=(nOfElems+nStartElem)) then
+			exit for
+		end if
+				
+	next
+	
+	'pokaz lub ukryj "Pokaż więcej . . . ."
+	if (p>=i) then
+		page_.ctrl(ID_MORE_RESULTS).hide=false
+	else
+		page_.ctrl(ID_MORE_RESULTS).hide=true
+	end if
+
+	'ustaw na, ktorym elemencie skonczylismy
+	page_.ctrl(ID_MORE_RESULTS).userprop.prop(100)=CLng(i)
+end function
+
+
+
+
+'wyswietlanie zawartosci 
+function filltablefromHS(pHS, byval nStartElem, byval nOfElems)
+
+	dim ii,hi,lo,iCtrl,p
+	iCtrl =  MIN_CTRL_INDEX 
+
+	dim i,pObj,pHli
+
+	p = count_hs_elems(pHS)
+
+	i = 1
+	for each ii in pHS
+		
+		'wyswietlamy elementy tylko z podanego zakresu
+		if (i>=nStartElem) then
+			pHS.extract ii, hi, lo
+			set pObj = trans_.getobj(hi,lo)
+
+			g_tab.newrow
+				
+			if (i mod 2) = 0 then
+				g_tab.row.styleitem = STYLE_ROW_EVEN
+			end if
+
+
+			set pHli = doc_.createhli()
+			pHli.prop(GVAR_IDOBJ_VAR) = pObj.idObj
+			page_add_checkbox g_tab , pObj.text , iCtrl + i
+			page_.ctrl(iCtrl + i).value="1"
+			set page_.ctrl(iCtrl + i).userprop = pHli
+
+		end if
+
+		i=i+1
+
+		if (i=(nOfElems+nStartElem)) then
+			exit for
+		end if
+	next
+	
+	'pokaz lub ukryj "Pokaż więcej . . . ."
+	if (p>=i) then
+		page_.ctrl(ID_MORE_RESULTS).hide=false
+	else
+		page_.ctrl(ID_MORE_RESULTS).hide=true
+	end if
+
+	'ustaw na, ktorym elemencie skonczylismy
+	page_.ctrl(ID_MORE_RESULTS).userprop.prop(100)=CLng(i)
+end function
+
+'czyscimy tablice kolejnosci elementow z zbednych rzeczy
+function clear_order_table(byref pHS , byref pTable)
+
+	dim elem,lo,hi
+	dim iter
+	for iter = 0 to pTable.upperindex
+		'jezeli element nie istnieje w HS to wypieprzamy go z tablicy
+		if not pHS.exists(page_.root.nTypeID , pTable.value(iter)) then
+			pTable.remove(iter)
+			iter = iter - 1
+		end if
+	next	
+end function
+
+
+
+
+
+'zwraca ilosc elementow listy
+function count_list_elems()
+	dim pElement,count
+	count=0
+	for each pElement in page_.root.listElement
+		count=count+1
+	next
+	count_list_elems=count 
+end function
+
+
+'zwraca ilosc elementow hyperseta
+function count_hs_elems(pHS)
+	dim ii,count
+	count=0
+	for each ii in pHS
+		count=count+1
+	next
+	count_hs_elems=count
+end function
+
+function exists_hs_element(pHS): exists_hs_element=false
+	dim ii, count
+	for each ii in pHS
+		exists_hs_element=true
+		exit for
+	next
+end function
+
+
+'wybranie tylko tych elementow, przy ktorych checkobxy sa zaznaczone
+function select_checked_elems()
+	dim i,j, iCtrl,pHli,p
+	
+	iCtrl = MIN_CTRL_INDEX + 1
+	i = count_hs_elems(pHS1) - 1
+	p= countVisibleElems()
+
+	if selected = true then
+		for j=iCtrl to (iCtrl + p - 1)
+			if not page_.trygetctrl(j) is nothing then
+				set pHli = page_.ctrl(j).userprop
+				if page_.ctrl(j).value = 0 then
+					pHS1.remove page_.root.nTypeId , pHli.prop(GVAR_IDOBJ_VAR)
+					changed=true
+				end if
+			end if
+		next
+	end if
+end function
+
+
+
+function select_object_type()
+	dim pm : set pm = doc_.getmodule(60113)
+	dim nTypeID
+	nTypeID = pm.select_object()
+	page_.root.nTypeId=nTypeID
+end function
+
+sub page_add_checkbox(byref tab, byval strText , nId )
+	tab.newcell.addctrl(CTRL_TYPE_CHECKBOX, clng(nID)).element.border = 0
+	tab.element.addnew(CTRL_TYPE_STATIC, -1).text = strText
+end sub
+
+function uncheckall
+	dim i
+	for i= MIN_CTRL_INDEX to MIN_CTRL_INDEX + countVisibleElems()
+		if not page_.trygetctrl(i) is nothing then			
+			page_.ctrl(i).value = "0"			
+			changed=true
+			selected=true
+			deleted=true
+		end if
+	next	
+end function
+
+function reversecheck
+	dim i
+	for i= MIN_CTRL_INDEX to MIN_CTRL_INDEX + countVisibleElems()
+		if not page_.trygetctrl(i) is nothing then
+			changed=true
+			selected=true
+			deleted=true
+			if page_.ctrl(i).value = "1" then 
+				page_.ctrl(i).value = "0"
+			else
+				page_.ctrl(i).value = "1"
+			end if
+		end if
+	next
+end function
+
+function fcopy(byval nFormat,byref pDS)
+	'przenis wszystkie zmiany do bazy ale nie zapisuj
+	'zmain - robimy tylko na potrzeby kopiowania
+	leave()
+	changed=false
+	selected=false
+	deleted=false
+
+	'wykonaj standardowe kopiowanie
+	fcopy = doc_.getmodule(nFormat).std_copy(page_,pDS)
+end function
+
+function fpaste(byval nFormat,byref pSS)
+	'wklej wszystko do bazy
+	fpaste = doc_.getmodule(nFormat).std_paste(page_,pSS)
+	'zaladuj do hypersetu
+	prepare()
+end function
+
+function c8_ongetdata(ctrl)
+	if page_.root.nUser = 0 then
+		ctrl.value="0"
+	else
+		ctrl.value="1"
+	end if
+	c8_ongetdata = true
+end function
+
+function c8_ondataentered(ctrl, value)
+	if value then
+		page_.root.nUser = clng(getCurrentUserID())
+	else
+		page_.root.nUser = clng(0)
+	end if
+
+	c8_ondataentered = true
+end function
+
+function c40_ongetdata(byref oCtrl): c40_ongetdata=true	
+	oCtrl.value=cstr(page_.root.nIsSecurity)
+end function
+
+function c40_ondataentered(byref oCtrl, byval newValue)
+	page_.root.nIsSecurity = clng(newValue)
+	c40_ondataentered=true
+end function
+
+]]></script>
+</config>
+<header>
+</header>
+<body>
+
+<table style='STYLE_TABLE'>
+<tbody>
+
+<tr>
+	<td colspan='2'>
+		<table border='0' >
+			<tbody>
+				<tr>
+					<td width='min' keepline='true'>
+						<t bold='true'>Nazwa Listy</t>
+						<edit name='e3' size='30' style='STYLE_CTRL'>
+							<transfer mode='edit_field'>
+								<field>strNazwa</field>
+							</transfer>
+						</edit>
+					</td>
+				</tr>
+				<tr>
+					<td colspan='4'>
+						<checkbox name='c40'><t>Ochrona listy</t>
+							<transfer mode='custom'>				
+							</transfer>
+						</checkbox>
+						<radio colspan='2' hide='true'>
+							<transfer mode='edit_field'>
+								<field>edynamic</field>
+							</transfer>
+							<t>dowolna kolejność</t>
+							<t>zachowuj kolejność</t>
+						</radio>
+					</td>
+				</tr>
+			</tbody>
+		</table>
+	</td>
+</tr>
+
+</tbody>
+</table>
+
+<table>
+	<tbody>
+
+		<tr border='1'>
+			<td style='STYLE_ROW_BTN'>
+				XF_BUTTON(varFunction="printlist",Wyświetl)
+				XF_BUTTON(varFunction="filllist" ,Wypełnij)
+				XF_BUTTON(varFunction="clearlist",Wyczyść)
+				XF_BUTTON(varFunction="varCmd=CMD_GOBACK",Anuluj)
+			</td>
+		</tr>
+
+		<tr><td><t></t></td></tr>
+
+		<tr border='0'>
+			<td style='STYLE_ROW_BTN'>
+				XF_BUTTON(varFunction="WizzardRun",Kreator operacji)
+			</td>
+		</tr>
+
+		<tr><td><t></t></td></tr>
+
+	</tbody>
+</table>
+
+
+<table name='t5000' style='STYLE_TABLE_BODY'>
+	<tbody>
+	</tbody>
+	<tfooter>
+
+		<tr name='e##ID_MORE_RESULTS' hide='true'>
+			<td >
+				<t href='varFunction="moreResults"'>Pokaż więcej wyników . . .</t>
+			</td>
+		</tr>
+
+		<tr border='0'>
+			<td>
+				<t/>
+			</td>
+		</tr>
+		<tr style='STYLE_ROW_BTN'>
+			<td>
+				XF_BUTTON(varFunction="uncheckall",Odznacz)
+				<t/>
+				XF_BUTTON(varFunction="reversecheck",Odwróć)
+			</td>
+		</tr>
+	</tfooter>
+</table>
+
+</body>
+<footer>
+</footer>
+</page>

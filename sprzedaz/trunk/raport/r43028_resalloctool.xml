@@ -1,0 +1,715 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1001.h"
+#include "h1004.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1222.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1234.h"
+#include "h1240_appvar.h"
+
+#define CTRLID_RESULT_TABLE		1001
+#define CTRLID_ALLOC_QTY		1002
+#define CTRLID_ORDER_STATS		1003
+-->
+<page style='STYLE_PAGE'>
+<config>
+	<title>
+	Kreator przydziału towaru
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+<script>
+<![CDATA[
+'msgbox
+#include "50122"
+#include "50518"
+
+'harui
+#include "50101"
+
+'fire_choicelist
+#include "50200"
+
+dim g_eMode
+dim g_pRRAT : set g_pRRAT = nothing
+dim g_pModPM : set g_pModPM = doc_.getmodule(60227)
+
+dim g_idMagRezerw : g_idMagRezerw = clng(0)
+
+#ifdef _ABAKUS
+dim g_bPressPrzydziel: g_bPressPrzydziel = false
+#endif
+
+function fopen : fopen = false
+	g_eMode = trans_.var(APPVAR_MODE)
+
+	if not HARUI(UAR_CMDID(CMDID_WIZZARD_REAL_ZAM)) then
+		exit function
+	end if
+  
+	g_idMagRezerw = trans_.findobjid(TYPEID_N5MAGAZYN,"eTyp = N5TYPMAG_REZERWACJE")
+
+	'todo: harui
+
+	fopen = frefresh()
+end function
+
+function frefresh : frefresh = false
+
+	dim pModRapEngine : set pModRapEngine = doc_.getmodule(60108)
+
+	dim pRRAT : set pRRAT = g_pModPM.new_resource_request_alloc_tool()
+	
+	pRRAT.init g_idMagRezerw
+
+	dim pParamArray : set pParamArray = get_default_param(pRRAT)
+	
+	if pModRapEngine.show_raport_param_dialog(pParamArray,"Kryteria selekcji") = 0 then
+		exit function
+	end if
+
+	dim pPerforming : set pPerforming = doc_.performing("Trwa przygotowanie danych...")
+		
+	set g_pRRAT = nothing
+	trans_.discard
+	set g_pRRAT = pRRAT
+		
+	fill_results g_pRRAT,pParamArray
+	frefresh = true
+end function
+
+function fsave
+	'todo
+'	fsave = std_fsave()
+end function
+
+function get_default_param(byref pRRAT)
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+
+	pParamArray.add pRRAT.get_termin_real_param()
+	pParamArray.add pRRAT.get_rejestr_param()
+	pParamArray.add pRRAT.get_magazyn_param()
+	pParamArray.add pRRAT.get_klient_nazwa_param()
+	pParamArray.add pRRAT.get_klient_indeks_param()
+	pParamArray.add pRRAT.get_grupa_klient_param()
+
+	set get_default_param = pParamArray
+end function
+
+function section_hideshow_hli(byref pHLI)
+	doc_.afc.formsection.section_hideshow page_, pHLI.prop(100)
+end function
+
+'----------------------------------------------------
+function all_allocate_products()
+#ifdef _ABAKUS
+  g_bPressPrzydziel = true
+#endif
+	g_pRRAT.allocate_qty
+end function
+
+function order_allocate_products(byref pHLI)
+#ifdef _ABAKUS
+  g_bPressPrzydziel = true
+#endif
+	dim nIter : nIter = clng(pHLI.prop(100))
+	
+	g_pRRAT.allocate_qty_item nIter
+end function
+
+function all_release_products()
+#ifdef _ABAKUS
+  g_bPressPrzydziel = false
+#endif
+	 g_pRRAT.release_qty
+end function
+
+function order_release_products(byref pHLI)
+#ifdef _ABAKUS
+  g_bPressPrzydziel = false
+#endif
+	dim nIter : nIter = clng(pHLI.prop(100))
+
+	g_pRRAT.release_qty_item nIter
+end function
+
+function c##CTRLID_ALLOC_QTY##_ongetdata(pCtrl)
+	dim nIter : nIter = clng(pCtrl.userprop.prop(100))
+	dim nIter2 : nIter2 = clng(pCtrl.userprop.prop(101))
+
+	dim oRRI : set oRRI = g_pRRAT.m_oItemArray.Value(nIter)
+	dim oRRID : set oRRID = oRRI.m_oDetailArray.Value(nIter2)
+
+	pCtrl.value = oRRID.m_curAllocQty
+
+	dim bWykresl: bWykresl = (oRRID.m_curAllocQty <> 0)  
+#ifdef _ABAKUS
+	if g_bPressPrzydziel then
+		dim curIloscDost : curIloscDost = ccur(pCtrl.userprop.prop(103))
+		bWykresl = not (curIloscDost < oRRID.m_curPendingQty)
+	end if
+#endif
+  
+	wykresl_wiersz pCtrl.parent.parent,bWykresl
+end function
+
+function c##CTRLID_ALLOC_QTY##_ondataentered(pCtrl, varValue)
+	dim nIter : nIter = clng(pCtrl.userprop.prop(100))
+	dim nIter2 : nIter2 = clng(pCtrl.userprop.prop(101))
+
+	c##CTRLID_ALLOC_QTY##_ondataentered = g_pRRAT.allocate_qty_detail_value(nIter,nIter2,varValue)
+end function
+
+'----------------------------------------------------
+function c##CTRLID_ORDER_STATS##_ongetdata(pCtrl)
+	dim nIter : nIter = clng(pCtrl.userprop.prop(100))
+
+	dim oRRI : set oRRI = g_pRRAT.m_oItemArray.Value(nIter)
+
+	pCtrl.value = cstr(oRRI.m_nPendingCount) + "/" + cstr(oRRI.m_nTotalCount)
+
+	wykresl_wiersz pCtrl.parent.parent,(oRRI.m_nPendingCount = 0)
+end function
+
+'----------------------------------------------------
+function wykresl_wiersz(byref pTableRow,byval bWykresl)
+	dim pCell
+	for each pCell in pTableRow
+		dim pCtrl
+		for each pCtrl in pCell
+			if pCtrl.type = CTRL_TYPE_STATIC or	pCtrl.type = CTRL_TYPE_STATICEX then
+#ifdef _ABAKUS
+				if bWykresl then
+					pCtrl.forecolor = rgb(192,192,192)
+				else
+					pCtrl.forecolor = rgb(0,0,0)
+				end if
+#else
+				if bWykresl then
+					pCtrl.forecolor = rgb(0,0,0)
+				else
+					pCtrl.forecolor = rgb(150,150,150)
+				end if
+#endif        
+			end if
+		next
+	next
+end function
+'----------------------------------------------------
+function fill_results(byref pRRAT,byref pParamArray)
+	dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(page_.ctrl(CTRLID_RESULT_TABLE))
+	pTB.section_body.removeall
+
+	dim strSQL : strSQL = pRRAT.get_query(pParamArray.Value(0),pParamArray.Value(1),pParamArray.Value(3),pParamArray.Value(4),pParamArray.Value(5))
+	dim pCursor : set pCursor = trans_.createadors(strSQL)
+	pRRAT.fill_from_query pCursor
+
+#ifdef _ABAKUS
+	dim nNrRecData: nNrRecData = 1
+	dim iter3: iter3 = 0
+#endif
+
+	dim nRecNr : nRecNr = 0
+	dim iter
+	for iter = 0 to pRRAT.m_oItemArray.UpperIndex
+		dim oRRI : set oRRI = pRRAT.m_oItemArray.Value(iter)
+		dim oOrderObj : set oOrderObj = trans_.getobj(oRRI.m_nTypeId,oRRI.m_idObj)
+
+#ifdef _FRAM    
+    dim popKlient : popKlient = ""
+    dim aktKlient : aktKlient = oOrderObj.pKlient.text
+    
+    if iter > 0 then
+      dim oRRI2 : set oRRI2 = pRRAT.m_oItemArray.Value(iter - 1)
+      dim oOrderObj2 : set oOrderObj2 = trans_.getobj(oRRI2.m_nTypeId,oRRI2.m_idObj)
+      popKlient = oOrderObj2.pKlient.text
+    end if
+    
+    if iter = 0 then
+      '---- section klient
+      with pTB.newrow.row
+			  .styleitem=STYLE_GROUP_HEADER
+			  set .userprop = doc_.createhli()
+			  .userprop.prop(PROPC_SECTION_START) = clng(1)
+			  .userprop.prop(PROPC_SECTION_HIDDEN) = clng(0)
+			  .userprop.prop(PROPC_SECTION_REQ) = clng(0)
+		  end with
+
+		  with pTB.newcell.addctrl(CTRL_TYPE_PICTURE, -1).element
+			  .image = PICTURE_SMALL_MINUS
+			  .width = SIZE_FOR_PLUS
+			  .height = SIZE_FOR_PLUS
+			  .ignoresysdisable true
+			  .tip="Zwiń"
+			  set .hli= doc_.createhli()
+			  .hli.prop(GVAR_FUNCTIONHLI) = "section_hideshow_hli"
+			  .hli.prop(100) = clng(.ident)
+		  end with
+      
+		  with pTB.cell
+			  .keepline=true
+#ifdef _FRAM
+			  .colspan=10
+#else
+			  .colspan=6
+#endif
+		  end with
+
+      pTB.addtexthli aktKlient,_
+	      doc_.createhlistr("OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5KLIENT," + cstr(oOrderObj.pKlient.idobj) + ",USAGE_VIEW)")
+      pTB.element.bold=true 
+    end if
+    
+    if (popKlient <> aktKlient) and (iter > 0) then
+      '---- section end klient
+		  with pTB.newrow.row
+			  .hide = true
+			  set .userprop = doc_.createhli()
+			  .userprop.prop(PROPC_SECTION_END) = clng(1)
+		  end with
+		  '--------
+      '---- section klient
+      with pTB.newrow.row
+			  .styleitem=STYLE_GROUP_HEADER
+			  set .userprop = doc_.createhli()
+			  .userprop.prop(PROPC_SECTION_START) = clng(1)
+			  .userprop.prop(PROPC_SECTION_HIDDEN) = clng(0)
+			  .userprop.prop(PROPC_SECTION_REQ) = clng(0)
+		  end with
+
+		  with pTB.newcell.addctrl(CTRL_TYPE_PICTURE, -1).element
+			  .image = PICTURE_SMALL_MINUS
+			  .width = SIZE_FOR_PLUS
+			  .height = SIZE_FOR_PLUS
+			  .ignoresysdisable true
+			  .tip="Zwiń"
+			  set .hli= doc_.createhli()
+			  .hli.prop(GVAR_FUNCTIONHLI) = "section_hideshow_hli"
+			  .hli.prop(100) = clng(.ident)
+		  end with
+      
+		  with pTB.cell
+			  .keepline=true
+			  .colspan=6
+		  end with
+
+      pTB.addtexthli aktKlient,_
+	      doc_.createhlistr("OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5KLIENT," + cstr(oOrderObj.pKlient.idobj) + ",USAGE_VIEW)")
+      pTB.element.bold=true
+   end if   
+#endif   
+    
+#ifdef _ABAKUS
+	if nNrRecData = 1 then
+		'początek sekcji
+		with pTB.newrow.row
+			.styleitem=STYLE_GROUP_HEADER
+			set .userprop = doc_.createhli()
+			.userprop.prop(PROPC_SECTION_START) = clng(1)
+			.userprop.prop(PROPC_SECTION_HIDDEN) = clng(0)
+			.userprop.prop(PROPC_SECTION_REQ) = clng(0)
+		end with
+  		
+		with pTB.newcell.addctrl(CTRL_TYPE_PICTURE, -1).element
+			.image = PICTURE_SMALL_MINUS
+			.width = SIZE_FOR_PLUS
+			.height = SIZE_FOR_PLUS
+			.ignoresysdisable true
+			.tip="Zwiń"
+			set .hli= doc_.createhli()
+			.hli.prop(GVAR_FUNCTIONHLI) = "section_hideshow_hli"
+			.hli.prop(100) = clng(.ident)
+		end with
+
+		with pTB.cell
+			.keepline=true
+#ifdef _ABAKOSTEEL
+			.colspan=8
+#else
+			.colspan=7
+#endif			
+		end with
+		pTB.addtext trans_.afc.display.fulldate(oRRI.m_dDataWyst)
+		pTB.element.bold=true 
+	end if
+#endif    
+    
+    '---- section dok
+		with pTB.newrow.row
+			.styleitem=STYLE_GROUP_HEADER
+			set .userprop = doc_.createhli()
+			.userprop.prop(PROPC_SECTION_START) = clng(1)
+			.userprop.prop(PROPC_SECTION_HIDDEN) = clng(0)
+			.userprop.prop(PROPC_SECTION_REQ) = clng(0)
+		end with
+    
+#ifdef _ABAKUS
+		pTB.newcell
+		pTB.cell.width = clng(200) 
+#endif
+		
+    with pTB.newcell.addctrl(CTRL_TYPE_PICTURE, -1).element
+			.image = PICTURE_SMALL_MINUS
+			.width = SIZE_FOR_PLUS
+			.height = SIZE_FOR_PLUS
+			.ignoresysdisable true
+			.tip="Zwiń"
+			set .hli= doc_.createhli()
+			.hli.prop(GVAR_FUNCTIONHLI) = "section_hideshow_hli"
+			.hli.prop(100) = clng(.ident)
+		end with
+
+		with pTB.cell
+			.keepline=true
+#ifdef _FRAM
+      .colspan=1
+#else
+			.colspan=4
+#endif
+		end with
+		dim strHeader : strHeader = oOrderObj.text
+		pTB.addtexthli strHeader,_
+			doc_.createhlistr("OPEN_FORM_PROXY_HLI_USAGE("+cstr(oRRI.m_nTypeId)+"," + cstr(oRRI.m_idObj)+",USAGE_VIEW)")
+      
+#ifdef _FRAM
+    pTB.element.width = clng(3000)      
+		pTB.newcell.addctrl CTRL_TYPE_STATIC , -1
+		with pTB.element
+			set .userprop = doc_.createhli()
+			.userprop.prop(100) = clng(iter)
+			.customredirect = clng(CTRLID_ORDER_STATS)
+			.transfer = page_.createtransfer("custom")
+		end with
+    pTB.newcell.addtext GetStatus(oOrderObj)
+    pTB.newcell.addtext trans_.afc.display.fulldate(oOrderObj.dDataReal)
+#endif      
+      
+#ifndef _FRAM
+    pTB.element.bold=true
+
+		pTB.addctrl CTRL_TYPE_BREAKLINE, -1
+		pTB.addtext oOrderObj.pKlient.text      
+#endif
+#ifndef _FRAM
+		pTB.newcell.addctrl CTRL_TYPE_STATIC , -1
+		with pTB.element
+			set .userprop = doc_.createhli()
+			.userprop.prop(100) = clng(iter)
+			.customredirect = clng(CTRLID_ORDER_STATS)
+			.transfer = page_.createtransfer("custom")
+		end with
+#endif    
+
+#ifdef _FRAM
+    pTB.newcell.cell.colspan=5
+#endif 
+
+		pTB.newcell.cell.keepline=true   
+		with pTB.addctrl(CTRL_TYPE_BUTTON, -1).element
+			.bold = false
+			.styleitem=STYLE_BUTTON
+			.text = "Przydziel"
+			set .hli= doc_.createhli()
+			.hli.prop(100) = clng(iter)
+			.hli.prop(GVAR_FUNCTIONHLI) = "order_allocate_products"
+		end with
+		with pTB.addctrl(CTRL_TYPE_BUTTON, -1).element
+			.bold = false
+			.styleitem=STYLE_BUTTON
+			.text = "Zeruj"
+			set .hli= doc_.createhli()
+			.hli.prop(GVAR_FUNCTIONHLI) = "order_release_products"
+			.hli.prop(100) = clng(iter)			
+		end with		
+
+		with pTB.addctrl(CTRL_TYPE_BUTTON, -1).element
+			.bold = false
+			.styleitem=STYLE_BUTTON
+			.text = "Realizuj"
+			set .hli= doc_.createhli()
+			.hli.prop(GVAR_FUNCTIONHLI) = "order_realize_products"
+			.hli.prop(100) = clng(iter)
+			.hli.prop(101) = oOrderObj.idobj
+			
+		end with	
+		
+#ifdef _ABAKOSTEEL
+		pTB.cell.colspan=2
+#endif 		
+    
+#ifdef _AMPLUS
+    pTB.newcell.cell	  
+#endif
+
+		'---- details
+		dim iter2
+		for iter2 = 0 to oRRI.m_oDetailArray.UpperIndex
+			dim oRRID : set oRRID = oRRI.m_oDetailArray.Value(iter2)
+			dim oDetailObj : set oDetailObj = oOrderObj.listPozycje.get(oRRID.m_nLP)
+			pTB.newrow
+#ifdef _ABAKUS
+			pTB.newcell
+			pTB.cell.width = clng(200) 
+#endif      
+			if nRecNr mod 2 = 0 then
+				pTB.row.styleitem = STYLE_ROW_EVEN
+			end if
+#ifdef APPCONFIG_RAPORT_BY_PROD_INX
+			pTB.newcell.addtext oDetailObj.pProdukt.strIndeks
+#else
+			pTB.newcell.addtext oDetailObj.pProdukt.text
+#endif
+			
+			dim strSkrot : strSkrot = oDetailObj.pOpak.pJednOpak.strSkrot
+			dim nDokl : nDokl = oDetailObj.pOpak.pJednOpak.nDokladnosc - 1
+      
+#ifdef _FRAM
+      pTB.cell.colspan=4
+      pTB.newcell.addtext(doc_.afc.display.quantity(GetIloscPozZlec(oOrderObj,oRRID.m_nLP),strSkrot,nDokl)).cell.align=ALIGN_RIGHT
+#endif      
+      
+			pTB.newcell.addtext(doc_.afc.display.quantity(oRRID.m_curOrderQty,strSkrot,nDokl)).cell.align=ALIGN_RIGHT
+
+			pTB.newcell.addtext(doc_.afc.display.quantity(oRRID.m_curPendingQty,strSkrot,nDokl)).cell.align=ALIGN_RIGHT
+
+			dim oStockInfo : set oStockInfo = pRRAT.get_stock_info(oDetailObj.pProdukt.idobj,oDetailObj.pOpak.idobj)
+
+			pTB.newcell.addtext(doc_.afc.display.quantity(oStockInfo.get_avail_qty(), strSkrot,nDokl)).cell.align=ALIGN_RIGHT
+			pTB.newcell.addtext(doc_.afc.display.quantity(oStockInfo.get_reserv_qty(), strSkrot,nDokl)).cell.align=ALIGN_RIGHT
+			
+#ifdef _ABAKOSTEEL
+			dim curKrotnosc: curKrotnosc = oDetailObj.pOpak.currKrotnosc
+			pTB.newcell.addtext("opak.: " + doc_.afc.display.quantity(curKrotnosc, strSkrot, nDokl)).cell.align=ALIGN_RIGHT
+			pTB.cell.width = clng(4000)
+#endif
+
+			pTB.newcell.cell.align=ALIGN_RIGHT
+			pTB.addctrl CTRL_TYPE_CURRENCY , -1
+			with pTB.element
+#ifndef _ABAKOSTEEL			
+				.size=13
+#endif				
+				.unit = strSkrot
+				.precision = nDokl
+
+				set .userprop = doc_.createhli()
+				.userprop.prop(100) = clng(iter)
+				.userprop.prop(101) = clng(iter2)
+#ifdef _ABAKUS
+				.userprop.prop(103) = ccur(oStockInfo.get_avail_qty())
+#endif
+				.customredirect = clng(CTRLID_ALLOC_QTY)
+				.transfer = page_.createtransfer("custom")
+			end with
+      
+#ifdef _AMPLUS
+    pTB.newcell.cell.keepline=true
+		with pTB.addctrl(CTRL_TYPE_BUTTON, -1).element
+			.bold = false
+			.styleitem=STYLE_BUTTON
+			.text = "Kontrahenci"
+			set .hli= doc_.createhli()
+			.hli.prop(102) = clng(nRecNr)
+      .hli.prop(GVAR_FUNCTIONHLI) = "show_contrahent"
+		end with
+#endif
+      
+			nRecNr = nRecNr + 1
+		next
+		'---- section end dok
+		with pTB.newrow.row
+			.hide = true
+			set .userprop = doc_.createhli()
+			.userprop.prop(PROPC_SECTION_END) = clng(1)
+		end with
+		'---- ----
+   
+#ifdef _ABAKUS
+		if nNrRecData = pRRAT.m_oItemArrayData.value(iter3) then
+			'konic sekcji
+			with pTB.newrow.row
+				.hide = true
+				set .userprop = doc_.createhli()
+				.userprop.prop(PROPC_SECTION_END) = clng(1)
+			end with     
+			nNrRecData = 0
+			iter3 = iter3 + 1
+		end if
+		nNrRecData = nNrRecData + 1
+#endif    
+    
+	next
+end function
+
+function GetStatus(byref oOrderObj): GetStatus= ""
+  if not oOrderObj.pDokStatus is nothing then
+    dim oDokStatus: set oDokStatus = trans_.getobj(TYPEID_N5DOKSTATUS,oOrderObj.pDokStatus.IdObj)
+    GetStatus = oDokStatus.dcs_strNazwa
+  end if
+end function
+
+function GetIloscPozZlec(byref oOrderObj, byval nLP): GetIloscPozZlec = ccur(0.0)
+  if oOrderObj.IdObj > 0 then
+    'znajdź zlecenie
+    dim nIdZlec: nIdZlec = trans_.findobjid(TYPEID_N5ZLECPROD,"pZamowienie = " + cstr(oOrderObj.IdObj))
+    if nIdZlec > 0 then
+      dim oZlec: set oZlec = trans_.getobj(TYPEID_N5ZLECPROD,nIdZlec)
+      dim oPoz : set oPoz = oZlec.listPozycje.get(nLP)
+      GetIloscPozZlec = oPoz.curIloscOpakPoz
+    end if
+  end if
+end function
+
+'funkcja wyświetla listę kontrahentów od których zakupiono produkt
+function show_contrahent(HLI)
+  
+  dim iNrRow : iNrRow = clng(HLI.prop(102))
+  dim iLicz : iLicz = 0
+  dim iter
+	for iter = 0 to g_pRRAT.m_oItemArray.UpperIndex
+		dim oRRI : set oRRI = g_pRRAT.m_oItemArray.Value(iter)
+		dim oOrderObj : set oOrderObj = trans_.getobj(oRRI.m_nTypeId,oRRI.m_idObj)
+    dim aktKlient : aktKlient = oOrderObj.pKlient.text
+      dim iter2
+		  for iter2 = 0 to oRRI.m_oDetailArray.UpperIndex
+			  dim oRRID : set oRRID = oRRI.m_oDetailArray.Value(iter2)
+			  dim oDetailObj : set oDetailObj = oOrderObj.listPozycje.get(oRRID.m_nLP)
+        if iLicz = iNrRow then
+          dim idobj : idobj = oDetailObj.pProdukt.idobj
+
+          'wywołaj raport z parametrem idobj produktu
+          doc_.postcommand "varCmd=CMD_OPEN_STATIC_PAGE varDestPage=60140 appvar_raport_type=RAPTEMPLATE_KREATOR_PRZY_TOW_KONTRAH vs110='" + CStr(idobj) +  "'"
+          
+          exit function
+        end if
+        iLicz = iLicz + 1
+      next
+  next
+  
+end function
+
+function order_realize_products(hli)
+	dim oWizzard: set oWizzard = doc_.getpagehli("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=PAGE_WIZZARD_REALIZACJA_ZAMOWIENIA appvar_mode=3 vn105=2") 'vn105 jest zmienna sterujaca kreatorem realiz. zamowienia dla obce wlasne, zmienna vn105
+	
+	if oWizzard.run_external(g_pRRAT , clng(hli.prop(100)) , clng(hli.prop(101))) then
+		page_.ctrl(hli(PROPC_CONTROL)).disable=true
+	end if
+end function
+
+#ifdef _FRAM
+function drukuj_do_real
+
+  dim idDPC : idDPC = trans_.findobjid(TYPEID_N5DPC, "ePubType=" + CStr(N5DPC_PUBTYPE_INNY))
+	if idDPC < 1 then
+		idDPC = fire_choice_list( TYPEID_N5DPC , "Publikacja typu 'Inny'" ,"strNazwa","pub_nInnytyp=" + CStr(N5DPC_PUBTYPE_INNY_POZYCJE_DO_REALIZAJI) ,"",""	)	
+		if idDPC = 0 then
+			nx_.trace.fatal "FKK002","Brak publikacji typu 'Inny'"
+			exit function
+		end if
+	end if
+
+	dim oHLIResult : set oHLIResult = doc_.createhli()
+	
+	realize_publication idDPC,g_pRRAT,true,oHLIResult
+end function
+#endif
+
+]]>
+</script>
+</config>
+	<body>
+		<table>
+			<tbody>
+				<tr>
+					<td>
+						<picture image='80139' tip='Wypełnij' width='1000' height='1000' href='varFunction="frefresh"' />
+						<picture image='80103' tip='Zachowaj' width='1000' height='1000' href='varFunction="fsave"' />
+					</td>
+				</tr>
+				<tr>
+					<td>
+						<button href='varFunction="all_allocate_products"' style='STYLE_BUTTON'>Przydziel kolejno</button>
+						<button href='varFunction="all_release_products"' style='STYLE_BUTTON'>Zeruj wszystko</button>
+            #ifdef _FRAM
+            <button href='varFunction="drukuj_do_real"' style='STYLE_BUTTON'>Wydruk</button>
+            #endif
+      </td>
+				</tr>
+				<tr>
+					<td>
+						<table border='1' name='CTRLID_RESULT_TABLE'>
+							<thead style='STYLE_TABLE_HEADER'>
+								<tr>
+#ifdef _ABAKUS
+									<td rowspan='2'></td>
+#endif                  
+#ifdef _FRAM
+									<td rowspan='2' colspan='2' width='5000'>
+										<t>Produkt</t>
+									</td>
+									<td rowspan='2' width='2000'>
+										<text>Status</text>
+									</td>
+									<td rowspan='2' width='2000'>
+										<text>Termin realizacji</text>
+									</td>         
+									<td colspan='7'>                  
+#else
+									<td rowspan='2' width='4000'>
+										<t>Produkt</t>
+									</td>
+#ifdef _ABAKOSTEEL
+									<td colspan='6'>
+#else
+									<td colspan='5'>
+#endif										
+#endif                    
+										<text>Ilość opakowań</text>
+									</td>
+#ifdef _AMPLUS                  
+                  <td rowspan='2'><t></t></td>
+#endif
+                </tr>
+								<tr>
+#ifdef _FRAM               
+									<td width='2000'>
+										<t>w produkcji</t>
+									</td>
+#endif
+									<td width='2000'>
+										<t>zamówiona</t>
+									</td>
+									<td width='2000'>
+										<t>pozostała</t>
+									</td>
+									<td width='2000'>
+										<t>dostępna</t>
+									</td>
+									<td width='2000'>
+										<t>zarezerwowana</t>
+									</td>
+#ifdef _ABAKOSTEEL
+									<td colspan='2'>
+#else
+									<td width='2000'>
+#endif										
+										<t>przydzielona</t>
+									</td>
+								</tr>
+							</thead>
+							<tbody backcolor='white' border='0'>
+							</tbody>
+						</table>
+					</td>
+				</tr>
+			</tbody>
+		</table>		
+	</body>
+</page>

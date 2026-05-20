@@ -1,0 +1,598 @@
+#include "h1000.h"
+
+<?xml version="1.0" encoding="windows-1250" ?>
+<page>
+<config>
+<script>
+<![CDATA[
+
+'strona zawiera funkcje pomocnicze przydatne przy instalacji
+
+#define NAVO_INI	"navo3.ini"
+
+#define PAGE_FORM_SQL_LOGON 21001
+
+'--------------------------------------------------------------------------
+'
+' Funkcja sprawdza, czy istnieje plik i zwraca tak lub nie (T/F)
+' Parametry:
+'   [in] strFileName  - nazwa pliku
+'
+'--------------------------------------------------------------------------
+function does_file_exist(byval strFileName)
+	does_file_exist = false
+
+	dim fso: set fso = createobject("scripting.filesystemobject")
+	if fso.FileExists(cstr(strFileName)) then
+		does_file_exist = true
+	end if
+end function
+
+'---------------------------------------------------------------------------------------
+' Próba podłączenia się do serwera SQL w wersji 2000
+'
+' Najpierw próbujemy połączyć się z strSQLServerName + "\NAVO2000"
+' a potem z samym strSQLServerName
+'
+' bTestSingleInstatnce - Jezeli nie uda sie podłączyć do serwera
+'         strSQLServerName + "\NAVO2000" ani nie uda się go wystartować
+'		  nie oznacz to jeszcze, że taki serwer nie istnieje. Wyszukujemy
+'		  go. Jeżeli takie samo dodatkowe wyszukanie ma być dokonane
+'		  dla pojedynczej instancji czyli serwera o nazwie strSQLServerName
+'		  nalezy tu dac TRUE. FALSE dajemy glownie w przypadku gdy
+'		  chcemy jeszcze poszukiwać serwera funkcja try_mssql7. Ona
+'		  zrobi dodatkowe wyszukanie za nas.
+'---------------------------------------------------------------------------------------
+function try_mssql2000(byval strSQLServerName, byval strUID, byval strPWD, byref instses, byval bTestSingleInstatnce): try_mssql2000=""
+
+	on error resume next
+
+	instses.addlogmsg "Searching for SQL Server 2000/MSDE 8"
+
+	dim sqldmo : set sqldmo = createobject("SQLDMO.SQLServer2.8.0")
+	
+	'COM object existence is not enough
+	if isobject(sqldmo) then
+
+		instses.addlogmsg "SQLDMO.SQLServer2.8.0 object created."
+
+		sqldmo.Connect strSQLServerName, strUID, strPWD  'try to connect
+		if (err.number = 0) then
+			try_mssql2000 = strSQLServerName
+			exit function
+		end if
+
+		instses.addlogmsg "Couldn't connect to the server: " + CStr(err.description)
+		err.clear
+
+		sqldmo.start false, strSQLServerName, strUID, strPWD 'try our instance
+		'1056 = ERROR_SERVICE_ALREADY_RUNNING
+		if (err.number = 0 or err.number = 1056) then
+			try_mssql2000 = strSQLServerName
+			exit function
+		end if
+
+		instses.addlogmsg "I was unable to start the server: " + CStr(err.description)
+		err.clear
+
+		if (existsSQLServer(strSQLServerName)) then
+			try_mssql2000 = strSQLServerName
+			exit function
+		end if
+		
+
+	end if
+
+	instses.addlogmsg "Could not find SQL Server 2000/MSDE 8"
+
+end function
+
+'---------------------------------------------------------------------------------------
+' Sprawdzanie w grupie dostępnych serwerów czy istnieje już serwer o
+' podanej nazwie. Grupa serwerów nie zawsze odpowiada wszystkim
+' dostępnym
+'---------------------------------------------------------------------------------------
+private function isSQLServerByName(byval strSQLServerName): isSQLServerByName = false
+	
+	dim pSQLServerDMOApp
+	set pSQLServerDMOApp = nothing
+
+	on error resume next
+	set pSQLServerDMOApp = CreateObject("SQLDMO.Application")
+
+	if (not pSQLServerDMOApp is nothing) then
+
+		dim pSQLServersList
+		set pSQLServersList = pSQLServerDMOApp.ListAvailableSQLServers
+
+		dim i
+		for i = 1 to pSQLServersList.Count
+			dim strServerName
+			strServerName = CStr(pSQLServersList.Item(i))
+
+			if (strServerName = strSQLServerName) then
+				isSQLServerByName = true
+				set pSQLServerDMOApp = nothing
+				exit function
+			end if
+		next
+
+	end if
+
+	set pSQLServerDMOApp = nothing
+end function
+
+#define SQLDMOSvc_Continuing	 6
+#define SQLDMOSvc_Paused		 2
+#define SQLDMOSvc_Pausing		 7
+#define SQLDMOSvc_Running		 1
+#define SQLDMOSvc_Starting		 4
+#define SQLDMOSvc_Stopped		 3
+#define SQLDMOSvc_Stopping		 5
+#define SQLDMOSvc_Unknown		 0
+#define SQLDMOSvc_Error			-1
+
+'---------------------------------------------------------------------------------------
+' Pobierz status serwera SQL'owego o podanej nazwie
+'
+' RESULT: SQLDMOSvc_xxxxxx
+'---------------------------------------------------------------------------------------
+private function getSQLServerStatus(byval strSQLServerName): getSQLServerStatus = CLng(SQLDMOSvc_Error)
+	
+	dim pSQLDmo
+	set pSQLDmo = nothing
+
+	err.clear
+
+	on error resume next
+	set pSQLDmo = createobject("SQLDMO.SQLServer")
+
+	if (not pSQLDmo is nothing) then
+		pSQLDmo.Name = CStr(strSQLServerName)
+		getSQLServerStatus = CLng(pSQLDmo.Status)
+	end if
+
+	if (err.number<>0) then
+		getSQLServerStatus = CLng(SQLDMOSvc_Error)
+	end if
+end function
+
+'---------------------------------------------------------------------------------------
+' Sprawdza czy istnieje serwer SQL o podanej nazwie
+'
+' RESULT: true / false
+'---------------------------------------------------------------------------------------
+function existsSQLServer(byval strSQLServerName): existsSQLServer = false
+
+	dim iTrial
+	for iTrial = 1 to 2
+
+		if (getSQLServerStatus( strSQLServerName ) <> SQLDMOSvc_Error) then
+			'Każdy status odczytany dla serwera o podanej nazwie
+			'oznacza dla nas, iż serwer taki istnieje
+			existsSQLServer = true
+			exit function
+		end if
+
+		if (isSQLServerByName( strSQLServerName )) then
+			'Sprawdzamy asekuracyjnie po nazwie
+			existsSQLServer = true
+			exit function
+		end if
+
+	next 'iTrial
+
+end function
+
+#define SQL_SERVER_OK				 0
+#define SQL_SERVER_DOESNT_EXIST		-2
+#define SQL_SERVER_ISNOT_STARTED	-1
+
+'---------------------------------------------------------------------------------------
+' Próba podłączenia się do serwera SQL w wersji 7
+'
+' RESULTS: SQL_SERVER_OK, SQL_SERVER_DOESNT_EXIST, SQL_SERVER_ISNOT_STARTED
+'---------------------------------------------------------------------------------------
+function try_mssql7(byval strSQLServerName, byval strUID, byval strPWD, byref instses)
+
+	'Nie udało się podłączenie a i nawet stworzenie obiektu 
+	'sqldmo - instalacja serwera sql wymagana
+	try_mssql7 = SQL_SERVER_DOESNT_EXIST
+
+	err.clear
+	instses.addlogmsg "Searching for SQL Server 7.0/MSDE 7"
+		
+	on error resume next
+
+	dim sqldmo
+	set sqldmo = createobject("SQLDMO.SQLServer.7.0")
+	
+	if (isobject(sqldmo)) then
+
+		instses.addlogmsg "SQLDMO.SQLServer.7.0 object created."
+		sqldmo.Connect strSQLServerName, strUID, strPWD 'try to connect
+		
+		'jezeli nie udalo sie podlaczyc to probujemy uruchamiac
+		if (err.number<>0) then
+
+			instses.addlogmsg "Unable to connect to SQL Server: " + CStr(err.description)
+			err.clear
+			
+			sqldmo.start false, strSQLServerName, strUID, strPWD	'try to start
+			
+			'1056 = ERROR_SERVICE_ALREADY_RUNNING
+			if (err.number = 0 or err.number = 1056) then
+				'Udalo sie uruchomienie serwera.
+				instses.addlogmsg "Server started."
+				try_mssql7 = SQL_SERVER_OK
+				exit function
+			end if
+
+			instses.addlogmsg "Couldn't start the server: " + CStr(err.description)
+
+			'Jeżeli uruchomienie serwera sie nie udało to
+			'sprawdzamy czy rzeczywiście on nie istnieje
+
+			if (not existsSQLServer( strSQLServerName )) then
+				'Serwera na prawde nie ma. Mozna go ewentualnie
+				'probowac doinstalowac
+				'result:SQL_SERVER_DOESNT_EXIST
+				instses.addlogmsg ". . . and The server doesn't exist"
+				exit function
+			else
+				'Serwer jest ale z jakis powodow nie udalo
+				'sie go wystartowac i podlaczyc do niego
+				instses.addlogmsg ". . . but The server exists"
+				try_mssql7 = SQL_SERVER_ISNOT_STARTED
+				exit function
+			end if
+
+		else 'err.number=0
+			'Udało się podłączenie do serwera SQL. Jest on już uruchomiony
+			try_mssql7 = SQL_SERVER_OK
+			exit function
+		end if
+
+	else
+
+		'Nie było nawet obiektu SQLDMO - serwer w wersji 7 nie
+		'istnieje
+		instses.addlogmsg "Could not find SQL Server 7.0/MSDE 7"
+		instses.addlogmsg err.description
+
+	end if
+
+end function
+
+'install msde80
+function install_msde80(byref instses, byval strUID, byval strPWD)
+	install_msde80 = 0
+
+	instses.addlogmsg "Preparing to install MSDE 2000..."
+
+	dim sysobj: set sysobj = doc_.system
+
+	'znajdź root instalacji
+	dim strInstRoot: strInstRoot = sysobj.registry(hKey_LocalMachine,"SOFTWARE\NAVO\NAVO2002\Setup","InstallationRoot")
+	if strInstRoot = "" then
+		instses.addlogmsg "Cannot retrieve InstallationRoot value"
+		exit function
+	end if
+	instses.addlogmsg "InstallationRoot: " + strInstRoot
+
+	'znajdź media source
+	dim strMediaSrc: strMediaSrc = instses.getmediaurl("","components\msde80\","Sqlresld.dll","MSDE 2000")
+	if strMediaSrc = "" then
+		instses.addlogmsg "Cannot retrieve MediaSource value"
+		exit function
+	end if
+	instses.addlogmsg "Media source for MSDE Setup: " + strMediaSrc
+
+	'//@TODO - zamienić 'Program Files' na SpecialFolder
+	dim strTargetDir : strTargetDir = left(sysobj.windir,1) + ":\Program Files\Microsoft SQL Server\"
+	dim strDataDir : strDataDir = strInstRoot + "Database\"
+	dim strLogName : strLogName = "c:\msde80setuplog.txt"
+	dim strArgs : strArgs = "/wait TARGETDIR=""" + strTargetDir + """ DATADIR=""" + strDataDir +_ 
+	""" INSTANCENAME=""NAVO2002"" COLLATION=""SQL_Polish_Cp1250_CI_AS"" SECURITYMODE=SQL " '/L*v " + strLogName + " /qb "
+
+	instses.addlogmsg "Arguments for MSDE Setup: " + strArgs
+	dim strProcessPath: strProcessPath = strMediaSrc + "components\msde80\setup.exe"
+	dim strProcessDir: strProcessDir = strMediaSrc + "components\msde80\"
+	instses.addlogmsg "Installing MSDE from directory: " + strProcessDir
+	instses.addlogmsg "Executing MSDE setup program: " + strProcessPath
+	
+	dim exitcode
+	dim bWait : bWait = true
+	'if sysobj.osid = 1 then
+	if (true) then
+		bWait = false
+		sysobj.registry(hKey_LocalMachine,"SOFTWARE\NAVO\NAVO2002\Setup","MonitorProcess") = strProcessPath
+		sysobj.registry(hKey_LocalMachine,"SOFTWARE\NAVO\NAVO2002\Setup","MonitorDir") = strProcessDir
+		sysobj.registry(hKey_LocalMachine,"SOFTWARE\NAVO\NAVO2002\Setup","MonitorArgs") = strArgs
+		instses.addlogmsg "Spawing SETUP in /monitor mode"
+		strProcessPath = strInstRoot + "System\setup.exe"
+		strProcessDir  = strInstRoot + "System\"
+		strArgs =  "/monitor /install server /dest """ + strProcessDir + """"
+	end if
+	exitcode = sysobj.execute(strProcessPath, strProcessDir, strArgs, true, bWait)
+	'if sysobj.osid = 1 then
+	if (true) then
+		instses.addlogmsg "Spawned MSDE setup. Exiting due OS lack of capabilities."
+		install_msde80 = 3011	'symulujemy ERROR_SUCCESS_RESTART_REQUIRED
+		exit function
+	end if
+	instses.addlogmsg "Exit code: " + cstr(clng(exitcode))
+
+	if exitcode = 0 then	'3010 - ERROR_SUCCESS_REBOOT_REQUIRED
+		'jeszcze raz sprawdzamy, czy wszystko jest OK
+		'check mssql2000
+		if try_mssql2000( trans_.var(GVAR_MACHINE), strUID, strPWD, instses, true ) = "" then
+			instses.addlogmsg "SQL Server doesn't work after the installation process. It's strange!"
+			install_msde80 = -1
+			exit function
+		end if
+	end if
+	install_msde80 = exitcode
+end function
+
+
+
+'--------------------------------------------------------------------------
+'
+' CNavoFirmaComponentInfo zawiera informacje o zainstalowanym komponencie NAVO Firmy
+'
+'--------------------------------------------------------------------------
+class CNavoFirmaComponentInfo
+	public m_Name ' nazwa komponentu: "SPRZEDAZ", "PRODUK", "NAVOFK", "KPIR100", "STARTKIT"
+	public m_MajorVersion ' 3
+	public m_MinorVersion ' 54 (3.54), 55(3.55), 70 (3.7), 71 (3.7(1))
+	public m_Root ' ścieżka do katalogu zawieracącego komponent
+
+	private sub class_initialize()
+		m_Name = ""
+		m_MajorVersion = clng(0)
+		m_MinorVersion = clng(0)
+		m_Root = ""
+	end sub
+end class
+
+
+'--------------------------------------------------------------------------
+'
+' CNavoFirmaInfo zawiera informacje o zainstalowanej wersji NAVO Firma
+'
+'--------------------------------------------------------------------------
+class CNavoFirmaInfo
+	public m_Components() ' lista komponentów CNavoFirmaComponentInfo
+
+	private sub class_initialize()
+		redim m_Components(0)
+		m_MsSQL = false
+		m_Sybase = false
+		m_Root = ""
+		m_DataBase = ""
+		m_Password = ""
+	end sub
+
+	public m_MsSQL ' zainstalowana wersja dla MSSQL Server
+	public m_Sybase ' zainstalowana wersja dla Sybase
+
+	public m_Root ' ścieżka do katalogu zawieracącego zainstalowaną NAVO Firmę
+	public m_DataBase ' nazwa pliku bazy (bez ścieżki) dla Sybase
+	public m_Password ' hasło dostępu do bazy
+
+	'zwraca liczbę komponentów
+	public function Count()
+		Count = ubound(m_Components)
+	end function
+
+	'dodaje komponent
+	public sub AddComponent(byref oComp)
+		if oComp is nothing then
+			exit sub
+		end if
+
+		if oComp.m_Root<>"" and m_Root="" then
+			' zapamiętaj ścieżkę
+			m_Root = oComp.m_Root
+		end if
+
+		if m_DataBase="" and m_Password="" then
+			if oComp.m_MajorVersion=clng(3) and oComp.m_MinorVersion=clng(54) then
+				m_DataBase = "firma35.db"
+				m_Password = "mendelejew"
+			elseif oComp.m_MajorVersion=clng(3) and oComp.m_MinorVersion = clng(70) then
+				m_DataBase = "firma37.db"
+				m_Password = "y1410grun"
+			else
+				m_DataBase = "firma" + CStr(oComp.m_MajorVersion) + left(CStr(oComp.m_MinorVersion),1) + ".db"
+				m_Password = "y1410grun"
+			end if
+		end if
+
+		' dodajemy do listy
+		dim nSize: nSize = ubound(m_Components)
+		set m_Components(nSize) = oComp
+		redim preserve m_Components(nSize+1)
+	end sub
+
+	' szuka komponentu szName. Jeśli znajdzie, to zwraca obiekt CNavoFirmaComponentInfo.
+	' jeśli nie znajdzie, zwraca nothing
+	public function FindComponent(byval szName)
+		set FindComponent = nothing
+		dim i
+		dim nSize: nSize = ubound(m_Components)
+		if nSize>0 then
+			for i=0 to (nSize-1)
+				if m_Components(i).m_Name=szName then
+					set FindComponent = m_Components(i)
+					exit function
+				end if
+			next
+		end if
+	end function
+
+end class
+
+
+'--------------------------------------------------------------------------
+'
+' Funkcja wyszukuje komponent na komputerze i wstawia informacje o nim
+' do obiektu oInfo (typu CNavoFirmaInfo).
+' Funkcja zwraca obiekt oInfo. Jeśli oInfo było nothing i nie znaleziono
+' komponentu, funkcja zwraca nothing.
+' Parametry:
+'   oInfo  - obiekt, do którego wstawiamy komponent. Jeśli jest nothing, funkcja
+'            wewnętrznie tworzy obiekt i go zwraca
+'   szName - nazwa komponentu np. "SPRZEDAZ"
+'--------------------------------------------------------------------------
+function insert_s3_component(byref oInfo, byval szName)
+	set insert_s3_component = nothing
+
+	dim oComp
+	dim oSystem: set oSystem = doc_.system
+	dim szValue: szValue = oSystem.PrivateProfile(cstr(szName), "State", NAVO_INI)
+	if szValue<>"" then
+		if oInfo is nothing then
+			set oInfo = new CNavoFirmaInfo
+		end if
+		set oComp = new CNavoFirmaComponentInfo
+		oComp.m_Name = cstr(szName)
+		if szValue="354" then
+			oComp.m_MajorVersion = clng(3)
+			oComp.m_MinorVersion = clng(54)
+		elseif szValue="370" then
+			oComp.m_MajorVersion = clng(3)
+			oComp.m_MinorVersion = clng(70)
+		elseif szValue="371" then
+			oComp.m_MajorVersion = clng(3)
+			oComp.m_MinorVersion = clng(71)
+		elseif szValue="380" then
+			oComp.m_MajorVersion = clng(3)
+			oComp.m_MinorVersion = clng(80)
+		else
+			'inna wersja
+			if (isNumeric(szValue)) then
+				dim strMajorVersion
+				strMajorVersion = left(szValue, 1)
+
+				dim strMinorVersion: strMinorVersion = "0"
+				if (len(szValue)>1) then
+					strMinorVersion = right(szValue, len(szValue)-1)
+				end if
+
+				if (isNumeric(strMajorVersion)) then
+					oComp.m_MajorVersion = CLng(strMajorVersion)
+				else
+					oComp.m_MajorVersion = CLng(3)
+				end if
+
+				if (isNumeric(strMinorVersion)) then
+					oComp.m_MinorVersion = CLng(strMinorVersion)
+				else
+					oComp.m_MinorVersion = CLng(80)
+				end if
+			else
+				oComp.m_MajorVersion = clng(3)
+				oComp.m_MinorVersion = clng(80)
+			end if
+
+		end if
+		oComp.m_Root = oSystem.PrivateProfile(cstr(szName), "PROD_ROOT", NAVO_INI)
+		oInfo.AddComponent oComp
+	end if
+
+end function
+
+
+
+'--------------------------------------------------------------------------
+'
+' Funkcja sprawdza, czy na komputerze lokalnym jest zainstalowana wersja
+' NAVO Firmy. Jeśli jest, zwracany jest obiekt CNavoFirmaInfo
+' zawierający informacje o tym komponencie. Jeśli nie ma, funkcja zwraca nothing.
+'
+'--------------------------------------------------------------------------
+function get_navo_firma_info()
+	set get_navo_firma_info = nothing
+	dim oInfo: set oInfo = nothing
+
+	insert_s3_component oInfo, "SPRZEDAZ"
+	insert_s3_component oInfo, "NAVOFK"
+	insert_s3_component oInfo, "PRODUK"
+	insert_s3_component oInfo, "KPIR100"
+	insert_s3_component oInfo, "STARTKIT"
+
+	' sprawdzenie, czy istnieje jakiś komponent
+	if not oInfo is nothing then
+		if oInfo.Count()=0 then
+			set oInfo = nothing
+		end if
+	end if
+
+	if not oInfo is nothing then
+		dim oSystem: set oSystem = doc_.system
+		dim szValue: szValue = oSystem.PrivateProfile("SYSTEM", "SERVER", NAVO_INI)
+		if szValue<>"" then
+			oInfo.m_Sybase = true
+		end if
+
+		szValue = oSystem.PrivateProfile("SYSTEM", "SERVERSQL", NAVO_INI)
+		if szValue<>"" then
+			oInfo.m_MsSQL = true
+		end if
+
+		if not oInfo.m_Sybase then
+			' jeśli nie ma wersji sieciowej - sprawdzamy obecność pliku
+			if oInfo.m_Root<>"" then
+				dim strDBFilePath: strDBFilePath = oInfo.m_Root + oInfo.m_DataBase
+				dim fso: set fso = createobject("scripting.filesystemobject")
+				oInfo.m_Sybase = fso.FileExists(cstr(strDBFilePath))
+			end if
+		end if
+
+	end if
+
+	set get_navo_firma_info = oInfo
+end function
+
+
+
+'--------------------------------------------------------------------------
+'
+' Funkcja wyświetla okno logowania i zwraca wuniki.
+' Zawiera dwie kontrolki z nazwą użytkownika i hasłem.
+' W przypadku naciśnięcia klawisza O.K. funkcja zwraca true. W przeciwnym
+' wypadku zwraca false.
+' Parametry:
+'   [in]     strCaption  - wyświetlany tekst z informacją
+'   [in,out] strUserName - nazwa użytkownika
+'   [out]    strPassword - hasło
+' Parametr strUserName musi być zainicjowany wartością domyślną. Ten login
+' jest wtedy wyświetlany po otwarciu okienka.
+'
+'--------------------------------------------------------------------------
+function show_logon_dialog(byval strTitle, byref strUserName, byref strPassword)
+	show_logon_dialog = false
+
+	dim pFormLogon: set pFormLogon=doc_.getmodule(PAGE_FORM_SQL_LOGON)
+	pFormLogon.setCaption strTitle
+	pFormLogon.setUserName strUserName
+
+	if pFormLogon.domodalauto() then
+		strUserName = pFormLogon.getUserName()
+		strPassword = pFormLogon.getPassword()
+		show_logon_dialog = true
+	end if
+end function
+
+]]>
+</script>
+</config>
+<header>
+</header>
+<body>
+</body>
+<footer>
+</footer>
+</page>

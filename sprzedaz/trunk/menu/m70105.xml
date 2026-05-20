@@ -1,0 +1,471 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+
+-->
+<page style='STYLE_PAGE'>
+
+<config>
+<script>
+  
+  <!-- 
+-->
+<![CDATA[
+class cfieldinfo
+	private m_strFieldName
+	
+	private m_nOldNr
+	private m_nNewNr
+	
+	private m_nOldRelType
+	private m_nNewRelType
+	
+	private m_strOldSQLType
+	private m_strNewSQLType
+
+	private m_nOldSQLTypeCode
+	private m_nNewSQLTypeCode
+	
+	private m_bOldPersit
+	private m_bNewPersit
+	
+	private sub class_initialize()
+		m_nOldNr = -1		'nie było
+		m_nNewNr = -1		'nie ma być
+
+		m_strOldSQLType = ""
+		m_strNewSQLType = ""
+	end sub
+
+	public property let name(byval strFieldName)
+		m_strFieldName = strFieldName
+	end property
+
+	public property get name
+		name = m_strFieldName
+	end property
+
+	public function is_old
+		is_old = (m_nOldNr <> -1)
+	end function
+
+	public function is_new
+		is_new = (m_nNewNr <> -1)
+	end function
+
+	public function is_persist
+		is_persist = m_bNewPersit
+	end function
+
+	public sub setnewinfo(byref arrInfo)
+		m_nNewNr = clng(arrInfo(2))
+		m_nNewRelType = clng(arrInfo(4))
+		m_strNewSQLType = arrInfo(5)
+		m_bNewPersit = (arrInfo(6) = "1")
+		m_nNewSQLTypeCode = clng(arrInfo(7))
+	end sub
+
+	public sub setoldinfo(byref arrInfo)
+		m_nOldNr = clng(arrInfo(2))
+		m_nOldRelType = clng(arrInfo(4))
+		m_strOldSQLType = arrInfo(5)
+		m_bOldPersit = (arrInfo(6) = "1")
+		m_nOldSQLTypeCode = clng(arrInfo(7))
+	end sub
+
+	public function is_changed()
+		is_changed = (m_nOldRelType <> m_nNewRelType) or (m_strOldSQLType <> m_strNewSQLType) or (m_bOldPersit <> m_bNewPersit)
+	end function
+	public function desc_changes
+		dim str : str = "field " + name + " changes:" + vbCrLf
+		if m_nOldRelType <> m_nNewRelType then
+			str = str + vbTab + ">relation from " + cstr(m_nOldRelType) + " to " + cstr(m_nNewRelType) + vbCrLf
+		end if
+		if m_strOldSQLType <> m_strNewSQLType then
+			str = str + vbTab + ">SQL type from " + m_strOldSQLType + " to " + m_strNewSQLType + vbCrLf
+		end if
+		if m_nOldSQLTypeCode <> m_nOldSQLTypeCode then
+			str = str + vbTab + ">type code from " + cstr(m_nOldSQLTypeCode) + " to " + cstr(m_nOldSQLTypeCode) + vbCrLf
+		end if
+		desc_changes = str + "-------" + vbCrLf
+	end function
+
+	public function estimate_default
+		select case m_nNewSQLTypeCode
+		case SQLlong
+			estimate_default = "0"
+		case SQLdate
+			estimate_default = doc_.afc.convert.date2SQL(doc_.afc.globals.nulldate())
+		case SQLtime
+			estimate_default = cstr(doc_.afc.globals.nulltime())
+		case SQLcurrency, SQLqty
+			estimate_default = "0.0"
+		case else
+			if m_nNewSQLTypeCode >= SQLc1 and m_nNewSQLTypeCode < SQLvc7900 then
+				estimate_default = "''"
+			else
+				estimate_default = "DEFAULT"
+			end if
+		end select 
+	end function
+	
+	public function update_collections(byref rnOldNr,byref rnNewNr) : update_collections = false
+		if is_old() and is_new() and m_nOldNr <> m_nNewNr and m_nNewRelType = RELT_LIST then
+			rnOldNr = m_nOldNr
+			rnNewNr = m_nNewNr
+			update_collections = true
+		end if
+	end function
+
+end class
+
+class ctableinfo
+	private m_pFieldDict
+	private m_strTableName
+	private m_nTypeId
+	private m_bOld
+	private m_bNew
+	
+	private sub class_initialize()
+		set m_pFieldDict = CreateObject("Scripting.dictionary")
+		m_bOld = false
+		m_bNew = false
+		m_nTypeId = -1
+	end sub
+	public property let name(byval strTableName)
+		m_strTableName = strTableName
+	end property
+	public property let typeid(byval nTypeId)
+		m_nTypeId = nTypeId
+	end property
+
+	public property get name
+		name = m_strTableName
+	end property
+
+	public sub mark_old
+		m_bOld = true
+	end sub
+
+	public sub mark_new
+		m_bNew = true
+	end sub
+
+	public function is_old
+		is_old = m_bOld
+	end function
+
+	public function is_new
+		is_new = m_bNew
+	end function
+
+	public function get_field_by_name(byval strFieldName)
+		if m_pFieldDict.Exists(strFieldName) then
+			set get_field_by_name = m_pFieldDict.Item(strFieldName)
+		else
+			set get_field_by_name = nothing
+		end if
+	end function
+	public function add_field(byval strFieldName)
+		dim pFieldInfo : set pFieldInfo = new cfieldinfo
+		pFieldInfo.name = strFieldName
+		m_pFieldDict.Add strFieldName,pFieldInfo
+
+		set add_field = pFieldInfo
+	end function
+
+	public function is_changed() : is_changed = false
+		dim arrFields : arrFields = m_pFieldDict.Items
+		dim iter
+		for iter = 0 to m_pFieldDict.Count - 1
+			if arrFields(iter).is_changed() then
+				is_changed = true
+				exit for
+			end if
+		next
+	end function
+	public sub alter_table_rename(byref soLog,byref soSQL)
+		soSQL.write "-- alter table " + name + vbCrLf
+		soSQL.write "sp_rename '" + name + "','upg___" + name + "','OBJECT'" + vbCrLf
+		soSQL.write "go" + vbCrLf
+	end sub
+
+	public sub alter_table_insert_drop(byref soLog,byref soSQL)
+		soSQL.write ""  + vbCrLf
+		soSQL.write ""  + vbCrLf
+		soSQL.write "go "  + vbCrLf
+		soSQL.write "create procedure upd_"+ name +" as "  + vbCrLf
+		soSQL.write "-- HINT - tutaj mozna wstawic procedury" + vbCrLf
+		soSQL.write "-----insert ---------------------" + vbCrLf
+		soSQL.write "insert into " + name + "(" + vbCrLf + vbTab + "IdObj,VersionId"
+		dim arrFields : arrFields = m_pFieldDict.Items
+		dim iter
+		for iter = 1 to m_pFieldDict.Count - 1
+			if arrFields(iter).is_persist() then
+				soSQL.write "," + arrFields(iter).name
+			end if
+			if iter mod 8 = 0 then
+				soSQL.write vbCrLf + vbTab
+			end if
+		next
+		soSQL.write ")" + vbCrLf + "select"+vbCrLf + vbTab + "IdObj,VersionId"
+		for iter = 1 to m_pFieldDict.Count - 1
+			if arrFields(iter).is_changed() and arrFields(iter).is_old() and arrFields(iter).is_new() then
+				soLog.write arrFields(iter).desc_changes
+			end if
+		next
+		dim strTODO_info : strTODO_info = ""
+		for iter = 1 to m_pFieldDict.Count - 1
+			if arrFields(iter).is_persist() then
+				if arrFields(iter).is_old() then
+						soSQL.write "," + arrFields(iter).name
+				else
+					if arrFields(iter).is_new() then
+						soSQL.write "," + arrFields(iter).estimate_default()
+						soLog.write "Warning! Replace DEFAULT with proper value for " + name + ":" + arrFields(iter).name + vbCrLf
+						strTODO_info = strTODO_info + "--TODO:check DEFAULT " + name + ":" + arrFields(iter).name + vbCrLf
+					else
+						soLog.write "Warning! Data from " + name + ":" + arrFields(iter).name + " will be lost" + vbCrLf
+					end if
+				end if
+			end if
+			if iter mod 8 = 0 then
+				soSQL.write vbCrLf + vbTab
+			end if
+		next
+		soSQL.write vbCrLf + "from upg___" + name + vbCrLf + vbCrLf
+		soSQL.write "go" + vbCrLf
+
+
+		soSQL.write strTODO_info
+		soSQL.write "exec upd_"+ name + vbCrLf
+		soSQL.write "go" + vbCrLf
+		soSQL.write "drop procedure upd_"+ name + vbCrLf
+		soSQL.write "go" + vbCrLf
+		soSQL.write "drop table upg___" + name + vbCrLf + vbCrLf + vbCrLf
+		soSQL.write "go" + vbCrLf
+		soSQL.write "raiserror('transfered " + name + "',0,1)" + vbCrLf
+		soSQL.write "go" + vbCrLf
+
+	end sub
+	public sub create_table(byref soLog,byref soSQL)
+		dim strOneTable
+		pModule70103.generuj_create_one_table doc_.stdobjdef.getobjdef(m_nTypeId),strOneTable
+		soSQL.write strOneTable
+		soLog.write "created table " + name + " with current definition"+ vbCrLf
+	end sub
+
+	public sub drop_table(byref soLog,byref soSQL)
+		soSQL.write "-- drop table " + name + vbCrLf
+		soSQL.write "if exists (select * from sysobjects where name='" + name + "')" + vbCrLf
+		soSQL.write vbTab + "drop table " + name + vbCrLf
+		soSQL.write "---------------------------------" + vbCrLf
+	end sub
+	public sub update_collections(byref soLog,byref soSQL)
+		dim arrFields : arrFields = m_pFieldDict.Items
+		dim iter
+		for iter = 1 to m_pFieldDict.Count - 1
+			dim nOldNr,nNewNr
+			if arrFields(iter).update_collections(nOldNr,nNewNr) then
+				soLog.write "update collections for " + name + ":" + arrFields(iter).name +_
+				" from " + cstr(m_nTypeId*1000+nOldNr)  + " to " + cstr(m_nTypeId*1000+nNewNr) + vbCrLf
+				soSQL.write "update collections set idCollection=" + cstr(m_nTypeId*1000+nNewNr) +_
+				" where idCollection=" + cstr(m_nTypeId*1000+nOldNr) + vbCrLf
+			end if
+		next
+	end sub
+end class
+
+function read_line(byref pTS)
+	if pTS.AtEndOfStream then
+		read_line = 0
+	else
+		read_line = split(pTS.ReadLine(),vbTab)
+	end if
+end function
+
+dim pModule70103 : set pModule70103 = doc_.getmodule(70103)
+
+sub list_table_modif(byref soLog,byref soSQL,byref pInfo)
+	soSQL.write " use %DBNAME% "  + vbCrLf
+	soSQL.write " go "  + vbCrLf
+	soSQL.write "--========= BEGIN INJECT A ==============" + vbCrLf
+	dim arrTables : arrTables = pInfo.Items
+	dim iter
+	soLog.write "=========Listing new tables =========== " + vbCrLf
+	for iter = 0 to pInfo.Count - 1
+		if arrTables(iter).is_new() and not arrTables(iter).is_old() then
+			soLog.write "CREATE table " + arrTables(iter).name + vbCrLf
+		end if
+	next
+	soLog.write "=========Listing dropped tables =========== " + vbCrLf
+	for iter = 0 to pInfo.Count - 1
+		if not arrTables(iter).is_new() and arrTables(iter).is_old() then
+			soLog.write "DROP table " + arrTables(iter).name + vbCrLf
+			arrTables(iter).drop_table soLog,soSQL
+		end if
+	next
+	soLog.write "=========Listing changed tables =========== " + vbCrLf
+	for iter = 0 to pInfo.Count - 1
+		if arrTables(iter).is_new() and arrTables(iter).is_old() and arrTables(iter).is_changed() then
+			soLog.write "ALTER table " + arrTables(iter).name + vbCrLf
+			arrTables(iter).alter_table_rename soLog,soSQL
+		end if
+	next
+	soSQL.write "--========= END INJECT A ==============" + vbCrLf
+	soSQL.write "--========= BEGIN INJECT B ==============" + vbCrLf
+	'create new tables in new form
+	'nie tworzymy tabel juz istniejacych niezmienionych
+	for iter = 0 to pInfo.Count - 1
+		if (arrTables(iter).is_new() and not arrTables(iter).is_old()) or arrTables(iter).is_changed()  then
+			arrTables(iter).create_table soLog,soSQL
+		end if
+	next
+	'transer data (insert into table select from upg___table)
+	for iter = 0 to pInfo.Count - 1
+		if arrTables(iter).is_new() and arrTables(iter).is_old() and arrTables(iter).is_changed() then
+			arrTables(iter).alter_table_insert_drop soLog,soSQL
+		end if
+	next
+	soLog.write "=========Listing intact tables =========== " + vbCrLf
+	for iter = 0 to pInfo.Count - 1
+		if arrTables(iter).is_new() and arrTables(iter).is_old() and not arrTables(iter).is_changed() then
+			soLog.write "OK table " + arrTables(iter).name + vbCrLf
+		end if
+	next
+	soLog.write "=========Listing errors =========== " + vbCrLf
+	for iter = 0 to pInfo.Count - 1
+		if not arrTables(iter).is_new() and not arrTables(iter).is_old() then
+			soLog.write "Error!!! table " + arrTables(iter).name + vbCrLf
+		end if
+	next
+	soLog.write "==================================" + vbCrLf
+	soSQL.write "--========= END INJECT B ==============" + vbCrLf
+end sub
+
+function update_collections(byref soLog,byref soSQL,byref pInfo)
+	soSQL.write "--========= BEGIN INJECT C ==============" + vbCrLf
+	dim arrTables : arrTables = pInfo.Items
+	dim iter
+	soLog.write "=========Updating collections =========== " + vbCrLf
+	soSQL.write "--TODO: CHECK ORDER OF UPDATES (when more than 1 collection in object) !! update collections set idCollection=n+1 where idCollection=n" + vbCrLf
+
+	for iter = 0 to pInfo.Count - 1
+		arrTables(iter).update_collections soLog,soSQL
+	next
+	soSQL.write "--========= END INJECT C ==============" + vbCrLf
+end function
+
+function generuj
+	dim pInfo: set pInfo = CreateObject("Scripting.dictionary")
+	dim fso: Set fso = CreateObject("Scripting.FileSystemObject")
+	dim pOldDesc : set pOldDesc = fso.OpenTextFile(page_.ctrl(1).value,1)
+	dim pNewDesc : set pNewDesc = fso.OpenTextFile(page_.ctrl(2).value,1)
+	dim arrLine
+	dim pTableInfo
+	dim pFieldInfo
+	dim soLog: set soLog = doc_.createstreamobj()
+	dim soSQL: set soSQL = doc_.createstreamobj()
+
+	soSQL.write "-- upgrade from " + page_.ctrl(1).value + " to " + page_.ctrl(2).value + vbCrLf
+	soSQL.write "-- generated: " + CStr(Now()) + vbCrLf
+
+	'--- load old definition
+	soLog.write "=========Loading old [" + page_.ctrl(1).value + "]" + vbCrLf
+	do 
+		arrLine = read_line(pOldDesc)
+		if not isArray(arrLine) then
+			exit do
+		else
+			if pInfo.Exists(arrLine(1)) then
+				set pTableInfo = pInfo.Item(arrLine(1))
+			else
+				set pTableInfo = new ctableinfo
+				pTableInfo.name = arrLine(1)
+				pTableInfo.typeid = clng(arrLine(0))
+				pInfo.Add arrLine(1),pTableInfo
+			end if
+			pTableInfo.mark_old
+			set pFieldInfo = pTableInfo.add_field(arrLine(3))
+			pFieldInfo.setoldinfo arrLine
+		end if
+	loop while true
+	soLog.write "=========Loaded old [" + page_.ctrl(1).value + "]" + vbCrLf
+	soLog.write "=========Loading new [" + page_.ctrl(2).value + "]" + vbCrLf
+	'--- load new definition
+	do 
+		arrLine = read_line(pNewDesc)
+		if not isArray(arrLine) then
+			exit do
+		else
+			if pInfo.Exists(arrLine(1)) then
+				set pTableInfo = pInfo.Item(arrLine(1))
+			else
+				set pTableInfo = new ctableinfo
+				pInfo.Add arrLine(1),pTableInfo
+				pTableInfo.name = arrLine(1)
+				pTableInfo.typeid = clng(arrLine(0))
+				soLog.write  ">> new table " + arrLine(1)+ vbCrLf
+			end if
+			pTableInfo.mark_new
+			set pFieldInfo = pTableInfo.get_field_by_name(arrLine(3))
+			if pFieldInfo is nothing then
+				set pFieldInfo = pTableInfo.add_field(arrLine(3))
+				soLog.write "> new field " + arrLine(1) + ":"+ arrLine(3)+ vbCrLf
+			end if
+			pFieldInfo.setnewinfo arrLine
+		end if
+	loop while true
+	soLog.write "=========Loaded new [" + page_.ctrl(2).value + "]" + vbCrLf
+	
+	list_table_modif soLog,soSQL,pInfo
+	update_collections soLog,soSQL,pInfo
+
+	trans_.message 0,0, "done!"
+	
+	soLog.save page_.ctrl(4).value
+	soSQL.save page_.ctrl(3).value
+end function
+
+function fopen
+	page_.ctrl(1).value="c:\navo_eb\sprzedaz\db14.desc"
+	page_.ctrl(2).value="c:\navo_eb\sprzedaz\db15.desc"
+	page_.ctrl(3).value="c:\navo_eb\sprzedaz\upg14_15.sql"
+	page_.ctrl(4).value="c:\navo_eb\sprzedaz\upg14_15.txt"
+	fopen = true
+end function
+
+]]>
+</script>
+</config>
+
+<header>
+</header>
+	<body>
+		<t>Database Upgrader dla Microsoft SQL</t><br/>
+		<table>
+		<tbody>
+			<tr>
+				<td><t>Stare desc</t><edit name='e1' size='45' /></td>
+			</tr>
+			<tr>
+				<td><t>Nowe desc</t><edit name='e2' size='45' /></td>
+			</tr>
+			<tr>
+				<td><t>upg1_2.sql</t><edit name='e3' size='45' /></td>
+			</tr>
+			<tr>
+				<td><t>upg1_2.txt</t><edit name='e4' size='45' /></td>
+			</tr>
+			<tr>
+				<td><button href='vs1017="generuj"'>Go !</button></td>
+			</tr>
+
+		</tbody>
+		</table>
+		<br/>
+		<t name='e200'></t>
+	</body>
+	<footer>
+	</footer>
+</page>

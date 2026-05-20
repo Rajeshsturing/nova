@@ -1,0 +1,207 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#comment document factory
+#comment NX_READY
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1231.h"
+-->
+<page style='STYLE_PAGE'>
+	<config>
+		<script>
+<![CDATA[
+'nx_trace
+#include "50519"
+'getCurrentRKSId
+#include "50120"
+
+#include "50200"
+
+#include "50122"
+
+'getCurrentUser
+#include "50203"
+
+#comment '-----------------------------------------------------------------
+#comment ' Zamowienie Obce -> WZ
+#comment ' idWZ - 0 -> nowa, <> 0 istniejaca
+#comment ' idZam - id zamowienia
+#comment ' oPRS - prod-request-set
+#comment ' iMode - tryb dopisywania pozycji
+#comment ' idRejWZ - 0 - szukaj lub pytaj
+#comment '-----------------------------------------------------------------
+
+function nx_zo_2_wz(byval bAllowUI,byref idWZ,byval idZam,byref oPRS,byval iMode,byval idRejWZ)
+	nx_zo_2_wz = false
+
+	dim pSubTrans : set pSubTrans=trans_.createsubtran()
+
+	dim oZamowienie : set oZamowienie = trans_.getobj(TYPEID_N5ZAMOWIENIE,idZam)
+
+	DISABLED_NX_TRACE_SUB_START("Tworzenie dokumentu WZ z zamówienia obcego " + oZamowienie.text)
+
+	'------------------------------------
+	if idRejWZ = 0 then
+		idRejWZ = nx_choose_rejestr(bAllowUI,"N5REJESTRDOK__WZ")
+	end if
+	if idRejWZ = 0 then
+		exit function
+	end if
+	
+	dim oWZ
+	'--------- prepare env. -------------
+	if idWZ = 0 then
+		trans_.var(APPVAR_REJESTR_TYP) = clng(N5REJESTRDOK__WZ)
+		trans_.var(APPVAR_REJESTR_DOKUMENTOW) = idRejWZ
+		set oWZ = trans_.newobj(TYPEID_N5DOKMAG)
+		idWZ = oWZ.idobj
+	else
+		set oWZ = trans_.getobj(TYPEID_N5DOKMAG,idWZ)
+	end if
+	'---------- fill header -------------
+	set oWZ.pKlient = oZamowienie.pKlient
+	set oWZ.pKlient_JO = oZamowienie.pKlient_JO
+	set oWZ.pMagZrod = trans_.getobj(TYPEID_N5MAGAZYN,oPRS.id_magazyn)
+	set oWZ.wrefDokHandl = oZamowienie
+	oWZ.dm_strNrDokObcy = oZamowienie.zam_strNrDokObcy
+	oWZ.strUwagi = oZamowienie.strUwagi
+#ifdef _IOW
+	oWZ.strExtra2 = oZamowienie.strExtra2
+#endif
+	set oWZ.dm_pSposobDostawy = oZamowienie.zam_pSposobDostawy
+	copy_extras_fields oWZ,oZamowienie
+
+	dim pMod60227 : set pMod60227 = doc_.getmodule(60227)
+	pMod60227.nx_prod_request_2_dokmag oWZ,oPRS,iMode
+
+	nx_zo_2_wz = trans_.saveobjects()
+
+end function
+
+#comment '-----------------------------------------------------------------
+#comment '-----------------------------------------------------------------
+function nx_zo_2_fvs(byval bAllowUI,byref idFVS,byval idZam,byref oPRS,byval iMode,byval idRejFVS)
+end function
+
+#comment '-----------------------------------------------------------------
+#comment ' wybor rejestru dokumentow z podanej listy typow
+#comment ' strRejTypList - lista typow rozdzielona ";" lub ","
+#comment '-----------------------------------------------------------------
+function nx_choose_rejestr(byval bAllowUI,byval strRejTypList)
+	nx_choose_rejestr = clng(0)
+
+	strRejTypList = replace(strRejTypList,";",",")	'for compatibility
+
+	dim strWhereType : strWhereType = ""
+	if strRejTypList <> "" then
+		strWhereType = " n5rejestrdok.eTyp in ( " + strRejTypList + ") and "
+	end if
+	dim strWhereRokKs
+#ifdef _TANDEM_BAITS
+  if strRejTypList <> cstr(N5REJESTRDOK__ZZ) then
+	  strWhereRokKs = "(n5rejestrdok.pRokKsieg=0 or n5rejestrdok.pRokKsieg=" + cstr(getCurrentRKSId()) + ")"  
+  else
+    strWhereRokKs = "(1=1)"
+  end if
+#else
+	strWhereRokKs = "(n5rejestrdok.pRokKsieg=0 or n5rejestrdok.pRokKsieg=" + cstr(getCurrentRKSId()) + ")"
+#endif  
+	
+	dim strWhere : strWhere = strWhereType + strWhereRokKs + " and (eAktywny=1)"
+
+#ifdef _SWIAT_TOREBEK
+	if strRejTypList = CStr(N5REJESTRDOK_PARAGON) or strRejTypList = CStr(N5REJESTRDOK__ZAM_OBCE) then
+		dim pCurUser : set pCurUser = getCurrentUser()
+		if pCurUser.strTelefon <> "" then
+			dim oRS : set oRS = trans_.createadors("select * from n5rejestrdok where eTyp = " + strRejTypList + " and strNazwa like '%" +_ 
+								          pCurUser.strTelefon + "%'")
+			if oRS.recordCount > clng(0) then
+				strWhere = strWhere + " and n5rejestrdok.strNazwa like '%" + pCurUser.strTelefon + "%'"
+			end if
+		end if  
+	end if
+#endif
+
+#ifdef _IZOLACJE
+	if trans_.isvar(APPVAR_REJESTR_SPRZEDAZY_TYP) then
+		if trans_.var(APPVAR_REJESTR_SPRZEDAZY_TYP) = clng(1) then
+			strWhere = strWhere + " and nInternalID <> 2 "
+		elseif trans_.var(APPVAR_REJESTR_SPRZEDAZY_TYP) = clng(2) then
+			strWhere = strWhere + " and nInternalID = 2 "
+		end if
+	end if
+#endif
+
+	dim strPrefix: strPrefix = ""
+#ifdef _TORAL
+	if trans_.isvar(GVAR_REJESTR_PREFIX) then
+		strPrefix = " and strNazwa like '" + Left(trans_.var(GVAR_REJESTR_PREFIX),2) + "%'"
+	end if	
+#endif
+
+	dim idRejestr : idRejestr = trans_.findobjid(TYPEID_N5REJESTRDOK,strWhere + strPrefix)
+	
+#ifdef _TORAL
+	'gdy nie znajdzie żadnego rejestru próbuje bez prefixu
+	if idRejestr = clng(0) then
+		idRejestr = trans_.findobjid(TYPEID_N5REJESTRDOK,strWhere)
+	end if
+#endif
+
+	'-- dokladnie jeden rejestr
+	if idRejestr > 0 then
+		dim oRejestr : set oRejestr = trans_.getobj(TYPEID_N5REJESTRDOK , idRejestr)
+		'--- kontrola uprawnien
+		if oRejestr.n5rejestrdok_hasUserRights() then
+			nx_choose_rejestr = idRejestr
+			nx_.trace.info "IKD001", "Wybrano rejestr dokumentów " + oRejestr.text
+			exit function
+		else
+			nx_.trace.fatal "FKD001", "Brak uprawnień do rejestru dokumentów " + oRejestr.text
+		end if
+	else
+		'--------- brak rejestru ---
+		if idRejestr = 0 then
+			nx_.trace.fatal "FKD002", "Brak wymaganego rejestru dokumentów"
+		else
+			if bAllowUI then
+				do while true
+					idRejestr = nx_fire_choice_list(TYPEID_N5REJESTRDOK,"",strWhere,"")
+					if idRejestr = 0 then
+						exit do
+					end if
+					set oRejestr = trans_.getobj(TYPEID_N5REJESTRDOK , idRejestr)
+					if oRejestr.n5rejestrdok_hasUserRights() then
+						nx_choose_rejestr = idRejestr
+						nx_.trace.info "IKD001", "Wybrano rejestr dokumentów " + oRejestr.text
+						exit function
+					end if
+					MessageBox "Nie posiadasz uprawnień do wykorzystywania rejestru " + oRejestr.text,_
+						"Kontrola uprawnień", vbOKOnly, vbInformation
+				loop
+			else
+				nx_.trace.fatal "FKD003", "Znaleziono wiele rejestru dokumentów (tryb bez nadzoru)"
+			end if
+		end if
+	end if
+end function
+
+#comment '-----------------------------------------------------------------
+#comment ' kopiowanie pol extras
+#comment '-----------------------------------------------------------------
+private sub copy_extras_fields(byref oDestObj,byref oSrcObj)
+	oDestObj.strExtra1 = oSrcObj.strExtra1
+	oDestObj.strExtra2 = oSrcObj.strExtra2
+	oDestObj.dExtra3 = oSrcObj.dExtra3
+	oDestObj.curExtra4 = oSrcObj.curExtra4
+	oDestObj.curExtra5 = oSrcObj.curExtra5
+	set oDestObj.pKwalifikatorEx = oSrcObj.pKwalifikatorEx
+end sub
+]]>
+</script>
+	</config>
+	<body>
+	</body>
+</page>

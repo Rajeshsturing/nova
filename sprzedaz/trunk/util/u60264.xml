@@ -1,0 +1,932 @@
+#include "h1000.h"
+#include "h1001.h"
+#include "h1004.h"
+#include "h1200.h"
+#include "h1201.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1240.h"
+
+#define ID_TABLE_RESULT		1001
+
+<?xml version="1.0" encoding="windows-1250" ?>
+<page>
+<config>
+<title>Wizzard</title>
+<script>
+
+<!--
+	ALWAYS MANUAL
+	Krator zasad sprawdzania stanu aplikacji (reguł)
+-->
+
+<![CDATA[
+
+#include "50100"
+#include "50122"
+#include "50126"
+#include "50209"
+#include "50516"
+#include "50624"
+#include "50622"
+#include "50623"
+
+'harui
+#include "50101"
+
+'-----------------------------------------------------------------------
+' Uruchamia nasz wizzard
+'-----------------------------------------------------------------------
+function fopen()
+	if not HARUI(UAR_CMDID(CMDID_WIZZARD_RULES)) then
+		fopen = false
+		exit function
+	end if
+
+	'Strona uzywana tylko do uruchomienia wizzarda
+	fopen = false
+
+	'Tworzymy staly zestaw regul (rules). Trzymany on jest
+	'w zmiennej globalnej g_pRules
+	Rules_CreateConst
+
+	'Wybór z listy dostępnych rules
+	dim pRuleChoiceModule
+	set pRuleChoiceModule = doc_.getmodule(60266)
+
+	'IdObj wybranej zasady lub zero gdy nowa
+	dim nRuleID
+	nRuleID = pRuleChoiceModule.getRuleID()
+
+	'Wychodzimy - zrezygnowano z wyboru
+	if (nRuleID<0) then
+		exit function
+	end if
+
+	'Uruchom nasz wizzard
+	RulesWizzard_Start nRuleID
+end function
+
+'************************************************************************
+'* Obsluga zdarzen pochodzacych z wizzarda
+'************************************************************************
+
+'-----------------------------------------------------------------------
+' Kontener wizzarda
+'-----------------------------------------------------------------------
+class CRulesWizzardContainer
+	public pRulesManager	'Manager zasad -> pointer do g_pRules
+							'trzymajacej informacje o definicji zasad
+								
+	public nRuleType		'Typ zasady - domyslinie pierwszy z radio
+	public nRule			'Wybrana zasada z danego typu - tez z radio
+
+	public nRuleTypeChoice	'Ostatni dokonany wybor - Typ (grupa)
+	public nRuleChoice		'Ostatnia wybrana zasada z danej grupy
+	
+	public paramsRequired	'Tablica parametrów wymaganych
+	public paramsOptional	'Tablica parametrów opcjonalnych
+
+	public nIdObj			'IdObj rekordu n5rule lub 0 gdy nowy
+
+	public strNazwa			'Nazwa reguły
+
+	'-----------------------------------------------------------------------
+	' Zwraca nazwe grupy reguł aktualnie wybranej
+	'-----------------------------------------------------------------------
+	public function getRuleName()
+		getRuleName = "G" + CStr(nRuleType)
+	end function
+
+	'-----------------------------------------------------------------------
+	' Zwraca nazwę grupy wraz z wybraną regułą
+	'-----------------------------------------------------------------------
+	public function getRuleChoice()
+		getRuleChoice = getRuleName() + "R" + CStr(nRule)
+	end function
+
+	private sub class_initialize()
+		nRuleType = CLng(1)
+		nRule = CLng(1)
+		nRuleTypeChoice = CLng(-1)
+		nRuleChoice = CLng(-1)
+	
+		nIdObj = CLng(0)
+		strNazwa = ""
+
+		set paramsRequired = doc_.afc.new_navoarray()
+		set paramsOptional = doc_.afc.new_navoarray()
+	end sub
+
+end class
+
+'-----------------------------------------------------------------------
+' Przygotuj obiekt wizzarda, dodaj odpowiednie kroki, kontener wizzarda
+' i uruchom go
+'-----------------------------------------------------------------------
+function RulesWizzard_Start(byval nRuleID)
+	
+	'Robimy obiekt wizzarda, ktory nie pracuje
+	'na obiekcie bazodanowym -> CWizzard(false)
+	dim pRulesWizzard
+	set pRulesWizzard = CWizzard(false)
+
+	'Inicjujemy kontener
+	dim pContainer
+	set pContainer = new CRulesWizzardContainer
+	
+	'Dodajemy dodatkowy wskaźnik na definicje zasad
+	'jak i idobj zasady lub 0 gdy nowa
+	set pContainer.pRulesManager = g_pRules
+	pContainer.nIdObj = nRuleID
+
+	'Jeżeli mamy doczynienia z edycją reguły to wypełniamy kontener
+	'danymi tak samo jak by został on wypełniony podczas działania
+	'wizzarda
+	if (nRuleID>0) then
+		if (not Rules_PrepareContainer(nRuleID, pContainer)) then
+			exit function
+		end if
+	end if
+
+	'Dodajemy container do wizzarda
+	pRulesWizzard.add_container pContainer
+
+	'Dodajemy odpowiednie kroki wizzarda
+	'Jeżeli jest to edycja już istniejącej 
+	'zasady to krok 1 i 2 z wyborem grupy i typu
+	'będziemy pomijać
+	if (nRuleID=0) then
+		pRulesWizzard.add_step 20520	'1
+		pRulesWizzard.add_step 20521	'2
+	end if
+
+	'Dodajmy pozostałe kroki wizzarda
+	pRulesWizzard.add_step 20522	'3
+	pRulesWizzard.add_step 20523	'4
+	pRulesWizzard.add_step 20524	'5
+	pRulesWizzard.add_step 20525	'6
+
+	'Uruchamiamy cały wizzard. Teraz będą już wołane
+	'zdarzenia onPageEnter, onPageExit, onWizzardComplered itd.
+	pRulesWizzard.run
+end function
+
+'-----------------------------------------------------------------------
+' Na podstawie istniejącej już reguły wypełniamy kontener w taki sam
+' sposób jak by został wypełniony podczas działania wizzarda
+' Uzywane przy otwieraniu kreatora do edycji juz istniejacych zasad
+'-----------------------------------------------------------------------
+function Rules_PrepareContainer(byval nRuleID, byref pContainer): Rules_PrepareContainer = false
+	dim pRule
+	set pRule = trans_.getobj(TYPEID_N5RULE, nRuleID)
+
+	if (pRule is nothing) then
+		view_message 6283, 0
+		exit function
+	end if
+
+	'Ustaw nazwe zasady
+	pContainer.strNazwa = pRule.strName
+
+	'Odszukaj definicje zasady w g_pRules reprezentującej
+	'kolekcje definicji zasad. Szukamy po typie zasady zapisanym
+	'w n5rule
+	dim pRuleDefinition
+	set pRuleDefinition = nothing
+
+	dim i, n
+	set pRuleDefinition = Rules_SearchByType(pRule.strCode, i, n)
+
+	if (pRuleDefinition is nothing) then
+		'Nie znaleziono zapisanej zasady. Zasada o podanym
+		'typie juz nie istnieje
+		view_message 6284, 0
+		exit function
+	end if
+
+	'Ustaw na podstawie tego rownież grupe jak i
+	'typ wybranej zasady w kontenerze wizzarda
+	pContainer.nRuleType = (i+1)
+	pContainer.nRuleTypeChoice = pContainer.nRuleType
+	pContainer.nRule = (n+1)
+	pContainer.nRuleChoice = pContainer.nRule
+
+	'Pobierz jakie podał użytkownik. Najpierw parametry, które
+	'musiał podać - wymagane
+	dim pRequiredParam
+	set pRequiredParam = pRule.n5rule_getRequiredParams()
+
+	'Jezeli nothing to nie udało się pobrać - wystąpił jakiś
+	'błąd
+	if (pRequiredParam is nothing) then
+		view_message 6285, 0
+		exit function
+	end if
+
+	'Parametry zostały porabene jednak reprezentuje je obiekt, który
+	'jest przekazywany do funkcji wykonującej daną zasade. Mu musimy
+	'zamienić je na parametry przyswajane przez wizzard i ustawić
+	'w kontenerze dodatkowe właściwości, których nie ma w obiekcie
+	'przekazywanym do funkcji wykonującej zasade
+	Rules_params2container pContainer, pRequiredParam, pRuleDefinition.strDescription, pContainer.paramsRequired
+
+	'Pobierz parametry opcjonalne i zrob jeszcze raz to samo
+	dim pOptionalParams
+	set pOptionalParams = pRule.n5rule_getOptionalParams()
+
+	'Zawsze ma byc obiekt nawet jezeli nie wybrano nawet jednego
+	'parametru opcjonalnego
+	if (pOptionalParams is nothing) then
+		view_message 6285, 0
+		exit function
+	end if
+
+	Rules_params2container pContainer, pRequiredParam, pRuleDefinition.strOptionalDescription, pContainer.paramsOptional
+
+	Rules_PrepareContainer = true
+end function
+
+'-----------------------------------------------------------------------
+' Przenosi parametry do kontenera wizzarda. Zamienia obiekt reprezentujący
+' wybrane parametry (pParams) przekazywane do funkcji wykonującej dana
+' zasade na obiekt przyswajany przez wizzard i znajdujacy sie w kontenetrze
+' strRuleDef - jest to string definiujący podaną zasade pobrany z g_pRules
+'-----------------------------------------------------------------------
+function Rules_params2container(byref pContainer, byref pParams, byref strRuleDef, byref pParamsArray)
+	'Rozbijaj opis tekstu na tablice elementów tekstowych
+	dim pTextElems
+	set pTextElems = doc_.afc.new_navoarray()
+
+	'Dokonujemy rozbicia. Tablica zawieta elementy
+	'tekstowe będące skrótem jak i zwykłym tekstem
+	pTextElems.Separate strRuleDef, DELIMITER_LEVEL_1
+
+	if (pTextElems.Count()=0) then
+		'Brak definicji. Był pusty string
+		exit function
+	end if
+
+	'Aktualna pozycja w rozbitym stringu na tablice
+	'jest ustawiana na początek
+	dim nCurrentArrPos
+	nCurrentArrPos = CLng(0)
+
+	'Jezeli zostaly zapisane jakies parametry to pParams
+	'będzie je posiadał
+	if (pParams.Count()>0) then
+
+		'Przechodzimy przez wszystkie zapisane parametry
+		'np. w tablicy beda dwa elementy jezeli do wyboru jest
+		'kwota i symbol walutu z takiego stringa.
+		'Wybierz <kwota> i podaj <symbol> waluty
+		dim nCurrentParamPos
+		for nCurrentParamPos = 0 to pParams.UpperIndex()
+
+			'Wyszukaj w stringu z definicja parametru tego naszego
+			'odpowiadającego aktualnemu parametrowi w pParams(nCurrentParamPos)
+			'i wyciagnij ten parametr do strShortCutParam
+			dim strShortCutParam
+			strShortCutParam = ""
+
+			dim iParamSearch
+			for iParamSearch = nCurrentArrPos to pTextElems.UpperIndex()
+				dim strElement
+				strElement = replace(pTextElems.Value(iParamSearch), DELIMITER_LEVEL_1, "")
+
+				if (left(strElement, 1) = DELIMITER_LEVEL_2) then
+					'Mamy doczynienia z parametrem bedacym
+					'skrótem. To ten parametr nas interesuje
+					strShortCutParam = replace(strElement, DELIMITER_LEVEL_2, "")
+
+					'Nastepnego parametru bedziemy szukac nie od poczatku
+					'lecz wlasnie od tej pozycji
+					nCurrentArrPos = iParamSearch + 1
+					exit for
+				end if
+			next
+
+			'Wydobywamy z definicji parametru nazwe jaka ma być wyświetlona
+			'jeżeli parametr nie został wybrany. Jest to znowu pierwszy element
+			'z tablicy odzielonej przez DELIMITER_LEVEL_3
+			dim pChoiceElement
+			set pChoiceElement = doc_.afc.new_navoarray()
+
+			pChoiceElement.Separate strShortCutParam, DELIMITER_LEVEL_3
+
+			dim strChoiceElement
+			strChoiceElement = ""
+
+			if (pChoiceElement.Count()>0) then
+				'Mamy nazwe wyswietlana gdy parametr nie jest
+				'wybrany
+				strChoiceElement = pChoiceElement.Value(0)
+			end if
+
+			'Robimy obiekt reprezentujący jeden wybrany parametr
+			'i posiadający listę następnych parametrów jeżeli
+			'istnieje możliwość wyboru wieli np. a + b + c
+			dim pRuleParam
+			set pRuleParam = doc_.afc.new_CRulesParam()
+
+			'Dodaj do tablicy parametrów wybranych kontenera
+			'nasz parametr
+			pParamsArray.Add pRuleParam
+
+			'Z tablicy parametrow ale tej dla funkcji wykonujacej
+			'zasady pobieramy obiekt reprezentujący listę parametrow
+			dim pFunctionParams
+			set pFunctionParams = pParams.Value(nCurrentParamPos)
+
+			if (pFunctionParams.params_count()>0) then
+				'Jeżeli są jakieś parametry okrslone to dodajemy
+				
+				'Zamieniamy liste parametrow na parametry w kontenerze
+				'Pierwszy param ładujemy bezpośrednio do pRuleParam a
+				'następne do listy znajdującej się w pRuleParam
+				Rules_param2ruleparam pRuleParam, pFunctionParams.getParam(0), strChoiceElement
+
+				if (pFunctionParams.params_count()>1) then
+
+					dim iContinue
+					for iContinue = 1 to (pFunctionParams.params_count()-1)
+
+						'Dodajemy parametry wynikające ze zrobionej
+						'kontynuacji
+						dim pContinueParam
+						set pContinueParam = doc_.afc.new_CRulesParam()
+
+						'Dodajemy taki parametr do listy parametrów
+						'naszego parametru głównego
+						pRuleParam.pListParams.Add pContinueParam
+						
+						Rules_param2ruleparam pContinueParam, pFunctionParams.getParam(iContinue), strChoiceElement
+					
+					next
+
+				end if
+			end if
+
+		next
+
+	end if 'pParams.Count()>0
+
+end function
+
+'-----------------------------------------------------------------------
+' Zamieniamy juz konkretny obiekt reprezentujacy parametr przekazywany 
+' do funkcji wykonujacej na taki przyswajalny przez wizzard. Wizzard
+' potrzebuje wiecej informacji
+'-----------------------------------------------------------------------
+function Rules_param2ruleparam(byref pRuleParam, byref pFunctionParam, byval strChoice)
+
+	'Jeżeli parametr jest typu vbEmpty oznacza to, że jest on
+	'np. opcjonalny lub nie został wybrany
+	if (pFunctionParam.nVarType<>vbEmpty) then
+
+		'Zaznaczamy ze zostal wybrany przez user'a
+		pRuleParam.bEmpty = false
+
+		'Na podstawie typu parametru ustaw wartość jaka ma być
+		'wyświetlana w skrócie
+		if (pFunctionParam.nVarType=vbObject) then
+			dim pObject
+			set pObject = trans_.getobj(pFunctionParam.nTypeId, pFunctionParam.varValue)
+
+			if (not pObject is nothing) then
+				pRuleParam.strDisplay = pObject.field(pFunctionParam.strFldName)
+			else
+				pRuleParam.bEmpty = true
+				pRuleParam.strDisplay = "<usunięto wybrany obiekt>"
+			end if
+
+		else
+			pRuleParam.strDisplay = value2display(pFunctionParam.varValue)
+		end if
+	else
+		'Jezeli nie został wypełniony a został zapisany to znaczy, że
+		'jest opcjonalny
+		pRuleParam.bOptional = true
+	end if '!vbEmpty
+	
+	'Ustaw separatory i wartość jaka ma być zapisana w bazie
+	'jezeli nic nie ulegnie zmianie podczas edycji
+	pRuleParam.strSeparator = pFunctionParam.strSeparator1
+	pRuleParam.strSeparator2 = pFunctionParam.strSeparator2
+	pRuleParam.strSave = pFunctionParam.strSavedValue
+
+	'Ustaw jeszcze tekst wyświetlany w przypadku gdy
+	'parametr nie został określony
+	pRuleParam.strChoiceText = strChoice
+end function
+
+
+'-----------------------------------------------------------------------
+' Zdarzenie na wyjście z danego kroku wizzarda
+'-----------------------------------------------------------------------
+function onPageExit(pWizzardPage)
+
+	select case ( pWizzardPage.m_nPage )
+		case 20522 'krok 2
+
+			'Sprawdzamy czy wszystkie wymagane parametry zostały
+			'wypełnione
+			dim pParamsRequired
+			set pParamsRequired = pWizzardPage.m_pContainer.paramsRequired
+
+			dim i
+			for i = 0 to pParamsRequired.UpperIndex()
+				dim pRequiredParam
+				set pRequiredParam = pParamsRequired.value(i)
+
+				if (pRequiredParam.bEmpty) then
+					if (not pRequiredParam.bOptional) then
+						MessageBox "Musisz określić parametr """ + trim(pRequiredParam.strChoiceText) + """", "Kreator zasad" , vbOkOnly, vbInformation
+						onPageExit = PAGE_DONOTEXIT
+						exit function
+					end if
+				end if
+
+			next
+
+			'Aktywnie wybrana zasada (jej definicja)
+			dim pRule
+			set pRule = pWizzardPage.m_pContainer.pRulesManager.m_pRuleTypes.Value(pWizzardPage.m_pContainer.nRuleType-1).m_pRules.Value(pWizzardPage.m_pContainer.nRule-1)
+
+			if (len(trim(pRule.strOptionalDescription))=0) then
+				'Przeskok do kroku 5 bo nie ma opisu dla
+				'parametrów opcjonalnych (nie ma co wybierać)
+				onPageExit = 20524
+				exit function
+			end if
+
+		case 20524 'krok 5
+			
+			'Sprawdzamy czy podano poprawnie nazwę dla reguły
+			if (trim(pWizzardPage.m_pContainer.strNazwa)="") then
+				MessageBox "Musisz podać nazwę reguły", "Kreator zasad" , vbOkOnly, vbInformation
+				onPageExit = PAGE_DONOTEXIT
+				exit function
+			end if
+
+			if (len(trim(pWizzardPage.m_pContainer.strNazwa))>128) then
+				MessageBox "Nazwa reguły nie może być dłuższa niż 128 znaków.", "Kreator zasad" , vbOkOnly, vbInformation
+				onPageExit = PAGE_DONOTEXIT
+				exit function
+			end if
+
+	end select
+	
+	onPageExit=PAGE_DEFAULT
+end function
+
+function getParamName(byval nParametr)
+	dim strParams
+	if (nParametr=1) then
+		strParams = "parametr wymagany"
+	elseif (nParametr<5) then
+		strParams = "parametry wymagane"
+	else
+		strParams = "parametrów wymaganych"
+	end if
+
+	getParamName = CStr(nParametr) + " " + strParams
+end function
+
+'-----------------------------------------------------------------------
+' Zdarzenie wejscia na dana strone
+'-----------------------------------------------------------------------
+function onPageEnter(pWizzardPage)
+	select case ( pWizzardPage.m_nPage )
+		
+		case 20520 'krok pierwszy wizzarda - wybor typu
+
+			'Tworzymy items dla naszego radio buttona
+			dim pRadio
+			set pRadio = pWizzardPage.m_pPage.ctrl(1)
+			
+			dim i
+			for i = 0 to pWizzardPage.m_pContainer.pRulesManager.m_pRuleTypes.UpperIndex()
+
+				dim pRuleType
+				set pRuleType = pWizzardPage.m_pContainer.pRulesManager.m_pRuleTypes.Value(i)
+
+				dim pStatic
+				'todo:spiko Zamienic na CTRL_TYPE_STATICEX gdy zacznie
+				'poprawnie zawijac w radio teksty
+				set pStatic = pRadio.addnew(CTRL_TYPE_STATIC, -1)
+				pStatic.text = "G" + CStr(i+1) + ". " + pRuleType.m_strTypeName
+
+			next
+
+			pRadio.value = pWizzardPage.m_pContainer.nRuleType
+			pWizzardPage.m_pContainer.nRule = CLng(1)
+
+		case 20521 'krok 2 - wybor zasady z okreslonego typu z kroku 1
+
+			pWizzardPage.m_pPage.ctrl(2).text = pWizzardPage.m_pContainer.getRuleName()
+
+			'Tworzymy items dla naszego radio buttona
+			set pRadio = pWizzardPage.m_pPage.ctrl(1)
+
+			dim n
+			for n = 0 to pWizzardPage.m_pContainer.pRulesManager.m_pRuleTypes.Value(pWizzardPage.m_pContainer.nRuleType-1).m_pRules.UpperIndex()
+
+				dim pRule
+				set pRule = pWizzardPage.m_pContainer.pRulesManager.m_pRuleTypes.Value(pWizzardPage.m_pContainer.nRuleType-1).m_pRules.Value(n)
+				'todo:spiko Zamienic na CTRL_TYPE_STATICEX gdy zacznie
+				'poprawnie zawijac w radio teksty
+				set pStatic = pRadio.addnew(CTRL_TYPE_STATIC, -1)
+				pStatic.text = "R" + CStr(n+1) + ". " + pRule.strRuleName
+
+			next
+
+			pRadio.value = pWizzardPage.m_pContainer.nRule
+
+		case 20522 'krok3 - wybor parametrow wymaganych dla danej zasady (reguly)
+
+			pWizzardPage.m_pPage.ctrl(2).text = pWizzardPage.m_pContainer.getRuleChoice()
+
+			'Aktywnie wybrana zasada. Sprawdzany czy jest inna od poprzednio
+			'wybranej i jezeli tak to czyscimy tablice zawierajace info.
+			'o tym co zostało okreslone przez usera (parametry wybrane)
+			set pRule = pWizzardPage.m_pContainer.pRulesManager.m_pRuleTypes.Value(pWizzardPage.m_pContainer.nRuleType-1).m_pRules.Value(pWizzardPage.m_pContainer.nRule-1)
+
+			if (pWizzardPage.m_pContainer.nRuleTypeChoice<>pWizzardPage.m_pContainer.nRuleType or _
+				pWizzardPage.m_pContainer.nRuleChoice<>pWizzardPage.m_pContainer.nRule) then
+				pWizzardPage.m_pContainer.nRuleTypeChoice=pWizzardPage.m_pContainer.nRuleType
+				pWizzardPage.m_pContainer.nRuleChoice=pWizzardPage.m_pContainer.nRule
+				
+				pWizzardPage.m_pContainer.paramsRequired.RemoveAll
+				pWizzardPage.m_pContainer.paramsOptional.RemoveAll
+
+			end if
+			
+			dim pRequiredParams
+			set pRequiredParams = pWizzardPage.m_pContainer.paramsRequired
+			
+			'Robimy tekst calej regula wraz ze skrotami
+			Rules_CreateText pWizzardPage.m_pPage, pRule, pRequiredParams, false
+
+		case 20523 'krok 4 wybór parametrów opcjonalnych
+
+			pWizzardPage.m_pPage.ctrl(2).text = pWizzardPage.m_pContainer.getRuleChoice()
+
+			'Aktywnie wybrana zasada
+			set pRule = pWizzardPage.m_pContainer.pRulesManager.m_pRuleTypes.Value(pWizzardPage.m_pContainer.nRuleType-1).m_pRules.Value(pWizzardPage.m_pContainer.nRule-1)
+
+			dim pOptionalParams
+			set pOptionalParams = pWizzardPage.m_pContainer.paramsOptional
+
+			Rules_CreateText pWizzardPage.m_pPage, pRule, pOptionalParams, true
+
+		case 20524 'krok 5 określanie nazwy reguły
+			
+			pWizzardPage.m_pPage.ctrl(2).text = pWizzardPage.m_pContainer.getRuleChoice()
+
+			'Jeżeli nazwa jest pusta to ustaw
+			if (trim(pWizzardPage.m_pContainer.strNazwa)="") then
+				pWizzardPage.m_pPage.ctrl(3).focus=true
+			end if
+
+		case 20525 'krok 6 podsumowanie
+
+			'Ustaw na stronie podsumowania odpowiednie static'i
+
+			pWizzardPage.m_pPage.ctrl(2).text = pWizzardPage.m_pContainer.getRuleChoice()
+			pWizzardPage.m_pPage.ctrl(3).text = pWizzardPage.m_pContainer.strNazwa
+
+			dim pRuleDefinition
+			set pRuleDefinition = pWizzardPage.m_pContainer.pRulesManager.m_pRuleTypes.Value(pWizzardPage.m_pContainer.nRuleType-1).m_pRules.Value(pWizzardPage.m_pContainer.nRule-1)
+
+			pWizzardPage.m_pPage.ctrl(4).text = LCaseFirst( pRuleDefinition.strRuleName )
+
+			dim nLiczbParamReq
+			nLiczbParamReq = CLng(0)
+
+			dim pParamsReqArr
+			set pParamsReqArr = pWizzardPage.m_pContainer.paramsRequired
+
+			dim iPos
+			for iPos = 0 to pParamsReqArr.UpperIndex()
+				dim pParamReq
+				set pParamReq = pParamsReqArr.Value(iPos)
+
+				if (not pParamReq.bEmpty) then
+					nLiczbParamReq = nLiczbParamReq + 1
+					if (pParamReq.pListParams.Count()>0) then
+						nLiczbParamReq = nLiczbParamReq + pParamReq.pListParams.UpperIndex()
+					end if
+				end if
+			next
+
+			pWizzardPage.m_pPage.ctrl(5).text = getParamName(nLiczbParamReq)
+			
+	end select
+end function
+
+'-----------------------------------------------------------------------
+' Tworzy dla danej strony tekst ze skrotami z mozliwoscia klikniecia
+' w odpowiednie miejsca i wyboru odpowiednich obiektow, liczb itd.
+' czyli inaczej wyrenderuj cały tekst na naszej stronie wraz ze skrótami
+'
+' Wolane zawsze dla pustej gdy strona nie ma takiego tekstu. Wybor
+' juz okreslonego parametru powoduje tylko zmiane .text odpowiedniego
+' skrotu a nie wypisanie wszystkiego od nowa przez ta funkcje
+'-----------------------------------------------------------------------
+function Rules_CreateText(byref pPage, byref pRule, byref pParamsArray, byval bOptionalParams)
+
+	'Pobieramy opis tworzenia tekstu ze skrótami z definicji
+	'danej zasady (sposob tworzenia tekstu ze skrotami)
+	dim strDescription
+	if (not bOptionalParams) then
+		strDescription = pRule.strDescription
+	else
+		strDescription = pRule.strOptionalDescription
+	end if
+
+	'Usuwamy wszystkie elementy naszego kontenera
+	dim pElemsCont
+	set pElemsCont = pPage.ctrl(1)
+	pElemsCont.removeall
+
+	'Rozbijaj opis tekstu na tablice elementów tekstowych
+	dim pTextElems
+	set pTextElems = doc_.afc.new_navoarray()
+
+	'Dokonujemy rozbicia
+	pTextElems.Separate strDescription, DELIMITER_LEVEL_1
+
+	'nParamPosition - mówi nam, który jest to parametr w kolejności. 
+	'Umożliwia nam powiązanie danego parametru z odpowiednim elementem
+	'(pozycja) z tablicy parametrów
+	dim nParamPosition
+	nParamPosition = CLng(0)
+
+	'Ostatni identyfikator kontrolki dodanej na strone
+	dim nLastCTRLID
+	nLastCTRLID = -1
+
+	'Dodajemy poszczególne elementy w zależności od ich
+	'typu
+	dim i
+	for i = 0 to pTextElems.UpperIndex()
+	
+		'Pobieramy element tekstowy z tablicy
+		dim strElement
+		strElement = replace(pTextElems.Value(i), DELIMITER_LEVEL_1, "")
+
+		if (left(strElement, 1) = DELIMITER_LEVEL_2) then
+
+			'Mamy doczynienia ze specjalnym parametrem, z którego
+			'ma zostać wygenerowany skrót. Usuwamy znacznik mowiacy
+			'ze to skrot
+			strElement = replace(strElement, DELIMITER_LEVEL_2, "")
+
+			'Robimy tablice zawierajaca wlasciwosci danego skrotu
+			dim pChoiceElement
+			set pChoiceElement = doc_.afc.new_navoarray()
+
+			pChoiceElement.Separate strElement, DELIMITER_LEVEL_3
+
+			'Robimy tablice trzymajaca wybrane parametry. Gdy pozycja
+			'juz istnieje to tylko pobieramy
+			dim pRuleParam
+			if (pParamsArray.upperIndex()<nParamPosition) then
+				set pRuleParam = doc_.afc.new_CRulesParam()
+				pRuleParam.strChoiceText = pChoiceElement.value(0)
+				pParamsArray.add pRuleParam
+			else
+				set pRuleParam = pParamsArray.value(nParamPosition)
+			end if
+
+			dim bChoiceAdded
+			bChoiceAdded = true
+
+			'Robimy skrot dla odpowiedniego typu wyboru na podstawie opisu
+			'(wydobytych wlasciwosci) skrotu - pChoiceElement
+			dim pRulesHli
+			set pRulesHli = Rules_CreateShorcut(pChoiceElement, nParamPosition)
+
+			'Sprawdzamy czy parametr jest opcjonalny i zaznacz to
+			if (pRulesHli.exists(FUNCTION_OPTIONAL)) then
+				if (pRulesHli.prop(FUNCTION_OPTIONAL)="1") then
+					pRuleParam.bOptional = true
+				end if
+			end if
+
+			'Jeżeli istnieje separator 2 to robimy go za ostatnio
+			'dodana kontrolka nLastCTRLID
+			pRulesHli.prop(FUNCTION_CTRL_ID) = nLastCTRLID
+			pRulesHli.prop(FUNCTION_ROOT_ELEM) = CLng(1)
+
+			'Rules_ContinueSelection_SepID - zajdmuje się dodawaniem
+			'static'ow separatorów na strone
+			dim nEmptyID
+			Rules_ContinueSelection_SepID pRulesHli, pPage, nParamPosition, FUNCTION_CONNECTOR2, pRuleParam, bChoiceAdded, nEmptyID
+
+			dim strText2Display
+			strText2Display = pRuleParam.strChoiceText
+
+			'Dodajemy spacje jako osobny static
+			if (left(strText2Display, 1)=" ") then
+				dim pStaticSpace
+				set pStaticSpace = pElemsCont.addnew(CTRL_TYPE_STATIC, -1)
+				pStaticSpace.text = " "
+			end if
+
+			strText2Display = trim(strText2Display)
+
+			dim pStatic
+			set pStatic = pElemsCont.addnew(CTRL_TYPE_STATICEX, -1)
+			pStatic.text = strText2Display
+
+			pRulesHli.prop(FUNCTION_CTRL_ID) = pStatic.ident
+			pRulesHli.prop(FUNCTION_ROOT_ELEM) = CLng(0)
+
+			set pStatic.hli = pRulesHli
+			nLastCTRLID = pStatic.ident
+
+			'Ustawienie odpowiednich kolorów itd. gdy potrzeba
+			SetStaticStyleEx pStatic, false, false, false, true
+
+			if (pRuleParam.bEmpty and (not pRuleParam.bOptional)) then
+				pStatic.forecolor = PARAM_COLOR_REQ
+			else
+				pStatic.forecolor = PARAM_COLOR_OPT
+			end if
+
+			if (not pParamsArray.value(nParamPosition).bEmpty) then
+				pStatic.text = pParamsArray.value(nParamPosition).strDisplay
+
+				'Jezeli parametr został już określony i mamy doczynienia
+				'z parametrem posiadającym kontunuacje to musimy ją 
+				'odtworzyć i tyle
+					
+				if (pRulesHli.prop(FUNCTION_CONNECTOR)<>"") then
+					'Jest tworzenie kontynuacji
+					dim n
+					for n = pParamsArray.value(nParamPosition).pListParams.UpperIndex() to 0 step -1
+						'Tworzenie kontynuwacji selekcji.
+						Rules_ContinueSelection pRulesHli, pParamsArray, pPage, n, nLastCTRLID
+					next
+
+				end if
+			end if
+
+			nParamPosition = nParamPosition + 1
+
+		else
+			'Mamy doczynienia z fragmentem, który jest zwykłym
+			'tekstem. Dodajemy go na strone i tyle
+			if (len(strElement)>0) then
+				dim pNormalStatic
+				set pNormalStatic = pElemsCont.addnew(CTRL_TYPE_STATICEX, -1)
+				pNormalStatic.text = strElement
+				nLastCTRLID = pNormalStatic.ident
+			end if
+		end if
+
+	next
+
+end function
+
+'-----------------------------------------------------------------------
+' Dodaj do stringa nowy string oddzielajac wybranym stringiem
+'-----------------------------------------------------------------------
+function Add2StringDelimiter(byref strOut, byval strAdd, byval strDelimieter)
+	strAdd = CStr(strAdd)
+
+	if (strOut<>"") then
+		strOut = strOut + strDelimieter
+	end if
+
+	strOut = strOut + strAdd
+end function
+
+'-----------------------------------------------------------------------
+' Zapisz pojedynczy parametr do stringa
+'-----------------------------------------------------------------------
+function SaveSingleParam(byref pSingleParam): SaveSingleParam = ""
+	Add2StringDelimiter SaveSingleParam, pSingleParam.strSave, DELIMITER_LEVEL_3
+	Add2StringDelimiter SaveSingleParam, pSingleParam.strSeparator, DELIMITER_LEVEL_3
+	Add2StringDelimiter SaveSingleParam, pSingleParam.strSeparator2, DELIMITER_LEVEL_3
+end function
+
+'-----------------------------------------------------------------------
+' Zapisz parametry z tablicy parametór do stringa
+'-----------------------------------------------------------------------
+function SaveParams(byref pParamsArray): SaveParams = ""
+
+	'Brak parametrów
+	if (pParamsArray.count()=0) then
+		exit function
+	end if
+
+	'Iterujemy się po wszystkich parametrach
+	dim i
+	for i = 0 to pParamsArray.UpperIndex()
+
+		'Zapisujemy parametry. Parametry nie wypełnione
+		'też są zapisywane tylko jako vbEmpty
+		dim pSingleParam
+		set pSingleParam = pParamsArray.value(i)
+
+		'Zapisujemy tylko parametry wypełnione lub puste ale
+		'będące parametrem opcjonalnym
+		if ((not pSingleParam.bEmpty) or pSingleParam.bOptional) then
+
+			'Jeżelie zapisujemy następny parametr to
+			'musimy oddzielić go od pozostałych
+			if (i>0) then
+				SaveParams = SaveParams + DELIMITER_LEVEL_1
+			end if
+
+			SaveParams = SaveParams + SaveSingleParam(pSingleParam)
+
+			'Sprawdzamy czy ma coś na liście parametrów, a
+			'ma jeżeli parametr był typu continue i zostało
+			'cos wybrane
+			dim n
+			for n = 0 to pSingleParam.pListParams.UpperIndex()
+
+				dim pSingleParamContinue
+				set pSingleParamContinue = pSingleParam.pListParams.Value(n)
+
+				SaveParams = SaveParams + DELIMITER_LEVEL_2
+				SaveParams = SaveParams + SaveSingleParam(pSingleParamContinue)
+			
+			next
+
+		end if '!Empty or Optional
+
+	next
+end function
+
+'-----------------------------------------------------------------------
+' Zakończenie wizzarda
+'-----------------------------------------------------------------------
+function onWizzardComplete(pWizzardPage): onWizzardComplete=false
+
+	'Pobieramy parametry do zapisu danych
+	dim strParamsRequied
+	strParamsRequied = SaveParams(pWizzardPage.m_pContainer.paramsRequired)
+
+	if (len(strParamsRequied)>7900) then
+		MessageBox "Za dużo lub za długie parametry wymagane. Nie będzie można zapisać danych.", "Kreator zasad" , vbOkOnly, vbInformation
+		exit function
+	end if
+
+	'Pobieramy parametry opcjonalne
+	dim strOptionalParams
+	strOptionalParams = SaveParams(pWizzardPage.m_pContainer.paramsOptional)
+
+	dim pTran
+	set pTran = trans_.createsubtran()
+
+	dim pRuleDef
+	set pRuleDef = pWizzardPage.m_pContainer.pRulesManager.m_pRuleTypes.Value(pWizzardPage.m_pContainer.nRuleType-1).m_pRules.Value(pWizzardPage.m_pContainer.nRule-1)
+
+	dim pRule
+	if (pWizzardPage.m_pContainer.nIdObj=0) then
+		set pRule = trans_.newobj(TYPEID_N5RULE)
+	else
+		set pRule = trans_.getobj(TYPEID_N5RULE, pWizzardPage.m_pContainer.nIdObj)
+
+		if (pRule is nothing) then
+			view_message 6286, 0
+			exit function
+		end if
+	end if
+
+	'Ustawiamy nazwe reguły
+	pRule.strName = trim(CStr(pWizzardPage.m_pContainer.strNazwa))
+	'Kod
+	pRule.strCode = pRuleDef.strType
+	'Parametry wymagane
+	pRule.strParam = strParamsRequied
+	'Parametry opcjonalne
+	pRule.strOptionalParam = strOptionalParams
+
+	if (trans_.saveobjects()) then
+		MessageBox "Reguła została zapisana.", "Kreator zasad" , vbOkOnly, vbInformation
+		onWizzardComplete = true
+	else
+		MessageBox "NIE udało się zapisać reguły.", "Kreator zasad" , vbOkOnly, vbInformation
+		trans_.discard
+	end if
+
+	set pTran = nothing
+end function
+
+]]>
+
+</script>
+</config>
+
+<body>
+</body>
+
+</page>

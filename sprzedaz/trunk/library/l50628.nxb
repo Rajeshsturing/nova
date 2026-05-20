@@ -1,0 +1,497 @@
+'--------------------------------------------------------------------------
+' (c) NAVO 2003 Ltd.
+' Spikowski Piotr
+'
+' Konfiguracja paska szybkiego dostêpu (zapis i ³adowanie)
+'--------------------------------------------------------------------------
+
+'showOutlookBar
+#include "50129"
+#include "50203"
+
+#define OUTLOOKBAR_MAX_OPTIONS		10
+#define OUTLOOKBAR_SELECTED_COLOR	RGB(0, 0, 255)
+
+'--------------------------------------------------------------------------
+' Klasa reprezentuje zestaw opcji outlookbar'a
+'--------------------------------------------------------------------------
+class COutlookBar
+
+	private m_pBarOptions	'Tablica opcji dostêpnych na outlookbarz'e
+							'Ma zawsze wielkoœæ maxymalnej liczby mo¿liwych
+							'do ustawienia opcji
+
+	private m_bEditMode		'Czy outlookbar jest w trybie edycji tzn. mo¿na
+							'dodawac nowe pozycje i zmienicac istniej¹ce
+							'a ca³oœæ jest wo³ana za poœrednictwem specjalnej
+							'strony do edycji toolbar'a
+
+	private m_nUserID		'IdObj uzytkownika dla ktorego pasek szybkiego
+							'dostepu ma byc konfigurowany, ladowany
+
+	private sub class_initialize()
+
+		'Domyœlnie wszystko siê dzieje dla aktualnie
+		'zalogowanego u¿ytkownika
+		m_nUserID = CLng(trans_.var(GVAR_USER))
+
+		'Inicjujemy tablice dostêpnych opcji
+		set m_pBarOptions = trans_.afc.new_navoarray()
+
+		'Tablica ta ma zawsze tyle elementów, ile
+		'jest maksymalnie opcji do ustawienia
+		dim i
+		for i=1 to OUTLOOKBAR_MAX_OPTIONS
+			dim pSingleOption
+			set pSingleOption = new CBarOption
+
+			'Ustaw info o zajmowanej pozycji
+			pSingleOption.m_nPosition = i
+			
+			'Dodaj do tablicy elementów menu
+			m_pBarOptions.Add pSingleOption 
+		next
+
+		'Domyœlnie nie mamy trybu edycyjnego
+		m_bEditMode = false
+	end sub
+
+	private sub class_terminate()   'OK
+		set m_pBarOptions = nothing
+	end sub
+
+	'--------------------------------------------------------------------------
+	' Ustaw ID u¿ytkownika dla którego ma siê odbywaæ konfiguracja lub
+	' ³adowanie outlookbar'a
+	'--------------------------------------------------------------------------
+	public function setUser(byval nUserID)
+		m_nUserID = CLng(nUserID)
+	end function
+
+	'--------------------------------------------------------------------------
+	' Uruchomienie wszystkiego w trybie edycyjnym tzn. mo¿liwoœæ
+	' zmiany pozycji menu szybkiego dostêpu za poœrednictwem specjalnej
+	' strony do edycji
+	'--------------------------------------------------------------------------
+	public function EditMode()
+		m_bEditMode = true
+	end function
+
+	'--------------------------------------------------------------------------
+	' Przejscie do zwyklego trybu roboczego
+	'--------------------------------------------------------------------------
+	public function WorkingMode()
+		m_bEditMode = false
+	end function
+
+	'--------------------------------------------------------------------------
+	' Pobiera strone reprezentuj¹c¹ outlookbar'a
+	'--------------------------------------------------------------------------
+	private function getBarPage()
+		set getBarPage = doc_.getoutlookbar
+		
+		if (getBarPage is nothing) then
+			showOutlookBar
+			set getBarPage = doc_.getoutlookbar
+		end if
+
+	end function
+
+	'--------------------------------------------------------------------------
+	' Powoduje wstawienie pozycji menu (narysowanie ich)
+	'--------------------------------------------------------------------------
+	public function Render()
+
+		'Wstawiamy wszystkie poszczególne opcje
+		'na stronê szybkiego dostepu
+
+		dim pPage
+		set pPage = getBarPage()
+
+		if (pPage is nothing) then
+			exit function
+		end if
+
+		dim nBarTableID
+		nBarTableID = pPage.getBarTableID()
+
+		dim pTab
+		set pTab = doc_.afc.new_tb(pPage).attach(pPage.ctrl(nBarTableID)).section_body.removeall
+
+		dim i
+		for i = 1 to OUTLOOKBAR_MAX_OPTIONS
+
+			'Nowy wiersz
+			pTab.NewRow
+
+			dim pSingleOption
+			set pSingleOption = getItemAtPosition(i)
+
+			if (pSingleOption.m_bSelected and m_bEditMode) then
+				
+				'W trybie edycyjnym zaznaczmy, któr¹ pozycjê menu
+				'user chce aktualnie zmieniaæ
+
+				pTab.row.border = CLng(1)
+				pTab.row.backcolor = OUTLOOKBAR_SELECTED_COLOR
+				pTab.row.backcolor2 = OUTLOOKBAR_SELECTED_COLOR
+			else
+				pTab.row.border = CLng(0)
+			end if
+
+			'Dodajemy komórke i element w tej komorce
+			'tzn. obrazek lub sam tekst gdy nie ma
+			'obrazka
+			
+			if (pSingleOption.m_bEmpty) then
+
+				'Pozycja menu nie zosta³a wype³niona (pusta)
+				if (m_bEditMode) then
+					
+					'Tryb edycji - pokaujemy puste miejsca w ktorych
+					'mo¿na wstawic now¹ pozycjê menu specjalnymi
+					'obrazkami
+					pTab.NewCell.AddCtrl CTRL_TYPE_PICTURE, -1
+					pTab.element.image = CLng(PICTURE_MISSING)
+					pTab.element.tip = "Miejsce na Twoje menu"
+
+				else
+
+					'Robimy puste miejsce by powsta³ zawsze takiej
+					'samej wielkoœci odstêp. Jak ktoœ go chcia³ to
+					'dostanie. Wstawiamy pusty obrazek
+
+					pTab.NewCell.AddCtrl CTRL_TYPE_PICTURE, -1
+					pTab.element.image = CLng(80213)
+
+				end if
+
+			else
+
+				if (pSingleOption.m_nPictureID>0) then
+					'Mamy obrazek
+					pTab.NewCell.AddCtrl CTRL_TYPE_PICTURE, -1
+					pTab.element.image = CLng(pSingleOption.m_nPictureID)
+					pTab.element.tip = CStr(pSingleOption.m_strName)
+				else
+					'Nie mamy obrazka - dodajemy tylko tekst
+					pTab.NewCell.AddCtrl CTRL_TYPE_STATICEX, -1
+					pTab.element.text = pSingleOption.m_strName
+				end if
+
+			end if 'not empty
+
+			'Je¿eli mamy doczynienia z obrazkiem
+			'to ustawiamy jego wysokoœæ i szerokoœæ
+			if (pTab.element.type = CTRL_TYPE_PICTURE) then
+				pTab.element.width=CLng(1000)
+				pTab.element.height=CLng(1000)
+			end if
+
+			'Tworzymy skrót do odpowiedniego menu
+			if (m_bEditMode) then
+				set pTab.element.hli = doc_.createhlistr("varFunctionHLI='toolbar_selectitem' vn100='" + CStr(i) + "' gvar_page_iid='" + CStr(page_.iid) + "'")
+			else
+				if (not pSingleOption.m_bEmpty) then
+					set pTab.element.hli = pSingleOption.m_pHLI
+				end if
+			end if
+			
+		next 'i
+		 
+	end function
+
+	'--------------------------------------------------------------------------
+	' Dzila w trybie edycji. Zaznacza, któr¹ pozycjê user chce edytowaæ
+	'--------------------------------------------------------------------------
+	public function selectItem(byval nPosNumber)
+
+		if (not m_bEditMode) then
+			exit function
+		end if
+
+		dim i
+		for i = 1 to OUTLOOKBAR_MAX_OPTIONS
+			dim pSingleOption
+			set pSingleOption = getItemAtPosition(i)
+
+			'Zanzacz lub wyczysc, ktora pozycja jest wyselekcjonowana
+			if (i=nPosNumber) then
+				pSingleOption.m_bSelected = true
+			else
+				pSingleOption.m_bSelected = false
+			end if
+		next
+
+	end function
+
+	'--------------------------------------------------------------------------
+	' Funkcja dla trybu edycyjnego. Zwraca zaznacz¹n¹ pozycjê menu
+	' przez user'a
+	'--------------------------------------------------------------------------
+	public function getSelectedItem(): set getSelectedItem = nothing
+		dim i
+		for i = 1 to OUTLOOKBAR_MAX_OPTIONS
+			dim pSingleOption
+			set pSingleOption = getItemAtPosition(i)
+
+			if (pSingleOption.m_bSelected) then
+				set getSelectedItem = pSingleOption
+			end if
+
+		next
+	end function
+
+	'--------------------------------------------------------------------------
+	' Pobierz pozycje z podanego numeru
+	'--------------------------------------------------------------------------
+	public function getItemAtPosition(byval nPosition)
+		set getItemAtPosition = m_pBarOptions.Value( nPosition - 1 )
+	end function
+
+	'--------------------------------------------------------------------------
+	' Zapisuje wszystkie opcje
+	'--------------------------------------------------------------------------
+	public function save(): save = false
+		dim pSubTrans
+		set pSubTrans = trans_.createsubtran()
+
+		dim strOptions: strOptions = ""
+		dim i
+		for i = 1 to OUTLOOKBAR_MAX_OPTIONS
+			dim pSingleOption
+			set pSingleOption = getItemAtPosition(i)
+
+			if (strOptions<>"") then
+				strOptions = strOptions + vbTab
+			end if
+			strOptions = strOptions + CStr(pSingleOption.m_nCommandIID)
+
+		next
+
+		setuserprofileByID USERPROF_OUTLOOKBAR_CONFIG, strOptions, m_nUserID
+
+		save = trans_.saveobjects()
+		set pSubTrans = nothing
+	end function
+
+	'--------------------------------------------------------------------------
+	' Wczytuje dostarczone opcje
+	'--------------------------------------------------------------------------
+	public function load_options(byval strOptions)
+		
+		dim pOptions
+		set pOptions = trans_.afc.new_navoarray()
+	
+		pOptions.Separate strOptions, vbTab
+
+		dim i
+		for i=0 to pOptions.UpperIndex()
+			
+			if (i>OUTLOOKBAR_MAX_OPTIONS) then
+				'Za duzo zapisanych opcji !!
+				exit for
+			end if
+
+			dim strCmdIID
+			strCmdIID = pOptions.Value(i)
+
+			if (isNumeric(strCmdIID)) then
+				dim nCmdIID
+				nCmdIID = CLng(strCmdIID)
+
+				if (nCmdIID>0) then
+					dim pMenu
+					set pMenu = getMenuObject(nCmdIID)
+
+					if (not pMenu is nothing) then
+						'Znaleziono menu o podanym CMDIID
+
+						dim pSingleOption
+						set pSingleOption = getItemAtPosition(i+1)
+
+						pSingleOption.m_bEmpty = false
+						
+						if (pMenu.hli.exists(PROPC_ICON)) then
+							pSingleOption.m_nPictureID = CLng(pMenu.hli.prop(PROPC_ICON))
+						else
+							pSingleOption.m_nPictureID = 0
+						end if
+
+						pSingleOption.m_strName = Replace(pMenu.hli.prop(PROPC_LABEL), "&", "")
+						set pSingleOption.m_pHLI = pMenu.hli
+						pSingleOption.m_nCommandIID = nCmdIID
+
+					end if '!pMenu nothing
+
+				end if 'nCmdIID>0
+
+			end if 'isNumeric
+
+		next
+
+		'Gdy nie ma opcji zaladowanych dodaj specjalny skrot 
+		'umozliwiajacy konfiguracje paska szybkiego dostepu
+		AddExtraTemporaryOption
+
+	end function
+
+	'--------------------------------------------------------------------------
+	' Wczytuje wszytkie opcje
+	'--------------------------------------------------------------------------
+	public function load()
+		dim strOptions
+		strOptions = getuserprofileByID(USERPROF_OUTLOOKBAR_CONFIG, m_nUserID)
+
+		if (strOptions="") then
+			'Jeszcze nie zapisano menu
+			'Gdy nie ma opcji zaladowanych dodaj specjalny skrot 
+			'umozliwiajacy konfiguracje paska szybkiego dostepu
+			AddExtraTemporaryOption
+			exit function
+		end if
+
+		load = load_options(strOptions)
+	end function
+
+	'--------------------------------------------------------------------------
+	' Je¿eli jest zero pozycji na pasku szybkiego dostêpu do dodaj
+	' skrót do konfiguracji tego paska
+	'--------------------------------------------------------------------------
+	public function AddExtraTemporaryOption()
+		
+		'Je¿eli nie jesteœmy w trybie do edycji danych
+		'to gdy nie ma ani jednej pozycji menu zdefiniowanej
+		'pokazujemy specjalny skrot do konfiguracji outlookbar'a
+		if (not m_bEditMode) then
+		
+			'Sprawdzaj czy sa jakies okreslone pozycje menu
+			dim i, bAllEmpty: bAllEmpty = true
+			for i=1 to OUTLOOKBAR_MAX_OPTIONS
+				
+				dim pSingleOption
+				set pSingleOption = getItemAtPosition(i)
+				
+				if (not pSingleOption.m_bEmpty) then
+					bAllEmpty = false
+					exit for
+				end if
+
+			next
+
+			if (bAllEmpty) then
+				'Nie okreslono pozycji menu so dodajemy
+				'specjalny skrot
+				set pSingleOption = getItemAtPosition(1)
+				pSingleOption.m_bEmpty = false
+				pSingleOption.m_strName = "Konfiguruj pasek szybkiego dostêpu"
+				set pSingleOption.m_pHLI = doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=PAGE_SETUP_OUTLOOKBAR")
+			end if
+
+		end if
+
+	end function
+
+	'--------------------------------------------------------------------------
+	' Pobiera obiekt menu o okrœlonym IID
+	'--------------------------------------------------------------------------
+	public function getMenuObject(byval nCmdIID): set getMenuObject = nothing
+		dim pSubNode
+		for each pSubNode in doc_.getmenuobj().node(0)
+
+			dim pResult
+			set pResult = searchForMenuObject(nCmdIID,pSubNode)
+			
+			if (not pResult is nothing) then
+				set getMenuObject = pResult
+				exit function
+			end if
+
+		next
+	end function
+
+	'--------------------------------------------------------------------------
+	' Funkcja pomocnicza dla getMenuObject rekursywnie przechodzaca
+	' po menu aplikacji i szukaj¹ce tego w³aœciwego
+	'--------------------------------------------------------------------------
+	private function searchForMenuObject(byval nCmdIID, byref pNode): set searchForMenuObject = nothing
+		
+		if (pNode.hli.prop(PROPC_CMD_IID) = nCmdIID) then
+			set searchForMenuObject = pNode
+			exit function
+		end if
+
+		dim pSubNode
+		for each pSubNode in pNode
+		
+			dim pResult
+			set pResult = searchForMenuObject(nCmdIID, pSubNode)
+
+			if (not pResult is nothing) then
+				set searchForMenuObject = pResult
+				exit function
+			end if
+
+		next
+	end function
+
+end class
+
+'--------------------------------------------------------------------------
+' Klasa reprezentuje jedn¹ opcje dostêpn¹ na outlookbar'ze
+'--------------------------------------------------------------------------
+class CBarOption
+	
+	public m_nPictureID	'Identyfikator obrazka dla danej opcji
+	public m_strName	'Nazwa opcji
+	public m_pHLI		'HLI dla danej opcji
+	public m_bEmpty		'Czy jest to puste miejsce na opcje
+	public m_bSelected	'Czy zmieniamy aktualnie t¹ pozycjê menu
+	public m_nPosition	'Pozycja w menu
+	public m_nCommandIID
+
+	private sub class_initialize()
+		m_nPictureID = 0
+		m_nPosition = 0
+		m_nCommandIID = 0
+		m_strName = ""
+		set m_pHLI = nothing
+		m_bEmpty = true
+		m_bSelected = false
+	end sub
+
+	'--------------------------------------------------------------------------
+	' Zamien pozycje z innym obiektem CBarOption
+	'--------------------------------------------------------------------------
+	public function swap(byref pBarOption)
+		dim nPictureID
+		dim strName
+		dim pHLI
+		dim bEmpty
+		dim bSelected
+		dim nCommandIID
+
+		nPictureID = pBarOption.m_nPictureID
+		strName = pBarOption.m_strName
+		set pHLI = pBarOption.m_pHLI
+		bEmpty = pBarOption.m_bEmpty
+		bSelected = pBarOption.m_bSelected
+		nCommandIID = pBarOption.m_nCommandIID
+
+		pBarOption.m_nPictureID = m_nPictureID
+		pBarOption.m_strName = m_strName
+		set pBarOption.m_pHLI = m_pHLI
+		pBarOption.m_bEmpty = m_bEmpty
+		pBarOption.m_bSelected = m_bSelected
+		pBarOption.m_nCommandIID = m_nCommandIID
+		
+		m_nPictureID = nPictureID
+		m_strName = strName
+		set m_pHLI = pHLI
+		m_bEmpty = bEmpty
+		m_bSelected = bSelected
+		m_nCommandIID = nCommandIID
+
+	end function
+
+end class

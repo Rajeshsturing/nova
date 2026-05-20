@@ -1,0 +1,1338 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+wymagane appvar_rejestr_typ
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1004.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1222.h"
+#include "h1228.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1240_appvar.h"
+
+#define CREATOR_TITLE  Kreator księgowań grupowych - wiele rejestrów
+
+#comment ID kontrolek dla tabel rejestrów: 1,2,...
+
+#define CTRLID_RESULT_TABLE      1000
+#define CTRLID_CHECKBOX_HEADER   1001
+#define CTRLID_ROW_CHECKBOX      1002
+#define CTRLID_SCHEMAT_DEKR      1003
+#define CTRLID_DOKKSIEG          1004
+#define CTRLID_PAGE_INFO	       1005
+
+#define PROP_ROW_IDENT           201
+#define PROP_REC_NUM             202
+
+#comment pierwsza kolumna (niezbędne dla cBuildQuery)
+#define KOL_FIRST        2
+
+#define CELL_CHECKBOX    1
+#define ELEM_CHECKBOX    1
+
+#ifdef _DEBUG
+#define MAX_DOKINFO3_LEN	17
+#else
+#define MAX_DOKINFO3_LEN	40
+#endif
+
+-->
+<page style='STYLE_PAGE'>
+<config>
+	<title>
+	CREATOR_TITLE
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+<script>
+<![CDATA[
+'nx_trace
+#include "50519"
+#include "50200"
+#include "50600"
+
+'choose_typ_rejestru_restrict
+#include "50112"
+
+'.transfer.createtransfer("row_custom")
+
+'choose_rejestr_dok
+#include "50517"
+
+#include "50101"
+
+'cDrawReport
+#include "50526"
+
+'realize publication
+#include "50518"
+
+
+'lista IdObj wybranych rejestrów
+dim g_pRejestrList
+
+'lista kursorów odpowiadająca wybranym rejestrom
+dim g_pListCursor
+
+'lista obiektów CPoz odpowiadająca wybranym rejestrom
+dim g_pListObject
+
+dim g_pPerf
+
+class CPoz
+	public m_iIdobjZrod					'idobj zrodlowego dokumentu np fvat, wz
+	public m_iIdobjSchDekret		'idobj schematu dekretacji
+	public m_bChecked
+	
+		private sub class_initialize()
+			 m_bChecked = true
+			 m_iIdobjZrod = clng(0)
+			 m_iIdobjSchDekret = clng(0) 
+		end sub
+end class
+
+'----------------------------------------------------------------------------------
+function fopen() : fopen = false
+
+	'check rights
+	if not HARUI(UAR_CMDID(CMDID_MENU_KSIEGOWANIE_GRUPOWE)) then
+		exit function
+	end if
+  
+	'inicjalizacja obiektów => dla celów rysowania dynamicznego (50526)
+	initialObjects  
+
+	dim idTypRej : idTypRej = choose_typ_rejestru_restrict("N5REJESTRDOK_KASOWY;N5REJESTRDOK_BANKOWY;N5REJESTRDOK_FAKT_SP;N5REJESTRDOK_KOR_FAKT_SP;N5REJESTRDOK_RACH;N5REJESTRDOK_KOR_RACH;N5REJESTRDOK_PARAGON;N5REJESTRDOK_KOR_PARAGON;N5REJESTRDOK_FAKT_EXP;N5REJESTRDOK_KOR_FAKT_EXP;N5REJESTRDOK_FAKTURA_ZALICZKOWA;N5REJESTRDOK_FAKTURA_ZALICZKOWA_KOR;N5REJESTRDOK_KOREKTA_WDT;N5REJESTRDOK_WDT;N5REJESTRDOK_FAKT_ZAK;N5REJESTRDOK_WNT;N5REJESTRDOK_KOREKTA_WNT;N5REJESTRDOK_KOR_FAKT_ZAK;N5REJESTRDOK_FAKT_IMP;N5REJESTRDOK_KOR_FAKT_IMP;N5REJESTRDOK_FAKT_ZAK_RR;N5REJESTRDOK_KOR_FAKT_ZAK_RR;N5REJESTRDOK__PZ;N5REJESTRDOK__WZ;N5REJESTRDOK__ZD;N5REJESTRDOK__ZZ;N5REJESTRDOK__PW;N5REJESTRDOK__RW;N5REJESTRDOK__PP;N5REJESTRDOK__RP;N5REJESTRDOK__MM;N5REJESTRDOK__MP;N5REJESTRDOK__MR;N5REJESTRDOK__IP;N5REJESTRDOK__IR;N5REJESTRDOK_DOSTAWA;N5REJESTRDOK_KOR_DOSTAWA;N5REJESTRDOK_IMPORT_USLUG;N5REJESTRDOK_KOR_IMPORT_USLUG", true)
+	if idTypRej <= 0 then
+		exit function
+	end if
+
+	trans_.var(APPVAR_REJESTR_TYP) = idTypRej
+	trans_.var(APPVAR_REJESTR_DOKUMENTOW) = clng(0) 
+
+	page_.cmdenabled(CMD_PRINT) = false
+	page_.cmdenabled(CMD_PRINTPREVIEW) = false  
+  
+	frefresh
+  
+	fopen = true
+end function
+
+'------------------------------------------------
+'standardowa funkcja wolana na przycisk 'odswież'
+'------------------------------------------------
+function frefresh()
+	frefresh = setup_cursor()
+	if not frefresh then
+		page_.goback
+	end if
+    
+	fill_results
+  
+	set g_pPerf = nothing
+end function
+
+#ifdef _TORAL
+	dim g_bZakup: g_bZakup = false
+#endif
+
+'----------------------
+'przygotowanie kursora
+'----------------------
+function setup_cursor : setup_cursor = false
+	set g_pRejestrList = doc_.afc.new_navoarray()
+	set g_pListCursor = doc_.afc.new_navoarray()
+	set g_pListObject = doc_.afc.new_navoarray()
+  
+	dim pCursor : set pCursor = nothing
+	trans_.discard
+
+	dim pModRapEngine : set pModRapEngine = doc_.getmodule(60108)
+	dim pParamFactory: set pParamFactory = doc_.afc.rap.param
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+	
+	'---- ustawiaj dla każdego typu rejestru:
+	dim strRejestrWhere		'-- wyrażenie dla rejestru
+	dim strSchematWhere		'-- wyrażenie dla schematu dekr.
+	dim strDKWhere			'-- wyrażenie dla dowodu ksiegowego
+	dim strDataWystBE		'-- bind-expression dla daty
+	dim nTypeId				'-- typeid obiektów
+	dim strOrderBy			'-- kolejność wysw.
+
+	
+	select case trans_.var(APPVAR_REJESTR_TYP)
+	case N5REJESTRDOK_KASOWY,N5REJESTRDOK_BANKOWY
+		nTypeId = TYPEID_N5PLATNOSC
+		strDataWystBE = "dDataOper"
+		strSchematWhere = "pSchematDekr"
+		strDKWhere = "pDowodKsieg"
+		strRejestrWhere = "pRejestrDok=" + cstr(trans_.var(APPVAR_REJESTR_DOKUMENTOW))
+		strOrderBy = "dDataOper,IdObj"
+	case N5REJESTRDOK_FAKT_SP,N5REJESTRDOK_KOR_FAKT_SP,N5REJESTRDOK_RACH,N5REJESTRDOK_KOR_RACH,N5REJESTRDOK_PARAGON,N5REJESTRDOK_KOR_PARAGON,N5REJESTRDOK_FAKT_EXP,N5REJESTRDOK_KOR_FAKT_EXP,N5REJESTRDOK_KOREKTA_WDT,N5REJESTRDOK_WDT,N5REJESTRDOK_FAKTURA_ZALICZKOWA,N5REJESTRDOK_FAKTURA_ZALICZKOWA_KOR,N5REJESTRDOK_DOSTAWA,N5REJESTRDOK_KOR_DOSTAWA
+		nTypeId = TYPEID_N5SPRZEDAZ
+		strDataWystBE = "dDataWyst"
+		strSchematWhere = "pSchematDekr"
+		strDKWhere = "pDowodKsieg"
+		strRejestrWhere = "pRejestrDok=" + cstr(trans_.var(APPVAR_REJESTR_DOKUMENTOW))
+		strOrderBy = "dDataWyst,IdObj"
+	case N5REJESTRDOK_FAKT_ZAK,N5REJESTRDOK_WNT,N5REJESTRDOK_KOREKTA_WNT,N5REJESTRDOK_KOR_FAKT_ZAK,N5REJESTRDOK_FAKT_IMP,N5REJESTRDOK_KOR_FAKT_IMP,N5REJESTRDOK_FAKT_ZAK_RR,N5REJESTRDOK_KOR_FAKT_ZAK_RR,N5REJESTRDOK_IMPORT_USLUG,N5REJESTRDOK_KOR_IMPORT_USLUG
+		nTypeId = TYPEID_N5ZAKUP
+		strDataWystBE = "dDataWyst"
+		strSchematWhere = "pSchematDekr"
+		strDKWhere = "pDowodKsieg"
+		strRejestrWhere = "pRejestrDok=" + cstr(trans_.var(APPVAR_REJESTR_DOKUMENTOW))
+		strOrderBy = "dDataOtrzym,IdObj"   
+#ifdef _TORAL
+		g_bZakup = true    
+#endif      
+	case N5REJESTRDOK__PZ,N5REJESTRDOK__WZ,N5REJESTRDOK__ZD,N5REJESTRDOK__ZZ,N5REJESTRDOK__PW,N5REJESTRDOK__RW,N5REJESTRDOK__PP,N5REJESTRDOK__RP,N5REJESTRDOK__MM,N5REJESTRDOK__MP,N5REJESTRDOK__MR,N5REJESTRDOK__IP,N5REJESTRDOK__IR
+		nTypeId = TYPEID_N5DOKMAG
+		strDataWystBE = "dDataWyst"
+		strSchematWhere = "pSchematDekr"
+		strDKWhere = "pDowodKsieg"
+		strRejestrWhere = "pRejestrDok=" + cstr(trans_.var(APPVAR_REJESTR_DOKUMENTOW))
+		strOrderBy = "dDataWyst,IdObj"
+	end select
+
+	'Filtr na datę wystawienia
+	pParamArray.add doc_.afc.rap.param.new_date_range("Data wystawienia").bindexpr(strDataWystBE)
+	
+	'Filtr na status schematu
+	dim pParamSchemat : set pParamSchemat = pParamFactory.new_choice("Schemat dekretacji")
+	pParamSchemat.multiple = false
+	pParamFactory.init_on_query pParamSchemat, trans_, _
+	"select strNazwa,idobj from n5schematdekr where pRejestrDok=" + cstr(trans_.var(APPVAR_REJESTR_DOKUMENTOW)) +_
+	"union select '<dowolny>',-1  union select '<brak>', 0 order by 1"
+	pParamArray.add pParamSchemat
+
+	'Filtr na status dowodu księgowego
+	dim pParamDK : set pParamDK = pParamFactory.new_choice("Dowód księgowy")
+	pParamDK.multiple = true
+	pParamFactory.init_on_query pParamDK, trans_, _
+	"select '<brak>',-1  union select '<w buforze>', 0 union select '<zaksięgowane>', 1  order by 1"
+	pParamArray.add pParamDK
+
+	'Filtr na rejestr dokumentów
+	dim strRejWhere: strRejWhere = ""
+#ifdef _ALMA_TREND
+	if trans_.var(APPVAR_REJESTR_TYP) = N5REJESTRDOK_FAKT_SP then
+		strRejWhere = " and strNazwa not like '%FAKTURA_DO_PARAGON%' "
+	end if
+#endif
+	dim pParamFactory2: set pParamFactory2= doc_.afc.rap.param
+	dim pParam2: Set pParam2= pParamFactory2.new_choice("Rejestr dokumentów").bindexpr("IdObj")
+	doc_.afc.rap.param.init_on_query pParam2, trans_ ,"select strNazwa , idobj from n5rejestrdok where eTyp in (" + Cstr(trans_.var(APPVAR_REJESTR_TYP)) + ") " + strRejWhere + " order by strNazwa "
+	pParamArray.add pParam2
+  
+#ifdef _TORAL
+	if g_bZakup then
+		pParamArray.add doc_.afc.rap.param.new_date_range("Data otrzymania").bindexpr("dDataOtrzym")
+	end if
+#endif  
+	
+	if pModRapEngine.show_raport_param_dialog(pParamArray,"Kryteria selekcji") = 0 then
+		exit function
+	end if
+  
+	set g_pPerf = doc_.performing("Trwa przygotowywanie wyników...")
+  
+	'zapamiętaj IdObj wybranych rejestrów
+	dim strSQLRejestr: strSQLRejestr = pModRapEngine.query_apply_actual_param("%4",pParamArray)
+  
+	dim pRejestrCursor: set pRejestrCursor = trans_.createrawcursor(TYPEID_N5REJESTRDOK,strSQLRejestr,"strNazwa","")
+	dim elem
+	for each elem in pRejestrCursor
+		g_pRejestrList.add elem.IdObj
+	next
+  
+	
+	'post processing status schematu
+	dim idSchemat : idSchemat = pParamSchemat.values.Value(pParamSchemat.first_selected)
+	if idSchemat = -1 then
+		strSchematWhere = "(1=1)"
+	else
+		strSchematWhere = strSchematWhere + "=" + cstr(idSchemat)
+	end if
+
+	dim strTmp
+	strTmp = "(%1 or %2 or %3)"
+	'brak
+	if pParamDK.selected.value(0) then
+		strTmp = replace (strTmp , "%1" , strDKWhere + "=0")
+	else
+		strTmp = replace (strTmp , "%1" , strDKWhere + "=-1")
+	end if
+	'bufor
+	if pParamDK.selected.value(1) then
+		strTmp = replace (strTmp , "%2" , strDKWhere + " in (select idobj from n5dowodksieg where eStatus=N5_DEKRET_STATUS_BUFOR)")
+	else
+		strTmp = replace (strTmp , "%2" , strDKWhere + "=-1")
+	end if
+	'zaksiegowany
+	if pParamDK.selected.value(2) then
+		strTmp = replace (strTmp , "%3" , strDKWhere + " in (select idobj from n5dowodksieg where eStatus=N5_DEKRET_STATUS_ZAKS)")
+	else
+		strTmp = replace (strTmp , "%3" , strDKWhere + "=-1")
+	end if
+	strDKWhere = strTmp
+	DEBUG_MESSAGE(strDKWhere)	
+
+	dim strQueryWhere
+#ifdef _TORAL
+	if g_bZakup then
+		strQueryWhere = "pRejestrDok = [IdRejestr] and %1 and " + strSchematWhere + " and (" + strDKWhere + ")" + " and %5"  
+	else
+		strQueryWhere = "pRejestrDok = [IdRejestr] and %1 and " + strSchematWhere + " and (" + strDKWhere + ")"
+	end if
+#else  
+	strQueryWhere = "pRejestrDok = [IdRejestr] and %1 and " + strSchematWhere + " and (" + strDKWhere + ")"
+#endif
+
+	'parametry raportu
+	strQueryWhere = pModRapEngine.query_apply_actual_param(strQueryWhere,pParamArray)
+  
+  'dla każdego wybranego rejestru przygotuj kursor
+  dim iter
+  for iter = 0 to g_pRejestrList.upperIndex
+    dim strWhere: strWhere = Replace(strQueryWhere,"[IdRejestr]",CStr(g_pRejestrList.value(iter)))
+    'kursor
+    set pCursor = trans_.createrawcursor(nTypeId,strWhere,strOrderBy,"")
+    pCursor.forwardonly = false
+    
+    'utwórz słownik
+    dim oPozDok: set oPozDok = doc_.system.activex("Scripting.Dictionary")
+			
+    'wypełnij wartościami
+    for each elem in pCursor
+	    dim pPoz : set pPoz = new CPoz
+	    pPoz.m_iIdobjZrod = elem.idobj	
+	    set oPozDok(elem.idobj) = pPoz
+    next    
+    
+    'zapamiętaj kursor
+    g_pListCursor.add pCursor
+    'zapamiętaj obiekty dla rejestru
+    g_pListObject.add oPozDok
+  next
+  
+  setup_cursor = true
+end function
+
+'--------------------
+'wypelnianie wynikami
+'--------------------
+function fill_results()
+  page_.ctrl(CTRLID_RESULT_TABLE).body.removeall
+  dim pBody: set pBody = page_.ctrl(CTRLID_RESULT_TABLE).body
+  
+  dim nRowNumber: nRowNumber = 1
+  dim iter
+  for iter = 0 to g_pRejestrList.upperIndex
+    dim pRow : set pRow = pBody.insertnewrow(nRowNumber)
+   	dim pCell: set pCell = pRow.addnew(CTRL_TYPE_TABLECELL,-1)
+   
+    'tabela dla rejestru
+    dim pPlugInTable : set pPlugInTable = pCell.addnew(CTRL_TYPE_TABLE,iter + 1)
+    pPlugInTable.styleitem = STYLE_TABLE_BODY
+    dim pTB : set pTB = doc_.afc.new_tb(iter + 1).attach(pPlugInTable)  
+    
+    'początek sekcji zwijanej
+    with pTB.newrow.row
+	    .styleitem=STYLE_EMPTY_CELL
+	    set .userprop = doc_.createhli()
+	    .userprop.prop(PROPC_SECTION_START) = clng(1)
+	    .userprop.prop(PROPC_SECTION_HIDDEN) = clng(0)
+	    .userprop.prop(PROPC_SECTION_REQ) = clng(0)
+    end with    
+      
+    'przycisk zwiń sekcję
+		with pTB.newcell.addctrl(CTRL_TYPE_PICTURE, -1).element
+			.image = PICTURE_SMALL_MINUS
+			.width = SIZE_FOR_PLUS
+			.height = SIZE_FOR_PLUS
+			.ignoresysdisable true
+			.tip="Zwiń"
+			set .hli= doc_.createhli()
+			.hli.prop(GVAR_FUNCTIONHLI) = "section_hideshow_hli"
+			.hli.prop(100) = clng(.ident)
+		end with
+    
+    'nazwa rejestru na belce zwijanej
+    pTB.addtext("  " + GetNazwaRejestru(iter))
+    pTB.element.bold=true
+		with pTB.cell
+      .bold = true
+			.keepline = true
+      .colspan = 7
+		end with     
+    
+    pTB.newrow.newcell
+#ifdef _TORAL 
+    if g_bZakup then
+      pTB.cell.colspan = 9    
+    else
+      pTB.cell.colspan = 8    
+    end if
+#else
+    pTB.cell.colspan = 8
+#endif    
+    g_oDrawRep.drawButton pTB, "Przypisz schemat", 15, "Przypisz schemat dekretacji", "SetSchematDowod", iter
+    g_oDrawRep.drawButton pTB, "Wyzeruj schemat", 15, "Wyzeruj schemat dekretacji", "SetSchematDowodNothing", iter
+    g_oDrawRep.drawButton pTB, "Wydrukuj dowody", 15, "Wydrukuj dowody księgowe", "PrintDK", iter
+    g_oDrawRep.drawButton pTB, "Zaksięguj dowody", 15, "Zaksięguj dowody księgowe", "KsiegujDK", iter
+    pTB.cell.align = ALIGN_LEFT
+    
+    'nagłówek
+	  dim pHRow : set pHRow = pTB.newrow.row
+    'ustawienie właściwości dla wiersza
+    set pTB.row.userprop = doc_.createhli()
+    pTB.row.userprop.prop(PROP_ROW_IDENT) = iter  'nr kursora   
+    
+	  pTB.row.styleitem = STYLE_TABLE_HEADER
+    pTB.newcell   
+    pTB.addctrl CTRL_TYPE_CHECKBOX,-1
+    dim pCheckBoxHead: set pCheckBoxHead = pTB.element
+    with pCheckBoxHead
+      .customredirect = clng(CTRLID_CHECKBOX_HEADER)
+      .transfer = page_.createtransfer("custom")
+      .border = 0
+    end with
+    pTB.element.addnew CTRL_TYPE_STATIC, -1  
+    pTB.cell.width = CLng(400)
+    
+    g_oDrawRep.drawCellHead pTB, 1, "LP", MINIMIZE_SIZE, "", 1, 1, false
+    g_oDrawRep.drawCellHead pTB, 1, "Data", MINIMIZE_SIZE, "", 1, 1, false
+#ifdef _TORAL 
+    if g_bZakup then
+      g_oDrawRep.drawCellHead pTB, 1, "Data otrzymania", MINIMIZE_SIZE, "", 1, 1, false
+    end if
+#endif      
+    g_oDrawRep.drawCellHead pTB, 1, "Dokument", MINIMIZE_SIZE, "", 1, 1, false
+    g_oDrawRep.drawCellHead pTB, 1, "Kwota", MINIMIZE_SIZE, "", 1, 1, false
+    g_oDrawRep.drawCellHead pTB, 1, "Podmiot", 0, "", 1, 1, false
+    g_oDrawRep.drawCellHead pTB, 1, "Schemat dekretacji", MINIMIZE_SIZE, "", 1, 1, false
+    g_oDrawRep.drawCellHead pTB, 1, "Dowód księgowy", MINIMIZE_SIZE, "", 1, 1, false  
+    
+    'domyślnie zaznacz checkbox w nagłówku
+    pHRow.cell(CELL_CHECKBOX).element(ELEM_CHECKBOX).value = "1"
+    
+    'pozycje
+    dim oDok
+    dim nPos: nPos = 1
+    
+    for each oDok in g_pListCursor.value(iter)
+      pTB.newrow      
+      set pTB.row.userprop = doc_.createhli()
+      pTB.row.userprop.prop(PROP_ROW_IDENT) = iter  'nr kursora
+      pTB.row.userprop.prop(PROP_REC_NUM) = nPos    'lp elementu   
+      
+      dim crColor
+      if nPos mod 2 = 0 then
+        pTB.row.backcolor = ROW_COLOR
+        crColor = ROW_COLOR
+      else
+        crColor = WHITE_COLOR
+      end if        
+      
+      'checkbox w wierszu
+      pTB.newcell
+      pTB.addctrl CTRL_TYPE_CHECKBOX,-1
+      dim pCheckBox: set pCheckBox = pTB.element
+      with pCheckBox
+        .customredirect = clng(CTRLID_ROW_CHECKBOX)
+        .transfer = page_.createtransfer("custom")
+        .border = 0
+      end with
+      pTB.element.addnew CTRL_TYPE_STATIC, -1     
+      
+      'pozostałe kolumny
+      g_oDrawRep.drawCell     pTB, cstr(nPos), "", ALIGN_RIGHT, 0, 0, ""
+      g_oDrawRep.drawCellDate pTB, 0, GetDate(oDok), "", crColor
+#ifdef _TORAL 
+      if g_bZakup then
+        g_oDrawRep.drawCellDate pTB, 0, oDok.dDataOtrzym, "", crColor
+      end if  
+#endif
+      g_oDrawRep.drawCell     pTB, "", "", ALIGN_LEFT, oDok.type, oDok.idobj, GetNrDok(oDok)
+      g_oDrawRep.drawCellCur  pTB, 0, GetKwota(oDok), "", 2, 10, "", crColor
+      dim nPodmiotType, nPodmiotIdObj, strPodmiot
+      GetPodmiot oDok, nPodmiotType, nPodmiotIdObj, strPodmiot
+      g_oDrawRep.drawCell     pTB, "", "", ALIGN_LEFT, nPodmiotType, nPodmiotIdObj, strPodmiot
+      pTB.newcell
+      g_oDrawRep.drawPicture  pTB, PICTURE_CHOICE_N5SCHEMATDEKR, "Wybór schematu", "RowChooseSchemDekre", pTB.row.ident
+      g_oDrawRep.drawEdit pTB, CTRLID_SCHEMAT_DEKR, 45, 0, "", WHITE_COLOR
+      pTB.cell.keepline = true
+      pTB.newcell
+      g_oDrawRep.drawPicture  pTB, PICTURE_CHOICE_N5DOWODKSIEG, "Wybór dowodu księgowego", "RowChooseDowodKsieg", pTB.row.ident
+      g_oDrawRep.drawEdit pTB, CTRLID_DOKKSIEG, 30, 0, "", WHITE_COLOR  
+      g_oDrawRep.drawPicture  pTB, PICTURE_MALA_KART, "Podgląd dowodu księgowego", "RowViewDowodKsieg", pTB.row.ident
+      pTB.cell.keepline = true
+      
+      nPos = nPos + 1
+    next
+    
+    'zamknięcie sekcji
+    with pTB.newrow.row
+	    .hide = true
+	    set .userprop = doc_.createhli()
+	    .userprop.prop(PROPC_SECTION_END) = clng(1)
+    end with
+    
+    nRowNumber=nRowNumber+1
+    'odstęp między tabelami
+    dim pRow2: set pRow2 = pBody.insertnewrow(nRowNumber)
+	  dim pText: set pText = pRow2.addnew(CTRL_TYPE_TABLECELL,-1).addnew(CTRL_TYPE_STATIC,-1)     
+    
+    nRowNumber=nRowNumber+1
+  next  
+end function
+
+'----------------------
+'pobiera nazwę rejestru
+'----------------------
+function GetNazwaRejestru(byref iter): GetNazwaRejestru = ""
+  if g_pRejestrList.value(iter) > clng(0) then
+    GetNazwaRejestru = trans_.getobj(TYPEID_N5REJESTRDOK,clng(g_pRejestrList.value(iter))).strNazwa
+  end if
+end function
+
+'--------------------------------------
+'pobiera datę dla danego typu dokumentu
+'--------------------------------------
+function GetDate(oDok): GetDate = doc_.afc.globals.nulldate()
+  select case oDok.type
+    case TYPEID_N5PLATNOSC
+	    GetDate = oDok.dDataOper
+    case TYPEID_N5SPRZEDAZ,TYPEID_N5DOKMAG
+	    GetDate = oDok.dDataWyst
+    case TYPEID_N5ZAKUP
+#ifdef _IOW
+      GetDate = oDok.dDataWyst
+#else
+#ifdef _TORAL
+      GetDate = oDok.dDataWyst  
+#else
+	    GetDate = oDok.dDataOtrzym
+#endif
+#endif
+  end select
+end function
+
+'-------------------------------------------
+'pobiera opis dokumentu w zależności od typu
+'-------------------------------------------
+function GetNrDok(oDok): GetNrDok = ""
+  select case oDok.type
+    case TYPEID_N5PLATNOSC,TYPEID_N5SPRZEDAZ,TYPEID_N5DOKMAG
+	    GetNrDok = oDok.strNrDok
+    case TYPEID_N5ZAKUP
+	    GetNrDok = oDok.text
+  end select
+end function
+
+'--------------------------------------------
+'pobiera kwotę w zależności od typu dokumentu
+'--------------------------------------------
+function GetKwota(oDok): GetKwota = ccur(0)
+  select case oDok.type
+  case TYPEID_N5PLATNOSC
+	  GetKwota = oDok.curKwotaPodm
+  case TYPEID_N5DOKMAG
+	  GetKwota = oDok.curSumaMag
+  case TYPEID_N5SPRZEDAZ
+	  GetKwota = oDok.curSumaBrutto
+  case TYPEID_N5ZAKUP
+	  GetKwota = oDok.curSumaBrutto
+  end select
+end function
+
+'---------------------
+'pobiera dane podmiotu
+'---------------------
+sub GetPodmiot(oDok, nPodmiotType, nPodmiotIdObj, strPodmiot)
+  nPodmiotType = 0
+  nPodmiotIdObj = 0  
+  strPodmiot = ""
+
+  select case oDok.type
+    case TYPEID_N5PLATNOSC
+	    strPodmiot = oDok.wrefPodmiot.text
+	    nPodmiotType = oDok.wrefPodmiot.type
+	    nPodmiotIdObj  = oDok.wrefPodmiot.idobj
+    case TYPEID_N5SPRZEDAZ
+	    strPodmiot = oDok.pKlient.text
+	    nPodmiotType = oDok.pKlient.type
+	    nPodmiotIdObj  = oDok.pKlient.idobj
+    case TYPEID_N5DOKMAG
+	    if not oDok.pKlient is nothing then
+		    nPodmiotType = TYPEID_N5KLIENT
+		    strPodmiot = oDok.pKlient.text
+		    nPodmiotIdObj  = oDok.pKlient.idobj		
+	    else
+		    nPodmiotType = TYPEID_N5DOKMAG
+	    end if
+    case TYPEID_N5ZAKUP
+	    strPodmiot = oDok.pDostawca.text
+	    nPodmiotType = oDok.pDostawca.type
+	    nPodmiotIdObj  = oDok.pDostawca.idobj
+  end select
+
+  if nPodmiotType <> 0 and nPodmiotType <> TYPEID_N5DOKMAG then
+	  if len(strPodmiot) > MAX_DOKINFO3_LEN - 3 then
+		  strPodmiot = left(strPodmiot,MAX_DOKINFO3_LEN - 3 - 3) + "..."
+	  end if
+  end if
+end sub
+
+'------------------
+'zwiń/rozwiń sekcję
+'------------------
+function section_hideshow_hli(byref pHLI)
+	doc_.afc.formsection.section_hideshow page_, pHLI.prop(100)
+end function
+
+'-------------------
+'kolorowanie wiersza
+'-------------------
+sub changeRowColor(byref oRow, byval newValue)
+  if newValue = "1" then
+    'wiersz na żółto
+    oRow.backcolor = YELLOW_COLOR
+  else
+    'usuń żółty kolor
+    if oRow.userprop.exists(PROP_REC_NUM) then
+      dim iLP : iLP = oRow.userprop.prop(PROP_REC_NUM)
+      oRow.backcolor = setRowColor(iLP)
+    end if
+  end if
+end sub
+
+'--------------------------------------------
+'ustawia kolor dla wiersza w zależności od LP
+'--------------------------------------------
+function setRowColor(iLP)
+  if iLP mod 2 = 0 then
+    setRowColor = ROW_COLOR
+  else
+    setRowColor = WHITE_COLOR
+  end if   
+end function
+
+'--------------------------------------
+'kontrolki dla checkbox nagłowka tabeli
+'--------------------------------------
+function c##CTRLID_CHECKBOX_HEADER##_ongetdata(byref oCtrl) : c##CTRLID_CHECKBOX_HEADER##_ongetdata = true
+end function
+
+function c##CTRLID_CHECKBOX_HEADER##_ondataentered(byref oCtrl, byval newValue) : c##CTRLID_CHECKBOX_HEADER##_ondataentered = false
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+    dim nCursorNr: nCursorNr = oRow.userprop.prop(PROP_ROW_IDENT)
+    dim bCheck: bCheck = false
+	  if newValue = "1" then
+		  bCheck = true
+	  end if  
+    
+    dim elem
+    for each elem in g_pListCursor.value(nCursorNr)
+	    g_pListObject.value(nCursorNr).item(elem.idobj).m_bChecked = bCheck
+    next      
+    
+    set oRow = oRow.nextelement
+    do while not oRow is nothing
+      if not oRow.userprop is nothing then
+        if oRow.userprop.exists(PROP_ROW_IDENT) then
+          oRow.cell(CELL_CHECKBOX).element(ELEM_CHECKBOX).value = newValue
+          'kolorowanie
+          changeRowColor oRow, newValue
+        end if
+      end if
+      set oRow = oRow.nextelement      
+    loop    
+    
+    'przypisz dowolny schemat aby mozna bylo go przypisac w razie usuniecia fsave musi wykryc roznice
+    set g_schDoUsuniecia = nothing
+    dim iter : iter = 1
+    do while g_pListCursor.value(nCursorNr).exists(iter)
+      dim oDokZrod : set oDokZrod = g_pListCursor.value(nCursorNr).get(iter)
+      if not fwykryjNazweRef(oDokZrod) is nothing then
+        set g_schDoUsuniecia = fwykryjNazweRef(oDokZrod)
+        exit do
+      end if
+      iter = iter + 1
+    loop    
+  end if    	
+
+  c##CTRLID_CHECKBOX_HEADER##_ondataentered = true
+end function
+
+'-----------------------------------
+'zaznaczy wszystkie wiersze w tabeli
+'-----------------------------------
+function CheckAllCheckbox(byval nCursorNr, byval bValue)
+	dim elem
+	for each elem in g_pListCursor.value(nCursorNr)
+		g_pListObject.value(nCursorNr).item(elem.idobj).m_bChecked = bValue
+	next
+end function
+
+'--------------------------------------
+'kontrolki dla checkbox wiersza tabeli
+'--------------------------------------
+function c##CTRLID_ROW_CHECKBOX##_ongetdata(oCtrl): c##CTRLID_ROW_CHECKBOX##_ongetdata = true
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+    dim nCursorNr: nCursorNr = oRow.userprop.prop(PROP_ROW_IDENT)
+    dim nRow: nRow = oRow.userprop.prop(PROP_REC_NUM)
+    
+    if g_pListCursor.value(nCursorNr).exists(nRow) then
+      oCtrl.disable=false
+      if g_pListObject.value(nCursorNr).item(g_pListCursor.value(nCursorNr).get(nRow).idobj).m_bChecked then
+        oCtrl.value = "1"
+      else
+        oCtrl.value = "0"
+      end if
+    else
+      oCtrl.disable=true
+      oCtrl.value = ""
+    end if
+    'kolorowanie
+    changeRowColor oRow, oCtrl.value 
+  end if
+end function
+
+function c##CTRLID_ROW_CHECKBOX##_ondataentered(byref oCtrl, byval newValue): c##CTRLID_ROW_CHECKBOX##_ondataentered = false
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+    dim nCursorNr: nCursorNr = oRow.userprop.prop(PROP_ROW_IDENT)
+    dim nRow: nRow = oRow.userprop.prop(PROP_REC_NUM)
+    if newValue = "1" then
+	    g_pListObject.value(nCursorNr).item(g_pListCursor.value(nCursorNr).get(nRow).idobj).m_bChecked = true
+    else
+	    g_pListObject.value(nCursorNr).item(g_pListCursor.value(nCursorNr).get(nRow).idobj).m_bChecked = false
+    end if
+    oCtrl.value = newValue
+    'kolorowanie
+    changeRowColor oRow, newValue    
+  end if  
+  c##CTRLID_ROW_CHECKBOX##_ondataentered = true
+end function
+
+'-------------------------------------------------
+'wybór schematu dekretacji dla dokumentu w wierszu
+'-------------------------------------------------
+function RowChooseSchemDekre(pHLI)
+  dim oRow : set oRow = page_.ctrl(pHLI.prop(100))
+  if oRow.userprop.exists(PROP_ROW_IDENT) and oRow.userprop.exists(PROP_ROW_IDENT) then
+    dim nCursorNr: nCursorNr = oRow.userprop.prop(PROP_ROW_IDENT)
+    dim nRowNr: nRowNr = oRow.userprop.prop(PROP_REC_NUM)
+  
+    if not g_pListCursor.value(nCursorNr).exists(nRowNr) then
+      exit function
+    end if
+    trans_.var(APPVAR_REJESTR_DOKUMENTOW) = g_pRejestrList.value(nCursorNr)
+    
+    dim oDok: set oDok = g_pListCursor.value(nCursorNr).get(nRowNr)
+
+    std_choice_field_crsr oDok, "pSchematDekr", "",  "strNazwa", CRSR_SCHEMAT_AKTYWNY_PO_REJESTRACH, TYPEID_N5SCHEMATDEKR, nothing
+    
+    'przypisz do dictionary checked na true oraz idobj wybraneg schematu
+    dim oDictionary: set oDictionary = g_pListObject.value(nCursorNr).item(g_pListCursor.value(nCursorNr).get(nRowNr).idobj)
+    oDictionary.m_bChecked = true
+    if not g_pListCursor.value(nCursorNr).get(nRowNr).field("pSchematDekr") is nothing then
+      oDictionary.m_iIdobjSchDekret = g_pListCursor.value(nCursorNr).get(nRowNr).field("pSchematDekr").idobj
+    end if    
+    
+    trans_.var(APPVAR_REJESTR_DOKUMENTOW) = clng(0)
+  end if
+end function
+
+'-----------------------------------
+'wybór dowodu księgowego dla wiersza
+'-----------------------------------
+function RowChooseDowodKsieg(pHLI)
+  dim oRow : set oRow = page_.ctrl(pHLI.prop(100))
+  if oRow.userprop.exists(PROP_ROW_IDENT) and oRow.userprop.exists(PROP_ROW_IDENT) then
+    dim nCursorNr: nCursorNr = oRow.userprop.prop(PROP_ROW_IDENT)
+    dim nRowNr: nRowNr = oRow.userprop.prop(PROP_REC_NUM)  
+    
+    if not g_pListCursor.value(nCursorNr).exists(nRowNr) then
+      exit function
+    end if
+    dim oDok: set oDok = g_pListCursor.value(nCursorNr).get(nRowNr)
+    std_choice_field_crsr oDok, "pDowodKsieg", "", "strNrDok", 1, TYPEID_N5DOWODKSIEG , nothing
+  end if
+end function
+
+'-----------------------------------
+'podgląd dowodu księgowego w wierszu
+'-----------------------------------
+function RowViewDowodKsieg(pHLI)
+  dim oRow : set oRow = page_.ctrl(pHLI.prop(100))
+  if oRow.userprop.exists(PROP_ROW_IDENT) and oRow.userprop.exists(PROP_ROW_IDENT) then
+    dim nCursorNr: nCursorNr = oRow.userprop.prop(PROP_ROW_IDENT)
+    dim nRowNr: nRowNr = oRow.userprop.prop(PROP_REC_NUM) 
+    
+    if not g_pListCursor.value(nCursorNr).exists(nRowNr) then
+    exit function
+    end if
+    dim dok:set dok = g_pListCursor.value(nCursorNr).get(nRowNr)
+    std_openform_field dok, "pDowodKsieg"
+  end if	
+end function
+
+'--------------------------------------------
+'podpowiedź dla schematu dekretacji w wierszu
+'--------------------------------------------
+function c##CTRLID_SCHEMAT_DEKR##_ondataentered(oCtrl,value): c##CTRLID_SCHEMAT_DEKR##_ondataentered = false
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+    dim nCursorNr: nCursorNr = oRow.userprop.prop(PROP_ROW_IDENT)
+    dim nRow: nRow = oRow.userprop.prop(PROP_REC_NUM)
+
+	  oCtrl.disable = not (g_pListCursor.value(nCursorNr)).exists(nRow)
+    if (g_pListCursor.value(nCursorNr)).exists(nRow) then
+		  cust_rs_dataentered_obj oCtrl,value,(g_pListCursor.value(nCursorNr)).get(nRow),"strNazwa","pSchematDekr","pRejestrDok=" + CStr(g_pRejestrList.value(nCursorNr)) + " and eAktywny=N5SCHEMATDEKR_AKTYWNY"
+    end if
+  end if  
+  c##CTRLID_SCHEMAT_DEKR##_ondataentered = true
+end function
+
+function c##CTRLID_SCHEMAT_DEKR##_ongetdata(oCtrl)
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+    dim nCursorNr: nCursorNr = oRow.userprop.prop(PROP_ROW_IDENT)
+    dim nRow: nRow = oRow.userprop.prop(PROP_REC_NUM)
+
+    if (g_pListCursor.value(nCursorNr)).exists(nRow) then
+	    oCtrl.disable = false
+	    cust_rs_getdata_obj oCtrl,(g_pListCursor.value(nCursorNr)).get(nRow).field("pSchematDekr"),"strNazwa",true
+    else
+	    oCtrl.disable = true
+	    oCtrl.value = ""
+    end if
+  end if
+end function
+
+function c##CTRLID_SCHEMAT_DEKR##_onlostfocus(byref oCtrl,idGotFocus)
+	cust_rs_lostfocus oCtrl,idGotFocus
+end function
+'---------------------------------------------
+
+'--------------------------------
+'podpowiedz dla dowodu księgowego
+'--------------------------------
+function c##CTRLID_DOKKSIEG##_ondataentered(oCtrl,value): c##CTRLID_DOKKSIEG##_ondataentered = false
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+    dim nCursorNr: nCursorNr = oRow.userprop.prop(PROP_ROW_IDENT)
+    dim nRow: nRow = oRow.userprop.prop(PROP_REC_NUM)  
+  
+    oCtrl.disable = not (g_pListCursor.value(nCursorNr)).exists(nRow)
+    if (g_pListCursor.value(nCursorNr)).exists(nRow) then
+      cust_rs_dataentered_obj oCtrl,value,(g_pListCursor.value(nCursorNr)).get(nRow),"strNrDok","pDowodKsieg",""
+    end if
+  end if
+  c##CTRLID_DOKKSIEG##_ondataentered = true
+end function
+
+function c##CTRLID_DOKKSIEG##_ongetdata(oCtrl)
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+    dim nCursorNr: nCursorNr = oRow.userprop.prop(PROP_ROW_IDENT)
+    dim nRow: nRow = oRow.userprop.prop(PROP_REC_NUM)  
+    
+    if (g_pListCursor.value(nCursorNr)).exists(nRow) then
+	    oCtrl.disable = false	
+	    cust_rs_getdata_obj oCtrl,(g_pListCursor.value(nCursorNr)).get(nRow).field("pDowodKsieg"),"strNrDok",true
+    else
+	    oCtrl.disable = true
+	    oCtrl.value = ""
+    end if
+  end if  
+end function
+
+function c##CTRLID_DOKKSIEG##_onlostfocus(byref oCtrl,idGotFocus)
+	cust_rs_lostfocus oCtrl,idGotFocus
+end function
+'--------------------------------
+
+'---------------------------
+'Przypisz schemat dekretacji
+'---------------------------
+function SetSchematDowod(pHLI)
+  dim nCursorNr : nCursorNr = pHLI.prop(100)    
+  dim nIdRejDok: nIdRejDok = g_pRejestrList.value(nCursorNr)
+  
+  dim strWhere , strTitle , strFldName , strMatchFld
+  if nIdRejDok > clng(0) then
+    strFldName = "pSchematDekr"
+    strWhere = "eAktywny=1 and pRejestrDok=" + cstr(nIdRejDok)			
+    strTitle = "Wybierz schemat dekretacji"
+    strMatchFld = "strNazwa"
+
+    dim elem,iter,id
+    iter = 1
+
+    dim pDok
+    id = fire_choice_list(TYPEID_N5SCHEMATDEKR,strTitle,strMatchFld,strWhere,"","")
+    if id > 0 then
+      set pDok = trans_.getobj(TYPEID_N5SCHEMATDEKR , id)
+    else
+      exit function
+    end if
+
+    dim pPerforming : set pPerforming = doc_.performing("Trwa wprowadzanie zmian...")
+
+    for each elem in g_pListCursor.value(nCursorNr)
+      'sprawdz czy dany wiersz jest zaznaczony
+      if  g_pListObject.value(nCursorNr).Exists(elem.idobj) then
+        dim bCopyCheck: bCopyCheck =  g_pListObject.value(nCursorNr).item(elem.idobj).m_bChecked
+      end if
+      'jesli jest zaznaczony to przypisz mu schemat dekret
+      if bCopyCheck  then
+        set elem.field(strFldName) = pDok
+      end if
+    next
+  end if
+end function
+
+'--------------------------
+'Wyzeruj schemat dekretacji
+'--------------------------
+function SetSchematDowodNothing(pHLI)
+  dim nCursorNr : nCursorNr = pHLI.prop(100) 
+  dim pPerforming : set pPerforming = doc_.performing("Trwa wprowadzanie zmian...")
+  dim elem
+	
+  'wyszukuj tak dlugo az znajdziemy jakis schemat
+  set g_schDoUsuniecia = nothing
+  dim iter: iter = 1
+  do while g_pListCursor.value(nCursorNr).exists(iter)
+    dim oDokZrod : set oDokZrod = g_pListCursor.value(nCursorNr).get(iter)
+    if not fwykryjNazweRef(oDokZrod) is nothing then
+      set g_schDoUsuniecia = fwykryjNazweRef(oDokZrod)
+      exit do
+    end if
+    iter = iter + 1
+  loop
+
+  for each elem in g_pListCursor.value(nCursorNr)
+    if g_pListObject.value(nCursorNr).item(elem.idobj).m_bChecked then
+      if not fwykryjNazweRef(elem) is nothing then 
+        g_pListObject.value(nCursorNr).item(elem.idobj).m_iIdobjSchDekret = fwykryjNazweRef(elem).idobj
+      end if
+      fZnajdzNazwePolaSch_przypiszSch elem,nothing	'set elem.sSchematDekr = nothing
+    end if
+  next
+end function
+
+'gdy usuwamy schematy musimy podczas zapisu przypisac dowolny schemat aby fsave zauwazyl zmiane i mogl zapisac
+dim g_schDoUsuniecia 
+
+'-----------------------------
+'przypisz schemat do dokumentu
+'-----------------------------
+function fZnajdzNazwePolaSch_przypiszSch(byref object,byval objSch)
+select case object.type
+		case TYPEID_N5ISTAT
+			set	object.istt_pSchematDekr = objSch
+		case TYPEID_N5PIT11
+			set	object.pt11_pSchematDekr = objSch
+		case TYPEID_N5PIT4
+			set	object.pt4_pSchematDekr = objSch
+		case TYPEID_N5PIT4R
+			set	object.pit4r_pSchematDekr = objSch
+		case TYPEID_N5PIT5
+			set	object.pt5_pSchematDekr = objSch
+		case TYPEID_N5PIT5L
+			set	object.pt5l_pSchematDekr = objSch
+		case TYPEID_N5PLLISTAPLAC
+			set	object.lppl_pSchematDekr = objSch
+		case TYPEID_N5RAPKAS
+			set	object.raka_pSchematDekr = objSch
+		case TYPEID_N5ROZLVAT
+			set	object.vat7_pSchematDekr = objSch
+		case TYPEID_N5VATUE
+			set	object.vtue_pSchematDekr = objSch
+		case TYPEID_N5ZADANIE
+			set	object.pSchematDekretacji	 = objSch
+		case else
+		 set	object.pSchematDekr = objSch
+	end select
+end function
+
+'----------------
+'nazwa referencji
+'----------------
+function fwykryjNazweRef(byval object)
+	select case object.type
+		case TYPEID_N5ISTAT
+			set	fwykryjNazweRef = object.istt_pSchematDekr
+		case TYPEID_N5PIT11
+			set	fwykryjNazweRef = object.pt11_pSchematDekr
+		case TYPEID_N5PIT4
+			set	fwykryjNazweRef = object.pt4_pSchematDekr
+		case TYPEID_N5PIT4R
+			set	fwykryjNazweRef = object.pit4r_pSchematDekr
+		case TYPEID_N5PIT5
+			set	fwykryjNazweRef = object.pt5_pSchematDekr
+		case TYPEID_N5PIT5L
+			set	fwykryjNazweRef = object.pt5l_pSchematDekr
+		case TYPEID_N5PLLISTAPLAC
+			set	fwykryjNazweRef = object.lppl_pSchematDekr
+		case TYPEID_N5RAPKAS
+			set	fwykryjNazweRef = object.raka_pSchematDekr
+		case TYPEID_N5ROZLVAT
+			set	fwykryjNazweRef = object.vat7_pSchematDekr
+		case TYPEID_N5VATUE
+			set	fwykryjNazweRef = object.vtue_pSchematDekr
+		case TYPEID_N5ZADANIE
+			set	fwykryjNazweRef = object.pSchematDekretacji	
+		case else
+		 set	fwykryjNazweRef = object.pSchematDekr
+	end select
+end function
+
+'------------------------------------------
+'wydrukuj dowody księgowe z danego rejestru
+'------------------------------------------
+function PrintDK(pHLI)
+  dim nCursorNr : nCursorNr = pHLI.prop(100)
+  
+  'najpierw wybieramy publikacje typu N5DPC_PUBTYPE_DOWOD_KSIEGOWY
+  dim strWhere:strWhere = "ePubType=N5DPC_PUBTYPE_DOWOD_KSIEGOWY"
+  dim idDPC
+  idDPC = trans_.findobjid(TYPEID_N5DPC,strWhere)
+  if idDPC < 1 then
+    idDPC = fire_choice_list(TYPEID_N5DPC,"Wybierz publikacje","strNazwa",strWhere,"","")
+  end if
+
+  if idDPC > 0 then
+  'zapytaj raz
+
+    if fAllCheckboxZaznaczone(nCursorNr) then
+      if MessageBox("Wybrano opcję wydruku wszystkich wyselekcjonowanych dowodów księgowych z danego rejestru. Czy napewno chcesz drukowac wszystkie te dokumenty?", "Wydruk dowodów księgowych", vbYesNo, vbQuestion)<>vbYes then
+        exit function
+      end if
+    else
+      if MessageBox("Wybrano opcję wydruku zaznaczonych dowodów księgowych z danego rejestru. Czy napewno chcesz drukowac zaznaczone dokumenty?", "Wydruk dowodów księgowych", vbYesNo, vbQuestion)<>vbYes then
+        exit function
+      end if	
+    end if
+
+    dim elem
+    for each elem in g_pListCursor.value(nCursorNr)
+      if not elem.pDowodKsieg is nothing then
+        if g_pListObject.value(nCursorNr).item(elem.idobj).m_bChecked then
+          realize_publication idDPC , elem.pDowodKsieg , false , nothing
+        end if
+      end if
+    next
+    
+  end if
+end function
+
+'------------------------------------------
+'wydrukuj dowody księgowe z danego rejestru
+'------------------------------------------
+function PrintDKAll()
+  'zapytaj raz
+  if fAllCheckboxZaznaczoneAll() then
+    if MessageBox("Wybrano opcję wydruku wszystkich wyselekcjonowanych dowodów księgowych z wielu rejestrów. Czy napewno chcesz drukowac wszystkie te dokumenty?", "Wydruk dowodów księgowych", vbYesNo, vbQuestion)<>vbYes then
+      exit function
+    end if
+  else
+    if MessageBox("Wybrano opcję wydruku zaznaczonych dowodów księgowych z wielu rejestrów. Czy napewno chcesz drukowac zaznaczone dokumenty?", "Wydruk dowodów księgowych", vbYesNo, vbQuestion)<>vbYes then
+      exit function
+    end if	
+  end if
+      
+  dim nCursorNr
+  for nCursorNr = 0 to g_pListCursor.upperIndex 
+  
+    'najpierw wybieramy publikacje typu N5DPC_PUBTYPE_DOWOD_KSIEGOWY
+    dim strWhere:strWhere = "ePubType=N5DPC_PUBTYPE_DOWOD_KSIEGOWY"
+    dim idDPC
+    idDPC = trans_.findobjid(TYPEID_N5DPC,strWhere)
+    if idDPC < 1 then
+      idDPC = fire_choice_list(TYPEID_N5DPC,"Wybierz publikacje","strNazwa",strWhere,"","")
+    end if
+
+    if idDPC > 0 then
+      dim elem
+      for each elem in g_pListCursor.value(nCursorNr)
+        if not elem.pDowodKsieg is nothing then
+          if g_pListObject.value(nCursorNr).item(elem.idobj).m_bChecked then
+            realize_publication idDPC , elem.pDowodKsieg , false , nothing
+          end if
+        end if
+      next
+    
+    end if
+  next
+end function
+
+'-----------------------------------------------------------------
+'zwraca true gdy zaznaczono wszystkie dokumenty w obrębie rejestru
+'-----------------------------------------------------------------
+function fAllCheckboxZaznaczone(byref nCursorNr)
+  fAllCheckboxZaznaczone = true
+  dim elem
+  dim bZazCheck : bZazCheck = true
+  for each elem in g_pListCursor.value(nCursorNr)
+    if g_pListObject.value(nCursorNr).item(elem.idobj).m_bChecked then
+      fAllCheckboxZaznaczone = false
+      exit function
+    end if
+  next
+end function
+
+'----------------------------------------------
+'zwraca true gdy zaznaczono wszystkie dokumenty
+'----------------------------------------------
+function fAllCheckboxZaznaczoneAll()
+  fAllCheckboxZaznaczoneAll = true
+  dim nCursorNr
+  for nCursorNr = 0 to g_pListCursor.upperIndex
+    dim elem
+    dim bZazCheck : bZazCheck = true
+    for each elem in g_pListCursor.value(nCursorNr)
+      if g_pListObject.value(nCursorNr).item(elem.idobj).m_bChecked then
+        fAllCheckboxZaznaczoneAll = false
+        exit function
+      end if
+    next
+  next
+end function
+
+'---------------------------------------------
+'Księguje dowody księgowe z wybranego rejestru
+'---------------------------------------------
+function KsiegujDK(pHLI)
+  dim nCursorNr : nCursorNr = pHLI.prop(100)
+  if fAllCheckboxZaznaczone(nCursorNr) then
+    MessageBox "Nie zaznaczono żadnego elementu.", "Księgowanie", vbOKOnly, vbInformation
+    exit function
+  else
+    if MessageBox_WARNING("Wybrano opcję zaksięgowania ZAZNACZONYCH dowodów ksiegowych. Zostaną zapisane wprowadzone zmiany i ZAZNACZONE dowody zostaną zaksiegowane. Czy chcesz kontynuować?", "Wydruk dowodów księgowych", "Operacje nieodwracalna",  vbYesNo, vbQuestion)<>vbYes then
+      exit function
+    end if		
+  end if
+
+  if not fsave(1,nCursorNr) then
+    MessageBox "Operacje nieudana", "Księgowanie", vbOkOnly, vbInformation
+  else
+    MessageBox "Operacje udana", "Księgowanie", vbOkOnly, vbInformation
+  end if
+  trans_.discard
+end function
+
+'---------------------------------------------
+'Księguje dowody księgowe z wybranego rejestru
+'---------------------------------------------
+function KsiegujDKAll()
+  if fAllCheckboxZaznaczoneAll() then
+    MessageBox "Nie zaznaczono żadnego elementu.", "Księgowanie", vbOKOnly, vbInformation
+    exit function
+  else
+    if MessageBox_WARNING("Wybrano opcję zaksięgowania ZAZNACZONYCH dowodów ksiegowych. Zostaną zapisane wprowadzone zmiany i ZAZNACZONE dowody zostaną zaksiegowane. Czy chcesz kontynuować?", "Wydruk dowodów księgowych", "Operacje nieodwracalna",  vbYesNo, vbQuestion)<>vbYes then
+      exit function
+    end if		
+  end if
+    
+  dim bSucces: bSucces = true  
+  dim nCursorNr
+  for nCursorNr = 0 to g_pListCursor.upperIndex
+    if not fsave(1,nCursorNr) then
+      bSucces = false
+      MessageBox "Operacje nieudana", "Księgowanie", vbOkOnly, vbInformation
+      exit for
+    end if
+  next
+  if bSucces then
+    MessageBox "Operacje udana", "Księgowanie", vbOkOnly, vbInformation
+  end if
+  trans_.discard
+end function
+
+'---------
+'zaksięguj
+'---------
+function fsave(byval nZaksieg, byval nCursorNr)
+  fsave = true
+    
+  dim bEnsureGM : bEnsureGM = false
+
+  select case trans_.var(APPVAR_REJESTR_TYP)
+    case N5REJESTRDOK__PZ,N5REJESTRDOK__WZ,N5REJESTRDOK__ZD,N5REJESTRDOK__ZZ,N5REJESTRDOK__PW,N5REJESTRDOK__RW,N5REJESTRDOK__PP,N5REJESTRDOK__RP,N5REJESTRDOK__MM,N5REJESTRDOK__MP,N5REJESTRDOK__MR,N5REJESTRDOK__IP,N5REJESTRDOK__IR
+      bEnsureGM = true
+  end select
+
+  if bEnsureGM then
+    if not doc_.getmodule(60253).gm_ensure_accuracy_ui(true) then
+      exit function
+    end if 
+  end if 
+  
+  dim iter : iter = 1
+  dim pPerf : set pPerf = doc_.performing("Zapisywanie schematów...")
+  do while g_pListCursor.value(nCursorNr).exists(iter)
+    dim oDokZrod : set oDokZrod = g_pListCursor.value(nCursorNr).get(iter)
+    dim oPozDict : set oPozDict = g_pListObject.value(nCursorNr).item(oDokZrod.idobj)
+				
+    if oPozDict.m_bChecked then 'czy jest zaznaczony check box
+      if nZaksieg = 0 then
+        if not fwykryjNazweRef(oDokZrod) is nothing then
+          oPozDict.m_iIdobjSchDekret = fwykryjNazweRef(oDokZrod).idobj
+          fZnajdzNazwePolaSch_przypiszSch oDokZrod,nothing								'set oDokZrod).pSchematDekr= nothing
+        else 
+          if not g_pListObject.value(nCursorNr).item(oDokZrod.idobj).m_iIdobjSchDekret = clng(0) then
+            fZnajdzNazwePolaSch_przypiszSch oDokZrod,trans_.getobj(TYPEID_N5SCHEMATDEKR,g_pListObject.value(nCursorNr).item(oDokZrod.idobj).m_iIdobjSchDekret )		'set oDokZrod.pSchematDekr = trans_.getobj(TYPEID_N5SCHEMATDEKR,g_pListObject.value(nCursorNr).item(oDokZrod.idobj).m_iIdobjSchDekret 
+            oPozDict.m_iIdobjSchDekret = clng(0)
+          end if
+        end if
+      end if
+	
+      if  nZaksieg = 1 then
+        if not oDokZrod.pDowodKsieg is nothing then
+          if not saveObiectRow(oDokZrod.type,oDokZrod.idobj,nZaksieg,nCursorNr) then
+            fsave = false
+            trans_.message 0,0,"Nieudany zapis"
+            exit function
+          end if
+        end if
+      else
+        if not saveObiectRow(oDokZrod.type,oDokZrod.idobj,nZaksieg,nCursorNr) then
+          fsave = false
+          trans_.message 0,0,"Nieudany zapis"
+          exit function
+        end if
+      end if
+
+      'przywroc przypisane wczesniej schematy
+      if not fwykryjNazweRef(oDokZrod) is nothing then
+        fZnajdzNazwePolaSch_przypiszSch oDokZrod,trans_.getobj(TYPEID_N5SCHEMATDEKR,fwykryjNazweRef(oDokZrod).idobj)	'set oDokZrod.pSchematDekr = trans_.getobj(TYPEID_N5SCHEMATDEKR,fwykryjNazweRef(oDokZrod).idobj
+      end if
+    end if
+
+    iter = iter + 1		
+    set oDokZrod = nothing
+    set oPozDict = nothing
+  loop
+  set pPerf = nothing
+  
+end function
+
+'---------------
+'zapisz wszystko
+'---------------
+function fsave_ikona
+  NX_TRACE_START_STREAM("Zachowanie danych",nothing)
+  dim nCursorNr
+  for nCursorNr = 0 to g_pListCursor.upperIndex
+	  fsave 0,nCursorNr  
+  next
+  trans_.discard
+  NX_TRACE_SHOW_LOG(0)
+end function
+
+'---------------
+'zapisz dokument
+'---------------
+function saveObiectRow(byval nTypDokZrod, byval idDokZrod, byval nZaksieg, byval nCursorNr)
+	saveObiectRow = true
+	dim pSubTrans
+	set pSubTrans = trans_.createsubtran()
+	
+	dim oObj : set oObj = trans_.getobj(nTypDokZrod,idDokZrod)
+		if nZaksieg = 1 then
+			oObj.pDowodKsieg.eStatus = clng(N5_DEKRET_STATUS_ZAKS)
+		else
+			if g_pListObject.value(nCursorNr).item(oObj.idobj).m_iIdobjSchDekret = 0 then
+				fZnajdzNazwePolaSch_przypiszSch oObj,nothing 'set oObj.pSchematDekr = nothing
+			else
+				fZnajdzNazwePolaSch_przypiszSch oObj,trans_.getobj(TYPEID_N5SCHEMATDEKR,g_pListObject.value(nCursorNr).item(oObj.idobj).m_iIdobjSchDekret)
+				'set oObj.pSchematDekr = trans_.getobj(TYPEID_N5SCHEMATDEKR,g_pListObject.value(nCursorNr).item(oObj.idobj).m_iIdobjSchDekret)		'ze slownika(iddokzrod) bierzemy schemat dekret. 
+			end if
+		end if
+	
+	if not trans_.saveobjects then
+		trans_.message 1,90000,"Zachowanie danych nieudane. Nieudany zapis " +  oobj.text
+		saveObiectRow = false
+	end if
+end function
+
+function fenableedit
+	page_.enableedit = not page_.enableedit
+end function
+
+function c##CTRLID_PAGE_INFO##_ongetdata(pCtrl)
+  dim strRej: strRej = "rejestr"
+  if g_pRejestrList.count() >= 2 and g_pRejestrList.count() <=4 then
+    strRej = "rejestry"
+  end if
+  if g_pRejestrList.count() >= 5 then
+    strRej = "rejestrów"
+  end if  
+	pCtrl.value = "Wybrano " + cstr(g_pRejestrList.count()) + " " + strRej
+end function
+
+
+]]>
+</script>
+</config>
+
+	<body>
+		<table>
+			<tbody>
+				<tr>
+					<td rowspan="3">
+						<table bordercolor='white'>
+							<tbody>
+								<tr>
+									<td>
+										<picture image='80139' tip='Wypełnij listę' 
+											width='1000' height='1000' 
+											href='varFunction="frefresh"' />
+									</td>
+									<td>
+										<picture image='80103' tip='Zachowaj' 
+											width='1000' height='1000' 
+											href='varFunction="fsave_ikona"' />
+									</td>
+								</tr>
+								<tr>
+									<td colspan='2' width='4500'>
+										QXE_BUTTON(-1,17,Wydrukuj dowody,varFunction=PrintDKAll)
+										QXE_BUTTON(-1,17,Zaksięguj dowody,varFunction=KsiegujDKAll)
+									</td>
+								</tr>
+							</tbody>
+						</table>
+					</td>
+					<td style='STYLE_TABLE_INFO' >
+						<t name='CTRLID_PAGE_INFO'>
+							<transfer mode='custom' />
+						</t>
+					</td>                     
+				</tr>
+				<tr><td><t/></td></tr>
+				<tr>
+					<td>
+						<table name='CTRLID_RESULT_TABLE' bordercolor='white'>
+							<tbody>
+							</tbody>
+						</table>            
+					</td>          
+				</tr>
+			</tbody>
+		</table>
+	</body>
+</page>

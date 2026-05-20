@@ -1,0 +1,299 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+interfejs modułu
+	create_config_object(pRejestr)
+
+interfejs obiektu "config"
+	
+	void load_from_string(byref strConfig)
+	function save_to_string
+	[property] string operation_name(nOperNr)
+	show_config_page(nOperNr)
+	perform_operation(nOperNr,byref pObject)
+	void init_with_defaults(nTypRej)
+
+moduł operacji dla reejstru zadan
+
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1222.h"
+#include "h1224.h"
+
+#define SECID_ALL	1
+
+#define FORM_SPAN	2
+#define RCELL_SPAN	1
+
+#define CTRLID_DPC_1		101
+#define CTRLID_DPC_2		102
+#define CTRLID_CREATE_TASK	103
+
+#define CTRLID_PIC_DPC_1	104
+#define CTRLID_PIC_DPC_2	105
+
+#define CTRLID_DPC_1_PREVIEW	107
+#define CTRLID_DPC_2_PREVIEW	108
+
+
+#define COUNT_OPERATIONS	7
+#define COUNT_OPERATIONS_INX	8
+
+-->
+<page style='STYLE_PAGE' width='10000'>
+<config>
+<startpos>center</startpos>
+<script>
+<![CDATA[
+#include "50200"
+
+'qxx_publication
+#include "50217"
+
+'realize publication
+#include "50518"
+
+class cwyn_oper_config
+	public m_strName
+	public m_cCreateTask
+	
+	public m_idObjDPC_1
+	public m_idObjDPC_2
+	public m_eTypRej
+	
+	public sub class_initialize()
+		m_strName = ""
+		m_cCreateTask = "0"
+		m_idObjDPC_1 = 0	'no DP to perform
+		m_idObjDPC_2 = 0	'no DP to perform
+	end sub
+
+
+	public property get is_empty()		
+		is_empty =	(m_cCreateTask = "0") and _
+					(m_idObjDPC_1 = clng(0)) and _
+					(m_idObjDPC_2 = clng(0))
+	end property
+
+	public sub load_from_string(byref strConfig)
+		dim aItems : aItems = split(strConfig, vbTab)
+		if ubound(aItems) = 3 then
+			m_strName		= aItems(0)
+			m_cCreateTask	= left(aItems(1),1)
+			m_idObjDPC_1	= clng(aItems(2))
+			m_idObjDPC_2	= clng(aItems(3))
+		end if
+	end sub
+	
+	public function save_to_string
+		save_to_string = doc_.afc.convert.formatter("%1"+vbTab+"%2"+vbTab+"%3"+vbTab+"%4") _
+			(m_strName)(cstr(m_cCreateTask))(cstr(m_idObjDPC_1))(cstr(m_idObjDPC_2)).done()
+	end function
+
+	public sub show_config_page
+		dim pPage : set pPage = doc_.getpagehli("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=THIS_FILE")
+
+		pPage.topelement.title = "Konfiguracja operacji """ + m_strName + """"
+
+		pPage.ctrl(CTRLID_CREATE_TASK).value = m_cCreateTask
+		'todo: otwieranie i wybór
+		
+		dim strPubType : strPubType = ""
+				
+
+		setup_choose_dpc_pic pPage,CTRLID_PIC_DPC_1,CTRLID_DPC_1_PREVIEW,CTRLID_DPC_1,m_idObjDPC_1,strPubType
+		setup_choose_dpc_pic pPage,CTRLID_PIC_DPC_2,CTRLID_DPC_2_PREVIEW,CTRLID_DPC_2,m_idObjDPC_2,strPubType
+		setup_choose_dpc_label pPage,CTRLID_DPC_1,abs(m_idObjDPC_1)
+		setup_choose_dpc_label pPage,CTRLID_DPC_2,abs(m_idObjDPC_2)
+		setup_choose_dpc_preview pPage , CTRLID_DPC_1_PREVIEW , m_idObjDPC_1 
+		setup_choose_dpc_preview pPage , CTRLID_DPC_2_PREVIEW , m_idObjDPC_2 
+
+		if pPage.domodalauto() = CMD_CHOICE then
+			m_cCreateTask = pPage.ctrl(CTRLID_CREATE_TASK).value
+			m_idObjDPC_1 = get_choosen_dpc(pPage,CTRLID_PIC_DPC_1,CTRLID_DPC_1_PREVIEW)
+			m_idObjDPC_2 = get_choosen_dpc(pPage,CTRLID_PIC_DPC_2,CTRLID_DPC_2_PREVIEW)
+		end if
+	end sub
+	public sub perform_operation(byref pObject , byref pPage)
+		perform_operation_on_config	Me, pObject , pPage
+	end sub
+end class
+
+class czad_dok_config
+private m_aOperations(COUNT_OPERATIONS_INX)
+	private m_eTypRej
+
+
+	public function is_empty(byval nNumOper)		
+		dim pOperConf:set pOperConf = m_aOperations(nNumOper)
+		is_empty =	pOperConf.is_empty
+	end function
+	
+	public sub class_initialize()
+		dim i
+		for i = 0 to COUNT_OPERATIONS
+			set m_aOperations(i) = new cwyn_oper_config
+		next
+	end sub
+
+	public sub setTypeRej(eTypRej)
+		m_eTypRej = eTypRej
+		dim i
+		for i = 0 to COUNT_OPERATIONS
+			m_aOperations(i).m_eTypRej = m_eTypRej
+		next
+	end sub
+
+	public sub init_with_defaults(nTypRej)
+		dim i
+		for i = 0 to COUNT_OPERATIONS
+			set m_aOperations(i) = new cwyn_oper_config
+		next
+
+		setTypeRej nTypRej
+
+	end sub
+
+	public sub load_from_string(byref strConfig)
+		dim aItems : aItems = split(strConfig, REJDOK_CONG_SEPARATOR)
+		dim i 
+		dim last : last = ubound(aItems)
+		if last > COUNT_OPERATIONS then
+			last = COUNT_OPERATIONS
+		end if
+		for i = 0 to last
+			m_aOperations(i).load_from_string aItems(i)
+		next
+	end sub
+	
+	public function save_to_string
+		dim strTotal : strTotal = ""
+		dim i
+		for i = 0 to COUNT_OPERATIONS
+			strTotal = strTotal + m_aOperations(i).save_to_string() + REJDOK_CONG_SEPARATOR
+		next
+		save_to_string = strTotal
+	end function
+
+	public property get operation_name(byval nOperNr)
+		operation_name = m_aOperations(nOperNr).m_strName
+	end property
+	public property let operation_name(byval nOperNr,byref strName)
+		m_aOperations(nOperNr).m_strName = strName
+	end property
+
+	public sub show_config_page(byval nOperNr)
+		m_aOperations(nOperNr).show_config_page
+	end sub
+	public sub perform_operation(nOperNr,byref pObject,byref pPage)
+#ifdef _DEBUG
+		trans_.message 1002 , 0 , "DEBUG: " + cstr(operation_name(nOperNr))
+#endif
+		m_aOperations(nOperNr).perform_operation pObject , pPage
+	end sub
+end class
+
+function create_config_object(byref pRejestr)
+	dim pNewConfig : set pNewConfig = new czad_dok_config
+	pNewConfig.setTypeRej pRejestr.eTyp
+
+	set create_config_object = pNewConfig
+end function
+
+
+'--------------------------- config page ------------------
+function fok
+	page_.result = CMD_CHOICE
+	page_.goback
+end function
+
+
+function fcancel
+	page_.goback
+end function
+
+'--------------------------- perform operation ------------------
+private sub perform_operation_on_config(byref pConfig,byref pListaPlac , byref pPage)
+	if not make_task_on_notaods(pConfig.m_cCreateTask,pListaPlac,pPage) then
+		exit sub
+	end if
+	
+	if not make_publication_on_zad(pConfig.m_idObjDPC_1,pListaPlac,pPage) then
+		exit sub
+	end if
+
+	if not make_publication_on_zad(pConfig.m_idObjDPC_2,pListaPlac,pPage) then
+		exit sub
+	end if
+end sub
+
+
+private function make_task_on_notaods(cCreateTask,byref pListaPlac,byref pPage) : make_task_on_notaods = true
+
+	if cCreateTask = "0" then
+		exit function
+	end if
+
+	if pPage.std_fsave_external_with_saveobjects() then
+		make_task_on_notaods = false
+	end if
+
+end function
+
+private function make_publication_on_zad(idObjDPC,byref oZadanie , byref pPage) : make_publication_on_zad = true
+
+	if idObjDPC = 0 then
+		exit function
+	end if
+
+	if not pPage.std_fsave_external_with_saveobjects() then
+		make_publication_on_zad = false
+		exit function
+	end if
+
+	if (not oZadanie.pKlient is nothing) and is_email_publication(idObjDPC) then
+		make_publication_on_zad = (realize_email_publication(abs(idObjDPC),oZadanie,oZadanie.pKlient.strEmail,oZadanie.text,nothing) = 0)
+	else
+		make_publication_on_zad = (realize_publication(abs(idObjDPC),oZadanie,idObjDPC>0,nothing) = 0)
+	end if
+
+end function
+'---------------------------------------------------------------------------------
+
+]]>
+</script>
+</config>
+<body>
+QXF_BEGIN
+	QXS_BEGIN_FLAT(SECID_ALL,Konfiguracja,FORM_SPAN)
+		<tr>
+			QXX_CHOOSE_PUBLICATION(CTRLID_DPC_1,CTRLID_PIC_DPC_1,CTRLID_DPC_1_PREVIEW,1)
+		</tr>		
+
+		<tr>
+			QXX_CHOOSE_PUBLICATION(CTRLID_DPC_2,CTRLID_PIC_DPC_2,CTRLID_DPC_2_PREVIEW,1)
+		</tr>
+		
+		QXR_SEPARATOR(2)
+#comment NEXTVERSION - wywalic hide
+		<tr hide='true'>
+			QXC_LABEL(Zdarzenia,1)
+			<td>
+				<checkbox width='max' name='CTRLID_CREATE_TASK' >
+					<text>zapamiętaj zdarzenie</text>
+				</checkbox>
+			</td>
+		</tr>
+		QXR_SEPARATOR(FORM_SPAN)
+
+	QXS_END_FLAT(FORM_SPAN)
+QXF_END
+
+XFDIALOGBUTTONS
+
+</body>
+</page>

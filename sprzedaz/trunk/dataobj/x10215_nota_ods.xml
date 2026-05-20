@@ -1,0 +1,395 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+REV:KB:20030120
+
+#include "h1000.h" 
+#include "h1200.h" 
+#include "h1203.h" 
+#include "h1229.h"
+#include "h1240.h" 
+#include "h1231.h" 
+
+prefix: nos_
+-->
+<class>
+	<identifier>TYPEID_N5NOTAODS</identifier>
+	<table>n5notaods</table>
+	<humanname>Nota odsetkowa</humanname>
+	<idobj/>
+
+	XDF_NRDOK
+
+	<embedded>
+		<name>dDataWyst</name>
+		<sqltype>SQLdate</sqltype>
+		<humanname>Data wystawienia</humanname>
+		<nonempty/>
+	</embedded>
+
+	<ref>
+		<name>pKlient</name>
+		<humanname>Klient</humanname>
+		<typeid>TYPEID_N5KLIENT</typeid>
+	</ref>
+
+	<ref>
+		<name>pUzytRej</name>
+		<humanname>Wprowadził</humanname>
+		<typeid>TYPEID_N5UZYTKOWNIK</typeid>
+	</ref>
+
+	<embedded>
+		<name>strUwagi</name>
+		<sqltype>SQLvc512</sqltype>
+		<humanname>Uwagi</humanname>
+	</embedded>
+
+	<embedded>
+		<name>curSumaOds</name>
+		<sqltype>SQLcurrency</sqltype>
+		<humanname>Suma odsetek</humanname>
+	</embedded>
+
+	<list>
+		<name>listPozycje</name>
+		<humanname>Pozycje noty</humanname>
+		<typeid>TYPEID_N5POZNOTAODS</typeid>
+	</list>
+
+
+	XDF_REJDOWSCHEM
+
+	<embedded>
+		<name>strExtra1</name>
+		<sqltype>SQLvc32</sqltype>
+		<humanname>strExtra1</humanname>
+	</embedded>
+	<embedded>
+		<name>strExtra2</name>
+		<sqltype>SQLvc7900</sqltype>
+		<humanname>strExtra2</humanname>
+	</embedded>
+	<embedded>
+		<name>dExtra3</name>
+		<sqltype>SQLdate</sqltype>
+		<humanname>dExtra3</humanname>
+		<default>null</default>
+	</embedded>
+	<embedded>
+		<name>curExtra4</name>
+		<sqltype>SQLcurrency</sqltype>
+		<humanname>curExtra4</humanname>
+	</embedded>
+	<embedded>
+		<name>curExtra5</name>
+		<sqltype>SQLcurrency</sqltype>
+		<humanname>curExtra5</humanname>
+	</embedded>
+	<ref>
+		<name>pKwalifikatorEx</name>
+		<humanname>Kwalifikator</humanname>
+		<typeid>TYPEID_N5KWALIFIKATOR</typeid>
+		<optional/>
+	</ref>
+
+	<ref>
+		<name>pTransakcja</name>
+		<humanname>Transakcja</humanname>
+		<typeid>TYPEID_N5TRANSAKCJA</typeid>
+		<optional/>
+	</ref>
+
+	XDF_OSTMODYF(nos_)
+
+<cursors>
+
+	<cursor>
+		<identifier>CRSR_DEFAULT</identifier>
+		<humanname>wg numeru dokumentu</humanname>
+		<join></join>
+		<where></where>
+		<orderby>strNrDok</orderby>
+	</cursor>
+
+	<cursor>
+		<identifier>CRSR_PO_REJESTRZE_DOKUMENTOW</identifier>
+		<humanname>wg rejestru</humanname>
+		<join></join>
+		<where>n5notaods.pRejestrDok=appvar_rejestr_dokumentow</where>
+		<orderby>strNrDok</orderby>
+	</cursor>
+
+
+</cursors>
+
+
+<script>
+<![CDATA[
+
+'dok_handl_*_transaction
+#include "L50227.NXB"
+
+'przelicz walute
+#include "50523"
+
+'GetCurrentUser
+#include "L50203.NXB"
+
+
+'make_dk_*
+#include "L50214.NXB"
+
+'getCurrentRKS
+#include "50120"
+
+'initialize_transaction_oper
+#include "50525"
+
+function n5notaods_as_text(): n5notaods_as_text=""    
+	n5notaods_as_text = this_.strNrDok
+end function
+
+
+
+function n5notaods_initnew()
+
+	n5notaods_initnew = true
+
+	set this_.pRejestrDok =  trans_.getobj(TYPEID_N5REJESTRDOK,trans_.var(APPVAR_REJESTR_DOKUMENTOW) )
+	set this_.pUzytRej = GetCurrentUser()
+	set this_.nos_pUzytModyf = this_.pUzytRej
+
+end function
+
+
+function n5notaods_befupd()
+    set this_.pDowodKsieg = make_dk_update(this_.get_this(),this_.pDowodKsieg,this_.pSchematDekr,n5notaods_befupd)
+
+  dim curWartOds: curWartOds = this_.curSumaOds
+	dim oTransOper: set oTransOper = find_transaction_oper(this_,nothing)
+	    
+#ifdef ENABLE_DB14
+    update_transaction_oper this_, oTransOper, curWartOds, 0, curWartOds, 0, ccur(0.0), ccur(0.0)
+#else
+    update_transaction_oper this_, oTransOper, curWartOds, 0, curWartOds, 0
+#endif
+
+	nota_update_transaction this_.get_this()
+	n5notaods_befupd = n5notaods_checkDate()
+
+	if n5notaods_befupd then
+		set this_.nos_pUzytModyf = GetCurrentUser()
+	end if
+
+  'usuń powiązanie z transakcją dok handlowego
+  if this_.listPozycje.count = clng(0) then
+    dim idTrans : idTrans = trans_.findobjid(TYPEID_N5TRANSAKCJA,"pNotaOds = " + CStr(this_.idobj))
+    dim oTrans
+    if idTrans > clng(0) then
+      set oTrans = trans_.getobj(TYPEID_N5TRANSAKCJA,idTrans)
+      set oTrans.pNotaOds = nothing
+    end if
+  end if
+  
+#ifdef ENABLE_DB11_F   
+	dim idTransOper
+	get_id_trans oTransOper, idTransOper, this_.pTransakcja, idTrans
+	n5notaods_befupd = save_transaction_oper(idTransOper, idTrans) 
+#endif
+
+end function
+
+function n5notaods_befdel()
+	 n5notaods_befdel = make_dk_delete(this_.get_this(),this_.pDowodKsieg) and nota_delete_transaction(this_.get_this(),"") and n5notaods_checkDate()
+end function
+
+
+function n5notaods_befins()
+
+    n5notaods_befins = n5notaods_GenerateNextNum() and n5notaods_checkDate()
+
+	if n5notaods_befins then
+		set this_.pDowodKsieg = make_dk_insert(this_.get_this(),this_.pSchematDekr,n5notaods_befins)
+	end if
+
+#ifdef ENABLE_DB11_F
+  n5notaods_befins = n5notaods_rebuild_trop()
+#else
+	nota_create_transaction this_.get_this()
+#endif
+
+end function
+
+
+function n5notaods_checkDate()
+	n5notaods_checkDate = getCurrentRKS().n5rokksieg_checkdate( this_.dDataWyst ) and this_.pRejestrDok.n5rejestrdok_checkdate (this_.dDataWyst)
+end function
+
+
+
+
+
+
+function n5notaods_GenerateNextNum()
+	dim strNrDok
+	if ((this_.strNrDok="") and (not this_.pRejestrDok is nothing)) then
+		if this_.pRejestrDok.n5rejestrdok_GenerateNextNum(strNrDok) then
+			this_.strNrDok =  strNrDok
+		else
+			n5notaods_GenerateNextNum = false
+			exit function
+		end if
+	end if
+	n5notaods_GenerateNextNum = true
+end function
+
+
+function n5notaods_pKlient_change(oldval):n5notaods_pKlient_change = true
+	if not oldval is nothing then
+		if this_.pKlient is nothing then
+			this_.listPozycje.deleteall
+		else
+			if oldval.idobj <> this_.pKlient.idobj then
+				this_.listPozycje.deleteall
+			end if
+		end if
+	end if 	
+end function
+
+
+VDF_PREJESTRDOK_DISABLE_CHANGE(n5notaods)
+
+function n5notaods_rebuild_trop() : n5notaods_rebuild_trop = false
+  'transakcja operacja
+  dim oTransOper
+  initialize_transaction_oper this_, oTransOper
+  dim curWartOds: curWartOds = this_.curSumaOds
+  	    
+#ifdef ENABLE_DB14
+  update_transaction_oper this_, oTransOper, curWartOds, 0, curWartOds, 0, ccur(0.0), ccur(0.0)
+#else
+  update_transaction_oper this_, oTransOper, curWartOds, 0, curWartOds, 0
+#endif
+
+    
+  'transakcja
+	if this_.pTransakcja is nothing then
+		dim pTrans : set pTrans = trans_.newobj(TYPEID_N5TRANSAKCJA)
+		pTrans.strSymTrans = this_.strNrDok				
+		set this_.pTransakcja = pTrans
+	end if    
+  nota_update_transaction this_
+    
+  if trans_.var(GVAR_OPERATION_MODE) = clng(OPERATION_MODE_UPGRADE) then
+    if not oTransOper is nothing then
+      set oTransOper.trop_pTransakcja = this_.pTransakcja
+    end if
+    n5notaods_rebuild_trop = true
+  else
+    dim idTransOper, idTrans
+    get_id_trans oTransOper, idTransOper, this_.pTransakcja, idTrans
+    n5notaods_rebuild_trop = save_transaction_oper(idTransOper, idTrans) 
+  end if    
+end function
+	
+private sub nota_create_transaction(byref pDokHandl)
+	if pDokHandl.pTransakcja is nothing then
+		dim pTrans : set pTrans = trans_.newobj(TYPEID_N5TRANSAKCJA)
+		pTrans.strSymTrans = pDokHandl.strNrDok				
+		set pDokHandl.pTransakcja = pTrans
+	end if
+	nota_update_transaction pDokHandl
+end sub
+
+private sub nota_update_transaction(byref pDokHandl)
+	if pDokHandl.pTransakcja is nothing then
+		exit sub
+	end if	
+	with pDokHandl.pTransakcja
+		if not pDokHandl.pKlient is nothing then
+			set .pWaluta = pDokHandl.pKlient.pWaluta		
+		end if
+		set .wrefPodmiot = pDokHandl.pKlient	
+		.eTyp = clng(N5TRANSAKCJA_NALEZNOSC)
+#ifndef ENABLE_DB11_F   
+		.curWn = pDokHandl.curSumaOds
+		.curWnEwid = .curWnEwid + przelicz_walute(.curWn,.trn_curKurs)
+#endif
+		.dDataWym = pDokHandl.dDataWyst
+		.dDataRozp = pDokHandl.dDataWyst
+	end with
+end sub
+
+private function nota_delete_transaction(byref pDokHandl,byval strTransakcjaField) : nota_delete_transaction = false
+	if pDokHandl.pTransakcja is nothing then
+		if strTransakcjaField <> "" then
+			if pDokHandl.field(strTransakcjaField) is nothing then
+				nota_delete_transaction = true
+			end if
+		else
+			nota_delete_transaction = true
+		end if
+	end if
+
+	if nota_delete_transaction then
+		exit function
+	end if
+	
+	dim id_trans:id_trans = 0
+	dim id_trans_ex:id_trans_ex = 0
+
+	id_trans = pDokHandl.pTransakcja.idobj
+	if strTransakcjaField <> "" then
+		if not pDokHandl.field(strTransakcjaField) is nothing then
+			id_trans_ex = pDokHandl.field(strTransakcjaField).idobj	
+		end if
+	end if  
+
+	'przestajemy na chwie uzywac tej transakcji
+	set pDokHandl.pTransakcja = nothing
+	if strTransakcjaField <> "" then
+		set pDokHandl.field(strTransakcjaField) = nothing	
+	end if
+
+	'zapamietujemy
+	trans_.save()
+  
+#ifdef ENABLE_DB11_F
+	dim oTransOper: set oTransOper = find_transaction_oper(this_,nothing)
+	if not oTransOper is nothing then
+	  'usuń operację transakcji
+	  try_delete_transaction_oper oTransOper.IdObj
+  end if  
+#endif  
+
+	'try save
+	dim result:result = false
+	dim pSubTrans:set pSubTrans = trans_.createsubtran()
+
+		dim pTrans:set pTrans = trans_.getobj(TYPEID_N5TRANSAKCJA , id_trans)
+		pTrans.markdel = true
+
+		dim pTrans_ex
+		if id_trans_ex>0 then
+			set pTrans_ex = trans_.getobj(TYPEID_N5TRANSAKCJA , id_trans_ex)
+			pTrans_ex.markdel = true
+		end if
+
+		'probojemy zapisac - faktura juz nie uzywa jej		
+		result  = trans_.save()
+		'jak sie nie udaje to przywracamy stan
+		if not result then
+			trans_.discard
+		end if
+	set pSubTrans = nothing
+
+	''jak sie nie udalo usuniecuie transakcji to przzywracamy stan
+	if not result then
+		trans_.discard
+	end if	
+	nota_delete_transaction = result
+end function
+
+]]>
+</script>
+</class>

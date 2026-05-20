@@ -1,0 +1,184 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!-- 
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200.h"
+#include "h1220.h"
+#include "h1203.h"
+#include "h1231.h"
+-->
+<page>
+<config>
+<script>
+<!--
+	Karta transakcji - plugins
+-->
+<![CDATA[
+
+
+'count_salda
+#include "50107"
+'getCurrentFirma
+#include "50203"
+
+
+sub plug_transakcja_podstawowe(byref pContainer,byval idTrans)
+
+	dim pTransakcja : set pTransakcja = trans_.getobj(TYPEID_N5TRANSAKCJA,idTRans)
+  
+#ifdef _FRAM
+  dim bZakup : bZakup = false
+  dim strWhere : strWhere = "isnull((SELECT min(z.pTransakcja) FROM n5zakup AS z INNER JOIN dbo.n5rejestrdok AS r ON z.pRejestrDok = r.IdObj " +_
+                            "AND z.pTransakcja = " + CStr(idTrans) + " WHERE r.eTyp IN (N5REJESTRDOK_WNT,N5REJESTRDOK_KOREKTA_WNT)),0)"
+  dim pZakupIdobj :  pZakupIdobj = trans_.findobjid(TYPEID_N5ZAKUP,"pTransakcja = " + strWhere)
+  if pZakupIdobj > 0 then
+    bZakup = true
+  end if
+  if bZakup then
+    dim pZakup : set pZakup = trans_.getobj(TYPEID_N5ZAKUP,pZakupIdobj)
+  end if  
+#endif   
+  
+	dim pPlugInTable : set pPlugInTable = pContainer.addnew(CTRL_TYPE_TABLE,-1)
+	pPlugInTable.border = 0
+	
+	dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(pPlugInTable)
+	
+	pTB.newrow.newcell.addtext("Symbol").element.bold = true
+	pTB.newcell.addtext pTransakcja.strSymTrans
+	pTB.cell.colspan = 2
+
+	pTB.newrow.newcell.addtext("Podmiot").element.bold = true
+	pTB.newcell.addtexthli pTransakcja.wrefPodmiot.text , doc_.createhlistr("varFunctionHLI='std_openform_object_hli' vn1='"+cstr(pTransakcja.wrefPodmiot.type)+"' vn2='"+cstr(pTransakcja.wrefPodmiot.idobj)+"'")
+	pTB.cell.colspan = 2
+
+	pTB.newrow.newcell.addtext("Data wymagalności").element.bold = true
+	pTB.newcell.addtext trans_.afc.display.fulldate(pTransakcja.dDataWym)
+	pTB.cell.colspan = 2
+
+	pTB.newrow.newcell.addtext("Saldo w walucie:").element.bold = true
+	pTB.newcell.addtext("Wn").element.bold = true
+	pTB.cell.align = ALIGN_RIGHT
+	pTB.newcell.addtext("Ma").element.bold = true
+	pTB.cell.align = ALIGN_RIGHT
+
+	dim pFirma:set pFirma = getcurrentFirma()
+	dim curWn:curWn = pTransakcja.curWn
+	dim curMa:curMa = pTransakcja.curMa
+	count_salda curMa, curWn 
+
+	dim curWnEwid:curWnEwid = pTransakcja.curWnEwid
+	dim curMaEwid:curMaEwid = pTransakcja.curMaEwid
+	count_salda curMaEwid, curWnEwid 
+
+	pTB.newrow.newcell.addtext("transakcji").element.bold = true
+	pTB.newcell.addtext(doc_.afc.display.money(curWn, pTransakcja.pWaluta.strSkrot))
+	pTB.cell.align = ALIGN_RIGHT
+	pTB.newcell.addtext(doc_.afc.display.money(curMa, pTransakcja.pWaluta.strSkrot))
+	pTB.cell.align = ALIGN_RIGHT
+
+
+	pTB.newrow.newcell.addtext("rachunkowości").element.bold = true
+	pTB.newcell.addtext(doc_.afc.display.money(curWnEwid, pFirma.pWaluta.strSkrot))
+	pTB.cell.align = ALIGN_RIGHT
+  
+#ifdef _FRAM
+  if bZakup then
+    pTB.newcell.addtext(doc_.afc.display.money(curMa * pZakup.curExtra4/ccur(10000.0), pFirma.pWaluta.strSkrot))
+	  pTB.cell.align = ALIGN_RIGHT
+  else
+	  pTB.newcell.addtext(doc_.afc.display.money(curMaEwid, pFirma.pWaluta.strSkrot))
+	  pTB.cell.align = ALIGN_RIGHT  
+  end if
+#else
+	pTB.newcell.addtext(doc_.afc.display.money(curMaEwid, pFirma.pWaluta.strSkrot))
+	pTB.cell.align = ALIGN_RIGHT
+#endif  
+ 
+#ifdef _FRAM
+	pTB.newrow.newcell.addtext("Kurs").element.bold = true
+  if bZakup then
+ 	  pTB.newcell.addtext(doc_.afc.display.quantity(pZakup.curExtra4/ccur(10000.0), "",4 ))
+  else
+    pTB.newcell.addtext(doc_.afc.display.quantity(pTransakcja.trn_curKurs, "",4 ))
+  end if
+	pTB.cell.align = ALIGN_RIGHT 
+#else 
+  pTB.newrow.newcell.addtext("Kurs").element.bold = true 
+	pTB.newcell.addtext(doc_.afc.display.quantity(pTransakcja.trn_curKurs, "",4 )) 
+	pTB.cell.align = ALIGN_RIGHT 
+#endif
+
+	dim today:today = trans_.var(GVAR_SYSDATE)
+	if (pTransakcja.dDataWym < today) and (curWn <> curMa) then
+		pTB.newrow.newcell.addtext("Transakcja jest przeterminowana!").element.bold = true
+		pTB.cell.colspan = 3
+		pTB.cell.align = ALIGN_CENTER
+		pTB.element.forecolor = rgb(255,0,0)
+	end if
+	
+end sub
+
+
+
+sub plug_transakcja_faktury(byref pContainer,byval idTrans)
+
+	dim pTransakcja : set pTransakcja = trans_.getobj(TYPEID_N5TRANSAKCJA,idTRans)
+	dim cursor:set cursor = trans_.createrawcursor(TYPEID_N5SPRZEDAZ , sqlwhere_for_pTransakcja(pTransakcja) , "dDataWyst,idobj" , "")
+	doc_.getmodule(60166).plug_faktury pContainer, cursor , 0
+
+end sub
+
+
+sub plug_transakcja_zakup(byref pContainer,byval idTrans)
+
+	dim pTransakcja : set pTransakcja = trans_.getobj(TYPEID_N5TRANSAKCJA,idTRans)
+	dim cursor:set cursor = trans_.createrawcursor(TYPEID_N5ZAKUP , sqlwhere_for_pTransakcja(pTransakcja) , "dDataWyst,idobj" , "")
+	doc_.getmodule(60166).plug_zakup pContainer, cursor , 0
+
+end sub
+
+
+
+sub plug_transakcja_platnosci(byref pContainer,byval idTRans,byval pPage)
+
+	dim cursor:set cursor = trans_.createrawcursor(TYPEID_N5PLATNOSC , "IdObj in (select p_idobj from vlist_n5platnosc_listpozycje where c_pTransakcja = " +cstr(idTRans)+" )" , "" , "")
+	doc_.getmodule(60166).plug_platnosci_2 pContainer, cursor , 0 , false , false , false , false , false , false , false , pPage , -1 , -1 , false , 0 , 1
+
+end sub
+
+
+sub plug_transakcja_dekret(byref pContainer,byval idTrans)
+
+	dim pTransakcja : set pTransakcja = trans_.getobj(TYPEID_N5TRANSAKCJA,idTRans)
+	dim cursor:set cursor = trans_.createrawcursor(TYPEID_N5DEKRET , "IdObj in (select IdObj from n5dekret where pTransakcja = " +cstr(idTRans)+ " )" , "" , "")
+	doc_.getmodule(60166).plug_dekret pContainer, cursor
+
+end sub
+
+
+sub plug_transakcja_operacja(byref pContainer,byval idTrans)
+	dim cursor: set cursor = trans_.createrawcursor(TYPEID_N5TRANSAKCJA_OPERACJA, "trop_pTransakcja = " + cstr(idTRans), "IdObj" , "")
+	doc_.getmodule(60166).plug_operacja pContainer, cursor
+end sub
+
+
+'zapytanie do kursora z fakturami...dziala tez dla zakupu i transakcji
+function sqlwhere_for_pTransakcja(byval pTransakcja)
+	sqlwhere_for_pTransakcja = doc_.afc.convert.formatter( _
+	" pTransakcja = %1  ") _
+	.add(CStr(pTransakcja.idobj)) _	
+	.done()
+end function
+
+
+
+
+]]>
+</script>
+</config>
+	<body>
+		<t>Karta transakcji - plugins</t>
+	</body>
+</page>

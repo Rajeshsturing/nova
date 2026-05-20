@@ -1,0 +1,297 @@
+======================================================================================
+100. Nominalny czas pracy (CPNOM)
+======================================================================================
+if .var("DKMK") = 0 then
+    .var("DRMK") = .calendar.dni_rob_plan(.monthstart(),.monthend())
+	.var("DKMK") = .calendar.dni_kal(.monthstart(),.monthend())
+	.var("DRON") = .calendar.dni_rob_plan(.startdate(),.enddate())
+	.var("DPON") = .var("DRON")
+    .var("DKON") = .calendar.dni_kal(.startdate(),.enddate())
+	.section 2
+	.subtitle 0, "Czas pracy"
+    .edit_var 2, "Dni robocze w miesi¹cu kalendarzowym","DRMK","d",0
+    .edit_var 4, "Dni robocze w okresie naliczenia","DRON","d",0
+    .edit_var 6, "Dni kalendarzowe w miesi¹cu kalendarzowym","DKMK","d",0
+    .edit_var 8, "Dni kalendarzowe w okresie naliczenia","DKON","d",0
+    .edit_var 10, "Dni przepracowane w okresie naliczenia","DPON","d",0
+	.store_entry "DPON", .var("DPON"), .payroll.text
+end if
+
+======================================================================================
+110. Choroba - rozliczenie czasu pracy (CPCHOR)
+======================================================================================
+.section 6
+.subtitle 0,"Choroba od " + cstr(.document.ddataod) + " do " + cstr(.document.ddatado)
+dim nDniRobChor : nDniRobChor = .calendar.dni_rob_plan(.document.ddataod,.document.ddatado)
+.store_entry "DKCHOR", .calendar.dni_kal(.document.ddataod,.document.ddatado), "Choroba od " + cstr(.document.ddataod) + " do " + cstr(.document.ddatado)
+.store_entry "DRCHOR", nDniRobChor, "Choroba od " + cstr(.document.ddataod) + " do " + cstr(.document.ddatado)
+.store_entry "DPON", - nDniRobChor, "Choroba od " + cstr(.document.ddataod) + " do " + cstr(.document.ddatado)
+.var("DPON") = .var("DPON") - nDniRobChor
+.info_cur 2,"Dni robocze",nDniRobChor,"d",0
+======================================================================================
+120. Œrednia ZUS z 6 m-cy (SRZUS6)
+======================================================================================
+if .var("SRZUS6") = 0 then
+	dim nRok : nRok = year(.monthstart())
+	dim nMc : nMc = month(.monthstart())
+	if not .was_entry("SRZUS6",.monthstart(),.monthend()) then
+		dim curSuma : curSuma = ccur(0.0)
+		dim lnMcy : lnMcy = 0
+		'ostatni m-c
+		nMc = nMc - 1
+		dim curOstMc : curOstMc = .monthsum("PSRZUS6",nRok,nMc)
+		'poprzednie
+		dim iter
+		for iter = 0 to 5
+			dim nDROkr : nDROkr = .monthsum("DRON",nRok,nMc)
+			'przepracowano conajmniej po³owê - wliczaj
+			if (nDROkr - .monthsum("DRCHOR",nRok,nMc)) >= nDROkr / 2 and nDROkr > 0 then
+			  curSuma = curSuma + .monthsum("PSRZUS6",nRok,nMc)
+			  lnMcy = lnMcy + 1
+			end if
+			nMc = nMc - 1
+		next
+		if lnMCy = 0 then
+			.var("SRZUS6") = curOstMc 
+		else
+			.var("SRZUS6") = curSuma / lnMcy
+		end if
+	    .store_entry "SRZUS6", .var("SRZUS6"), .payroll.text
+	else
+		.var("SRZUS6") = .monthsum("SRZUS6",nRok,nMc)
+	end if
+end if
+======================================================================================
+500. [UMPR] Pensja (PENSJA)
+-> CPNOM
+======================================================================================
+dim curPensja : curPensja = .round(.param1()  * .var("DRON") / .var("DRMK"),2)
+.var("PZUS") = .var("PZUS") + curPensja
+.var("PPDWYN") = .var("PPDWYN") + curPensja
+.var("PSRZUS6") = .var("PSRZUS6") + curPensja
+.var("PPOTRCHOR") = .var("PPOTRCHOR") + .param1()
+======================================================================================
+600. [UMPR] Premia kwotowa (PREMKWOT)
+======================================================================================
+dim curPremia : curPremia = .round(.param1()  * .var("DRON") / .var("DRMK"),2)
+.var("PZUS") = .var("PZUS") + curPremia
+.var("PPDWYN") = .var("PPDWYN") + curPremia
+.var("PSRZUS6") = .var("PSRZUS6") + curPremia
+.var("PPOTRCHOR") = .var("PPOTRCHOR") + .param1()
+======================================================================================
+700. [CHOR] Potr¹cenie z tyt. choroby (POTRCHOR)
+======================================================================================
+.section 6
+dim curPotrChor : curPotrChor = .round(.var("PPOTRCHOR") * .calendar.dni_kal(.document.ddataod,.document.ddatado) / 30,2)
+.var("PZUS") = .var("PZUS") - curPotrChor
+.var("PPDWYN") = .var("PPDWYN") - curPotrChor
+.var("PSRZUS6") = .var("PSRZUS6") - curPotrChor
+.info_cur 4,"Potr¹cenie z tyt. choroby",curPotrChor,"PLN",2
+======================================================================================
+800. [CHOR] Wynagrodzenie chorobowe 100% (WYNCHOR100)
+-> SRZUS6
+-> CPCHOR
+-> POTRCHOR
+======================================================================================
+dim UNETTOWIENIE : UNETTOWIENIE = ccur(0.8129)
+dim curWynChor : curWynChor = .round(.var("SRZUS6") * UNETTOWIENIE * .calendar.dni_kal(.document.ddataod,.document.ddatado) / 30 * .param1() / 100.00,2)
+.var("PPDWYN") = .var("PPDWYN") + curWynChor
+.var("PSRZUS6") = .var("PSRZUS6") + curWynChor
+.section 6
+.info_cur 6,"Wynagrodzenie chorobowe",curWynChor,"PLN",2
+======================================================================================
+900. [UMPR] Koszty uzyskania przychodu (KUPNOR)
+======================================================================================
+if not .was_entry("KUP",.monthstart(),.monthend()) then
+	.store_entry "KUP",.rate("KUPNOR"), .payroll.text
+end if
+======================================================================================
+900. [UMPR] Miesiêczna ulga podatkowa (ULGPOD)
+======================================================================================
+if not .was_entry("ULGPOD",.monthstart(),.monthend()) then
+    .store_entry "ULGPOD",.rate("ULGPOD"), .payroll.text
+end if
+======================================================================================
+910. [UMPR] Ubezpieczenia spo³eczne (UBSPOL)
+======================================================================================
+.section 20
+.subtitle 0,"Ubezpieczenia spo³eczne"
+'PZUS narastaj¹co od pocz¹tku roku bez bie¿¹cego miesi¹ca
+.var("$pzuspop") = .sum("PZUS",.yearstart(),.monthstart()-1)
+.edit_var 2, "Podstawa ZUS narastaj¹co (bez bie¿¹cego miesi¹ca)", "$pzuspop", "PLN", 2
+'todo: co jesli jest to 2-gie naliczenie w m-cu !!
+'podstawa-ub. em. i rent.-kwota graniczna
+if .var("PZUS") + .var("$pzuspop") > .rate("GRUBEMRE") then
+	.var("$pubemre") = .max(0.0,.rate("GRUBEMRE") - .var("$pzuspop"))
+else
+	.var("$pubemre") = .var("PZUS")
+end if
+.edit_var 4, "Podstawa ub. emerytalnego i rentowego", "$pubemre", "PLN", 2
+.store_entry "PUBEMRE", .var("$pubemre"), .payroll.text
+
+.var("$pubchwyp") = .var("PZUS")
+.edit_var 6, "Podstawa ub. chorobowego i wypadkowego", "$pubchwyp", "PLN", 2
+.store_entry "PUBCHWYP", .var("$pubchwyp"), .payroll.text
+'ub. emerytalne
+if .agreement.cUbEm = "1" then
+	.var("$ubemp") = .round( .var("$pubemre") * .rate("UBEMER") / 2 / 100.0,2)
+	.var("$ubemf") = .var("$ubemp")
+	.edit_var 8, "Ubezpiecznie emerytalne - pracownik", "$ubemp", "PLN", 2
+	.store_entry "UBEMP",.var("$ubemp"), .payroll.text
+	.edit_var 10, "Ubezpiecznie emerytalne - firma", "$ubemf", "PLN", 2
+	.store_entry "UBEMF", .var("$ubemf"), .payroll.text
+	.var("$ubemer") = .var("$ubemf") + .var("$ubemp")
+end if
+'ub. rentowe
+if .agreement.cUbRe = "1" then
+	.var("$ubrep") = .round( .var("$pubemre") * .rate("UBRENT") / 2 / 100.0,2)
+	.var("$ubref") = .var("$ubrep")
+	.edit_var 12, "Ubezpieczenie rentowe - pracownik", "$ubrep", "PLN", 2
+	.store_entry "UBREP", .var("$ubrep"), .payroll.text
+	.edit_var 14, "Ubezpieczenie rentowe - firma", "$ubref", "PLN", 2
+	.store_entry "UBREF", .var("$ubref"), .payroll.text
+	.var("$ubrent") = .var("$ubref") + .var("$ubrep")
+end if
+'ub chorobowe
+if .agreement.cUbCh = "1" then
+	 .var("$ubchor") = .round(.var("PZUS") * .rate("UBCHOR") / 100.0,2)
+	 .edit_var 16, "Ubezpieczenie chorobowe", "$ubchor", "PLN", 2
+	 .store_entry "UBCHOR", .var("$ubchor"), .payroll.text
+end if
+'ub wypadkowe
+if .agreement.cUbWyp = "1" then
+	.var ("$ubwyp") = .round(.var("PZUS") * .rate("UBWYP") / 100.0,2)
+	.edit_var 18, "Ubezpieczenie wypadkowe", "$ubwyp", "PLN", 2
+	.store_entry "UBWYP", .var ("$ubwyp") , .payroll.text
+end if
+'FP i FGSP
+if .agreement.cFP = "1" then
+	.var ("$fp") = .round(.var("PZUS") * .rate("FP") / 100.0,2)
+	.edit_var 20, "Fundusz Pracy", "$fp", "PLN", 2
+	.store_entry "FP", .var ("$fp") , .payroll.text
+end if
+if .agreement.cFGSP = "1" then
+	.var ("$fgsp") = .round(.var("PZUS") * .rate("FGSP") / 100.0,2)
+	.edit_var 22, "FGŒP", "$fgsp", "PLN", 2
+	.store_entry "FGSP", .var ("$fgsp"), .payroll.text
+end if
+======================================================================================
+912. [UMPR] Podatki (PODATEK)
+======================================================================================
+.section 20
+'brutto
+.var("$brutto") = .var("PPDWYN") + .var("PPDZAS")
+.edit_var 110,"Brutto", "$brutto","PLN",2
+.store_entry "BRUTTO", .var("$brutto") , .payroll.text
+'ub.prac.
+.var("$ubprac") = .var("$ubemp") + .var("$ubrep") + .var("$ubchor")
+.edit_var 114, "Ubezpieczenia spo³eczne - pracownik", "$ubprac", "PLN", 2
+.store_entry "UBPRAC", .var("$ubprac"), .payroll.text
+.var("PPDWYN") = .var("PPDWYN") - .var("$ubprac")
+'KUP
+.var("$kup") = .sum("KUP",.monthstart(),.monthend()) + .sum("KUP")
+.edit_var 48, "Koszty uzyskania przychodu", "$kup", "PLN", 2
+
+if .var("$kup") > .var("PPDWYN") then
+	.var("$kup") = .var("$kup") - .var("PPDWYN") 
+end if
+.var("PPDWYN") = .var("PPDWYN") - .var("$kup")
+.subtitle 41,"Podatek dochodowy"
+'podatek 
+.edit_var 42, "Podstawa pod. doch. od wynagrodzeñ", "PPDWYN", "PLN", 2
+.store_entry "PPDWYN",.var("PPDWYN"), .payroll.text
+.edit_var 44, "Podstawa pod. doch. od zasi³ków", "PPDZAS", "PLN", 2
+.store_entry "PPDZAS",.var("PPDZAS"), .payroll.text
+
+.var ("$ppd") = .round(.var("PPDWYN") + .var("PPDZAS"),0)
+.edit_var 50, "Podstawa podatku dochodowego", "$ppd", "PLN",2
+.store_entry "PPD",.var("$ppd"), .payroll.text
+'PPD narastaj¹co od pocz¹tku roku bez bie¿¹cego miesi¹ca
+.var("$ppdpop") = .sum("PPD",.yearstart(),.monthstart()-1)
+.edit_var 52, "Podstawa podatku dochodowego narast z pop. m-cy", "$ppdpop", "PLN",2
+'stawka PD
+if .var("$ppdpop") < .rate("PRPD1") then
+	.var("$stpd") = .rate("STPD1")
+else
+	if .var("$ppdpop") < .rate("PRPD2") then
+		.var("$stpd") = .rate("STPD2")
+	else
+		.var("$stpd") = .rate("STPD3")
+	end if
+end if
+.edit_var 54, "Stawka podatku dochodowego", "$stpd", "%", 2
+.store_entry "STPD", .var("$stpd"), .payroll.text
+'zaliczka
+.var("$zalpd") = .var("$stpd") * .round(.var("$ppd"),0) / 100.0
+.edit_var 56, "Zaliczka na podatek dochodowy", "$zalpd", "PLN", 2
+.store_entry "ZALPD", .var("$zalpd"), .payroll.text
+'ulga
+.var("$ulgpod") = .sum("ULGPOD",.monthstart(),.monthend()) + .sum("ULGPOD")
+.edit_var 58, "Miesiêczna ulga podatkowa", "$ulgpod", "PLN", 2
+'ub zdrowotne
+if .agreement.cUbZdr = "1" then
+	.var ("$pubzdr") = .round(.var("PZUS") - .var("$ubemp") - .var("$ubrep") - .var("$ubchor"),2)
+	.edit_var 62, "Podstawa ubezpieczenia zdrowotnego", "$pubzdr", "PLN", 2
+	.store_entry "PUBZDR", .var ("$pubzdr") , .payroll.text
+	.var("$ubzdr") = .round(.var("$pubzdr") * .rate("UBZDR") / 100.0,2)
+	.var("$ubzdrpd") = .round(.var("$pubzdr") * .rate("UBZDRPD") / 100.0,2)
+	.edit_var 64, "Ubezpieczenie zdrowotne", "$ubzdr", "PLN", 2
+	.edit_var 66, "Ubezpieczenie zdrowotne odliczone", "$ubzdrpd", "PLN", 2
+end if
+'zmniejszenie zal. p.d.
+if .var("$zalpd") < .var("$ulgpod") then
+	.var("$zalpdzm") =  ccur(0.0)
+else
+	.var("$zalpdzm") = .var("$zalpd")  - .var("$ulgpod")
+end if
+'korekta ub.zdr.
+if .var("$zalpdzm") < .var("$ubzdr") then
+	.var("$ubzdr") = .var("$zalpdzm")
+	if  .var("$zalpdzm") < .var("$ubzdrpd") then
+		.var("$ubzdrpd") = .var("$zalpdzm")
+		.var("$zalpdzm") = 0.0
+	else
+		.var("$zalpdzm") = .var("$zalpdzm") - .var("$ubzdrpd")
+	end if
+else
+	.var("$zalpdzm") = .var("$zalpdzm") - .var("$ubzdrpd")
+end if
+.var("$zalpdzm") = .round(.var("$zalpdzm"),1)
+.store_entry "UBZDR", .var("$ubzdr"), .payroll.text
+.store_entry "UBZDRPD", .var("$ubzdrpd"), .payroll.text
+.edit_var 68,  "Zaliczka na podatek dochodowy po zmniejszeniu", "$zalpdzm", "PLN", 2
+.store_entry "ZALPDZM", .var("$zalpdzm"), .payroll.text
+======================================================================================
+920. [UMPR] Sk³adki i podatki (SKLPOD)
+-> UBSPOL
+-> PODATEK
+======================================================================================
+.section 22
+'wyniki
+.subtitle 0,"Wyniki"
+.var("$ubfirma") = .var("$ubemf") + .var("$ubref") + .var("$ubwyp")
+.edit_var 2, "Ubezpieczenie spo³eczne - firma", "$ubfirma", "PLN", 2
+.store_entry "UBFIRMA", .var("$ubfirma"), .payroll.text
+.var("$rzus") = .var("$ubprac") + .var("$ubfirma")
+.edit_var 4, "Ubezpieczenie spo³eczne - razem", "$rzus", "PLN", 2
+.store_entry "RZUS", .var("$rzus"), .payroll.text
+'netto
+'todo: $ubzdr czy $ubzdrpd ?
+.var("$netto") = .var("$brutto") - .var("$zalpdzm") - .var("$ubprac") - .var("$ubzdr")
+.edit_var 5, "Netto", "$netto", "PLN", 2
+.store_entry "NETTO", .var("$netto"), .payroll.text
+'potr¹cenia i dodatki
+.subtitle 20, "Inne"
+.edit_var 22, "Razem potr¹cenia", "POTR", "PLN", 2
+.store_entry "RPOTR", .var("POTR"), .payroll.text
+.edit_var 24, "Razem dodatki", "DODATKI", "PLN", 2
+.store_entry "RDODATKI", .var("DODATKI"), .payroll.text
+.edit_var 26, "Razem zasi³ki nieopodatkowane", "ZNPDZUS", "PLN", 2
+.store_entry "ZNPDZUS", .var("ZNPDZUS"), .payroll.text
+'wyplata
+.var("$wyplata") = .var("$netto") - .var("POTR") + .var("DODATKI") + .var("ZNPDZUS") 
+.edit_var 28, "Do wyp³aty", "$wyplata", "PLN", 2
+
+.store_entry "WYPLATA", .var("$wyplata"),.payroll.text
+.store_entry "PSRZUS6", .var("PSRZUS6"),.payroll.text
+

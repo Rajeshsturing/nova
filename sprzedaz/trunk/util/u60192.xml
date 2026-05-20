@@ -1,0 +1,669 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+
+wsparcie dla budowy raportów płacowych o dynamicznej liczbie kolumn
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200.h"
+#inlcude "h1203.h"
+#include "h1231.h"
+#include "h1234.h"
+-->
+<page>
+<config>
+<script>
+<![CDATA[
+'nx_trace
+#include "50519"
+
+'messagebox	
+#include "50122"
+
+'OBJECT_SORTER
+#include "50618"
+
+#include "50205"
+#include "50613"
+
+'funkcja wypełnia navoarray zawartością choice listy
+'o idobj = idChoiceList typu n5plsubkonto
+
+function plkonto_choicelist_2_array(byval idChoiceList)
+	dim strQuery
+	'wybieramy czy jest to widok normalny czy lista plac czyli ostatnia zakładka - ustawiamy opcje w operacje-zaawansowane-listy wyboru-subkonto placowe-i tutaj tworzymy listy ktore beda widoczne w ostatniej zakladce raportu
+	strQuery = "select 'idobj' = n5plsubkonto.idObj from vlist_choicelist_listElement vlist " +_
+	"join n5plsubkonto on vlist.c_idelement = n5plsubkonto.idobj " +_
+	"where vlist.p_idobj = " + cstr(idChoiceList) + " and vlist.p_ntypeid = TYPEID_N5PLSUBKONTO " +_
+	"order by vlist.coll_lp"
+	
+	dim pArrOfIdObj : set pArrOfIdObj = trans_.afc.new_navoarray()
+	dim pADOCursor : set pADOCursor = trans_.createadors(strQuery)
+	do while not pADOCursor.EOF 
+		pArrOfIdObj.Add clng(pADOCursor(0))
+		pADOCursor.movenext
+	loop
+	set plkonto_choicelist_2_array = pArrOfIdObj
+end function
+
+
+function plkonto_choicelist_2_array_iow(byval idChoiceList)
+	dim strQuery
+
+	strQuery = "select 'idobj' = n5plsubkonto.idObj from vlist_choicelist_listElement vlist " +_
+	"join n5plsubkonto on vlist.c_idelement = n5plsubkonto.idobj " +_
+	"where vlist.p_idobj = " + cstr(idChoiceList) + " and vlist.p_ntypeid = TYPEID_N5PLSUBKONTO " +_
+	"and n5plsubkonto.strkod not in ('KUP', 'ZALPD','ULGPOD') " + _
+	"order by vlist.coll_lp"
+	
+	dim pArrOfIdObj : set pArrOfIdObj = trans_.afc.new_navoarray()
+	dim pADOCursor : set pADOCursor = trans_.createadors(strQuery)
+	do while not pADOCursor.EOF 
+		pArrOfIdObj.Add clng(pADOCursor(0))
+		pADOCursor.movenext
+	loop
+	set plkonto_choicelist_2_array_iow = pArrOfIdObj
+end function
+
+
+function sql_prepare_tmp_pldekr_sum_tbl(byref pArrOfIdObj)
+  
+	dim strSQL  
+	strSQL = "create table #tmp_pldekr_sum " + vbCrLf +_
+	"(" + vbCrLf
+
+	dim iter 
+	for iter = 0 to pArrOfIdObj.UpperIndex()
+		dim strCol
+		strCol = "cw_" + cstr(pArrOfIdObj.value(iter)) + " decimal(14,4) not null," + vbCrLf +_
+			"cm_" + cstr(pArrOfIdObj.value(iter)) + " decimal(14,4) not null,"
+		strSQL = strSQL + strCol
+	next
+	
+
+
+	strSQL = strSQL + "pPracownik integer not null," + vbCrLf +_
+		"pNaliczenie integer not null," + vbCrLf +_
+ #ifdef _FRAM
+		"pListaPlac integer not null," + vbCrLf +_
+		"dDataNal datetime not null," + vbCrLf +_
+        "PRIMARY KEY (pPracownik, pNaliczenie, pListaPlac,dDataNal)" + vbCrLf +_
+ #else
+    "pListaPlac integer not null" + vbCrLf +_
+    "PRIMARY KEY (pPracownik, pNaliczenie, pListaPlac)" + vbCrLf +_
+ #endif		
+		")" + vbCrLf
+
+	trans_.execsql strSQL
+end function
+
+dim g_bFramPaski:g_bFramPaski = false
+function sql_prepare_tmp_pldekr_sum_proc_FramPaski(byref g_oArrIdSubKont,byval bSeparateNal,byval bSeparateLP,byval strNalSubQueryForIn)
+	g_bFramPaski = true
+	sql_prepare_tmp_pldekr_sum_proc g_oArrIdSubKont,true,true, strNalSubQueryForIn
+	g_bFramPaski = false
+end function
+
+'pArrOfIdObj - tablica subkont
+'bSeparateNal - rozdzielaj naliczenia 
+function sql_prepare_tmp_pldekr_sum_proc(byref pArrOfIdObj,byval bSeparateNal,byval bSeparateLP, _
+	byval strNalSubQueryForIn) 
+  
+	dim strSQL1,strSQL2,strSQL
+	'--------- create procedure
+	strSQL1 = "create procedure #tmp_fill_pldekr_sum as " + vbCrLf +_
+	"insert into #tmp_pldekr_sum select " + vbCrLf
+
+	dim iter 
+	for iter = 0 to pArrOfIdObj.UpperIndex()
+		strSQL1 = strSQL1 + "0,0,"
+	next
+	strSQL1 = strSQL1 + "p_pPracownik,"
+	if bSeparateNal then
+		strSQL1 = strSQL1 + "p_idobj,"
+	else
+		strSQL1 = strSQL1 + "0,"
+	end if
+	if bSeparateLP then
+		strSQL1 = strSQL1 + "p_pListaPlac"
+	else
+		strSQL1 = strSQL1 + "0"
+	end if
+	dim strIdSubKonta : strIdSubKonta = pArrOfIdObj.unseparate(",")
+	
+	if strIdSubKonta = "" then
+		strIdSubKonta = "0"		'where list is empty it makes SQL happy
+	end if
+	
+	if g_bFramPaski = true then
+		strSQL1 = strSQL1 + ",p_ddataNal "
+	end if
+
+	strSQL1 = strSQL1 + " from vlist_n5plnaliczenie_listDekret as vl_dekr where p_idobj in (" +_
+		strNalSubQueryForIn + ") group by p_pPracownik"
+	if bSeparateNal then
+		strSQL1 = strSQL1 + ",p_idobj"
+	end if
+	if bSeparateLP then
+		strSQL1 = strSQL1 + ",p_pListaPlac"
+	end if
+	if g_bFramPaski = true then
+		strSQL1 = strSQL1 + ",p_ddataNal "
+	end if
+	
+	strSQL1 = strSQL1 + vbCrLf + vbCrLf
+	'-- declare cursor
+	strSQL2 = "declare c1 cursor FORWARD_ONLY for select sum(c_curKwota),p_pPracownik,c_pSubKonto"
+	if bSeparateNal then
+		strSQL2 = strSQL2 + ",p_idobj"
+	end if
+	if bSeparateLP then
+		strSQL2 = strSQL2 + ",p_pListaPlac"
+	end if
+	strSQL2 = strSQL2 + " from vlist_n5plnaliczenie_listDekret as vl_dekr where c_pSubKonto in (" + strIdSubKonta + ") and p_idobj in (" +_
+		strNalSubQueryForIn + ") group by p_pPracownik,c_pSubKonto"
+	if bSeparateNal then
+		strSQL2 = strSQL2 + ",p_idobj"
+	end if
+	if bSeparateLP then
+		strSQL2 = strSQL2 + ",p_pListaPlac"
+	end if
+	strSQL2 = strSQL2 + vbCrLf + "open c1" + vbCrLf +_
+	"declare @curKwota decimal(14,4)" + vbCrLf +_
+	"declare @pPracownik integer" + vbCrLf +_
+	"declare @pNaliczenie integer" + vbCrLf +_
+	"declare @pListaPlac integer" + vbCrLf +_
+	"declare @pSubKonto integer" + vbCrLf +_
+	"fetch next from c1 into @curKwota, @pPracownik,@pSubKonto"
+	if bSeparateNal then
+		strSQL2 = strSQL2 + ",@pNaliczenie"
+	end if
+	if bSeparateLP then
+		strSQL2 = strSQL2 + ",@pListaPlac"
+	end if
+	strSQL2 = strSQL2  + vbCrLf + "while @@FETCH_STATUS = 0" + vbCrLf +_
+	"begin" + vbCrLf
+
+	'---- update poszczególnych kolumn ---------
+	for iter = 0 to pArrOfIdObj.UpperIndex()
+		dim strCol
+		strCol = "if @pSubKonto =" + cstr(pArrOfIdObj.value(iter)) + vbCrLf +_
+			"begin" + vbCrLf +_
+			"update #tmp_pldekr_sum "+ vbCrLf +_
+			"set cw_" + cstr(pArrOfIdObj.value(iter)) + "=@curKwota where pPracownik = @pPracownik "+ vbCrLf
+			
+			if bSeparateNal then
+				strCol = strCol + "and pNaliczenie = @pNaliczenie "
+			end if
+			if bSeparateLP then
+				strCol = strCol + "and pListaPlac = @pListaPlac "
+			end if
+			strCol = strCol + vbCrLf + "end" + vbCrLf
+		strSQL2 = strSQL2 + strCol
+	next
+
+	strSQL2 = strSQL2 + "fetch next from c1 into @curKwota, @pPracownik,@pSubKonto"
+	if bSeparateNal then
+		strSQL2 = strSQL2 + ",@pNaliczenie"
+	end if
+	if bSeparateLP then
+		strSQL2 = strSQL2 + ",@pListaPlac" 
+	end if
+	strSQL2 = strSQL2  + vbCrLf + "end" + vbCrLf +_
+		"close c1" + vbCrLf +_
+		"deallocate c1" + vbCrLf 
+
+	strSQL = strSQL1 + strSQL2
+	trans_.execsql strSQL
+end function
+
+sub sql_fill_tmp_pldekr_sum
+	trans_.execsql "exec #tmp_fill_pldekr_sum"
+end sub
+
+function sql_clean_tmp_pldekr_sum()
+	dim strSQL
+	
+	strSQL = "drop procedure #tmp_fill_pldekr_sum" + vbCrLf +_
+		"drop table #tmp_pldekr_sum" + vbCrLf
+
+	trans_.execsql strSQL
+end function
+
+'-------------------------------------------------
+' tworzenie host'a naliczen - od tego zaczyna się 
+' wszystko
+'-------------------------------------------------
+
+function new_nal_host()
+	dim oNalHost : set oNalHost = doc_.system.activex("navopl.nal_host") 
+	oNalHost.init doc_,trans_, nx_
+	set new_nal_host = oNalHost
+end function
+
+'-------------------------------------
+'klasa opisuje parametry robienia 'paczki' naliczeń
+
+'-------------------------------------
+class CNaliczeniaBatchParam
+	private m_dDataOd		'od kiedy zbieramy składniki
+	private m_dDataDo		'do kiedy zbieramy składniki
+	private m_dDataNal		'pod jaką datą robimy naliczenie
+	private m_idListaPlac
+	private m_strListaPlacNr
+	private m_strTypyUmow
+
+	private sub class_initialize()
+		m_dDataOd = PIERWSZY_DZIEN_MCA
+		m_dDataDo = OSTATNI_DZIEN_MCA
+		m_idListaPlac = clng(0)
+		m_dDataNal = trans_.var(GVAR_TODAY)
+		m_strTypyUmow = "11111"
+		m_strListaPlacNr =""
+	end sub
+
+	public property get ddataod
+		ddataod = m_dDataOd
+	end property
+	public property get ddatado
+		ddatado = m_dDataDo
+	end property
+	public property get ddatanal
+		ddatanal = m_dDataNal
+	end property
+	public property get typyumow
+		typyumow = m_strTypyUmow
+	end property
+	public property get idlistaplac
+		idlistaplac = m_idListaPlac
+	end property
+	public property get nrlistyplac
+		nrlistyplac = m_strListaPlacNr
+	end property
+	
+	public property let ddataod(byval dDate)
+		m_dDataOd = dDate
+	end property
+	public property let ddatado(byval dDate)
+		m_dDataDo = dDate
+	end property
+	public property let ddatanal(byval dDate)
+		m_dDataNal = dDate
+	end property
+	public property let typyumow(byval strVal)
+		m_strTypyUmow = strVal
+	end property
+	public property let idlistaplac(byval idLP)
+		m_idListaPlac = idLP
+	end property
+	public property let nrlistyplac(byval strVal)
+		m_strListaPlacNr = strVal
+	end property
+end class
+
+
+function new_naliczenia_batch_param()
+	set new_naliczenia_batch_param = new CNaliczeniaBatchParam
+end function
+
+function create_naliczenia_on_batch(byref pNBP) : create_naliczenia_on_batch = true
+
+	dim oNalHost : set oNalHost = new_nal_host()
+
+	dim pPerf : set pPerf = doc_.performing("Rozpoczynam tworzenie naliczeń...")
+
+	'--- przygotowanie listy płac -----------
+	dim pListaPlac
+	if pNBP.idlistaplac = 0 then
+		set pListaPlac = trans_.newobj(TYPEID_N5PLLISTAPLAC)
+
+		with pListaPlac
+			.strNrDok = pNBP.nrlistyplac
+			.dDataOd = pNBP.dDataOd
+			.dDataDo = pNBP.dDataDo
+			.dDataNal = pNBP.ddatanal
+		end with
+	else
+		set pListaPlac = trans_.getobj(TYPEID_N5PLLISTAPLAC,pNBP.idlistaplac)
+
+		with pListaPlac
+			pNBP.dDataOd = .dDataOd
+			pNBP.dDataDo = .dDataDo
+			pNBP.ddatanal = .dDataNal
+		end with
+	end if
+
+	'--- przygotowanie kursora na umowach, które są aktywne i należą do wybranego zakresu
+	dim strWhereUmowy
+	strWhereUmowy = "n5plumowa.dDataOd <= " + doc_.afc.convert.date2sql(pNBP.dDataDo) +_
+	" and (n5plumowa.dDataDo >= " + doc_.afc.convert.date2sql(pNBP.dDataOd) + " or n5plumowa.dDataDo = " + doc_.afc.convert.date2sql(doc_.afc.globals.nulldate()) + ") "
+	
+	if not pListaPlac.lppl_pRejestrDok.wrefParam1 is nothing then
+		dim pCLPracownicy : set pCLPracownicy = pListaPlac.lppl_pRejestrDok.wrefParam1
+		dim strCLQuery : strCLQuery = " and n5plumowa.pPracownik in (0"
+		dim pCLElement
+		for each pCLElement in pCLPracownicy.listElement
+			strCLQuery = strCLQuery + "," + cstr(pCLElement.IdElement)
+		next 
+		strCLQuery = strCLQuery + ") "
+		strWhereUmowy = strWhereUmowy + strCLQuery
+	end if
+
+  dim strZrodlaWyn : strZrodlaWyn = pListaPlac.lppl_pRejestrDok.rejdok_strTypDokZrodWyn
+  dim typUmowy 
+  dim iter
+  if inStr(mid(strZrodlaWyn,1,3),"1")<>0 then
+    dim strTypUmowyQuery: strTypUmowyQuery =" and eTypumowy in(0"
+    for iter=1 to 3
+        typUmowy = mid(strZrodlaWyn,iter,1)
+        if typUmowy = 1 then
+          if iter = 1 then
+            strTypUmowyQuery =strTypUmowyQuery+",2"
+          end if
+          if iter = 2 then
+            strTypUmowyQuery = strTypUmowyQuery+",1"
+          end if
+          if iter = 2 then
+            strTypUmowyQuery = strTypUmowyQuery+",3"
+          end if
+        end if
+    next
+    strTypUmowyQuery = strTypUmowyQuery+")"
+    strWhereUmowy = strWhereUmowy + strTypUmowyQuery
+   end if
+	'place:todo: filtrowanie na typ umowy
+	
+	'--- iteracja po umowach
+	dim pUmowa
+	dim pUmowyArray : set pUmowyArray = doc_.afc.new_navoarray()
+	dim pCursorUmowy : set pCursorUmowy = trans_.createrawcursor(TYPEID_N5PLUMOWA,strWhereUmowy,"pPracownik","")
+	for each pUmowa in pCursorUmowy
+		pUmowyArray.add clng(pUmowa.idobj)
+	next
+
+	dim pNaliczenie
+	set pNaliczenie = trans_.newobj(TYPEID_N5PLNALICZENIE)
+	
+	for iter = 0 to pUmowyArray.upperIndex
+		set pUmowa = trans_.getobj(TYPEID_N5PLUMOWA,pUmowyArray.value(iter))
+		fill_naliczenie pNaliczenie, pUmowa, pNBP.dDataOd,pNBP.dDataDo,pNBP.ddatanal,pListaPlac
+		if pNaliczenie.listSkladnik.count <> 0 then
+			'========= wykonaj naliczenie składników =========
+			pPerf.text = "Naliczanie dla " + pNaliczenie.pPracownik.text
+			page_.updateview
+			if not compute_naliczenie(oNalHost,pNaliczenie,load_naliczenie(pNaliczenie),pPerf) then
+				set pPerf = nothing
+				MessageBox "Wykonanie naliczeń dla " + pNaliczenie.pPracownik.text + " nieudane.", "Tworzenie naliczeń",vbOkOnly,vbInformation
+				create_naliczenia_on_batch = false
+				exit function
+			end if
+			if not trans_.saveobjects() then
+				if MessageBox("Zachowanie danych nieudane dla pracownika: " + pNaliczenie.pPracownik.text +". Czy kontynuować naliczenie dla pozostałych pracowników?", "Tworzenie naliczeń",vbYesNo, vbQuestion) <> vbYes then
+				  exit function
+				end if
+			end if      
+			set pNaliczenie = trans_.newobj(TYPEID_N5PLNALICZENIE)
+		end if
+	next
+	if pNaliczenie.listSkladnik.count = 0 then
+		pNaliczenie.ignore = true
+	end if
+
+	set oNalHost = nothing
+end function
+
+
+#comment '==============================================================
+#comment ' wypełnia obiekt naliczenia dokumentami źródłowymi
+#comment '---------------------------------------------------------
+sub fill_naliczenie(byref pN5Naliczenie,byref pUmowa,byval dDataOd,byval dDataDo,byval dDataNal,byref pListaPlac)
+	'----- filtr dla wskazanej umowy i podanego okresu (ograniczonego dodatkowo okresem ważności umowy)
+	
+	'ograniczamy daty
+	dim dDataOd2 : dDataOd2 = dDataOd
+	if pUmowa.dDataOd > dDataOd2 then
+		dDataOd2 = pUmowa.dDataOd
+	end if
+	dim dDataDo2 : dDataDo2 = dDataDo
+	if pUmowa.dDataDo <> doc_.afc.globals.nulldate() then
+		if pUmowa.dDataDo < dDataDo2 then
+			dDataDo2 = pUmowa.dDataDo
+		end if 
+	end if
+
+	'================== zainicjuj naliczenie ==================
+	with pN5Naliczenie
+		set .pPracownik = pUmowa.pPracownik
+		.dDataNal = dDataNal
+		.dDataOd = dDataOd2
+		.dDataDo = dDataDo2
+		set .pListaPlac = pListaPlac
+	end with
+	
+	'================== zbieranie składników ==================
+	'----- przygotuj query dla wszystkich źródeł wynagrodzeń --
+	dim strQuery
+	with doc_.afc.convert
+		strQuery = .formatter("select v.typeid,v.idobj from view_pl_dok_zrod as v where pUmowa= %1 " + _
+		" and v.dDataOd <= %2 and (v.dDataDo >= %3 or v.dDataDo = %4)  order by v.ordr, v.dDataRej,v.idobj") _
+			(pUmowa.idobj)(.date2sql(dDataDo2))(.date2sql(dDataOd2))(.date2sql(doc_.afc.globals.nulldate())).done()
+	end with
+	
+	dim oNXArrayListSkl : set oNXArrayListSkl = nothing
+	if not pListaPlac.lppl_pRejestrDok.wrefParam2 is nothing then
+		dim oListaSkl : set oListaSkl = pListaPlac.lppl_pRejestrDok.wrefParam2
+		set oNXArrayListSkl = nx_.new_array()
+		dim oElemListSkl
+		for each oElemListSkl in oListaSkl.listElement
+			oNXArrayListSkl.add clng(oElemListSkl.idElement)
+		next
+	end if
+
+	pN5Naliczenie.listSkladnik.deleteall
+
+	'----- otwórz kursor
+	dim pCursor : set pCursor = trans_.createadors(strQuery)
+
+	do while not pCursor.eof
+		'--- dopisz dokument do naliczenia
+
+		dim nTypeId : nTypeId = clng(pCursor(0))
+		dim idObj : idObj = clng(pCursor(1))
+		dim pZrodWynag : set pZrodWynag = trans_.getobj(nTypeId,idObj)
+
+		dim iter : iter = 1
+
+		do while true
+			dim pSklWyn : set pSklWyn = pN5Naliczenie.n5plnaliczenie_gsfz_2(pZrodWynag,iter,nothing)
+			if pSklWyn is nothing then
+				exit do
+			end if
+			dim bAddItem : bAddItem = true
+
+			if not oNXArrayListSkl is nothing then
+				bAddItem = (oNXArrayListSkl.find(pSklWyn.pSchemat.idobj) >= 0)
+			end if
+
+			if bAddItem then
+				bAddItem = pSklWyn.pTerminNal.n5plterminnal_evaluate(pSklWyn,pN5Naliczenie)
+			end if
+
+			if bAddItem then
+				dim pSklNal : set pSklNal = pN5Naliczenie.listSkladnik.addnew()
+				with pSklNal
+					set .wrefDokument = pZrodWynag
+					.nLPDokZrodl = clng(iter)
+				end with
+			end if
+			iter = iter + 1
+		loop
+
+		pCursor.movenext
+	loop
+end sub
+
+NAVOARRAY_OBJECT_SORTER(csort_CSNI_wg_priority_navoarray,.priorytet)
+NAVOARRAY_OBJECT_SORTER(csort_nal_display_item_wg_priority_navoarray,.get_final_disp_priority())
+
+#comment '---------------------------------------------------------
+#comment ' przygotowanie jednego naliczenia do obliczeń i jego obliczenie
+#comment '---------------------------------------------------------
+private function prepare_err_msg
+	prepare_err_msg = "Wystąpił błąd skryptu " + cstr(err.Number) + ", opis:" + err.Description
+end function
+
+function compute_naliczenie(byref oNalHost,byref pN5Naliczenie,byref pNalStorage,byref oPerforming) 
+	compute_naliczenie = false
+	
+	'-------------------- określenie umowy ------------
+	dim pUmowa : set pUmowa = nothing
+
+	if pN5Naliczenie.pListaPlac is nothing then
+		trans_.message 1002 , 0 , "Należy wskazać listę płac"
+		exit function
+	end if	
+	'-------------------- 
+	if not pN5Naliczenie.n5plnaliczenie_checkPracownik() then
+		exit function
+	end if
+
+	NX_TRACE_SUB_START("Naliczenie dla " + pN5Naliczenie.pPracownik.text)
+	'--------------------
+
+	if not pN5Naliczenie.n5plnaliczenie_resolve_umowa(pUmowa) then
+		trans_.message 6521, 1, "Naliczenie musi zawierać składniki związane z tą samą umową"
+		exit function
+	end if
+
+	'-------------------- przygotowanie srodowiska runtime --------
+	dim oNalEnv : set oNalEnv = oNalHost.new_env(pN5Naliczenie.get_this,pUmowa)
+	oNalEnv.attach_storage pNalStorage
+	pNalStorage.clean_display_items
+	pNalStorage.reset_nonfixed_var_value
+
+	'-------------------- przygotowanie skryptu naliczenia za pomocą nal_comp'a
+	dim strVBScript : strVBScript = ""
+	dim bTrace : bTrace = true
+	dim oNalComp : set oNalComp = createobject("navopl.nal_computer")
+	with oNalComp
+		.initialize trans_.afc,pN5Naliczenie,bTrace
+		.build_csni_array
+		.initialize_env oNalEnv
+		.sort_csni_array new csort_CSNI_wg_priority_navoarray
+		strVBScript = .build_vb_script()
+	end with
+	set oNalComp = nothing
+	
+	'-------------------- wykonanie skryptu
+	dim strErrorMsg
+#ifndef _DEBUG
+	on error resume next	'{{
+#endif
+		executeglobal strVBScript
+		if err.Number <> 0 then
+			strErrorMsg = "Przygotowanie do obliczeń nieudane." + prepare_err_msg
+			nx_.trace.fatal "FPL001", strErrorMsg
+			exit function
+		else
+			donal oNalEnv
+			if err.Number <> 0 then
+				strErrorMsg = "Wykonanie obliczeń nieudane." + prepare_err_msg
+				nx_.trace.fatal "FPL002", strErrorMsg
+				exit function
+			end if
+		end if
+#ifndef _DEBUG
+	on error goto 0			'}}
+#endif
+
+	pNalStorage.sort_display_item_array new csort_nal_display_item_wg_priority_navoarray
+
+	oNalEnv.store_results 
+    
+	save_naliczenie pN5Naliczenie, pNalStorage
+
+	compute_naliczenie = true
+  
+  NX_TRACE_END
+
+end function
+
+function load_naliczenie(byref pN5Naliczenie)
+	set load_naliczenie = nothing
+	dim pNalStorage : set pNalStorage = doc_.system.activex("navopl.nal_storage") 
+    pNalStorage.initialize doc_.afc
+
+	if not pN5Naliczenie.fTextInfo.isempty() then
+		dim pImportPckg : set pImportPckg = doc_.system.activex("navoexpimp.importpackage")
+		set pImportPckg.sink = pNalStorage.new_parser()
+		pImportPckg.istream pN5Naliczenie.fTextInfo
+		pImportPckg.go
+	end if
+
+	set load_naliczenie = pNalStorage
+end function
+
+function save_naliczenie(byref pN5Naliczenie,byref pNalStorage)
+    '----- create stream ---
+    Dim pResultStream : Set pResultStream = doc_.createstreamobj()
+    '---- create export package
+    Dim pExportPckg: Set pExportPckg = doc_.system.activex("navoexpimp.exportpackage")
+    pResultStream.write "<?xml version=""1.0"" encoding=""windows-1250""?>" + vbCrLf
+    pExportPckg.ostream pResultStream
+
+	pNalStorage.save_to_stream pExportPckg
+
+	'---- attach to file
+    with pN5Naliczenie.fTextInfo
+		.attach pResultStream
+		.ext = "xml"
+	end with
+end function
+
+#comment '---------------------------------------------------------
+#comment 'wsparcie dla drzewka wyboru składników
+#comment '---------------------------------------------------------
+
+'fire_choice_tree
+#include "50200"
+
+function pl_choose_schemnal_id():pl_choose_schemnal_id = 0
+
+	dim idChoosenTypeId
+	dim idChoosenID
+	idChoosenID = fire_choice_tree(EXPLORER_PLSCHEMATNAL_BY_GROUP,TYPEID_N5PLGRUPASCHEMNAL,0,idChoosenTypeId)
+
+	if idChoosenTypeId <> TYPEID_N5PLSCHEMATNAL then
+		exit function
+	end if
+
+	if idChoosenID = 0 then
+		exit function
+	end if
+
+	pl_choose_schemnal_id = idChoosenID
+	
+end function
+
+#comment '---------------------------------------------------------
+
+function importPremia(byval strFileName)
+
+    set importPremia = nothing
+    dim pExportManager : set pExportManager = new CADOExportManager
+  	if not pExportManager.connectExcel(strFileName) then
+      exit function
+    end if
+    
+    dim pRec : set pRec = pExportManager.getConnection().execute( "select * from [Pracownik$]" )
+    
+    set importPremia = pRec
+
+end function
+
+]]>
+</script>
+</config>
+	<body>
+	</body>
+</page>

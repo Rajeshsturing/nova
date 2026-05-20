@@ -1,0 +1,325 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1201.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1222.h"
+#include "h1200.h"
+#include "h1232.h"
+
+
+
+#define PAGE_FORM_WIZZARD_BUDGET_STEP1		20354
+#define PAGE_FORM_WIZZARD_BUDGET_STEP2		20355
+#define PAGE_FORM_WIZZARD_BUDGET_STEP3		20356
+
+#define MODE_YEAR 1
+#define MODE_QUARTER 2
+#define MODE_MONTH 3
+
+-->
+<page style='STYLE_PAGE'>
+<config>
+	<title>
+Budżet
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+<typeid>TYPEID_N5BUDZET</typeid>
+<script><![CDATA[
+
+#include "50209"
+#include "50204"
+#include "50120"
+#include "50126"
+
+'msgbox
+#include "50122"
+
+#include "50101"
+
+function fopen(): fopen = true
+#ifdef _ABAKUS
+  fopen = not HARUI_FREE(UAR_OGRANICZONY_DOSTEP_DANE_KLIENTA)
+#endif
+end function
+
+function budget_creator	
+	run_this
+end function
+
+
+
+class CBudgetWzrd
+	public m_nMode
+	public m_strName
+	public m_strFullName
+	public m_pRks
+
+	public m_strDesc1
+	public m_strDesc2
+
+
+	public m_pQuartersArrayNames
+	public m_pQuartersArrayDatesFrom
+	public m_pQuartersArrayDatesTo
+
+	public dDateFrom
+    public dDateTo
+
+	private sub Class_Initialize()
+		m_nMode = clng(1)
+		set m_pRks = getCurrentRKS()
+		m_strName = page_.root.strNazwa
+	end sub
+
+	public function compose_desc1
+		compose_desc1 = m_strDesc1
+	end function
+
+	public function compose_desc2
+		compose_desc2 = m_strDesc2
+	end function
+
+	public sub compose_full_name
+		dim suffix
+
+
+		count_quaerters()
+
+		select case m_nMode
+			case MODE_YEAR:
+				suffix = " na bieżący rok"
+				dDateFrom = m_pRks.dDataRozp
+				dDateTo = m_pRks.dDataZakon
+				m_strDesc1 = "Zostanie utworzony budżet na caly rok finansowy"				 
+
+			case MODE_QUARTER:
+				suffix = " kwartalny na okres od <RRRR-MM-DD> do <RRRR-MM-DD> "
+				m_strDesc1 = "Zostaną utworzone budżety na kazdy kwartał roku  księgoweg"	
+
+			case MODE_MONTH:
+				suffix = " na miesiąc <RRRR-MM> "				
+				m_strDesc1 = "Zostaną utworzone budżety na kazdy miesiąc roku finansowego"	
+		end select
+			
+		if m_strName <> "" then
+			m_strFullName = doc_.afc.convert.formatter(m_strName + suffix) _
+				.add(trans_.afc.display.fulldate(dDateFrom)) _
+				.add(trans_.afc.display.fulldate(dDateTo)) _
+				.done
+			m_strDesc2 = m_strFullName
+		else
+			m_strFullName = ""
+		end if
+
+		 if m_nMode <> MODE_YEAR then
+			m_strDesc2 = ""
+		 end if
+	end sub
+
+
+	' obliczanie koeljnych okresow na ktore tworzymy budzety
+	private sub count_quaerters()
+
+		' jezeli na rok to spadamy - zadna filozofia :-)
+		if m_nMode = MODE_YEAR then
+			exit sub	
+		end if
+
+		'wypelniamy tablice z nazmawi i datami
+		set m_pQuartersArrayNames = doc_.afc.new_navoarray()
+		set m_pQuartersArrayDatesFrom = doc_.afc.new_navoarray()
+		set m_pQuartersArrayDatesTo = doc_.afc.new_navoarray()
+
+		'zawsze zaczynamy od poczatku roku księgowego
+		dim currFrom:currFrom = m_pRks.dDataRozp
+		dim currTo
+
+		'jezeli kwartalny to co 3 miesiące
+		if m_nMode = MODE_QUARTER then 
+			currTo = min (DateSerial(year(m_pRks.dDataRozp) , month(m_pRks.dDataRozp) + 3 , 1) - 1 ,m_pRks.dDataZakon)
+		else'w przeciwnym razie co miesiąc
+			currTo = min (DateSerial(year(m_pRks.dDataRozp) , month(m_pRks.dDataRozp) + 1 , 1) - 1 ,m_pRks.dDataZakon)
+		end if
+		
+
+		do' i kręcimy sie dopoki nie przejedziemy calegho roku księgowego
+			if currFrom > m_pRks.dDataZakon then
+				exit do	
+			end if
+
+			m_pQuartersArrayDatesFrom.add(currFrom)
+			m_pQuartersArrayDatesTo.add(currTo)
+
+			if m_nMode = MODE_QUARTER then 
+				m_pQuartersArrayNames.add(m_strName + " na kwartał od " + doc_.afc.display.fulldate(currFrom) + " do " + doc_.afc.display.fulldate(currTo) )
+			else
+				m_pQuartersArrayNames.add(m_strName + " na miesiąc " + cstr(year(currFrom)) + "-" + cstr(month(currFrom)))
+			end if
+
+			currFrom = currTo + 1
+			if m_nMode = MODE_QUARTER then 
+				currTo = min ( DateSerial(year(currFrom) , month(currFrom) + 3 , 1) - 1 , m_pRks.dDataZakon )
+			else
+				currTo = min ( DateSerial(year(currFrom) , month(currFrom) + 1 , 1) - 1 , m_pRks.dDataZakon )
+			end if
+
+									
+		loop		
+	end sub
+
+
+	' funkcja robiąca tabelke z 
+	public sub make_table(pTable)
+
+		if m_nMode = MODE_YEAR then
+			exit sub	
+		end if
+
+		dim tb
+		set tb = doc_.afc.new_tb(nothing).attach(pTable).removeall
+		tb.section_body.removeall
+
+
+		dim iter
+		for iter = 0 to m_pQuartersArrayNames.UpperIndex
+			tb.newrow.newcell.addtext(m_pQuartersArrayNames.value(iter))			
+			tb.cell.colspan = 2
+		next
+	end sub
+
+
+	public function finalize_wizard()
+
+		page_.root.ignore = true
+
+		dim pTran:set pTran = trans_.createsubtran()
+		dim pObj
+
+		select case m_nMode			
+			case MODE_YEAR:
+				set pObj = trans_.newobj(TYPEID_N5BUDZET)
+				pObj.dDataOd = dDateFrom
+				pObj.dDataDo = dDateTo
+				pObj.strNazwa = m_strFullName
+			case MODE_QUARTER,MODE_MONTH:
+				dim iter
+				for iter = 0 to m_pQuartersArrayNames.upperIndex
+					set pObj = trans_.newobj(TYPEID_N5BUDZET)
+					pObj.dDataOd = m_pQuartersArrayDatesFrom.value(iter)
+					pObj.dDataDo =  m_pQuartersArrayDatesTo.value(iter)
+					pObj.strNazwa = m_pQuartersArrayNames.value(iter)
+				next				
+							
+		end select
+
+		if MessageBox("Utworzono budżet według okreśłonych parametrów. Zapisać dane?", "Kreator budżetów", vbYesNo, vbQuestion) = vbYes then
+			if trans_.saveobjects then
+				MessageBox "Działanie kreatora zakończyło sie powodzeniem", "Kreator budżetów", vbOKOnly, vbInformation
+				finalize_wizard = true
+			else
+				MessageBox "Działanie kreatora zakończyło sie niepowodzeniem. Nie udało się zapisać danych.", "Kreator budżetów", vbOKOnly, vbInformation
+				trans_.discard
+				finalize_wizard = false
+			end if
+		else
+			trans_.discard
+			finalize_wizard = false
+		end if
+
+		set pTran = nothing
+
+		page_.root.ignore = false
+		 
+	end function
+
+
+
+
+end class
+
+
+
+
+
+dim pParamClass
+
+function run_this()
+	dim pWizzard
+	set pParamClass = new CBudgetWzrd
+	set pWizzard=CWizzard(false)
+	pWizzard.add_container pParamClass
+	pWizzard.add_step PAGE_FORM_WIZZARD_BUDGET_STEP1
+	pWizzard.add_step PAGE_FORM_WIZZARD_BUDGET_STEP2
+	pWizzard.add_step PAGE_FORM_WIZZARD_BUDGET_STEP3
+
+
+
+	pWizzard.run
+end function
+
+function onPageEnter(pWizzardPage)
+	select case ( pWizzardPage.m_nPage )
+		case PAGE_FORM_WIZZARD_BUDGET_STEP1:
+		case PAGE_FORM_WIZZARD_BUDGET_STEP2:
+		case PAGE_FORM_WIZZARD_BUDGET_STEP3:
+	end select
+end function
+
+function onPageExit(pWizzardPage)
+	onPageExit=PAGE_DEFAULT
+	select case ( pWizzardPage.m_nPage )
+		case PAGE_FORM_WIZZARD_BUDGET_STEP1:
+		case PAGE_FORM_WIZZARD_BUDGET_STEP2:
+			if pParamClass.m_strName = "" then
+				MessageBox "Musisz podać nazwe tworzonego budżetu", "Kreator budżetów" , vbOkOnly, vbInformation
+				onPageExit = PAGE_DONOTEXIT
+				exit function
+			end if
+		case PAGE_FORM_WIZZARD_BUDGET_STEP3:
+	end select
+end function
+
+function onPageInit(pWizzardPage)
+	select case ( pWizzardPage.m_nPage )
+		case PAGE_FORM_WIZZARD_BUDGET_STEP1:
+		case PAGE_FORM_WIZZARD_BUDGET_STEP2:
+		case PAGE_FORM_WIZZARD_BUDGET_STEP3:
+	end select
+end function
+
+function onWizzardComplete(pWizzardPage)
+		onWizzardComplete = pParamClass.finalize_wizard()
+end function
+
+
+]]></script>
+</config>
+<header>
+</header>
+<body>
+XFBEGIN
+
+
+XFREQNAZWA
+XFDATEFIELD(Data początkowa,dDataOd)
+XFDATEFIELD(Data końcowa,dDataDo)
+
+
+XFEND
+
+
+XFTABLEBUTTON(1001,Kreator budżetów ,budget_creator)
+
+</body>
+<footer>
+</footer>
+</page>

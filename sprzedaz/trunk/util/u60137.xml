@@ -1,0 +1,409 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1201.h"
+
+	Zarządzanie licencjami
+-->
+<page>
+<config>
+<script>
+<![CDATA[
+'MessageBox
+#include "50122"
+
+class CLicenceCodec
+	private m_strExData		'db content
+	private m_strModCode	'module code i.e. EB32
+	private m_nUserCount	'users count
+	private m_nDays4Free
+	private m_dtLastRun
+	private m_strUnlock
+	private m_strUserId
+
+	private sub class_initialize()
+		m_strExData = ""
+		m_strModCode = ""
+		m_nUserCount = 0
+		m_nDays4Free = 0
+		m_dtLastRun = trans_.afc.globals.nulldate()
+		m_strUnlock = "?"
+		m_strUserId = "?"
+	end sub
+
+	'-----------------------------------------------
+	public sub init_temporary(byval strModCode)
+		m_strExData  = ""
+		m_strModCode = strModCode
+		m_nUserCount = 1
+		m_nDays4Free = 30
+	end sub
+
+	public sub init_from_parts(byval strModCode,byval strUserId)
+		m_strExData  = ""
+		m_strModCode = strModCode
+		m_nUserCount = 1
+		m_nDays4Free = 0
+		m_dtLastRun = trans_.afc.globals.nulldate()
+		m_strUserId = strUserId
+	end sub
+
+	'-----------------------------------------------
+	public function init_from_ctrl_str(byval strControl)
+		init_from_ctrl_str = false
+		'-decode-
+		dim position 
+		dim strTmp : strTmp = ""
+		dim charVal
+		for position = 1 to len(strControl)
+			charVal = asc(mid(strControl,position,1))
+			if position Mod 3 = 0 then				'GUCIO
+				charVal = charVal - 2
+			end if
+			strTmp = strTmp + Chr( charVal )
+		next
+
+		'---- rozpakowywanie
+		dim tmpArray
+		set tmpArray=trans_.afc.new_navoarray()
+		
+		tmpArray.Separate strTmp, "-"
+
+		if tmpArray.Count() <> 7 then
+			exit function
+		end if
+
+		m_strExData = mid(tmpArray.Value(0), 2)
+		m_strModcode = tmpArray.Value(1)
+
+		if not isNumeric(tmpArray.Value(2)) then
+			exit function
+		end if
+
+		m_nUserCount = clng(tmpArray.Value(2))
+		if m_nUserCount <= 0 or m_nUserCount > 199 then
+			exit function
+		end if
+
+		if not isNumeric(tmpArray.Value(3)) then
+			exit function
+		end if
+
+		m_nDays4Free = clng(tmpArray.Value(3))
+		if m_nDays4Free < 0 or m_nDays4Free > 32 then
+			exit function
+		end if
+
+		dim strDay : strDay=Mid(tmpArray.Value(4), 1, 2)
+		dim strMonth : strMonth=Mid(tmpArray.Value(4), 3, 2)
+		dim strYear : strYear=Mid(tmpArray.Value(4), 5, len(tmpArray.Value(4))-4)
+
+		if (not isNumeric(strDay) or _
+			not isNumeric(strMonth) or _
+			not isNumeric(strYear)) then
+				exit function
+		end if
+
+		if (CLng(strDay)>31 or CLng(strDay)<1) or _
+		   (CLng(strMonth)>12 or CLng(strMonth)<1) then
+			exit function
+		end if
+
+		m_dtLastRun=DateSerial(CLng(strYear), CLng(strMonth), CLng(strDay))
+
+		m_strUnlock = tmpArray.Value(5)
+		m_strUserId = replace(tmpArray.Value(6),"!","-")
+
+		if (m_strUnlock <> "?") and (left(tmpArray.Value(0),1) <> "C") then
+      exit function
+		end if
+	
+		init_from_ctrl_str = true
+	end function
+
+	public function get_ctrl_str()
+		dim strKey : strKey = trans_.afc.convert.Formatter("C%1-%2-%3-%4-%5-%6-%7") _
+			(m_strExData)(m_strModcode)(m_nUserCount)(m_nDays4Free) _
+			(Date2StringDDMMYYYY(m_dtLastRun))(m_strUnlock)(replace(m_strUserId,"-","!")).done()
+
+		'-encode-
+		dim strTmp : strTmp = ""
+		dim charVal
+		dim position
+		for position = 1 to len(strKey)
+			charVal = asc(mid(strKey,position,1))
+			if position Mod 3 = 0 then			'GUCIO
+				charVal = charVal + 2
+			end if 
+			strTmp = strTmp + Chr( charVal )
+		next
+
+		get_ctrl_str = strTmp
+	end function
+
+	public function get_display_key()
+		dim nUserId : nUserId = clng(0)
+		dim iter 
+		dim cChar
+		for iter = 1 to len(m_strUserId)
+			cChar = mid(m_strUserId,iter,1)
+			if cChar >= "0" and cChar <= "9" then
+				nUserId = nUserId * 7 + (asc(cChar) - asc("0"))
+			else
+				nUserId = nUserId * 5
+			end if
+		next
+		get_display_key = m_strModCode + "/" + cstr(m_nUserCount) + "/" + cstr(nUserId) + "/" + left(m_strExData,4)
+	end function
+
+	public function get_unlock_key(byval strDisplayKey)
+		strDisplayKey = trim(ucase(strDisplayKey))
+		
+		dim cyKey
+		cyKey = ccur(100813.1855)
+
+		dim i
+		for i = 1 to len(strDisplayKey)
+			dim cItem 
+			cItem = mid(strDisplayKey, i, 1)
+
+			if cItem >= "0" and cItem <= "9" then 
+				cyKey = 16+cyKey + ccur((cyKey - Fix(cyKey)) / 10 + ccur(asc(cItem)-asc("0"))/10000) 
+			elseif cItem >= "A" and cItem <= "Z" then 
+				cyKey = cyKey + ccur(ccur(4+asc(cItem)-asc("A")) * exp(8+i mod 5))
+			end if 
+		next 
+		get_unlock_key = cstr(ccur(fix(cyKey * 10000)))
+	end function
+
+	public sub to_licence_obj(byref pLicObj)
+		pLicObj.strKod = m_strModcode
+		pLicObj.dDataWazn = dateserial(2001,4,m_nDays4Free)
+		pLicObj.strIdUser = m_strUserId
+		pLicObj.nStanowiska = clng(m_nUserCount)
+		pLicObj.strKontrola = get_ctrl_str()
+		pLicObj.strLogin = "?"
+	end sub
+
+	public function check_from_licence_obj(byref pLicObj)
+		'wczytaj i sprawdz poprawnosc kodu licencji
+		if ( not init_from_ctrl_str(pLicObj.strKontrola) ) then
+			check_from_licence_obj = -3 ' invalid licence
+			exit function
+		end if
+
+		'sprawdz poprawnosc zapisanej daty w kodzie licencji
+		if (pLicObj.dDataWazn <> dateserial(2001,4,m_nDays4Free)) then
+			check_from_licence_obj = -4 ' invalid licence
+			exit function
+		end if
+
+		'sprawdzamy liczbe stanowisk
+		if (pLicObj.nStanowiska <> usercount) then
+			check_from_licence_obj = -5 ' invalid licence
+			exit function
+		end if
+
+		if unlockcode <> "?" then
+			check_from_licence_obj = 0
+		else
+			if m_nDays4Free <= 0 then
+				check_from_licence_obj = -1
+			else
+				check_from_licence_obj = days4free
+			end if
+		end if
+	end function
+	'-----------------------------------------------
+	public property get days4free
+		days4free = m_nDays4Free
+	end property
+
+	public property let days4free(nDays)
+		m_nDays4Free = nDays
+	end property
+
+	public property get usercount
+		usercount = m_nUserCount
+	end property
+	
+	public property let usercount(byval nUserCount)
+		m_nUserCount = nUserCount
+	end property
+
+	public property get lastrun
+		lastrun = m_dtLastRun
+	end property
+
+	public property let unlockcode(byval strUnlockCode)
+		m_strUnlock = strUnlockCode
+	end property
+
+	public property get unlockcode
+		unlockcode = m_strUnlock
+	end property
+
+	public property let lastrun(byval dtLastRun)
+		m_dtLastRun = dtLastRun
+	end property
+
+	public property let userid(byval strUserId)
+		m_strUserId = strUserId
+	end property
+
+	public property get userid
+		userid = m_strUserId
+	end property
+
+	'----------------------------------------
+	private function Date2StringDDMMYYYY(byval dValid)
+		Date2StringDDMMYYYY=trans_.afc.convert.AddZeros(Day(dValid),2)+trans_.afc.convert.AddZeros(Month(dValid),2)+CStr(Year(dValid))
+	end function
+end class
+
+function new_licence_codec()
+	set new_licence_codec = new CLicenceCodec
+end function
+
+dim pM60106 : set pM60106 = doc_.getmodule(60106)
+
+private function get_licence_idobj(byval nOneModMask)
+	get_licence_idobj = trans_.findobjid(TYPEID_N5LICENCJA,"strKod='EB" + cstr(nOneModMask)+"'")
+end function
+
+private function create_temp_licence_obj(byval nOneModMask)
+	create_temp_licence_obj = -1
+	dim pSubTrans
+	set pSubTrans = trans_.createsubtran()
+	dim pLicObj : set pLicObj = trans_.newobj(TYPEID_N5LICENCJA)
+	dim idLic : idLic = pLicObj.idobj
+
+	dim pLicKey : set pLicKey = new_licence_codec()
+	pLicKey.init_temporary "EB" + cstr(nOneModMask)
+	pLicKey.lastrun = trans_.var(GVAR_SYSDATE)
+	pLicKey.to_licence_obj pLicObj
+
+	if trans_.saveobjects then
+		create_temp_licence_obj = idLic
+	end if
+end function
+
+function get_create_licence_obj(byval nOneModMask,byval bAllowCreate)
+	set get_create_licence_obj = nothing
+
+	dim idLic : idLic = get_licence_idobj(nOneModMask)
+	if idLic < 0 then
+		err.raise 7000,"Zarządzanie licencjami","Zduplikowany klucz licencji"
+	end if
+
+	if idLic = 0 then
+		if bAllowCreate then
+			idLic = create_temp_licence_obj(nOneModMask)
+		else
+			err.raise 7000,"Zarządzanie licencjami","Brak obiektu licencji"
+		end if
+	end if
+	if idLic < 0 then
+		err.raise 7000,"Zarządzanie licencjami","Zapis licencji niemożliwy"
+	end if
+
+	set get_create_licence_obj = trans_.getobj(TYPEID_N5LICENCJA,idLic)
+end function
+
+function get_create_licence_objects(byval bAllowCreate)
+	set get_create_licence_objects = nothing
+	
+	dim arrLicObj : set arrLicObj = trans_.afc.new_navoarray()
+	dim iter
+	dim nEBModMask : nEBModMask = 1
+	for iter = 0 to 5
+		arrLicObj.Add get_create_licence_obj(nEBModMask, bAllowCreate)
+		if arrLicObj.Value(iter) is nothing then
+			exit function
+		end if
+		nEBModMask = nEBModMask + nEBModMask
+	next
+
+	set get_create_licence_objects = arrLicObj
+end function
+
+'----------------------------------------------------------------------
+'sprawdza poprawnosc licencji
+' rezultat < -1	-> błąd / nieprawidłowa licencja
+' rezultat = -1 -> OK, licencja tymczasowa nieważna - musisz zarejestrować
+' rezultat = 0  -> OK, stała licencja
+' rezultat > 0  -> OK, licencja tymczasowa ważna jeszcze rezultat dni
+'----------------------------------------------------------------------
+function get_licence_info_and_update(byref pLicObj) 
+	dim pLicKey : set pLicKey = new_licence_codec()
+	get_licence_info_and_update = pLicKey.check_from_licence_obj(pLicObj)
+	if get_licence_info_and_update > 0 then
+		dim dtSystemDate : dtSystemDate = trans_.var(GVAR_SYSDATE)
+		if pLicKey.lastrun > dtSystemDate then
+			get_licence_info_and_update = -6
+		else
+			if pLicKey.lastrun < dtSystemDate then
+				pLicKey.days4free = pLicKey.days4free - 1
+				pLicKey.lastrun = dtSystemDate
+				pLicKey.to_licence_obj pLicObj
+			end if
+		end if
+	end if
+end function
+
+'----------------------------------------------------------------------
+'result:
+'-1 - error
+' 0 - OK
+'+1 - registration required
+'+2 - registration suggested
+'----------------------------------------------------------------------
+function check_licences_on_start()
+	check_licences_on_start = -1
+	dim pArrLic : set pArrLic = get_create_licence_objects(false)
+	if pArrLic is nothing then
+		exit function
+	end if
+
+	dim bRegistrationRequired : bRegistrationRequired = false
+	dim bRegistrationSuggested : bRegistrationSuggested = false
+	dim iter
+	dim nEBModMask : nEBModMask = 1
+	for iter = 0 to pArrLic.UpperIndex()
+		dim nLicInfo : nLicInfo = get_licence_info_and_update(pArrLic.value(iter))
+		if nLicInfo < -1 then
+			MessageBox "Nieaktualna informacja o licencji, kod:" + cstr(nLicInfo) + "," + cstr(pArrLic.value(iter).strKontrola), "Nieprawidłowa sytuacja", vbOkOnly, vbInformation
+		  check_licences_on_start = +1
+			exit function
+		end if
+		if nLicInfo >= 0 then
+			pM60106.LicCR nEBModMask, pArrLic.value(iter).nStanowiska
+		else
+			pM60106.LicCR nEBModMask, 0
+			bRegistrationRequired = true
+		end if
+		if nLicInfo <> 0 then
+			bRegistrationSuggested = true
+			'update lastrun
+		end if
+		nEBModMask = nEBModMask + nEBModMask
+	next
+	if not trans_.saveobjects then
+		exit function
+	end if
+	check_licences_on_start = 0
+	if bRegistrationSuggested then
+		check_licences_on_start = +2
+	end if
+	if bRegistrationRequired then
+		check_licences_on_start = +1
+	end if
+end function
+
+
+]]>
+</script>
+</config>
+<body>
+</body>
+</page>
+

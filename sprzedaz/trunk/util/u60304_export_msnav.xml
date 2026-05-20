@@ -1,0 +1,2825 @@
+<?xml version="1.0" encoding="windows-1250"?>
+<!--
+#comment NX_READY
+
+#comment _sprawdzenie_ 'w sprzedazy
+#comment _sprawdzenie2_ 'w dokmag
+#define _sprawdzenie3_ 'w zakupie
+
+export do MS Navision
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1231.h"
+
+
+--> 
+<page xmlns="http://tempuri.org/u60304_export_msnav.xsd">
+<config>
+<script>
+<![CDATA[ 
+
+#include "50212"
+#include "50203"
+'nx_trace
+#include "50519"
+
+Dim znak_kor : znak_kor = 1
+
+#comment '--------------------------------------------------------------------
+#comment ' pojedynczy wiersz rekordu exportowanego do MS Navision
+#comment '--------------------------------------------------------------------
+dim MSNAV_FLD_SEP : MSNAV_FLD_SEP = vbTab
+dim MSNAV_ROW_SEP : MSNAV_ROW_SEP = vbCrLf
+
+class cmsnavrow
+	public m_iKRK			'kod rodzaju konta
+	public m_iKRD			'kod rodzaju dokumentu
+	
+	public m_strNrDok		'numer dokumentu (nasz system)
+	public m_strNrDokObcy	'numer dokumentu zewn.
+	
+	public m_dDataDok		'data dokumentu
+	public m_dDataKsieg		'data ksiegowania
+	public m_dDataPlat		'termin platnosci
+	public m_dDataSkonto	'data skonta
+	
+	public m_curSkonto		'% skonta
+	public m_strSymKonto	'symbol konta
+	public m_strVATGGK		'gospodarcza grupa ksiegowa VAT
+	public m_strVATTGK		'towarowa grupa ksiegowa VAT
+	public m_strMPK			'centrum kosztow (MPK)
+	public m_strZlecKoszt	'zlecenie kosztów
+	
+	public m_bWn			'Winien/Ma
+	public m_curBrutto		'kwota brutto (z VAT)
+	public m_curNetto		'kwota netto
+	
+	public m_strKodWal		'kod waluty
+	public m_curKursWal		'kurs waluty
+	
+	public m_strOpis		'opis ksieg
+	public m_strNrDokRozl	'numer dok. rozliczenia
+	public m_iStorno		'ksiegowanie / strono
+	
+	private sub class_initialize()
+		m_iKRK = 0
+		m_iKRD = 0
+	
+		m_strNrDok = ""
+		m_strNrDokObcy = ""
+	
+		m_dDataDok = trans_.afc.globals.nulldate()
+		m_dDataKsieg = trans_.afc.globals.nulldate()
+		m_dDataPlat = trans_.afc.globals.nulldate()
+		m_dDataSkonto = trans_.afc.globals.nulldate()
+		
+		m_curSkonto = ccur(0.0)
+		m_strSymKonto = ""
+		
+		m_strVATGGK = ""
+		m_strVATTGK = ""
+		m_strMPK = ""
+		m_strZlecKoszt = ""
+		
+		m_bWn = true
+		
+		m_curBrutto = ccur(0.0)
+		m_curNetto = ccur(0.0)
+		
+		m_strKodWal = ""
+		m_curKursWal = ccur(0.0)
+		
+		m_strOpis = ""
+		m_strNrDokRozl = ""
+		m_iStorno = ""
+	end sub
+	
+	private sub class_terminate() 'OK
+	end sub
+	
+	private function date2msnav(byval dDate)
+		if dDate = trans_.afc.globals.nulldate() then
+			date2msnav = ""
+		else
+			date2msnav = trans_.afc.convert.AddZeros(Day(dDate),2) + "-" +_
+			trans_.afc.convert.AddZeros(Month(dDate),2) + "-" +_
+			cstr(Year(dDate))
+		end if
+	end function
+	private function cur2msnav(byval curValue)
+		if curValue = ccur(0.0) then
+			cur2msnav = ""
+		else
+			cur2msnav = replace(trans_.afc.convert.cur2sql(curValue),".",",")
+		end if
+	end function
+	
+	public sub write(byref oSO)
+		oSO.write cstr(m_iKRK) + MSNAV_FLD_SEP + cstr(m_iKRD) + MSNAV_FLD_SEP + m_strNrDok + MSNAV_FLD_SEP +_
+			m_strNrDokObcy + MSNAV_FLD_SEP + date2msnav(m_dDataDok) + MSNAV_FLD_SEP + date2msnav(m_dDataKsieg) + MSNAV_FLD_SEP +_
+			date2msnav(m_dDataPlat) + MSNAV_FLD_SEP + date2msnav(m_dDataSkonto) + MSNAV_FLD_SEP +_
+			cur2msnav(m_curSkonto) + MSNAV_FLD_SEP + m_strSymKonto + MSNAV_FLD_SEP + m_strVATGGK + MSNAV_FLD_SEP +_
+			m_strVATTGK + MSNAV_FLD_SEP + m_strMPK + MSNAV_FLD_SEP + m_strZlecKoszt + MSNAV_FLD_SEP
+		if m_bWn then
+			oSO.write "1"
+		else
+			oSO.write "2"
+		end if
+		oSO.write MSNAV_FLD_SEP + cur2msnav(m_curBrutto) + MSNAV_FLD_SEP + cur2msnav(m_curNetto) + MSNAV_FLD_SEP +_
+			m_strKodWal + MSNAV_FLD_SEP
+		if m_curKursWal <> ccur(1.0) then
+			oSO.write cur2msnav(m_curKursWal)
+		end if 
+		oSO.write MSNAV_FLD_SEP +_
+			m_strOpis + MSNAV_FLD_SEP + m_strNrDokRozl + MSNAV_FLD_SEP + cstr(m_iStorno) + MSNAV_ROW_SEP
+	end sub
+end class
+
+#comment '--------------------------------------------------------------------
+#comment ' zestaw rekordow exportowanych do MS Navision
+#comment ' 
+#comment ' usage: 
+#comment ' 1. new_msnav_export()
+#comment ' 2. dla kazdego rekordu wolamy add_new()
+#comment ' 3. wypelniamy wiersz
+#comment ' 4. na koncu wolamy write(streamobject)
+#comment ' 
+#comment '--------------------------------------------------------------------
+
+class cmsnavset
+	private m_oRowNXArray
+	
+	private sub class_initialize()
+		set m_oRowNXArray = nx_.new_array()
+	end sub
+	private sub class_terminate() 'OK
+		set m_oRowNXArray = nothing
+	end sub
+	
+	public function add_new()
+		dim oMSNAVRow : set oMSNAVRow = new cmsnavrow
+		m_oRowNXArray.add oMSNAVRow
+		set add_new = oMSNAVRow
+	end function
+	
+	public sub write(byref oSO)
+		dim oMSNAVRow
+		for each oMSNAVRow in m_oRowNXArray
+			oMSNAVRow.write oSO
+		next
+	end sub
+end class
+
+function new_msnav_export()
+	set new_msnav_export = new cmsnavset
+end function
+
+'********************************************************************************************************
+'deklaracje tablic zawierających konta (oraz parametry, od ktorych są zależne)
+'********************************************************************************************************
+dim strFileName
+dim FLD_STORELOG : FLD_STORELOG = 2		'minimalna ilosc pol w wierszu z kontami
+dim path : path = "C:\eksporty\"		'musi byc zakonczony slashem
+dim konta_n5sprzedaz_kraj()
+redim konta_n5sprzedaz_kraj(21)
+dim konta_n5sprzedaz_kraj_uslugi()
+redim konta_n5sprzedaz_kraj_uslugi(18)
+dim konta_n5sprzedaz_WDT()
+redim konta_n5sprzedaz_WDT(43)
+dim konta_n5zakup_WNT()
+redim konta_n5zakup_WNT(12)
+dim konta_n5zakup_kraj()
+redim konta_n5zakup_kraj(11)
+dim konta_PZ_WNT()
+redim konta_PZ_WNT(12)
+dim konta_PZ_kraj()
+redim konta_PZ_kraj(11)
+dim konta_ZD_WNT()
+redim konta_ZD_WNT(12)
+dim konta_ZD_kraj()
+redim konta_ZD_kraj(12)
+dim konta_MM()
+redim konta_MM(18)
+dim konta_WZ_WDT()
+redim konta_WZ_WDT(47)
+dim konta_WZ_kraj()
+redim konta_WZ_kraj(21)
+dim konta_ZZ_WDT()
+redim konta_ZZ_WDT(43)
+dim konta_ZZ_kraj()
+redim konta_ZZ_kraj(21)
+dim konta_PP()
+redim konta_PP(23)
+
+'*********************************************************
+'funkcja czytajace dane z ustawieniami kont z plikow tekstowych, sciezka do pliku okreslona przez path
+'*********************************************************
+
+Function importFileData(exportArray)
+
+	'aa=0
+	   dim pInputStream : set pInputStream = doc_.createstreamobj()
+			pInputStream.attach  path + strFileName + ".txt"
+       dim pInputRows:set pInputRows = doc_.afc.new_navoarray()
+       pInputRows.Separate pInputStream.getstring(),vbNewLine
+       dim iter,ind
+       dim tempArray()
+       dim arraySize : arraySize = UBound(exportArray)	
+       if pInputRows.upperIndex > 0 then
+			
+			redim exportArray(pInputRows.upperIndex)
+			
+			for iter = 0 to pInputRows.upperIndex
+                   dim strInputRow : strInputRow = pInputRows.value(iter)
+                   if strInputRow = "" then
+						 redim preserve exportArray(iter - 1)
+						 nx_.trace.error "Błąd","Napotkano pusty wpis w wierszu " + cstr(iter+1) +" w pliku kont: "+ cstr(strFileName) + ". Konta zostały zaimportowane do tego miejsca."
+                         exit for
+                   end if
+
+                   dim oRowItemArray : set oRowItemArray = doc_.afc.new_navoarray()
+                   oRowItemArray.Separate strInputRow,";"
+
+                   if oRowItemArray.upperIndex < FLD_STORELOG - 1 then
+                         nx_.trace.error "Błąd","nieprawidlowy wiersz kont w pliku: "+ cstr(strFileName )+ " (zbyt malo pol)[" + cstr(strInputRow ) + "]"
+                         redim exportArray(arraySize)
+                         importFileData = false
+                         exit function
+                   end if
+
+                   for ind = 0 to oRowItemArray.upperIndex
+                   
+						redim preserve tempArray(ind) 
+						tempArray(ind)= oRowItemArray.Value(ind) 
+                   next 
+                   
+                   exportArray(iter) = tempArray
+            next
+        else
+			redim exportArray(arraySize)
+			importFileData = false
+			exit function
+				
+        end if
+        
+		importFileData = true
+end function
+
+function init_sprzedaz_kraj()
+	
+	if not importFileData(konta_n5sprzedaz_kraj) then 
+	
+	nx_.trace.error "Błąd pliku", "Nie powiodło się wczytanie konfiguracji kont z pliku: konta_n5sprzedaz_kraj, wczytano konfiguracje wbudowaną."
+	konta_n5sprzedaz_kraj(0) = Array("","221-01") 'wiersz zerowy jest wierszem konta VAT
+	
+	konta_n5sprzedaz_kraj(1) = Array("311-04 Wyr.gotow-Polska wzory","220700 Wzory na wieszaku-wyr.got.sprzedaż ADO","700-04","220700")
+	konta_n5sprzedaz_kraj(2) = Array("311-12 Rolety - Polska Rycerska","305010 Rolety -wyr.gotowe sprzedaż ADO","700-09","305010")
+	konta_n5sprzedaz_kraj(3) = Array("311-20 Taśmy Polska LSSE","220400 Taśmy -wyr.gotowe sprzedaż ADO","700-20","220400")
+	konta_n5sprzedaz_kraj(4) = Array("332-01 Towary - Polska","1 -TOWARY Tkaniny (Gardine)","730-02","330050")
+	konta_n5sprzedaz_kraj(5) = Array("332-01 Towary - Polska","2 -TOWARY Zasłony (Deko)","730-02","330050")
+	konta_n5sprzedaz_kraj(6) = Array("332-01 Towary - Polska","4 -TOWARY Tkaniny meblowe (Moebelstoffe)","730-02","330050")
+	konta_n5sprzedaz_kraj(7) = Array("332-01 Towary - Polska","5 -TOWARY Konfekcja (Konfektion)","730-02","330050")
+	konta_n5sprzedaz_kraj(8) = Array("332-02 Wzory reklamowe","11 -TOWARY Wzory (Muster)","730-03","330050")
+	konta_n5sprzedaz_kraj(9) = Array("332-02 Wzory reklamowe","8 -TOWARY mater. reklamowe sprzedaż","730-03","330050")
+	konta_n5sprzedaz_kraj(10) = Array("332-04 Pościel, inne wyprzedaż","9 -TOWARY Pościel (Bettwaesche)","730-04","330050")
+	konta_n5sprzedaz_kraj(11) = Array("332-01 Towary - Polska","3 -TOWARY Taśmy (Baender)","730-06","330050")
+	konta_n5sprzedaz_kraj(12) = Array("332-01 Towary - Polska","6 -TOWARY Wykończenia (Abschluesse)","730-07","330050")
+	konta_n5sprzedaz_kraj(13) = Array("332-01 Towary - Polska","7 -TOWARY Dodatki (Zubehoer)","730-07","330050")
+	konta_n5sprzedaz_kraj(14) = Array("332-04 Pościel, inne wyprzedaż","10 -TOWARY Wyprzedaż (Kiloware)","740-05","330050")
+	
+	konta_n5sprzedaz_kraj(15) = Array("332-01 Towary - Polska","1_-TOWARY_Tkaniny_(Gardine)","730-02","330050")
+	konta_n5sprzedaz_kraj(16) = Array("332-01 Towary - Polska","2_-TOWARY_Zasłony_(Deko)","730-02","330050")
+	konta_n5sprzedaz_kraj(17) = Array("332-01 Towary - Polska","4_-TOWARY_Tkaniny_meblowe_(Moebelstoffe)","730-02","330050")
+	konta_n5sprzedaz_kraj(18) = Array("332-02 Wzory reklamowe","8_-TOWARY_mater._reklamowe_sprzedaż","730-03","330050")
+	konta_n5sprzedaz_kraj(19) = Array("332-01 Towary - Polska","3_-TOWARY_Taśmy_(Baender)","730-06","330050")
+	konta_n5sprzedaz_kraj(20) = Array("332-01 Towary - Polska","7_-TOWARY_Dodatki_(Zubehoer)","730-07","330050")
+	
+	end if
+end function
+
+function init_sprzedaz_kraj_uslugi()
+
+	if not importFileData(konta_n5sprzedaz_kraj_uslugi) then 
+	
+	nx_.trace.error "Błąd pliku", "Nie powiodło się wczytanie konfiguracji kont z pliku: konta_n5sprzedaz_kraj_uslugi, wczytano konfiguracje wbudowaną."
+	konta_n5sprzedaz_kraj_uslugi(0) = Array("","221-01")
+	
+	konta_n5sprzedaz_kraj_uslugi(1) = Array("220400 Taśmy -wyr.gotowe sprzedaż ADO","700-20","220400")
+	konta_n5sprzedaz_kraj_uslugi(2) = Array("220700 Wzory na wieszaku-wyr.got.sprzedaż ADO","700-04","220700")
+	konta_n5sprzedaz_kraj_uslugi(3) = Array("220700 Wzory na wieszaku-wyr.got.sprzedaż ADO","700-04","220700")
+	konta_n5sprzedaz_kraj_uslugi(4) = Array("220800 Ksiażki wzorów -wyr.got. sprzedaż ADO","700-04","220700")
+	konta_n5sprzedaz_kraj_uslugi(5) = Array("220800 Ksiażki wzorów -wyr.got. sprzedaż ADO","700-04","220700")
+	konta_n5sprzedaz_kraj_uslugi(6) = Array("220800 Palety wzorów -wyr.got.sprzedaż ADO","700-04","220700")
+	konta_n5sprzedaz_kraj_uslugi(7) = Array("220800 Palety wzorów -wyr.got.sprzedaż ADO","700-04","220700")
+	konta_n5sprzedaz_kraj_uslugi(8) = Array("305005 Konfekcja -wyr.gotowe sprzedaż ADO","700-57","305005")
+	konta_n5sprzedaz_kraj_uslugi(9) = Array("305010 Rolety -wyr.gotowe sprzedaż ADO","700-51","305010")
+	konta_n5sprzedaz_kraj_uslugi(10) = Array("305060 Konfekcja wzorów -wyr.got.sprzedaż ADO","700-57","305005")
+	konta_n5sprzedaz_kraj_uslugi(11) = Array("305070 Konf.zestawy firan -wyr.got.sprzedaż ADO","700-57","305005")
+	konta_n5sprzedaz_kraj_uslugi(12) = Array("305080 Poduszki -inna konfekcja wyr.got.sprzed.","700-57","305005")
+	konta_n5sprzedaz_kraj_uslugi(13) = Array("305080 Pościel -inna konfekcja wyr.got.sprzed.","700-57","305005")
+	konta_n5sprzedaz_kraj_uslugi(14) = Array("305080 Torby transp. inna konf. wyr.got. sprzedaż","700-57","305005")
+	konta_n5sprzedaz_kraj_uslugi(15) = Array("TOWARY-USŁUGI TRANSPORTOWE","730-08","330050")
+	konta_n5sprzedaz_kraj_uslugi(16) = Array("TOWARY-WYNAJEM MATER.REKLAMOWYCH","701-02","330050")
+	konta_n5sprzedaz_kraj_uslugi(17) = Array("POZ.SPRZEDAŻ KRAJOWA WYNAJEM","701-01","111000")
+	
+	end if
+end function
+	
+function init_sprzedaz_WDT()
+
+	if not importFileData(konta_n5sprzedaz_WDT) then
+	nx_.trace.error "Błąd pliku", "Nie powiodło się wczytanie konfiguracji kont z pliku: konta_n5sprzedaz_WDT, wczytano konfiguracje wbudowaną."
+	konta_n5sprzedaz_WDT(0) = Array("","") 'wiersz zerowy jest wierszem konta VAT
+	
+	konta_n5sprzedaz_WDT(1) = Array("311-15 Surowce konfekcja","Surowce TKANINY ZAKUP","740-01","305005")
+	konta_n5sprzedaz_WDT(2) = Array("311-15 Surowce konfekcja","Surowce -NICI ZAKUP","740-01","305005")
+	konta_n5sprzedaz_WDT(3) = Array("311-15 Surowce konfekcja","Surowce -DODATKI ZAKUP","740-01","305005")
+	konta_n5sprzedaz_WDT(4) = Array("311-15 Surowce konfekcja","Surowce -TAŚMY ZAKUP","740-01","305005")
+	konta_n5sprzedaz_WDT(5) = Array("311-08 Surowce rolosy","Surowce TKANINY ZAKUP","740-02","305010")
+	konta_n5sprzedaz_WDT(6) = Array("311-08 Surowce rolosy","Surowce -NICI ZAKUP","740-02","305010")
+	konta_n5sprzedaz_WDT(7) = Array("311-08 Surowce rolosy","Surowce -DODATKI ZAKUP","740-02","305010")
+	konta_n5sprzedaz_WDT(8) = Array("311-08 Surowce rolosy","Surowce -TAŚMY ZAKUP","740-02","305010")
+	konta_n5sprzedaz_WDT(9) = Array("311-13 Surowce -strefa taśmy","Surowce TKANINY ZAKUP","740-03","220400")
+	konta_n5sprzedaz_WDT(10) = Array("311-13 Surowce -strefa taśmy","Surowce -NICI ZAKUP","740-03","220400")
+	konta_n5sprzedaz_WDT(11) = Array("311-13 Surowce -strefa taśmy","Surowce -DODATKI ZAKUP","740-03","220400")
+	konta_n5sprzedaz_WDT(12) = Array("311-13 Surowce -strefa taśmy","Surowce -TAŚMY ZAKUP","740-03","220400")
+	konta_n5sprzedaz_WDT(13) = Array("311-01 Surowce wzory, hafty","Surowce TKANINY ZAKUP","740-04","220700")
+	konta_n5sprzedaz_WDT(14) = Array("311-01 Surowce wzory, hafty","Surowce -NICI ZAKUP","740-04","220700")
+	konta_n5sprzedaz_WDT(15) = Array("311-01 Surowce wzory, hafty","Surowce -DODATKI ZAKUP","740-04","220700")
+	konta_n5sprzedaz_WDT(16) = Array("311-01 Surowce wzory, hafty","Surowce -TAŚMY ZAKUP","740-04","220700")
+	konta_n5sprzedaz_WDT(17) = Array("311-01 Surowce wzory, hafty","Surowce TKANINY ZAKUP","740-08","268100")
+	konta_n5sprzedaz_WDT(18) = Array("311-01 Surowce wzory, hafty","Surowce -NICI ZAKUP","740-08","268100")
+	konta_n5sprzedaz_WDT(19) = Array("311-01 Surowce wzory, hafty","Surowce -DODATKI ZAKUP","740-08","268100")
+	konta_n5sprzedaz_WDT(20) = Array("311-01 Surowce wzory, hafty","Surowce -TAŚMY ZAKUP","740-08","268100")
+	konta_n5sprzedaz_WDT(21) = Array("311-01 Surowce wzory, hafty","Surowce TKANINY ZAKUP","740-09","268050")
+	konta_n5sprzedaz_WDT(22) = Array("311-01 Surowce wzory, hafty","Surowce -NICI ZAKUP","740-09","268050")	
+	konta_n5sprzedaz_WDT(23) = Array("311-01 Surowce wzory, hafty","Surowce -DODATKI ZAKUP","740-09","268050")
+	konta_n5sprzedaz_WDT(24) = Array("311-01 Surowce wzory, hafty","Surowce -TAŚMY ZAKUP","740-09","268050")
+	konta_n5sprzedaz_WDT(25) = Array("311-17 Surowce - lutowanie","Surowce TKANINY ZAKUP","740-10","220500")
+	konta_n5sprzedaz_WDT(26) = Array("311-17 Surowce - lutowanie","Surowce -NICI ZAKUP","740-10","220500")
+	konta_n5sprzedaz_WDT(27) = Array("311-17 Surowce - lutowanie","Surowce -DODATKI ZAKUP","740-10","220500")
+	konta_n5sprzedaz_WDT(28) = Array("311-17 Surowce - lutowanie","Surowce -TAŚMY ZAKUP","740-10","220500")
+	konta_n5sprzedaz_WDT(29) = Array("Wyr.gotow-strefa taśmy (311-13) 220400","220400 Taśmy -wyr.gotowe sprzedaż ADO","700-10","220400")
+	konta_n5sprzedaz_WDT(30) = Array("Wyr.got.lutowanie Ryc. (311-17) 220500","220500 Lutowanie -wyr.got.sprzedaż ADO","700-11","220500")
+	konta_n5sprzedaz_WDT(31) = Array("Wyr.gotowe Peruki (311-02) 220600","220600","Peruki -wyr.got. sprzedaż Rubies","700-03","220600")
+	konta_n5sprzedaz_WDT(32) = Array("Wyr.gotowe -wzory (311-01) 220700","220700","Wzory na wieszaku-wyr.got.sprzedaż ADO","700-18","220700")
+	konta_n5sprzedaz_WDT(33) = Array("Wyr.got.-palety wzorów (311-01) 220800","220800 Ksiażki wzorów -wyr.got. sprzedaż ADO","700-19","220800")
+	konta_n5sprzedaz_WDT(34) = Array("Wyr.got.-palety wzorów (311-01) 220800","220800 Palety wzorów -wyr.got.sprzedaż ADO","700-19","220800")
+	konta_n5sprzedaz_WDT(35) = Array("Wyr.gotowe -kornelki (311-01) 268050","268050 Kornelki - wyr.gotowe sprzedaż ADO","700-16","268050")
+	konta_n5sprzedaz_WDT(36) = Array("Wyr.gotowe -hafty (311-01) 268100","268100 Hafty - wyr.gotowe sprzedaż ADO","700-17","268100")
+	konta_n5sprzedaz_WDT(37) = Array("Wyroby gotowe konfekcja (311-15) 305005","305005 Konfekcja -wyr.gotowe sprzedaż ADO","700-12","305005")
+	konta_n5sprzedaz_WDT(38) = Array("Wyroby gotowe rolosy (311-08) 305010","305010 Rolety -wyr.gotowe sprzedaż ADO","700-07","305010")
+	konta_n5sprzedaz_WDT(39) = Array("Wyr.gotowe konf.wzory (311-15) 305060","305060 Konfekcja wzorów -wyr.got.sprzedaż ADO","700-13","305060")
+	konta_n5sprzedaz_WDT(40) = Array("Wyr.gotowe konf.zestawy (311-15) 305070","305070 Konf.zestawy firan -wyr.got.sprzedaż ADO","700-14","305070")
+	konta_n5sprzedaz_WDT(41) = Array("Wyr.gotowe konf.inna (311-15) 305080","305080 Pościel -inna konfekcja wyr.got.sprzed.","700-15","305080")
+	konta_n5sprzedaz_WDT(42) = Array("Wyr.gotowe konf.inna (311-15) 305080","305080 Poduszki -inna konfekcja wyr.got.sprzed.","700-23","305080")
+	
+	end if
+end function
+
+function init_zakup_WNT()
+
+	if not importFileData(konta_n5zakup_WNT) then
+	nx_.trace.error "Błąd pliku", "Nie powiodło się wczytanie konfiguracji kont z pliku: konta_n5zakup_WNT, wczytano konfiguracje wbudowaną."
+	konta_n5zakup_WNT(0) = Array("221-06","221-07")
+	
+	konta_n5zakup_WNT(1) = Array("311-01 Surowce wzory, hafty","300-01")
+	konta_n5zakup_WNT(2) = Array("311-02 Surowce - Peruki Kochniss","300-02")
+	konta_n5zakup_WNT(3) = Array("332-01 Towary - Polska","300-04")
+	konta_n5zakup_WNT(4) = Array("332-04 Pościel, inne wyprzedaż","300-04")
+	konta_n5zakup_WNT(5) = Array("332-02 Wzory reklamowe","332-02","300-05")
+	konta_n5zakup_WNT(6) = Array("332-03 Stojaki (umowa użycz.)","300-05")
+	konta_n5zakup_WNT(7) = Array("332-05 Artyk.reklamowe - użycz.","300-05")
+	konta_n5zakup_WNT(8) = Array("311-08 Surowce rolosy","300-08")
+	konta_n5zakup_WNT(9) = Array("311-13 Surowce -strefa taśmy","300-13")
+	konta_n5zakup_WNT(10) = Array("311-15 Surowce konfekcja","300-15")
+	konta_n5zakup_WNT(11) = Array("311-17 Surowce - lutowanie","300-17")
+	
+	end if
+end function
+
+function init_zakup_kraj()
+	
+	if not importFileData(konta_n5zakup_kraj) then
+	nx_.trace.error "Błąd pliku", "Nie powiodło się wczytanie konfiguracji kont z pliku: konta_n5zakup_kraj, wczytano konfiguracje wbudowaną."
+	konta_n5zakup_kraj(0) = Array("221-02","")
+	
+	konta_n5zakup_kraj(1) = Array("311-01 Surowce wzory, hafty","301-01")
+	konta_n5zakup_kraj(2) = Array("311-02 Surowce - Peruki Kochniss","301-02")
+	konta_n5zakup_kraj(3) = Array("332-01 Towary - Polska","301-04")
+	konta_n5zakup_kraj(4) = Array("332-02 Wzory reklamowe","301-05")
+	konta_n5zakup_kraj(5) = Array("332-03 Stojaki (umowa użycz.)","301-05")
+	konta_n5zakup_kraj(6) = Array("332-05 Artyk.reklamowe - użycz.","301-05")
+	konta_n5zakup_kraj(7) = Array("311-08 Surowce rolosy","301-08")
+	konta_n5zakup_kraj(8) = Array("311-13 Surowce -strefa taśmy","301-13")
+	konta_n5zakup_kraj(9) = Array("311-15 Surowce konfekcja","301-15")
+	konta_n5zakup_kraj(10) = Array("311-17 Surowce - lutowanie","301-17")
+	
+	end if
+end function
+
+
+Function init_PZ_WNT()
+    
+     
+    if not importFileData(konta_PZ_WNT) then  
+    nx_.trace.error "Błąd pliku", "Nie powiodło się wczytanie konfiguracji kont z pliku: konta_PZ_WNT, wczytano konfiguracje wbudowaną."   
+    konta_PZ_WNT(0) = Array("", "")
+    
+    konta_PZ_WNT(1) = Array("311-01 Surowce wzory, hafty", "311-01", "300-01")
+    konta_PZ_WNT(2) = Array("311-02 Surowce - Peruki Kochniss", "311-02", "300-02")
+    konta_PZ_WNT(3) = Array("332-01 Towary - Polska", "332-01", "300-04")
+    konta_PZ_WNT(4) = Array("332-04 Pościel, inne wyprzedaż", "332-04", "300-04")
+    konta_PZ_WNT(5) = Array("332-02 Wzory reklamowe (towary)", "332-02", "300-05")
+    konta_PZ_WNT(6) = Array("332-03 Stojaki (umowa użycz.towary)", "332-03", "300-05")
+    konta_PZ_WNT(7) = Array("332-05 Artyk.reklamowe - użycz.", "332-05", "300-05")
+    konta_PZ_WNT(8) = Array("311-08 Surowce rolosy", "311-08", "300-08")
+    konta_PZ_WNT(9) = Array("311-13 Surowce -strefa taśmy", "311-13", "300-13")
+    konta_PZ_WNT(10) = Array("311-15 Surowce konfekcja", "311-15", "300-15")
+    konta_PZ_WNT(11) = Array("311-17 Surowce - lutowanie", "311-17", "300-17")
+    
+    end if
+    
+End Function
+
+
+function init_PZ_kraj()
+
+	if not importFileData(konta_PZ_kraj) then
+	nx_.trace.error "Błąd pliku", "Nie powiodło się wczytanie konfiguracji kont z pliku: konta_PZ_kraj, wczytano konfiguracje wbudowaną."
+	konta_PZ_kraj(0) = Array("","")
+	
+	konta_PZ_kraj(1) = Array("311-01 Surowce wzory, hafty","311-01","301-01")
+	konta_PZ_kraj(2) = Array("311-02 Surowce - Peruki Kochniss","311-02","301-02")
+	konta_PZ_kraj(3) = Array("332-01 Towary - Polska","332-01","301-04")
+	konta_PZ_kraj(4) = Array("332-02 Wzory reklamowe (towary)","332-02","301-05")
+	konta_PZ_kraj(5) = Array("332-03 Stojaki (umowa użycz.towary)","332-03","301-05")
+	konta_PZ_kraj(6) = Array("332-05 Artyk.reklamowe - użycz.","332-05","301-05")
+	konta_PZ_kraj(7) = Array("311-08 Surowce rolosy","311-08","301-08")
+	konta_PZ_kraj(8) = Array("311-13 Surowce -strefa taśmy","311-13","301-13")
+	konta_PZ_kraj(9) = Array("311-15 Surowce konfekcja","311-15","301-15")
+	konta_PZ_kraj(10) = Array("311-17 Surowce - lutowanie","311-17","301-17")
+	
+	end if
+end function
+
+function init_ZD_WNT()
+
+	if not importFileData(konta_ZD_WNT) then
+	nx_.trace.error "Błąd pliku", "Nie powiodło się wczytanie konfiguracji kont z pliku: konta_ZD_WNT, wczytano konfiguracje wbudowaną."
+	konta_ZD_WNT(0) = Array("","")
+	
+	konta_ZD_WNT(1) = Array("311-01 Surowce wzory, hafty","300-01","311-01")
+	konta_ZD_WNT(2) = Array("311-02 Surowce - Peruki Kochniss","300-02","311-02")
+	konta_ZD_WNT(3) = Array("332-01 Towary - Polska","300-04","332-01")
+	konta_ZD_WNT(4) = Array("332-04 Pościel, inne wyprzedaż","300-04","332-04")
+	konta_ZD_WNT(5) = Array("332-02 Wzory reklamowe","300-05","332-02")
+	konta_ZD_WNT(6) = Array("332-03 Stojaki (umowa użycz.)","300-05","332-03")
+	konta_ZD_WNT(7) = Array("332-05 Artyk.reklamowe - użycz.","300-05","332-05")
+	konta_ZD_WNT(8) = Array("311-08 Surowce rolosy","300-08","311-08")
+	konta_ZD_WNT(9) = Array("311-13 Surowce -strefa taśmy","300-13","311-13")
+	konta_ZD_WNT(10) = Array("311-15 Surowce konfekcja","300-15","311-15")
+	konta_ZD_WNT(11) = Array("311-17 Surowce - lutowanie","300-17","311-17")
+	
+	end if
+end function
+
+function init_ZD_kraj()
+
+	if not importFileData(konta_ZD_kraj) then
+	nx_.trace.error "Błąd pliku", "Nie powiodło się wczytanie konfiguracji kont z pliku: konta_ZD_kraj, wczytano konfiguracje wbudowaną."
+	konta_ZD_kraj(0) = Array("","")
+	
+	konta_ZD_kraj(1) = Array("311-01 Surowce wzory, hafty","301-01","311-01")
+	konta_ZD_kraj(2) = Array("311-02 Surowce - Peruki Kochniss","301-02","311-02")
+	konta_ZD_kraj(3) = Array("332-01 Towary - Polska","301-04","332-01")
+	konta_ZD_kraj(5) = Array("332-02 Wzory reklamowe","301-05","332-02")
+	konta_ZD_kraj(6) = Array("332-03 Stojaki (umowa użycz.)","301-05","332-03")
+	konta_ZD_kraj(7) = Array("332-05 Artyk.reklamowe - użycz.","301-05","332-05")
+	konta_ZD_kraj(8) = Array("311-08 Surowce rolosy","301-08","311-08")
+	konta_ZD_kraj(9) = Array("311-13 Surowce -strefa taśmy","301-13","311-13")
+	konta_ZD_kraj(10) = Array("311-15 Surowce konfekcja","301-15","311-15")
+	konta_ZD_kraj(11) = Array("311-17 Surowce - lutowanie","301-17","311-17")
+	
+	end if
+	
+end function
+
+function init_MM()
+
+	if not importFileData(konta_MM) then
+	nx_.trace.error "Błąd pliku", "Nie powiodło się wczytanie konfiguracji kont z pliku: konta_MM, wczytano konfiguracje wbudowaną."
+	konta_MM(0) = Array("","")
+	
+	konta_MM(1) = Array("311-01 Surowce wzory, hafty","311-01","311-01")
+	konta_MM(2) = Array("311-02 Surowce - Peruki Kochniss","311-02","311-02")
+	konta_MM(3) = Array("332-01 Towary - Polska","332-01","332-01")
+	konta_MM(4) = Array("332-02 Wzory reklamowe (towary)","332-02","332-02")
+	konta_MM(5) = Array("332-03 Stojaki (umowa użycz.)","332-03","332-03")
+	konta_MM(6) = Array("332-05 Artyk.reklamowe - użycz.","332-05","332-05")
+	konta_MM(7) = Array("311-08 Surowce rolosy","311-08","311-08")
+	konta_MM(8) = Array("311-13 Surowce -strefa taśmy","311-13","311-13")
+	konta_MM(9) = Array("311-15 Surowce konfekcja","311-15","311-15")
+	konta_MM(10) = Array("311-17 Surowce - lutowanie","311-17","311-17")
+	konta_MM(11) = Array("332-04 Pościel, inne wyprzedaż","332-04","332-04")
+	konta_MM(12) = Array("311-04 Wyr.gotow-Polska wzory","311-04","311-04")
+	konta_MM(13) = Array("311-05 Wzory reklam. (darmowe)","311-05","311-05")
+	konta_MM(14) = Array("311-12 Rolety - Polska Rycerska","311-12","311-12")
+	konta_MM(15) = Array("311-18 Półprod.Taśmy ołowiane","311-18","311-18")
+	konta_MM(16) = Array("311-19 Półprod.Taśmy Konfekcja","311-19","311-19")
+	konta_MM(17) = Array("311-20 Taśmy Polska LSSE","311-20","311-20")
+	
+	end if
+	
+end function
+
+function init_WZ_WDT()
+
+	if not importFileData(konta_WZ_WDT) then
+	nx_.trace.error "Błąd pliku", "Nie powiodło się wczytanie konfiguracji kont z pliku: konta_WZ_WDT, wczytano konfiguracje wbudowaną."
+	konta_WZ_WDT(0) = Array("","")
+	
+	konta_WZ_WDT(1)=Array("Wyr.gotow-strefa taśmy (311-13) 220400","220400 Taśmy -wyr.gotowe sprzedaż ADO","220400","401-21","311-13")
+	konta_WZ_WDT(2)=Array("Wyr.got.lutowanie Ryc. (311-17) 220500","220500 Lutowanie -wyr.got.sprzedaż ADO","220500","401-27","311-17")
+	konta_WZ_WDT(3)=Array("Wyr.gotowe Peruki (311-02) 220600","220600 Peruki -wyr.got. sprzedaż Rubies","220600","401-12","311-02")
+	konta_WZ_WDT(4)=Array("Wyr.gotowe -wzory (311-01) 220700","220700 Wzory na wieszaku-wyr.got.sprzedaż ADO","220700","401-33","311-01")
+	konta_WZ_WDT(5)=Array("Wyr.got.-palety wzorów (311-01) 220800","220800 Ksiażki wzorów -wyr.got. sprzedaż ADO","220800","401-34","311-01")
+	konta_WZ_WDT(6)=Array("Wyr.got.-palety wzorów (311-01) 220800","220800 Palety wzorów -wyr.got.sprzedaż ADO","220800","401-34","311-01")
+	konta_WZ_WDT(7)=Array("Wyr.gotowe -kornelki (311-01) 268050","268050 Kornelki - wyr.gotowe sprzedaż ADO","268050","401-31","311-01")
+	konta_WZ_WDT(8)=Array("Wyr.gotowe -hafty (311-01) 268100","268100 Hafty - wyr.gotowe sprzedaż ADO","268100","401-32","311-01")
+	konta_WZ_WDT(9)=Array("Wyroby gotowe konfekcja (311-15) 305005","305005 Konfekcja -wyr.gotowe sprzedaż ADO","305005","401-22","311-15")
+	konta_WZ_WDT(10)=Array("Wyroby gotowe rolosy (311-08) 305010","305010 Rolety -wyr.gotowe sprzedaż ADO","305010","401-15","311-08")
+	konta_WZ_WDT(11)=Array("Wyr.gotowe konf.wzory (311-15) 305060","305060 Konfekcja wzorów -wyr.got.sprzedaż ADO","305060","401-28","311-15")
+	konta_WZ_WDT(12)=Array("Wyr.gotowe konf.zestawy (311-15) 305070","305070 Konf.zestawy firan -wyr.got.sprzedaż ADO","305070","401-29","311-15")
+	konta_WZ_WDT(13)=Array("Wyr.gotowe konf.inna (311-15) 305080","305080 Pościel -inna konfekcja wyr.got.sprzed.","305080","401-30","311-15")
+	konta_WZ_WDT(14)=Array("Wyr.gotowe konf.inna (311-15) 305080","305080_Poduszki_-inna_konfekcja_wyr.got.sprzed.","305080","401-47","311-15")
+	konta_WZ_WDT(15)=Array("311-15 Surowce konfekcja","Surowce TKANINY ZAKUP","305005","741-01","311-15")
+	konta_WZ_WDT(16)=Array("311-15 Surowce konfekcja","Surowce -NICI ZAKUP","305005","741-01","311-15")
+	konta_WZ_WDT(17)=Array("311-15 Surowce konfekcja","Surowce -DODATKI ZAKUP","305005","741-01","311-15")
+	konta_WZ_WDT(18)=Array("311-15 Surowce konfekcja","Surowce -TAŚMY ZAKUP","305005","741-01","311-15")
+	konta_WZ_WDT(19)=Array("311-08 Surowce rolosy","Surowce TKANINY ZAKUP","305010","741-02","311-08")
+	konta_WZ_WDT(20)=Array("311-08 Surowce rolosy","Surowce -NICI ZAKUP","305010","741-02","311-08")
+	konta_WZ_WDT(21)=Array("311-08 Surowce rolosy","Surowce -DODATKI ZAKUP","305010","741-02","311-08")
+	konta_WZ_WDT(22)=Array("311-08 Surowce rolosy","Surowce -TAŚMY ZAKUP","305010","741-02","311-08")
+	konta_WZ_WDT(23)=Array("311-13 Surowce -strefa taśmy","Surowce TKANINY ZAKUP","220400","741-03","311-13")
+	konta_WZ_WDT(24)=Array("311-13 Surowce -strefa taśmy","Surowce -NICI ZAKUP","220400","741-03","311-13")
+	konta_WZ_WDT(25)=Array("311-13 Surowce -strefa taśmy","Surowce -DODATKI ZAKUP","220400","741-03","311-13")
+	konta_WZ_WDT(26)=Array("311-13 Surowce -strefa taśmy","Surowce -TAŚMY ZAKUP","220400","741-03","311-13")
+	konta_WZ_WDT(27)=Array("311-01 Surowce wzory, hafty","Surowce TKANINY ZAKUP","220700","741-04","311-01")
+	konta_WZ_WDT(28)=Array("311-01 Surowce wzory, hafty","Surowce -NICI ZAKUP","220700","741-04","311-01")
+	konta_WZ_WDT(29)=Array("311-01 Surowce wzory, hafty","Surowce -DODATKI ZAKUP","220700","741-04","311-01")
+	konta_WZ_WDT(30)=Array("311-01 Surowce wzory, hafty","Surowce -TAŚMY ZAKUP","220700","741-04","311-01")
+	konta_WZ_WDT(31)=Array("311-01 Surowce wzory, hafty","Surowce TKANINY ZAKUP","268100","741-08","311-01")
+	konta_WZ_WDT(32)=Array("311-01 Surowce wzory, hafty","Surowce -NICI ZAKUP","268100","741-08","311-01")
+	konta_WZ_WDT(33)=Array("311-01 Surowce wzory, hafty","Surowce -DODATKI ZAKUP","268100","741-08","311-01")
+	konta_WZ_WDT(34)=Array("311-01 Surowce wzory, hafty","Surowce -TAŚMY ZAKUP","268100","741-08","311-01")
+	konta_WZ_WDT(35)=Array("311-01 Surowce wzory, hafty","Surowce TKANINY ZAKUP","268050","741-09","311-01")
+	konta_WZ_WDT(36)=Array("311-01 Surowce wzory, hafty","Surowce -NICI ZAKUP","268050","741-09","311-01")
+	konta_WZ_WDT(37)=Array("311-01 Surowce wzory, hafty","Surowce -DODATKI ZAKUP","268050","741-09","311-01")
+	konta_WZ_WDT(38)=Array("311-01 Surowce wzory, hafty","Surowce -TAŚMY ZAKUP","268050","741-09","311-01")
+	konta_WZ_WDT(39)=Array("311-17 Surowce - lutowanie","Surowce TKANINY ZAKUP","220500","741-10","311-17")
+	konta_WZ_WDT(40)=Array("311-17 Surowce - lutowanie","Surowce -NICI ZAKUP","220500","741-10","311-17")
+	konta_WZ_WDT(41)=Array("311-17 Surowce - lutowanie","Surowce -DODATKI ZAKUP","220500","741-10","311-17")
+	konta_WZ_WDT(42)=Array("311-17 Surowce - lutowanie","Surowce -TAŚMY ZAKUP","220500","741-10","311-17")
+	konta_WZ_WDT(43)=Array("Wyr.gotowe konf.zestawy (311-15) 305070","305070_Konf.zestawy_firan_-wyr.got.sprzedaż_ADO","305070","401-29","311-15")
+	konta_WZ_WDT(44)=Array("Wyroby gotowe konfekcja (311-15) 305005"," 305005_Konfekcja -wyr.gotowe sprzedaż ADO","305005","401-22","311-15")
+	konta_WZ_WDT(45)=Array("Wyroby gotowe rolosy (311-08) 305010","305010_Rolety_-wyr.gotowe_sprzedaż_ADO","305010","401-15","311-08")
+	konta_WZ_WDT(46)=Array("Wyroby gotowe konfekcja (311-15) 305005"," 305005_Konfekcja_-wyr.gotowe_sprzedaż_ADO","305005","401-22","311-15")
+	
+	end if
+	
+end function
+
+		function init_WZ_kraj()
+		
+		if not importFileData(konta_WZ_kraj) then
+			nx_.trace.error "Błąd pliku", "Nie powiodło się wczytanie konfiguracji kont z pliku: konta_WZ_kraj, wczytano konfiguracje wbudowaną."
+			konta_WZ_kraj(0)=Array("","")
+			
+			konta_WZ_kraj(1)=Array("220700 Wzory na wieszaku-wyr.got.sprzedaż ADO","311-04 Wyr.gotow-Polska wzory","220700","401-11","311-04")
+			konta_WZ_kraj(2)=Array("305010 Rolety -wyr.gotowe sprzedaż ADO","311-12 Rolety - Polska Rycerska","305010","401-18","311-12")
+			konta_WZ_kraj(3)=Array("220400 Taśmy -wyr.gotowe sprzedaż ADO","311-20 Taśmy Polska LSSE","220400","401-48","311-20")
+			konta_WZ_kraj(4)=Array("332-01 Towary - Polska","1 -TOWARY Tkaniny (Gardine)","330050","731-01","332-01")
+			konta_WZ_kraj(5)=Array("332-01 Towary - Polska","2 -TOWARY Zasłony (Deko)","330050","731-01","332-01")
+			konta_WZ_kraj(6)=Array("332-01 Towary - Polska","4 -TOWARY Tkaniny meblowe (Moebelstoffe)","330050","731-01","332-01")
+			konta_WZ_kraj(7)=Array("332-01 Towary - Polska","5 -TOWARY Konfekcja (Konfektion)","330050","731-01","332-01")
+			konta_WZ_kraj(8)=Array("332-02 Wzory reklamowe","11 -TOWARY Wzory (Muster)","330050","731-02","332-02")
+			konta_WZ_kraj(9)=Array("332-02 Wzory reklamowe","8 -TOWARY mater. reklamowe sprzedaż","330050","731-02","332-02")
+			konta_WZ_kraj(10)=Array("332-04 Pościel, inne wyprzedaż","9 -TOWARY Pościel (Bettwaesche)","330050","731-03","332-04")
+			konta_WZ_kraj(11)=Array("332-01 Towary - Polska","3 -TOWARY Taśmy (Baender)","330050","731-06","332-01")
+			konta_WZ_kraj(12)=Array("332-01 Towary - Polska","6 -TOWARY Wykończenia (Abschluesse)","330050","731-07","332-01")
+			konta_WZ_kraj(13)=Array("332-01 Towary - Polska","7 -TOWARY Dodatki (Zubehoer)","330050","731-07","332-01")
+			konta_WZ_kraj(14)=Array("332-04 Pościel, inne wyprzedaż","10 -TOWARY Wyprzedaż (Kiloware)","330050","741-05","332-04")
+			konta_WZ_kraj(15)=Array("332-01 Towary - Polska","1_-TOWARY_Tkaniny_(Gardine)","330050","731-01","332-01")
+			konta_WZ_kraj(16)=Array("332-01 Towary - Polska","2_-TOWARY_Zasłony_(Deko)","330050","731-01","332-01")
+			konta_WZ_kraj(17)=Array("332-01 Towary - Polska","4_-TOWARY_Tkaniny_meblowe_(Moebelstoffe)","330050","731-01","332-01")
+			konta_WZ_kraj(18)=Array("332-02 Wzory reklamowe","8_-TOWARY_mater._reklamowe_sprzedaż","330050","731-02","332-02")
+			konta_WZ_kraj(19)=Array("332-01 Towary - Polska","3_-TOWARY_Taśmy_(Baender)","330050","731-06","332-01")
+			konta_WZ_kraj(20)=Array("332-01 Towary - Polska","7_-TOWARY_Dodatki_(Zubehoer)","330050","731-07","332-01")
+			konta_WZ_kraj(18)=Array("332-02 Wzory reklamowe","8_-TOWARY_mater._reklamowe_użyczenie","330050","731-02","332-02")
+	
+	  end if
+	
+end function
+
+function init_ZZ_WDT()
+	
+	if not importFileData(konta_ZZ_WDT) then
+		nx_.trace.error "Błąd pliku", "Nie powiodło się wczytanie konfiguracji kont z pliku: konta_ZZ_WDT, wczytano konfiguracje wbudowaną."
+		konta_ZZ_WDT(0)=Array("","")
+		
+		konta_ZZ_WDT(1)=Array("Wyr.gotow-strefa taśmy (311-13) 220400","220400 Taśmy -wyr.gotowe sprzedaż ADO","220400","311-13","401-21")
+		konta_ZZ_WDT(2)=Array("Wyr.got.lutowanie Ryc. (311-17) 220500","220500 Lutowanie -wyr.got.sprzedaż ADO","220500","311-17","401-27")
+		konta_ZZ_WDT(3)=Array("Wyr.gotowe Peruki (311-02) 220600","220600 Peruki -wyr.got. sprzedaż Rubies","220600","311-02","401-12")
+		konta_ZZ_WDT(4)=Array("Wyr.gotowe -Zzory (311-01) 220700","220700 Zzory na wieszaku-wyr.got.sprzedaż ADO","220700","311-01","401-33")
+		konta_ZZ_WDT(5)=Array("Wyr.got.-palety Zzorów (311-01) 220800","220800 Ksiażki Zzorów -wyr.got. sprzedaż ADO","220800","311-01","401-34")
+		konta_ZZ_WDT(6)=Array("Wyr.got.-palety Zzorów (311-01) 220800","220800 Palety Zzorów -wyr.got.sprzedaż ADO","220800","311-01","401-34")
+		konta_ZZ_WDT(7)=Array("Wyr.gotowe -kornelki (311-01) 268050","268050 Kornelki - wyr.gotowe sprzedaż ADO","268050","311-01","401-31")
+		konta_ZZ_WDT(8)=Array("Wyr.gotowe -hafty (311-01) 268100","268100 Hafty - wyr.gotowe sprzedaż ADO","268100","311-01","401-32")
+		konta_ZZ_WDT(9)=Array("Wyroby gotowe konfekcja (311-15) 305005","305005 Konfekcja -wyr.gotowe sprzedaż ADO","305005","311-15","401-22")
+		konta_ZZ_WDT(10)=Array("Wyroby gotowe rolosy (311-08) 305010","305010 Rolety -wyr.gotowe sprzedaż ADO","305010","311-08","401-15")
+		konta_ZZ_WDT(11)=Array("Wyr.gotowe konf.Zzory (311-15) 305060","305060 Konfekcja Zzorów -wyr.got.sprzedaż ADO","305060","311-15","401-28")
+		konta_ZZ_WDT(12)=Array("Wyr.gotowe konf.zestawy (311-15) 305070","305070 Konf.zestawy firan -wyr.got.sprzedaż ADO","305070","311-15","401-29")
+		konta_ZZ_WDT(13)=Array("Wyr.gotowe konf.inna (311-15) 305080","305080 Pościel -inna konfekcja wyr.got.sprzed.","305080","311-15","401-30")
+		konta_ZZ_WDT(14)=Array("Wyr.gotowe konf.inna (311-15) 305080","305080 Pościel -inna konfekcja wyr.got.sprzed.","305080","311-15","401-47")
+		konta_ZZ_WDT(15)=Array("311-15 Surowce konfekcja","Surowce TKANINY ZAKUP","305005","311-15","741-01")
+		konta_ZZ_WDT(16)=Array("311-15 Surowce konfekcja","Surowce -NICI ZAKUP","305005","311-15","741-01")
+		konta_ZZ_WDT(17)=Array("311-15 Surowce konfekcja","Surowce -DODATKI ZAKUP","305005","311-15","741-01")
+		konta_ZZ_WDT(18)=Array("311-15 Surowce konfekcja","Surowce -TAŚMY ZAKUP","305005","311-15","741-01")
+		konta_ZZ_WDT(19)=Array("311-08 Surowce rolosy","Surowce TKANINY ZAKUP","305010","311-08","741-02")
+		konta_ZZ_WDT(20)=Array("311-08 Surowce rolosy","Surowce -NICI ZAKUP","305010","311-08","741-02")
+		konta_ZZ_WDT(21)=Array("311-08 Surowce rolosy","Surowce -DODATKI ZAKUP","305010","311-08","741-02")
+		konta_ZZ_WDT(22)=Array("311-08 Surowce rolosy","Surowce -TAŚMY ZAKUP","305010","311-08","741-02")
+		konta_ZZ_WDT(23)=Array("311-13 Surowce -strefa taśmy","Surowce TKANINY ZAKUP","220400","311-13","741-03")
+		konta_ZZ_WDT(24)=Array("311-13 Surowce -strefa taśmy","Surowce -NICI ZAKUP","220400","311-13","741-03")
+		konta_ZZ_WDT(25)=Array("311-13 Surowce -strefa taśmy","Surowce -DODATKI ZAKUP","220400","311-13","741-03")
+		konta_ZZ_WDT(26)=Array("311-13 Surowce -strefa taśmy","Surowce -TAŚMY ZAKUP","220400","311-13","741-03")
+		konta_ZZ_WDT(27)=Array("311-01 Surowce Zzory, hafty","Surowce TKANINY ZAKUP","220700","311-01","741-04")
+		konta_ZZ_WDT(28)=Array("311-01 Surowce Zzory, hafty","Surowce -NICI ZAKUP","220700","311-01","741-04")
+		konta_ZZ_WDT(29)=Array("311-01 Surowce Zzory, hafty","Surowce -DODATKI ZAKUP","220700","311-01","741-04")
+		konta_ZZ_WDT(30)=Array("311-01 Surowce Zzory, hafty","Surowce -TAŚMY ZAKUP","220700","311-01","741-04")
+		konta_ZZ_WDT(31)=Array("311-01 Surowce Zzory, hafty","Surowce TKANINY ZAKUP","268100","311-01","741-08")
+		konta_ZZ_WDT(32)=Array("311-01 Surowce Zzory, hafty","Surowce -NICI ZAKUP","268100","311-01","741-08")
+		konta_ZZ_WDT(33)=Array("311-01 Surowce Zzory, hafty","Surowce -DODATKI ZAKUP","268100","311-01","741-08")
+		konta_ZZ_WDT(34)=Array("311-01 Surowce Zzory, hafty","Surowce -TAŚMY ZAKUP","268100","311-01","741-08")
+		konta_ZZ_WDT(35)=Array("311-01 Surowce Zzory, hafty","Surowce TKANINY ZAKUP","268050","311-01","741-09")
+		konta_ZZ_WDT(36)=Array("311-01 Surowce Zzory, hafty","Surowce -NICI ZAKUP","268050","311-01","741-09")
+		konta_ZZ_WDT(37)=Array("311-01 Surowce Zzory, hafty","Surowce -DODATKI ZAKUP","268050","311-01","741-09")
+		konta_ZZ_WDT(38)=Array("311-01 Surowce Zzory, hafty","Surowce -TAŚMY ZAKUP","268050","311-01","741-09")
+		konta_ZZ_WDT(39)=Array("311-17 Surowce - lutowanie","Surowce TKANINY ZAKUP","220500","311-17","741-10")
+		konta_ZZ_WDT(40)=Array("311-17 Surowce - lutowanie","Surowce -NICI ZAKUP","220500","311-17","741-10")
+		konta_ZZ_WDT(41)=Array("311-17 Surowce - lutowanie","Surowce -DODATKI ZAKUP","220500","311-17","741-10")
+		konta_ZZ_WDT(42)=Array("311-17 Surowce - lutowanie","Surowce -TAŚMY ZAKUP","220500","311-17","741-10")
+		
+	end if
+	
+end function
+
+function init_ZZ_kraj()
+
+	if not importFileData(konta_ZZ_kraj) then
+		nx_.trace.error "Błąd pliku", "Nie powiodło się wczytanie konfiguracji kont z pliku: konta_ZZ_kraj, wczytano konfiguracje wbudowaną."
+		konta_ZZ_kraj(0)=Array("","")
+	
+		konta_ZZ_kraj(1)=Array("311-04 Wyr.gotow-Polska Zzory","220700 Zzory na wieszaku-wyr.got.sprzedaż ADO","220700","311-04","401-11")
+		konta_ZZ_kraj(2)=Array("311-12 Rolety - Polska Rycerska","305010 Rolety -wyr.gotowe sprzedaż ADO","305010","311-12","401-18")
+		konta_ZZ_kraj(3)=Array("311-20 Taśmy Polska LSSE","220400 Taśmy -wyr.gotowe sprzedaż ADO","220400","311-20","401-48")
+		konta_ZZ_kraj(4)=Array("332-01 Towary - Polska","1 -TOWARY Tkaniny (Gardine)","330050","332-01","731-01")
+		konta_ZZ_kraj(5)=Array("332-01 Towary - Polska","2 -TOWARY Zasłony (Deko)","330050","332-01","731-01")
+		konta_ZZ_kraj(6)=Array("332-01 Towary - Polska","4 -TOWARY Tkaniny meblowe (Moebelstoffe)","330050","332-01","731-01")
+		konta_ZZ_kraj(7)=Array("332-01 Towary - Polska","5 -TOWARY Konfekcja (Konfektion)","330050","332-01","731-01")
+		konta_ZZ_kraj(8)=Array("332-02 Zzory reklamowe","11 -TOWARY Zzory (Muster)","330050","332-02","731-02")
+		konta_ZZ_kraj(9)=Array("332-02 Zzory reklamowe","8 -TOWARY mater. reklamowe sprzedaż","330050","332-02","731-02")
+		konta_ZZ_kraj(10)=Array("332-04 Pościel, inne wyprzedaż","9 -TOWARY Pościel (Bettwaesche)","330050","332-04","731-03")
+		konta_ZZ_kraj(11)=Array("332-01 Towary - Polska","3 -TOWARY Taśmy (Baender)","330050","332-01","731-06")
+		konta_ZZ_kraj(12)=Array("332-01 Towary - Polska","6 -TOWARY Wykończenia (Abschluesse)","330050","332-01","731-07")
+		konta_ZZ_kraj(13)=Array("332-01 Towary - Polska","7 -TOWARY Dodatki (Zubehoer)","330050","332-01","731-07")
+		konta_ZZ_kraj(14)=Array("332-04 Pościel, inne wyprzedaż","10 -TOWARY Wyprzedaż (Kiloware)","330050","332-04","741-05")
+		konta_ZZ_kraj(15)=Array("332-01 Towary - Polska","1_-TOWARY_Tkaniny_(Gardine)","330050","332-01","731-01")
+		konta_ZZ_kraj(16)=Array("332-01 Towary - Polska","2_-TOWARY_Zasłony_(Deko)","330050","332-01","731-01")
+		konta_ZZ_kraj(17)=Array("332-01 Towary - Polska","4_-TOWARY_Tkaniny_meblowe_(Moebelstoffe)","330050","332-01","731-01")
+		konta_ZZ_kraj(18)=Array("332-02 Zzory reklamowe","8_-TOWARY_mater._reklamowe_sprzedaż","330050","332-02","731-02")
+		konta_ZZ_kraj(19)=Array("332-01 Towary - Polska","3_-TOWARY_Taśmy_(Baender)","330050","332-01","731-06")
+		konta_ZZ_kraj(20)=Array("332-01 Towary - Polska","7_-TOWARY_Dodatki_(Zubehoer)","330050","332-01","731-07")
+		
+	end if
+	
+end function
+
+function init_PP()
+
+	if not importFileData(konta_PP) then
+		nx_.trace.error "Błąd pliku", "Nie powiodło się wczytanie konfiguracji kont z pliku: konta_PP, wczytano konfiguracje wbudowaną."
+		konta_PP(0)=Array("","")
+	
+		konta_PP(1) = Array("311-04 Wyr.gotow-Polska wzory","603-01 Prod.w toku wzory, hafty LSSE","311-04","311-01")
+		konta_PP(2) = Array("311-05 Wzory reklam. (darmowe)","603-01 Prod.w toku wzory, hafty LSSE","311-05","311-01")
+		konta_PP(3) = Array("311-12 Rolety - Polska","603-08 Prod.w toku rolosy","311-12","311-08")
+		konta_PP(4) = Array("311-18 Półprod.Taśmy ołowiane","603-13 Prod.w toku taśmy LSSE","311-18","311-13")
+		konta_PP(5) = Array("311-19 Półprod.Taśmy Konfekcja","603-13 Prod.w toku taśmy LSSE","311-19","311-13")
+		konta_PP(6) = Array("311-20 Taśmy Polska LSSE","603-13 Prod.w toku taśmy LSSE","311-20","311-13")
+		konta_PP(7) = Array("311-21 Wyr.gotow.konfekcja Polska","603-15 Prod.w toku konfekcja","311-21","311-15")
+		konta_PP(8) = Array("311-21 Wyr.gotow.konfekcja Polska","603-15 Prod.w toku konfekcja","311-21","311-15")
+		konta_PP(9) = Array("311-21 Wyr.gotow.konfekcja Polska","603-15 Prod.w toku konfekcja","311-21","311-15")
+		konta_PP(10) = Array("311-21 Wyr.gotow.konfekcja Polska","603-15 Prod.w toku konfekcja","311-21","311-15")
+		konta_PP(11) = Array("311-21 Wyr.gotow.konfekcja Polska","603-15 Prod.w toku konfekcja","311-21","311-15")
+		konta_PP(12) = Array("311-21 Wyr.gotow.konfekcja Polska","603-15 Prod.w toku konfekcja","311-21","311-15")
+		konta_PP(13) = Array("311-22 Półprodukty konfekcja","603-15 Prod.w toku konfekcja","311-22","311-15")
+		konta_PP(14) = Array("311-22 Półprodukty konfekcja","603-15 Prod.w toku konfekcja","311-22","311-15")
+		konta_PP(15) = Array("311-22 Półprodukty konfekcja","603-15 Prod.w toku konfekcja","311-22","311-15")
+		konta_PP(16) = Array("311-22 Półprodukty konfekcja","603-15 Prod.w toku konfekcja","311-22","311-15")
+		konta_PP(17) = Array("311-22 Półprodukty konfekcja","603-15 Prod.w toku konfekcja","311-22","311-15")
+		konta_PP(18) = Array("311-22 Półprodukty konfekcja","603-15 Prod.w toku konfekcja","311-22","311-15")
+		konta_PP(19) = Array("311-23 Półprod.szwalnia (wzory,hafty,kornelki,lutowanie)","603-01 Prod.w toku wzory, hafty LSSE","311-23","311-01")
+		konta_PP(20) = Array("311-23 Półprod.szwalnia (wzory,hafty,kornelki,lutowanie)","603-01 Prod.w toku wzory, hafty LSSE","311-23","311-01")
+		konta_PP(21) = Array("311-23 Półprod.szwalnia (wzory,hafty,kornelki,lutowanie)","603-01 Prod.w toku wzory, hafty LSSE","311-23","311-01")
+		konta_PP(22) = Array("311-23 Półprod.szwalnia (wzory,hafty,kornelki,lutowanie)","603-17 Prod.w toku lutowanie","311-23","311-17")
+		
+	end if
+	
+end function
+
+'********************************************************************************************************
+'funkcje szykające i zwracające symbol konta w zaleznosci od podanych parametrow
+'(nazwa magazynu, grupa produktu, kwalifikator)
+'********************************************************************************************************
+Function find_n5zakup_account(oDokMag) 'szuka symbolu konta dla dokumentow zakupu - niepotrzebny kwalifikator i grupa prod.
+
+	'if oDokMag.pMagDocel.strNazwa = "1 -TOWARY Tkaniny (Gardine)" or oDokMag.pMagDocel.strNazwa = "8 -TOWARY mater. reklamowe sprzedaż" or oDokMag.pMagDocel.strNazwa = "7 -TOWARY Dodatki (Zubehoer)" or oDokMag.pMagDocel.strNazwa = "2 -TOWARY Zasłony (Deko)" or oDokMag.pMagDocel.strNazwa = "3 -TOWARY Taśmy (Baender)" or oDokMag.pMagDocel.strNazwa = "4 -TOWARY Tkaniny meblowe (Moebelstoffe)" or oDokMag.pMagDocel.strNazwa = "8 -TOWARY mater. reklamowe użyczenie" then
+	'	konta_ZZ_kraj_tow(100) = 5
+	'end if
+
+	Dim konto : konto = "nieprzewidziany magazyn"
+	Dim ind_zew, flag
+	flag = false
+
+    For ind_zew = 0 To ubound(konta_n5zakup_kraj)
+		If oDokMag.pMagDocel is Nothing then
+			nx_.trace.error "Błąd", "Dokument magazynowy podpięty do dokumentu zakupu nie posiada magazynu docelowego. Nr dokumentu: " + cstr(oDokMag.IdObj)
+		elseif StrComp(konta_n5zakup_kraj(ind_zew)(0), oDokMag.pMagDocel.strNazwa, 1) = 0 Then
+			konto = konta_n5zakup_kraj(ind_zew)(1)
+			flag = true
+			Exit For
+        End If
+    Next
+    
+    if not flag then
+		For ind_zew = 0 To ubound(konta_n5zakup_WNT)
+	        If oDokMag.pMagDocel is Nothing then
+				nx_.trace.error "Błąd", "Dokument magazynowy podpięty do dokumentu zakupu nie posiada magazynu docelowego. Nr dokumentu: " + cstr(oDokMag.IdObj)
+			elseif StrComp(konta_n5zakup_WNT(ind_zew)(0), oDokMag.pMagDocel.strNazwa, 1) = 0 Then
+				konto = konta_n5zakup_WNT(ind_zew)(1)
+				Exit For
+			End If
+		Next
+	end if
+	
+	'if konto = "nieprzewidziany magazyn" then
+	'	konta_ZZ_kraj_tow(100) = 5
+	'end if
+	
+	'if oPozList.pProdukt.pGrupaProd.strNazwa = "1 -TOWARY Tkaniny (Gardine)" or oPozList.pProdukt.pGrupaProd.strNazwa = "8 -TOWARY mater. reklamowe sprzedaż" or oPozList.pProdukt.pGrupaProd.strNazwa = "7 -TOWARY Dodatki (Zubehoer)" or oPozList.pProdukt.pGrupaProd.strNazwa = "2 -TOWARY Zasłony (Deko)" or oPozList.pProdukt.pGrupaProd.strNazwa = "3 -TOWARY Taśmy (Baender)" or oPozList.pProdukt.pGrupaProd.strNazwa = "4 -TOWARY Tkaniny meblowe (Moebelstoffe)" or oPozList.pProdukt.pGrupaProd.strNazwa = "8 -TOWARY mater. reklamowe użyczenie" then
+	'	konta_ZZ_kraj_tow(100) = 5
+	'end if
+	'konta_ZZ_kraj_tow(100) = 5
+	find_n5zakup_account = konto
+
+End Function
+
+Function find_n5sprzedaz_account(oDokMag, oPozList, oSprzedaz) 'szuka symbolu konta dla dokumentow sprzedazy
+
+	Dim konto: konto = "nieprzewidziany magazyn"
+	Dim ind_zew, ind_wew, flag, cond
+	ind_wew = 0
+	flag = false
+	
+	if (oSprzedaz.pRejestrDok.IdObj = 98) then 'sprawdzamy czy faktura jest faktura sprzedazy uslug
+	
+		For ind_zew = 0 To ubound(konta_n5sprzedaz_kraj_uslugi)
+			If StrComp(konta_n5sprzedaz_kraj_uslugi(ind_zew)(ind_wew), oPozList.pProdukt.pGrupaProd.strNazwa, 1) = 0 Then
+				cond = not (oSprzedaz.pKwalifikatorEx is nothing)
+				if cond then
+					cond = cond and StrComp(konta_n5sprzedaz_kraj_uslugi(ind_zew)(ind_wew + 2), oSprzedaz.pKwalifikatorEx.strNazwa, 1) = 0
+				end if
+				If cond or (oSprzedaz.pKwalifikatorEx is nothing) then
+					konto = konta_n5sprzedaz_kraj_uslugi(ind_zew)(ind_wew + 1)
+					Exit For
+				End If
+			End If
+		Next
+		
+	else
+
+    For ind_zew = 0 To ubound(konta_n5sprzedaz_kraj)
+        If StrComp(konta_n5sprzedaz_kraj(ind_zew)(ind_wew), oDokMag.pMagZrod.strNazwa, 1) = 0 Then
+            If StrComp(konta_n5sprzedaz_kraj(ind_zew)(ind_wew + 1), oPozList.pProdukt.pGrupaProd.strNazwa, 1) = 0 Then
+				cond = not (oSprzedaz.pKwalifikatorEx is nothing)
+				if cond then
+					cond = cond and StrComp(konta_n5sprzedaz_kraj(ind_zew)(ind_wew + 3), oSprzedaz.pKwalifikatorEx.strNazwa, 1) = 0
+				end if
+                  If cond or (oSprzedaz.pKwalifikatorEx is nothing) then
+                       konto = konta_n5sprzedaz_kraj(ind_zew)(ind_wew + 2)
+                       flag = true
+                       Exit For
+                  End If
+            End If
+        End If
+    Next
+    
+    ind_wew = 0
+    if not flag then
+		For ind_zew = 0 To ubound(konta_n5sprzedaz_WDT)
+	        If StrComp(konta_n5sprzedaz_WDT(ind_zew)(ind_wew), oDokMag.pMagZrod.strNazwa, 1) = 0 Then
+				If StrComp(konta_n5sprzedaz_WDT(ind_zew)(ind_wew + 1), oPozList.pProdukt.pGrupaProd.strNazwa, 1) = 0 Then
+				cond = not (oSprzedaz.pKwalifikatorEx is nothing)
+				if cond then
+					cond = cond and StrComp(konta_n5sprzedaz_WDT(ind_zew)(ind_wew + 3), oSprzedaz.pKwalifikatorEx.strNazwa, 1) = 0
+				end if
+					If cond or (oSprzedaz.pKwalifikatorEx is nothing) then
+						konto = konta_n5sprzedaz_WDT(ind_zew)(ind_wew + 2)
+						Exit For
+					End If
+				End If
+			End If
+		Next
+	end if
+	
+	end if
+	
+	find_n5sprzedaz_account = konto
+
+End Function
+
+'*******************************************************************************************************
+'Funkcja wyszukuje dane konta dla dokumentow magazynowych
+'*******************************************************************************************************
+Function find_n5dokmag_account(oDokMag, oPozList, mm) 'szuka symb. konta dla dokumentow magazynowych
+	Dim konto(1)
+	konto(0) = "nieprzewidziany magazyn"
+	konto(1) = "nieprzewidziany magazyn"
+	Dim konta_n5dokmag
+	Dim ind_zew, ind_wew
+	Dim strMagazyn
+	ind_wew = 0
+    select case oDokMag.nTypDok
+	          case N5REJESTRDOK__PZ
+                                     if not oDokMag.wrefDokHandl is Nothing then
+                                        if oDokMag.wrefDokHandl.pRejestrDok.eTyp = 48 or oDokMag.wrefDokHandl.pRejestrDok.eTyp = 50 then
+							  konta_n5dokmag = konta_PZ_WNT
+                                        else
+                                            konta_n5dokmag = konta_PZ_kraj
+                                        end if
+                                     else
+                                            konta_n5dokmag = konta_PZ_kraj
+                                     end if
+                                     strMagazyn = oDokMag.pMagDocel.strNazwa
+
+	          case N5REJESTRDOK__ZD
+	                               if not oDokMag.wrefDokHandl is Nothing then
+                                        if oDokMag.wrefDokHandl.pRejestrDok.eTyp = 48 or oDokMag.wrefDokHandl.pRejestrDok.eTyp = 50 then
+
+                                            konta_n5dokmag = konta_ZD_WNT
+
+                                        else
+                                            konta_n5dokmag = konta_ZD_kraj
+
+                                        end if
+                                     else
+                                            konta_n5dokmag = konta_ZD_kraj
+
+                                     end if
+                                     strMagazyn = oDokMag.pMagZrod.strNazwa
+	
+	          case N5REJESTRDOK__WZ
+	
+                                        if oDokMag.wrefDokHandl.n5sprzedaz_isExport() or oDokMag.wrefDokHandl.pRejestrDok.eTyp = 50 then
+
+                                          konta_n5dokmag = konta_WZ_WDT
+
+                                        else
+                                            konta_n5dokmag = konta_WZ_kraj
+
+                                        end if
+
+                                        strMagazyn = oDokMag.pMagZrod.strNazwa
+                                        
+              case N5REJESTRDOK__PP		
+              
+										konta_n5dokmag = konta_PP 'zmienic jak dojdzie nowy plik konfiguracyjny!!!!
+
+									   if mm then
+											strMagazyn = oDokMag.pMagDocel.strNazwa
+                                       else
+											strMagazyn = oDokMag.pMagZrod.strNazwa
+                                       end if
+
+	          case N5REJESTRDOK__ZZ
+	          
+	                                  if oDokMag.wrefDokHandl.n5sprzedaz_isExport() or oDokMag.wrefDokHandl.pRejestrDok.eTyp = 50 then
+
+                                          konta_n5dokmag = konta_ZZ_WDT
+
+                                        else
+                                            konta_n5dokmag = konta_ZZ_kraj
+
+                                        end if
+
+                                        strMagazyn = oDokMag.pMagZrod.strNazwa
+
+	
+	          case N5REJESTRDOK__MM
+	                                 konta_n5dokmag = konta_MM
+	                                 if mm then
+							   strMagazyn = oDokMag.pMagDocel.strNazwa
+                                       else
+							   strMagazyn = oDokMag.pMagZrod.strNazwa
+                                       end if
+              case else                                     nx_.trace.error "Błąd", "Nastąpiła próba eksportu nieprzewidzianego typu dokumentu. Nr dokumentu: " + cstr(oDokMag.strNrDok)
+										'oPozList.dokmagcocel = 5
+										find_n5dokmag_account = konto
+                                       exit function
+    end select
+    For ind_zew = 0 To UBound(konta_n5dokmag)
+        If StrComp(konta_n5dokmag(ind_zew)(ind_wew), strMagazyn, 1) = 0 Then
+            If not oPozList is Nothing Then
+                If StrComp(konta_n5dokmag(ind_zew)(ind_wew + 1), oPozList.pProdukt.pGrupaProd.strNazwa, 1) = 0 Then
+                      If  oPozList.pKwalifikatorEx is Nothing Then
+                           konto(0) = konta_n5dokmag(ind_zew)(ind_wew + 3)
+                           konto(1) = konta_n5dokmag(ind_zew)(ind_wew + 4)
+                           Exit For
+                      Elseif StrComp(konta_n5dokmag(ind_zew)(ind_wew + 2), oPozList.pKwalifikatorEx.strNazwa, 1) = 0 then
+                           konto(0) = konta_n5dokmag(ind_zew)(ind_wew + 3)
+                           konto(1) = konta_n5dokmag(ind_zew)(ind_wew + 4)
+                           Exit For
+                      End If
+                 End If
+            Else
+                    konto(0) = konta_n5dokmag(ind_zew)(ind_wew + 1)
+                    konto(1) = konta_n5dokmag(ind_zew)(ind_wew + 2)
+                    Exit For
+            End If
+        End If
+    Next
+
+    find_n5dokmag_account = konto
+
+End Function
+
+
+Function find_pp_account(oDokMag)
+	Dim konto(1)
+	konto(0) = "nieprzewidziany magazyn"
+	konto(1) = "nieprzewidziany magazyn"
+	Dim ind_zew, ind_wew
+	ind_wew = 0
+	'aaa=0
+	For ind_zew = 0 To UBound(konta_PP)
+        If StrComp(konta_PP(ind_zew)(ind_wew), oDokMag.pMagDocel.strNazwa, 1) = 0 Then
+            If StrComp(konta_PP(ind_zew)(ind_wew + 1), oDokMag.pMagZrod.strNazwa, 1) = 0 Then
+                konto(0) = konta_PP(ind_zew)(ind_wew + 2)
+                konto(1) = konta_PP(ind_zew)(ind_wew + 3)
+                exit for
+            End If
+        End If
+    Next
+
+    find_pp_account = konto
+end function
+
+
+'**************************************************************************************************************
+'funkcje ustalające grupy VAT
+'**************************************************************************************************************
+function vat_KG_GGK(byref oSprzedazZakup)
+	vat_KG_GGK = ""
+	select case oSprzedazZakup.type
+		case TYPEID_N5ZAKUP
+			select case oSprzedazZakup.pRejestrDok.eTyp
+				case N5REJESTRDOK_WNT, N5REJESTRDOK_KOREKTA_WNT
+					if oSprzedazZakup.pDostawca.pGrupaKlient.strNazwa = "Dostawca zagraniczny UE POZ" then
+						vat_KG_GGK = "UE POZ"
+					elseif oSprzedazZakup.pDostawca.pGrupaKlient.strNazwa = "Dostawca zagraniczny UE ADO" then
+						vat_KG_GGK = "UE ADO"
+					end if
+				case N5REJESTRDOK_FAKT_ZAK, N5REJESTRDOK_KOR_FAKT_ZAK
+					if oSprzedazZakup.pDostawca.pGrupaKlient.strNazwa = "Dostawca krajowy" then
+						vat_KG_GGK = "KRAJ"
+					end if
+				case N5REJESTRDOK_FAKT_IMP, N5REJESTRDOK_KOR_FAKT_IMP
+					if oSprzedazZakup.pDostawca.pGrupaKlient.strNazwa = "Import (zakupy spoza UE)" then
+						vat_KG_GGK = "IMPORT"
+					elseif oSprzedazZakup.pDostawca.pGrupaKlient.strNazwa = "Import ADO (zakupy spoza UE)" then
+						vat_KG_GGK = "IMP. ADO"
+					end if
+			
+			end select
+		case TYPEID_N5SPRZEDAZ
+			select case oSprzedazZakup.pRejestrDok.eTyp
+				case N5REJESTRDOK_WDT, N5REJESTRDOK_KOREKTA_WDT
+					if oSprzedazZakup.pKlient.pGrupaKlient.strNazwa = "Odbiorca zagraniczny UE POZ" then
+						vat_KG_GGK = "UE POZ"
+					elseif oSprzedazZakup.pKlient.pGrupaKlient.strNazwa = "Odbiorca zagraniczny UE ADO" then
+						vat_KG_GGK = "UE ADO"
+					end if
+				case N5REJESTRDOK_FAKT_SP, N5REJESTRDOK_KOR_FAKT_SP
+					if oSprzedazZakup.pKlient.pGrupaKlient.strNazwa = "Odbiorca sprzedaż krajowa" then
+						vat_KG_GGK = "KRAJ"
+					end if
+				case N5REJESTRDOK_FAKT_EXP, N5REJESTRDOK_KOR_FAKT_EXP
+					if oSprzedazZakup.pKlient.pGrupaKlient.strNazwa = "EXPORT (poza UE)" then
+						vat_KG_GGK = "EKSPORT"
+					elseif oSprzedazZakup.pKlient.pGrupaKlient.strNazwa = "EXPORT ADO (poza UE nabywcy ADO)" then
+						vat_KG_GGK = "EXP. ADO"
+					end if
+			end select
+	end select
+end function
+
+function vat_KG_TGK(byref oSprzedazZakup, byref pozycja)
+	vat_KG_TGK = ""
+	select case oSprzedazZakup.type
+		case TYPEID_N5ZAKUP
+			select case oSprzedazZakup.pRejestrDok.eTyp
+				case N5REJESTRDOK_WNT, N5REJESTRDOK_KOREKTA_WNT
+					if pozycja.pProdukt.eVAT = 7 then
+						vat_KG_TGK = "VAT UE7"
+					elseif pozycja.pProdukt.eVAT = 10 then
+						vat_KG_TGK = "VAT UE22"
+					elseif pozycja.pProdukt.eVAT = 13 then
+						vat_KG_TGK = "VAT UE8"
+					elseif pozycja.pProdukt.eVAT = 14 then
+						vat_KG_TGK = "VAT UE23"            
+					end if
+				case N5REJESTRDOK_FAKT_ZAK, N5REJESTRDOK_KOR_FAKT_ZAK
+					if pozycja.pProdukt.eVAT = 1 or pozycja.pProdukt.eVAT = 2 or pozycja.pProdukt.eVAT = 3 then
+						vat_KG_TGK = "0"
+					elseif pozycja.pProdukt.eVAT = 5 then
+						vat_KG_TGK = "03"
+					elseif pozycja.pProdukt.eVAT = 7 then
+						vat_KG_TGK = "07"
+					elseif pozycja.pProdukt.eVAT = 10 then
+						vat_KG_TGK = "22"
+					elseif pozycja.pProdukt.eVAT = 11 then
+						vat_KG_TGK = "05"
+					elseif pozycja.pProdukt.eVAT = 13 then
+						vat_KG_TGK = "08"
+					elseif pozycja.pProdukt.eVAT = 14 then
+						vat_KG_TGK = "23"            
+					end if
+				case N5REJESTRDOK_FAKT_IMP, N5REJESTRDOK_KOR_FAKT_IMP
+					vat_KG_TGK = "BEZ VAT"
+			end select
+		case TYPEID_N5SPRZEDAZ
+			select case oSprzedazZakup.pRejestrDok.eTyp
+				case N5REJESTRDOK_WDT, N5REJESTRDOK_KOREKTA_WDT
+					vat_KG_TGK = "VAT UE0"
+				case N5REJESTRDOK_FAKT_SP, N5REJESTRDOK_KOR_FAKT_SP
+					if pozycja.pProdukt.eVAT = 1 or pozycja.pProdukt.eVAT = 2 or pozycja.pProdukt.eVAT = 3 then
+						vat_KG_TGK = "0"
+					elseif pozycja.pProdukt.eVAT = 5 then
+						vat_KG_TGK = "03"
+					elseif pozycja.pProdukt.eVAT = 7 then
+						vat_KG_TGK = "07"
+					elseif pozycja.pProdukt.eVAT = 10 then
+						vat_KG_TGK = "22"
+					elseif pozycja.pProdukt.eVAT = 11 then
+						vat_KG_TGK = "05"
+					elseif pozycja.pProdukt.eVAT = 13 then
+						vat_KG_TGK = "08"
+					elseif pozycja.pProdukt.eVAT = 14 then
+						vat_KG_TGK = "23"            
+					end if
+				case N5REJESTRDOK_FAKT_EXP, N5REJESTRDOK_KOR_FAKT_EXP
+					vat_KG_TGK = "0"
+			end select
+	end select
+end function
+
+'******************************************************************************************************
+'funkcja wypelniajaca kazdy wiersz podstawowymi danymi niewymagającymi obliczen	
+'******************************************************************************************************
+Function basic_iRow(iKRK,iKRD,Wn_Ma,byref oMSNAVRow,oFakt,iCurency, opis)   'funkcja wiersza inform. bazowych
+
+	oMSNAVRow.m_iKRK = iKRK
+	oMSNAVRow.m_iKRD = iKRD
+	oMSNAVRow.m_bWn = Wn_Ma
+	oMSNAVRow.m_strNrDok = oFakt.strNrDok
+	oMSNAVRow.m_strNrDokObcy = oFakt.strNrDok
+	
+	If oFakt.type = TYPEID_N5ZAKUP then
+		oMSNAVRow.m_dDataKsieg = oFakt.dDataOtrzym
+		oMSNAVRow.m_dDataPlat = oFakt.dDataPlat
+		
+		if iCurency then
+			oMSNAVRow.m_strKodWal = oFakt.pWaluta.strSkrot
+			oMSNAVRow.m_curKursWal= oFakt.curKurs
+		else
+			oMSNAVRow.m_strKodWal = "PLN"
+		end if
+		
+	ElseIf oFakt.type = TYPEID_N5SPRZEDAZ Then
+		oMSNAVRow.m_dDataKsieg = oFakt.dDataSprzed
+		oMSNAVRow.m_dDataPlat = oFakt.dDataPlat
+		
+		if iCurency then
+			oMSNAVRow.m_strKodWal = oFakt.pWaluta.strSkrot
+			oMSNAVRow.m_curKursWal= oFakt.curKurs
+		else
+			oMSNAVRow.m_strKodWal = "PLN"
+		end if
+		
+	else
+		oMSNAVRow.m_dDataKsieg = oFakt.dDataWyst
+	end if
+	oMSNAVRow.m_dDataDok = oFakt.dDataWyst
+	oMSNAVRow.m_strOpis = opis + oFakt.strNrDok
+End Function
+
+'******************************************************************************************************
+'funkcja obliczająca i wstawiajaca do wiersza VATowskiego obliczony VAT
+'******************************************************************************************************
+Function RowVat(byref oMSNAVRow,oFakt,strKonto)
+	oMSNAVRow.m_strSymKonto = strKonto
+		If oFakt.type = TYPEID_N5ZAKUP then
+			if oFakt.n5zakup_isKorekta() then
+				oMSNAVRow.m_curBrutto = oFakt.pPopZAkup.curSumaVAT - oFakt.curSumaVAT
+				oMSNAVRow.m_curNetto  = oFakt.pPopZAkup.curSumaVAT - oFakt.curSumaVAT
+			else
+				oMSNAVRow.m_curBrutto = oFakt.curSumaVAT
+				oMSNAVRow.m_curNetto  = oFakt.curSumaVAT
+			end If
+		ElseIf oFakt.type = TYPEID_N5SPRZEDAZ Then
+			If oFakt.n5sprzedaz_isKorekta() Then
+				oMSNAVRow.m_curBrutto = oFakt.pPopSprzed.curSumaVAT - oFakt.curSumaVAT
+				oMSNAVRow.m_curNetto  = oFakt.pPopSprzed.curSumaVAT - oFakt.curSumaVAT
+			Else
+				oMSNAVRow.m_curBrutto = oFakt.curSumaVAT
+				oMSNAVRow.m_curNetto  = oFakt.curSumaVAT
+			End If 				
+		End If 
+End Function
+	
+'******************************************************************************************************
+'funkcja oblicza roznice miedzy suma pozycji w poprzednich wierszach a wartoscia faktury
+'******************************************************************************************************
+Function RowSumCurCheck(byref oMSNAVRow,oFakt,strKonto,roznica_netto, roznica_brutto)
+	oMSNAVRow.m_strSymKonto = strKonto
+	oMSNAVRow.m_curBrutto = roznica_brutto
+	oMSNAVRow.m_curNetto = roznica_netto
+End Function
+
+function liczWartoscTowarow(byref oSprzedazZakup, byval netto)
+	dim wartosc : wartosc = 0
+	dim pozycja
+	for each pozycja in oSprzedazZakup.listPozycje
+		if pozycja.pProdukt.eRodzaj = N5PRODUKT_TOWAR then
+			if (netto) then
+				wartosc = wartosc + pozycja.curWartNetto
+			else
+				wartosc = wartosc + pozycja.curWartBrutto
+			end if
+		end if
+	next
+	liczWartoscTowarow = wartosc
+end function
+
+'******************************************************************************************************
+'funkcja wypisuje srodkowe wiersze korekt zakupu i sprzedazy na podstawie specjalnej tablicy
+'z danymi przygotowanej przez funkcje prepare_ksprzedaz_kzakup
+'******************************************************************************************************
+function wypisz_wiersze_ksprzedaz_kzakup(byref tablicaProduktow, byref oMSNav, byref oSprzedazZakup)
+	dim counter1 : counter1 = 0
+	dim counter2 : counter2 = 0
+	dim iloscFakt
+	dim iloscMag
+	dim oProdukt
+	dim wiersze()
+	redim wiersze(0)
+	dim wiersz
+	dim cond
+	dim size : size = 0
+	dim condLiczRoznice 'warunek determinujacy, czy roznica powinna byc wliczona, bywa ze jest kilka pozycji produktu
+						'o tym samym id w tablicy (jak jest wiecej dokmagow niz 1), wtedy roznica wliczany tylko 1 raz
+	
+	dim znacznikiWykorzystania()
+	redim znacznikiWykorzystania(ubound(tablicaProduktow))
+	initializeZnaczniki znacznikiWykorzystania
+	dim wiersz1
+	dim wiersz2
+	dim wartoscNetto : wartoscNetto = 0
+	dim wartoscBrutto : wartoscBrutto = 0
+	dim wartoscRoznicyN
+	dim wartoscRoznicyB
+	dim condMag 'warunek bedzie ustalany w zaleznosci od tego czy mamy do czynienia z f. zakupu czy sprzedazy
+	
+	dim wpiszWalute : wpiszWalute = false
+	if oSprzedazZakup.type = TYPEID_N5ZAKUP then
+		if (oSprzedazZakup.pPopZAkup.n5zakup_isImportUE() or oSprzedazZakup.pPopZAkup.n5zakup_isImportNieUE()) Then
+			wpiszWalute = true
+		end if
+	elseif oSprzedazZakup.type = TYPEID_N5SPRZEDAZ then
+		if oSprzedazZakup.pPopSprzed.n5sprzedaz_isExport() Then
+			wpiszWalute = true
+		end if
+	end if
+	
+	for counter1 = 0 to ubound(tablicaProduktow)-1
+		wiersz1 = tablicaProduktow(counter1)
+		if znacznikiWykorzystania(counter1) = 0 then
+		'aaa = 0
+		
+			if oSprzedazZakup.type = TYPEID_N5SPRZEDAZ then
+				wartoscNetto = trans_.afc.convert.round2(wiersz1(0).curCenaNetto * wiersz1(5))
+				wartoscBrutto = trans_.afc.convert.round2(wiersz1(0).curCenaBrutto * wiersz1(5))
+			else
+				if wiersz1(4) <> 0 then
+					wartoscNetto = trans_.afc.convert.round2(wiersz1(0).curWartNetto * wiersz1(5) / wiersz1(4))					
+					wartoscBrutto = trans_.afc.convert.round2(wiersz1(0).curWartBrutto * wiersz1(5) / wiersz1(4))
+				end if
+			end if
+			
+			'aa=0
+			for counter2 = counter1+1 to ubound(tablicaProduktow)-1
+				if znacznikiWykorzystania(counter2) = 0 then
+					wiersz2 = tablicaProduktow(counter2)
+					if wiersz1(0).pProdukt.pGrupaProd.IdObj = wiersz2(0).pProdukt.pGrupaProd.IdObj then
+						
+						condMag = (wiersz1(3) is nothing or wiersz2(3) is nothing)
+						if not condMag then
+							if oSprzedazZakup.pRejestrDok.eTyp = N5REJESTRDOK_KOR_FAKT_SP or oSprzedazZakup.pRejestrDok.eTyp = N5REJESTRDOK_KOREKTA_WDT then
+								condMag = (wiersz1(3).pMagDocel.IdObj = wiersz2(3).pMagDocel.IdObj)
+							elseif oSprzedazZakup.pRejestrDok.eTyp = N5REJESTRDOK_KOR_FAKT_ZAK or oSprzedazZakup.pRejestrDok.eTyp = N5REJESTRDOK_KOREKTA_WNT then
+								condMag = (wiersz1(3).pMagZrod.IdObj = wiersz2(3).pMagZrod.IdObj)
+							end if
+						end if
+						
+						if condMag then
+
+							if oSprzedazZakup.type = TYPEID_N5SPRZEDAZ then
+								wartoscNetto = wartoscNetto + trans_.afc.convert.round2(wiersz2(0).curCenaNetto * wiersz2(5))
+								wartoscBrutto = wartoscBrutto + trans_.afc.convert.round2(wiersz2(0).curCenaBrutto * wiersz2(5))
+							else
+								if wiersz2(4) <> 0 then
+									wartoscNetto = wartoscNetto + trans_.afc.convert.round2(wiersz2(0).curWartNetto * wiersz2(5) / wiersz2(4))
+									wartoscBrutto = wartoscBrutto + trans_.afc.convert.round2(wiersz2(0).curWartBrutto * wiersz2(5) / wiersz2(4))
+								end if
+							end if
+							znacznikiWykorzystania(counter2) = 1
+
+						end if
+						
+					end if
+				end if
+			next
+			
+			if wartoscNetto > 0 or wartoscBrutto > 0 then
+				size = size + 1
+				redim preserve wiersze(size)
+				wiersze(size-1) = Array(wartoscNetto, wartoscBrutto, wiersz1(1), wiersz1(3))
+			end if
+			
+			znacznikiWykorzystania(counter1) = 1
+		end if
+	next
+	
+	
+	'***************************************************************************
+	'Jeszcze raz przechodzimy tablicę i wyszukujemy wszystkie roznice w wartosciach towarow
+	'***************************************************************************
+	initializeZnaczniki znacznikiWykorzystania
+	for counter1 = 0 to ubound(tablicaProduktow)-1
+		wiersz1 = tablicaProduktow(counter1)
+		
+		if znacznikiWykorzystania(counter1) = 0 then
+			wartoscRoznicyN = 0
+			wartoscRoznicyB = 0
+			condLiczRoznice = (counter1 = 0)
+			if not condLiczRoznice then
+				condLiczRoznice = (tablicaProduktow(counter1-1)(1).pProdukt.IdObj <> wiersz1(1).pProdukt.IdObj)
+			end if
+			if oSprzedazZakup.type = TYPEID_N5SPRZEDAZ then
+				if condLiczRoznice then
+					wartoscRoznicyN = trans_.afc.convert.round2((wiersz1(0).curCenaNetto - wiersz1(1).curCenaNetto) * wiersz1(4))
+					wartoscRoznicyB = trans_.afc.convert.round2((wiersz1(0).curCenaBrutto - wiersz1(1).curCenaBrutto) * wiersz1(4))
+				end if
+			else
+				if condLiczRoznice then
+					wartoscRoznicyN = trans_.afc.convert.round2(wiersz1(0).curWartNetto * wiersz1(4) / wiersz1(0).curIloscOpak - wiersz1(1).curWartNetto)
+					wartoscRoznicyB = trans_.afc.convert.round2(wiersz1(0).curWartBrutto * wiersz1(4) / wiersz1(0).curIloscOpak - wiersz1(1).curWartBrutto)
+				end if
+			end if
+			
+			for counter2 = counter1+1 to ubound(tablicaProduktow)-1
+				if znacznikiWykorzystania(counter2) = 0 then
+					wiersz2 = tablicaProduktow(counter2)
+					if wiersz1(0).pProdukt.pGrupaProd.IdObj = wiersz2(0).pProdukt.pGrupaProd.IdObj then
+						
+						condMag = (wiersz1(2) is nothing or wiersz2(2) is nothing)
+						if not condMag then
+							if oSprzedazZakup.pRejestrDok.eTyp = N5REJESTRDOK_KOR_FAKT_SP or oSprzedazZakup.pRejestrDok.eTyp = N5REJESTRDOK_KOREKTA_WDT then
+								condMag = (wiersz1(2).pMagZrod.IdObj = wiersz2(2).pMagZrod.IdObj)
+							elseif oSprzedazZakup.pRejestrDok.eTyp = N5REJESTRDOK_KOR_FAKT_ZAK or oSprzedazZakup.pRejestrDok.eTyp = N5REJESTRDOK_KOREKTA_WNT then
+								condMag = (wiersz1(2).pMagDocel.IdObj = wiersz2(2).pMagDocel.IdObj)
+							end if
+						end if
+						
+						if condMag then
+
+							if oSprzedazZakup.type = TYPEID_N5SPRZEDAZ then
+								if condLiczRoznice then
+									wartoscRoznicyN = wartoscRoznicyN + trans_.afc.convert.round2((wiersz1(0).curCenaNetto - wiersz1(1).curCenaNetto) * wiersz1(4))
+									wartoscRoznicyB = wartoscRoznicyB + trans_.afc.convert.round2((wiersz1(0).curCenaBrutto - wiersz1(1).curCenaBrutto) * wiersz1(4))
+								end if
+							else
+								if condLiczRoznice then
+									wartoscRoznicyN = wartoscRoznicyN + trans_.afc.convert.round2(wiersz1(0).curWartNetto * wiersz1(4) / wiersz1(0).curIloscOpak - wiersz1(1).curWartNetto)
+									wartoscRoznicyB = wartoscRoznicyB + trans_.afc.convert.round2(wiersz1(0).curWartBrutto * wiersz1(4) / wiersz1(0).curIloscOpak - wiersz1(1).curWartBrutto)
+								end if
+							end if
+							znacznikiWykorzystania(counter2) = 1
+
+						end if
+						
+					end if
+				end if
+			next
+				
+			if wartoscRoznicyN > 0 or wartoscRoznicyB > 0 then
+				size = size + 1
+				redim preserve wiersze(size)
+				wiersze(size-1) = Array(wartoscRoznicyN, wartoscRoznicyB, wiersz1(1), wiersz1(2))
+			end if
+		end if
+		
+	next
+	
+	'***********************************************************************
+	' "wtlaczanie" poszczegolnych wierszy do pliku
+	'***********************************************************************
+	dim pierwszyWiersz
+	dim pierwszyZapamietany
+	pierwszyZapamietany = false
+	dim sumaN
+	dim sumaB
+	sumaN = 0
+	sumaB = 0
+	dim oMSNAVRow
+	dim account
+	if oSprzedazZakup.pRejestrDok.eTyp = N5REJESTRDOK_KOR_FAKT_SP or oSprzedazZakup.pRejestrDok.eTyp = N5REJESTRDOK_KOREKTA_WDT then
+		for counter1=0 to ubound(wiersze)-1
+			set oMSNAVRow=oMSNav.add_new()
+			basic_iRow 1, 3, true, oMSNAVRow, oSprzedazZakup, false, "Korekta f. sprzedaży "
+			if not pierwszyZapamietany then
+				set pierwszyWiersz = oMSNAVRow
+				pierwszyZapamietany = true
+			end if
+			
+				oMSNAVRow.m_curBrutto = wiersze(counter1)(1)
+				oMSNAVRow.m_curNetto = wiersze(counter1)(0)
+				
+				oMSNAVRow.m_strSymKonto = find_n5sprzedaz_account (wiersze(counter1)(3), wiersze(counter1)(2), oSprzedazZakup)
+				if StrComp( oMSNAVRow.m_strSymKonto, "nieprzewidziany magazyn",1) = 0 then
+						nx_.trace.error "Błąd", "Nie odnaleziono numeru konta Wn/Ma dla dokumentu nr: " + oSprzedazZakup.strNrDok + " poszukiwany magazyn: '" + cstr(wiersze(counter1)(3).pMagZrod.strNazwa)+"'"
+				end if
+				oMSNAVRow.m_strVATGGK = vat_KG_GGK (oSprzedazZakup)
+				oMSNAVRow.m_strVATTGK = vat_KG_TGK (oSprzedazZakup, (wiersze(counter1)(2)))
+				
+			sumaN = sumaN + wiersze(counter1)(0)
+			sumaB = sumaB + wiersze(counter1)(1)
+		next
+	elseif oSprzedazZakup.pRejestrDok.eTyp = N5REJESTRDOK_KOR_FAKT_ZAK or oSprzedazZakup.pRejestrDok.eTyp = N5REJESTRDOK_KOREKTA_WNT then
+		for counter1=0 to ubound(wiersze)-1
+			set oMSNAVRow=oMSNav.add_new()
+			basic_iRow 1, 3, false, oMSNAVRow, oSprzedazZakup, false, "Korekta f. zakupu "
+			if not pierwszyZapamietany then
+				set pierwszyWiersz = oMSNAVRow
+				pierwszyZapamietany = true
+			end if
+			
+				oMSNAVRow.m_curBrutto = wiersze(counter1)(1)
+				oMSNAVRow.m_curNetto = wiersze(counter1)(0)
+				
+				oMSNAVRow.m_strSymKonto = find_n5zakup_account (wiersze(counter1)(3))
+				if StrComp( oMSNAVRow.m_strSymKonto, "nieprzewidziany magazyn",1) = 0 then
+						nx_.trace.error "Błąd", "Nie odnaleziono numeru konta Wn/Ma dla dokumentu nr: " + oSprzedazZakup.strNrDok + " poszukiwany magazyn: '" + cstr(wiersze(counter1)(3).pMagDocel.strNazwa)+"'"
+				end if
+				oMSNAVRow.m_strVATGGK = vat_KG_GGK (oSprzedazZakup)
+				oMSNAVRow.m_strVATTGK = vat_KG_TGK (oSprzedazZakup, (wiersze(counter1)(2)))
+			
+			sumaN = sumaN + wiersze(counter1)(0)
+			sumaB = sumaB + wiersze(counter1)(1)
+		next
+	end if
+	
+	dim wartNetTow
+	dim wartBrutTow
+	dim wartNetTowFakt
+	dim wartBrutTowFakt
+	wartNetTow = liczWartoscTowarow(oSprzedazZakup, true)
+	wartBrutTow = liczWartoscTowarow(oSprzedazZakup, false)
+	if oSprzedazZakup.type = TYPEID_N5ZAKUP then
+		wartNetTowFakt = liczWartoscTowarow(oSprzedazZakup.pPopZAkup, true)
+		wartBrutTowFakt = liczWartoscTowarow(oSprzedazZakup.pPopZAkup, false)
+	else
+		wartNetTowFakt = liczWartoscTowarow(oSprzedazZakup.pPopSprzed, true)
+		wartBrutTowFakt = liczWartoscTowarow(oSprzedazZakup.pPopSprzed, false)
+	end if
+	
+	if not isEmpty(pierwszyWiersz) then
+		pierwszyWiersz.m_curBrutto = pierwszyWiersz.m_curBrutto + (wartBrutTowFakt - wartBrutTow) - (sumaB)
+		pierwszyWiersz.m_curNetto = pierwszyWiersz.m_curNetto + (wartNetTowFakt - wartNetTow) - (sumaN)
+	end if
+	
+	'***********************************************************************
+	'ustalanie wiersza wyrównujacego ewentualne roznice w wartosciach 
+	'towarow i uslug z faktury oraz towarow z dokmag
+	'***********************************************************************
+	if oSprzedazZakup.type = TYPEID_N5ZAKUP then
+		if wartNetTowFakt - wartNetTow <> oSprzedazZakup.pPopZAkup.curSumaNetto - oSprzedazZakup.curSumaNetto then
+			set oMSNAVRow = oMSNav.add_new()
+			basic_iRow 1, 3, false, oMSNAVRow, oSprzedazZakup, false, "Kwota nierozpoznana na k. f. zak. "
+			RowSumCurCheck oMSNAVRow, oSprzedazZakup, "xxx-xx", (oSprzedazZakup.pPopZAkup.curSumaNetto - wartNetTowFakt) - (oSprzedazZakup.curSumaNetto - wartNetTow), (oSprzedazZakup.pPopZAkup.curSumaBrutto - wartBrutTowFakt) - (oSprzedazZakup.curSumaBrutto - wartBrutTow)
+		end if
+	else
+		if wartNetTowFakt - wartNetTow <> oSprzedazZakup.pPopSprzed.curSumaNetto - oSprzedazZakup.curSumaNetto then
+			set oMSNAVRow = oMSNav.add_new()
+			basic_iRow 1, 3, true, oMSNAVRow, oSprzedazZakup, false, "Kwota nierozpoznana na k. f. sprz. "
+			RowSumCurCheck oMSNAVRow, oSprzedazZakup, "xxx-xx", (oSprzedazZakup.pPopSprzed.curSumaNetto - wartNetTowFakt) - (oSprzedazZakup.curSumaNetto - wartNetTow), (oSprzedazZakup.pPopSprzed.curSumaBrutto - wartBrutTowFakt) - (oSprzedazZakup.curSumaBrutto - wartBrutTow)
+		end if
+	end if
+	
+	'***********************************************************************
+	'ustalanie wiersza VAT
+	'***********************************************************************
+	if oSprzedazZakup.pRejestrDok.eTyp = N5REJESTRDOK_KOR_FAKT_SP or oSprzedazZakup.pRejestrDok.eTyp = N5REJESTRDOK_KOREKTA_WDT then
+		if Not oSprzedazZakup.pPopSprzed.n5sprzedaz_isExport() Then
+			set oMSNAVRow=oMSNAV.add_new()
+			basic_iRow 1, 3, true, oMSNAVRow, oSprzedazZakup, false, "Różnica VATu korekty f. sprzedaży "
+			if not oSprzedazZakup.pKwalifikatorEx is nothing then
+				oMSNAVRow.m_strMPK = oSprzedazZakup.pKwalifikatorEx.strNazwa
+			end if
+			RowVat oMSNAVRow, oSprzedazZakup, konta_n5sprzedaz_kraj(0)(1)
+		end if
+	else if oSprzedazZakup.pRejestrDok.eTyp = N5REJESTRDOK_KOR_FAKT_ZAK or oSprzedazZakup.pRejestrDok.eTyp = N5REJESTRDOK_KOREKTA_WNT then
+			if Not (oSprzedazZakup.pPopZAkup.n5zakup_isImportUE() or oSprzedazZakup.pPopZAkup.n5zakup_isImportNieUE()) Then
+				set oMSNAVRow=oMSNAV.add_new()
+				basic_iRow 1, 3, false, oMSNAVRow, oSprzedazZakup, false, "VAT f. zakupu "
+				RowVat oMSNAVRow, oSprzedazZakup, konta_n5zakup_kraj(0)(0)
+			'else
+			'	set oMSNAVRow=oMSNAV.add_new()
+			'	basic_iRow 1, 3, false, oMSNAVRow, oSprzedazZakup, wpiszWalute, "VAT f. WNT "
+			'	RowVat oMSNAVRow, oSprzedazZakup, konta_n5zakup_WNT(0)(0)
+			'	set oMSNAVRow=oMSNAV.add_new()
+			'	basic_iRow 1, 3, true, oMSNAVRow, oSprzedazZakup, wpiszWalute, "VAT f. WNT "
+			'	RowVat oMSNAVRow, oSprzedazZakup, konta_n5zakup_WNT(0)(1)
+			end if
+		 end if
+	end if
+	'wiersz = tablicaProduktow(1000)
+end function
+
+'******************************************************************************************************
+'funkcja tworzy tablicę przekazywaną pozniej do funkcji wypisującej (definicja powyżej)
+'Tablica zawiera wiersze z: pozycją z faktury, pozycją z korekty (ten sam produkt),
+'dokument WZ, dokument ZZ (WZ dotyczy danego produktu, ZZ może go zawierac, ale nie musi),
+'ilosc towaru na korekcie faktury, ilosc towaru na dokumencie ZZ
+'******************************************************************************************************
+function prepare_ksprzedaz_kzakup(byref oSprzedazZakup)
+
+
+	dim pozycjeListy()
+	redim pozycjeListy(0)
+	dim pozycjeListyFaktury()
+	redim pozycjeListyFaktury(0)
+	dim tablicaProduktow()
+	redim tablicaProduktow(0)
+	
+	dim size
+	size = 0
+	
+	'************************************************************************************************************************
+	'przepisywanie elementow listy pozycji korekty sprzedazy oraz faktury oryginalnej do tablicy 
+	'(w celu umozliwienia dostepu do pozycji poprzez indeks numeryczny)
+	'************************************************************************************************************************
+	dim pozycjaListy
+	for each pozycjaListy in oSprzedazZakup.listPozycje
+		size = size + 1
+		redim preserve pozycjeListy(size)
+		set pozycjeListy(size - 1) = pozycjaListy
+	next
+	dim pozycjaListyFaktury
+	size = 0
+	if oSprzedazZakup.pRejestrDok.eTyp = N5REJESTRDOK_KOR_FAKT_SP or oSprzedazZakup.pRejestrDok.eTyp = N5REJESTRDOK_KOREKTA_WDT then
+		for each pozycjaListyFaktury in oSprzedazZakup.pPopSprzed.listPozycje
+			size = size + 1
+			redim preserve pozycjeListyFaktury(size)
+			set pozycjeListyFaktury(size - 1) = pozycjaListyFaktury
+		next
+	elseif oSprzedazZakup.pRejestrDok.eTyp = N5REJESTRDOK_KOR_FAKT_ZAK or oSprzedazZakup.pRejestrDok.eTyp = N5REJESTRDOK_KOREKTA_WNT then
+		for each pozycjaListyFaktury in oSprzedazZakup.pPopZAkup.listPozycje
+			size = size + 1
+			redim preserve pozycjeListyFaktury(size)
+			set pozycjeListyFaktury(size - 1) = pozycjaListyFaktury
+		next
+	end if
+	size = 0
+	
+	'************************************************************************************************************************
+	'tablica mówiąca, czy dany element z tablicy pozycjeListy juz zostal przepisany do tablicy tablicaProduktow
+	'************************************************************************************************************************
+	dim znacznikiWykorzystania()
+	redim znacznikiWykorzystania(ubound(pozycjeListy))
+	initializeZnaczniki znacznikiWykorzystania
+	
+	'************************************************************************************************************************
+	'wybieramy z bazy odpowiednie dokumenty magazynowe powiązane z analizowanymi fakturami (WZ i ZZ dla korekty
+	'faktury sprzedazy oraz PZ i ZD dla korekty faktury zakupu)
+	'************************************************************************************************************************
+	dim pCursorZZ_ZD, pCursorWZ_PZ
+	if oSprzedazZakup.pRejestrDok.eTyp = N5REJESTRDOK_KOR_FAKT_SP or oSprzedazZakup.pRejestrDok.eTyp = N5REJESTRDOK_KOREKTA_WDT then
+		set pCursorZZ_ZD = trans_.createrawcursor(10162,"nTypDok=21 and wrefDokHandl="+cStr(oSprzedazZakup.IdObj),"","")
+		set pCursorWZ_PZ = trans_.createrawcursor(10162,"nTypDok=19 and wrefDokHandl="+cStr(oSprzedazZakup.pPopSprzed.IdObj),"","")
+	elseif oSprzedazZakup.pRejestrDok.eTyp = N5REJESTRDOK_KOR_FAKT_ZAK or oSprzedazZakup.pRejestrDok.eTyp = N5REJESTRDOK_KOREKTA_WNT then
+		Set pCursorZZ_ZD = trans_.createrawcursor(10162,"nTypDok=20 and wrefDokHandl="+cStr(oSprzedazZakup.IdObj),"","")
+		set pCursorWZ_PZ = trans_.createrawcursor(10162,"nTypDok=18 and wrefDokHandl="+cStr(oSprzedazZakup.pPopZAkup.IdObj),"","")
+	end if
+	
+	dim oDokMag
+	dim wyswietlonoKomunikat: wyswietlonoKomunikat = false
+	dim pozMag
+	dim iloscMag
+	dim ilosc
+	dim iloscMagFakt
+	dim iloscFakt
+	dim pomTab
+	dim counter1
+	dim counter2
+	dim iloscDokumentowZZ_ZD
+	dim pozycjaZFaktury : set pozycjaZFaktury = nothing
+	dim dokMagZFaktury : set dokMagZFaktury = nothing
+	dim pozycjaZnaleziona
+	'************************************************************************************************************************
+	'przeszukiwanie tablicy pozycji faktury w celu zsumowania ilosci tych samych produktow
+	'************************************************************************************************************************
+	for counter1 = 0 to (ubound(pozycjeListy)) - 1
+		ilosc = 0
+		if (znacznikiWykorzystania(counter1) = 0 and pozycjeListy(counter1).pProdukt.eRodzaj = N5PRODUKT_TOWAR) then
+			ilosc = pozycjeListy(counter1).curIloscOpak
+			for counter2 = counter1+1 to ubound(pozycjeListy) - 1
+				if (znacznikiWykorzystania(counter2) = 0 and pozycjeListy(counter1).pProdukt.eRodzaj = N5PRODUKT_TOWAR) then
+					if pozycjeListy(counter1).pProdukt.strNazwa = pozycjeListy(counter2).pProdukt.strNazwa then
+						if pozycjeListy(counter1).pProdukt.IdObj = pozycjeListy(counter2).pProdukt.IdObj then
+							if pozycjeListy(counter1).curCenaNettoWal <> pozycjeListy(counter2).curCenaNettoWal then
+								nx_.trace.error "Błąd", "Ten sam produkt: " + pozycjeListy(counter1).pProdukt.strNazwa + " na fakturze " + oSprzedazZakup.strNrDok + " - różne ceny"
+								'pozycjeListy(1000) = 3
+							end if
+							ilosc = ilosc + pozycjeListy(counter2).curIloscOpak
+							znacznikiWykorzystania(counter2) = 1
+						end if
+					end if
+				end if
+			next
+			
+			'szukanie dowolnej pozycji listy z faktury w celu umieszczenia w tablicy wynikowej
+			pozycjaZnaleziona = false
+			for each oDokMag in pCursorWZ_PZ
+				for each pozMag in oDokMag.listPozycje
+					if pozycjeListyFaktury(counter1).pProdukt.strNazwa = pozMag.pProdukt.strNazwa then
+						if pozycjeListyFaktury(counter1).pProdukt.IdObj = pozMag.pProdukt.IdObj then
+							set pozycjaZFaktury = pozycjeListyFaktury(counter1)
+							set dokMagZFaktury = oDokMag
+							pozycjaZnaleziona = true
+							exit for
+						end if
+					end if
+				next
+				if pozycjaZnaleziona then
+					exit for
+				end if
+			next
+			
+			'jesli są jakies dokumenty ZZ (lub ZD) to dla kazdego umieszczamy w tablicy wpis z pozycją z listy i
+			'informacjami dodatkowymi
+			iloscDokumentowZZ_ZD = 0
+			
+			for each oDokMag in pCursorZZ_ZD
+				iloscDokumentowZZ_ZD = iloscDokumentowZZ_ZD + 1
+				iloscMag = 0
+				for each pozMag in oDokMag.listPozycje
+					if pozycjeListy(counter1).pProdukt.strNazwa = pozMag.pProdukt.strNazwa then
+						if pozycjeListy(counter1).pProdukt.IdObj = pozMag.pProdukt.IdObj then
+							iloscMag = iloscMag + pozMag.curIloscEwid
+						end if
+					end if
+				next
+				size = size + 1
+				redim preserve tablicaProduktow(size)
+				tablicaProduktow(size - 1) = Array(pozycjaZFaktury, pozycjeListy(counter1), dokMagZFaktury, oDokMag, ilosc, iloscMag)
+			next
+			
+			'jesli nie bylo zadnych dokumentow ZZ (lub ZD) to umieszczamy nothing zamiast ZZ (ZD)
+			if iloscDokumentowZZ_ZD = 0 then
+				if pozycjeListy(counter1).curIloscOpak <> pozycjeListyFaktury(counter1).curIloscOpak and not wyswietlonoKomunikat then
+					nx_.trace.error "Błąd", "Faktura nr: " + oSprzedazZakup.strNrDok + " - Pozycje na fakturze i korekcie różnią się ilościami, a nie ma ZZ"
+					wyswietlonoKomunikat = true
+				end if
+				if not pozycjaZFaktury is nothing then
+					size = size + 1
+					redim preserve tablicaProduktow(size)
+					tablicaProduktow(size - 1) = Array(pozycjaZFaktury, pozycjeListy(counter1), dokMagZFaktury, nothing, ilosc, 0)
+				'else
+				'	tablicaProduktow(size - 1) = Array(nothing, pozycjeListy(counter1), nothing, nothing, 0, 0)
+				end if
+			end if
+			znacznikiWykorzystania(counter1) = 1
+		end if
+	next
+	
+	prepare_ksprzedaz_kzakup = tablicaProduktow
+	'if pCursorZZ_ZD.count > 0 then
+	'if tablicaProduktow(0)(0) is nothing and tablicaProduktow(0)(2) is nothing and tablicaProduktow(0)(3) is nothing then
+	'	prepare_sprzedaz_zakup = tablicaProduktow
+	'end if
+	'end if
+	
+end function
+
+'*******************************************************************************************************
+'Funkcja przyjmuje tablicę z danymi wygenerowanymi w funkcji wypisz_sprzedaz.
+'*******************************************************************************************************
+function wypisz_wiersze_sprzedaz_zakup(byref tablicaProduktow, byref oMSNav, byref oSprzedazZakup)
+
+	dim counter1 : counter1 = 0
+	dim counter2 : counter2 = 0
+	dim iloscFakt
+	dim iloscMag
+	dim oProdukt
+	dim wiersze()
+	redim wiersze(0)
+	dim wiersz
+	dim cond
+	dim size : size = 0
+	
+	dim wpiszWalute : wpiszWalute = false
+	if oSprzedazZakup.type = TYPEID_N5ZAKUP then
+		if (oSprzedazZakup.n5zakup_isImportUE() or oSprzedazZakup.n5zakup_isImportNieUE()) Then
+			wpiszWalute = true
+		end if
+	elseif oSprzedazZakup.type = TYPEID_N5SPRZEDAZ then
+		if oSprzedazZakup.n5sprzedaz_isExport() Then
+			wpiszWalute = true
+		end if
+	end if
+	
+	'***************************************************************************************************************
+	'w tej pętli przekazana tablica produktów jest skanowana w poszukiwaniu różnic między ilościami produktu na
+	'fakturze i na dokumencie magazynowym. Każda różnica sygnalizowana jest przez odpowiedni komunikat
+	'***************************************************************************************************************
+	while counter1 < ubound(tablicaProduktow)
+		
+		wiersz = tablicaProduktow(counter1)
+		iloscFakt = wiersz(2)
+		iloscMag = wiersz(3)
+		counter2 = 1
+		
+		'***************************************************************************************************************
+		'konieczne liczenie warunku przed petla "while" ze wzgledu na to ze VB zawsze sprawdza wszystkie skladowe
+		'warunku (false and true and true zawsze jest liczone do konca, niezaleznie od tego, czy wartosc wyniku
+		'juz jest znana czy jeszcze nie)
+		'***************************************************************************************************************
+		cond = counter1 + counter2 < ubound(tablicaProduktow)
+		if (cond) then
+			cond = cond and tablicaProduktow(counter1 + counter2)(0).pProdukt.IdObj = wiersz(0).pProdukt.IdObj
+		end if
+		while (cond)
+			iloscMag = iloscMag + tablicaProduktow(counter1 + counter2)(3)
+			counter2 = counter2 + 1
+			cond = counter1 + counter2 < ubound(tablicaProduktow)
+			if (cond) then
+				cond = cond and tablicaProduktow(counter1 + counter2)(0).pProdukt.IdObj = wiersz(0).pProdukt.IdObj
+			end if
+		wend
+		
+		if iloscFakt <> iloscMag then
+			nx_.trace.error "Błąd!", "Produkt: " + wiersz(0).pProdukt.strNazwa + ". Ilość na fakturze " + oSprzedazZakup.strNrDok + " niezgodna z dokumentami magazynowymi! Pozycja na fakturze: " + cstr(wiersz(0).IdObj)
+		end if
+		counter1 = counter1 + counter2
+	wend
+	
+	dim znacznikiWykorzystania()
+	redim znacznikiWykorzystania(ubound(tablicaProduktow))
+	initializeZnaczniki znacznikiWykorzystania
+	dim wiersz1
+	dim wiersz2
+	dim wartoscNetto : wartoscNetto = 0
+	dim wartoscBrutto : wartoscBrutto = 0
+	dim condMag 'warunek bedzie ustalany w zaleznosci od tego czy mamy do czynienia z f. zakupu czy sprzedazy
+	
+	for counter1 = 0 to ubound(tablicaProduktow)-1
+		wiersz1 = tablicaProduktow(counter1)
+		if znacznikiWykorzystania(counter1) = 0 then
+		
+			if oSprzedazZakup.type = TYPEID_N5SPRZEDAZ then
+				wartoscNetto = trans_.afc.convert.round2(wiersz1(0).curCenaNetto * wiersz1(3))
+				wartoscBrutto = trans_.afc.convert.round2(wiersz1(0).curCenaBrutto * wiersz1(3))
+			else
+				if wiersz1(2) <> 0 then
+					wartoscNetto = trans_.afc.convert.round2(wiersz1(0).curWartNetto * wiersz1(3) / wiersz1(2))
+					wartoscBrutto = trans_.afc.convert.round2(wiersz1(0).curWartBrutto * wiersz1(3) / wiersz1(2))
+				end if
+			end if
+			
+			for counter2 = counter1+1 to ubound(tablicaProduktow)-1
+				if znacznikiWykorzystania(counter2) = 0 then
+					wiersz2 = tablicaProduktow(counter2)
+					if wiersz1(0).pProdukt.pGrupaProd.IdObj = wiersz2(0).pProdukt.pGrupaProd.IdObj then
+						if oSprzedazZakup.type = TYPEID_N5SPRZEDAZ then
+							condMag = (wiersz1(1).pMagZrod.IdObj = wiersz2(1).pMagZrod.IdObj)
+						else if oSprzedazZakup.type = TYPEID_N5ZAKUP then
+								condMag = (wiersz1(1).pMagDocel.IdObj = wiersz2(1).pMagDocel.IdObj)
+							 end if
+						end if
+						if condMag then
+						
+							if oSprzedazZakup.type = TYPEID_N5SPRZEDAZ then
+								wartoscNetto = wartoscNetto + trans_.afc.convert.round2(wiersz2(0).curCenaNetto * wiersz2(3))
+								wartoscBrutto = wartoscBrutto + trans_.afc.convert.round2(wiersz2(0).curCenaBrutto * wiersz2(3))
+							else
+								if wiersz2(2) <> 0 then
+									wartoscNetto = wartoscNetto + trans_.afc.convert.round2(wiersz2(0).curWartNetto * wiersz2(3) / wiersz2(2))
+									wartoscBrutto = wartoscBrutto + trans_.afc.convert.round2(wiersz2(0).curWartBrutto * wiersz2(3) / wiersz2(2))
+								end if
+							end if
+							
+							znacznikiWykorzystania(counter2) = 1
+						end if
+					end if
+				end if
+			next
+			
+			if (wartoscNetto > 0) then
+				size = size + 1
+				redim preserve wiersze(size)
+				wiersze(size-1) = Array(wartoscNetto, wiersz1(0), wiersz1(1), wartoscBrutto)
+			end if
+			znacznikiWykorzystania(counter1) = 1
+		end if
+	next
+	
+	'***********************************************************************
+	' "wtlaczanie" poszczegolnych wierszy do pliku
+	'***********************************************************************
+	dim pierwszyWiersz
+	dim pierwszyZapamietany
+	pierwszyZapamietany = false
+	dim sumaN
+	dim sumaB
+	sumaN = 0
+	sumaB = 0
+	dim oMSNAVRow
+	if oSprzedazZakup.type = TYPEID_N5SPRZEDAZ then
+		for counter1=0 to ubound(wiersze)-1
+			set oMSNAVRow=oMSNav.add_new()
+			if not pierwszyZapamietany then
+				set pierwszyWiersz = oMSNAVRow
+				pierwszyZapamietany = true
+			end if
+			basic_iRow 1, 2, false, oMSNAVRow, oSprzedazZakup, false, "Faktura sprzedaży "
+			if not oSprzedazZakup.pKwalifikatorEx is nothing then
+				oMSNAVRow.m_strMPK = oSprzedazZakup.pKwalifikatorEx.strNazwa
+			end if
+			oMSNAVRow.m_curBrutto = wiersze(counter1)(3)
+			oMSNAVRow.m_curNetto = wiersze(counter1)(0)
+			
+			oMSNAVRow.m_strSymKonto = find_n5sprzedaz_account (wiersze(counter1)(2), wiersze(counter1)(1), oSprzedazZakup)
+			if StrComp( oMSNAVRow.m_strSymKonto, "nieprzewidziany magazyn",1) = 0 then
+						nx_.trace.error "Błąd", "Nie odnaleziono numeru konta Wn/Ma dla dokumentu nr: " + oSprzedazZakup.strNrDok + " poszukiwany magazyn: '" + cstr(wiersze(counter1)(2).pMagZrod.strNazwa)+"'"
+			end if
+			oMSNAVRow.m_strVATGGK = vat_KG_GGK (oSprzedazZakup)
+			oMSNAVRow.m_strVATTGK = vat_KG_TGK(oSprzedazZakup, (wiersze(counter1)(1)))
+			sumaN = sumaN + wiersze(counter1)(0)
+			sumaB = sumaB + wiersze(counter1)(3)
+		next
+	elseif oSprzedazZakup.type = TYPEID_N5ZAKUP then
+		for counter1=0 to ubound(wiersze)-1
+			set oMSNAVRow=oMSNav.add_new()
+			if not pierwszyZapamietany then
+				set pierwszyWiersz = oMSNAVRow
+				pierwszyZapamietany = true
+			end if
+			basic_iRow 1, 2, true, oMSNAVRow, oSprzedazZakup, false, "Faktura zakupu "
+			oMSNAVRow.m_curBrutto = wiersze(counter1)(3)
+			oMSNAVRow.m_curNetto = wiersze(counter1)(0)
+			
+			oMSNAVRow.m_strSymKonto = find_n5zakup_account (wiersze(counter1)(2))
+			if StrComp( oMSNAVRow.m_strSymKonto, "nieprzewidziany magazyn",1) = 0 then
+						nx_.trace.error "Błąd", "Nie odnaleziono numeru konta Wn/Ma dla dokumentu nr: " + oSprzedazZakup.strNrDok + " poszukiwany magazyn: '" + cstr(wiersze(counter1)(2).pMagDocel.strNazwa)+"'"
+			end if
+			oMSNAVRow.m_strVATGGK = vat_KG_GGK (oSprzedazZakup)
+			oMSNAVRow.m_strVATTGK = vat_KG_TGK(oSprzedazZakup, (wiersze(counter1)(1)))
+			sumaN = sumaN + wiersze(counter1)(0)
+			sumaB = sumaB + wiersze(counter1)(3)
+		next
+	end if
+	
+	dim wartNetTow
+	dim wartBrutTow
+	wartNetTow = liczWartoscTowarow(oSprzedazZakup, true)
+	wartBrutTow = liczWartoscTowarow(oSprzedazZakup, false)
+	
+	if not isEmpty(pierwszyWiersz) then
+		pierwszyWiersz.m_curBrutto = pierwszyWiersz.m_curBrutto + (wartBrutTow - sumaB)
+		pierwszyWiersz.m_curNetto = pierwszyWiersz.m_curNetto + (wartNetTow - sumaN)
+	end if
+	
+	'***********************************************************************
+	'ustalanie wiersza wyrównujacego ewentualne roznice w wartosciach 
+	'towarow i uslug z faktury oraz towarow z dokmag
+	'***********************************************************************
+	
+	if wartNetTow <> oSprzedazZakup.curSumaNetto then
+		set oMSNAVRow = oMSNav.add_new()
+		if oSprzedazZakup.type = TYPEID_N5SPRZEDAZ then
+			basic_iRow 1, 2, false, oMSNAVRow, oSprzedazZakup, false, "Kwota nierozpoznana na f. sprz. "
+		else if oSprzedazZakup.type = TYPEID_N5ZAKUP then
+				basic_iRow 1, 2, true, oMSNAVRow, oSprzedazZakup, false, "Kwota nierozpoznana na f. zak. "
+			 end if
+		end if
+		RowSumCurCheck oMSNAVRow, oSprzedazZakup, "xxx-xx", oSprzedazZakup.curSumaNetto - wartNetTow, oSprzedazZakup.curSumaBrutto - wartBrutTow
+	end if
+	
+	'***********************************************************************
+	'ustalanie wiersza VAT
+	'***********************************************************************
+	if oSprzedazZakup.type = TYPEID_N5SPRZEDAZ then
+		if Not oSprzedazZakup.n5sprzedaz_isExport() Then
+			set oMSNAVRow=oMSNAV.add_new()
+			basic_iRow 1, 2, false, oMSNAVRow, oSprzedazZakup, false, "VAT należny faktury sprzedaży "
+			if not oSprzedazZakup.pKwalifikatorEx is nothing then
+				oMSNAVRow.m_strMPK = oSprzedazZakup.pKwalifikatorEx.strNazwa
+			end if
+			RowVat oMSNAVRow, oSprzedazZakup, konta_n5sprzedaz_kraj(0)(1)
+		end if
+	elseif oSprzedazZakup.type = TYPEID_N5ZAKUP then
+		if Not (oSprzedazZakup.n5zakup_isImportUE() or oSprzedazZakup.n5zakup_isImportNieUE()) Then
+			set oMSNAVRow=oMSNAV.add_new()
+			basic_iRow 1, 2, true, oMSNAVRow, oSprzedazZakup, false, "VAT naliczony faktury zakupu "
+			RowVat oMSNAVRow, oSprzedazZakup, konta_n5zakup_kraj(0)(0)
+		'eksport dekretu z VATem niepotrzebny, w razie czego mozna przywrocic
+		'else
+		'	set oMSNAVRow=oMSNAV.add_new()
+		'	basic_iRow 1, 2, true, oMSNAVRow, oSprzedazZakup, wpiszWalute, "VAT naliczony faktury zakupu WNT "
+		'	RowVat oMSNAVRow, oSprzedazZakup, konta_n5zakup_WNT(0)(0)
+		'	set oMSNAVRow=oMSNAV.add_new()
+		'	basic_iRow 1, 2, false, oMSNAVRow, oSprzedazZakup, wpiszWalute, "VAT należny faktury zakupu WNT "
+		'	RowVat oMSNAVRow, oSprzedazZakup, konta_n5zakup_WNT(0)(1)
+		end if
+	end if
+	
+end function
+
+
+'************************************************************************************************************************
+'funkcja analizuje pozycje faktury i tworzy tablicę tablicaProduktow, ktora zawiera produkty (zgrupowane po IdObj - jesli
+'na fakturze bylo wiecej pozycji z identycznymi produktami), do ktorych przypisane są: dokument magazynowy, na ktorym
+'produkt zostal wydany (jest kilka wierszy z tym samym produktem i roznymi magazynami, jesli produkt wydano z wiecej niz 
+'jednego magazynu), ilosc produktu na pozycji faktury oraz ilosc produktu na dokumencie magazynowym
+'Taką tablicę funkcja przekazuje nastepnie do funkcji zwrocWiersze, ktora stworzy tablice z konkretnymi danymi do eksportu
+'************************************************************************************************************************
+function prepare_sprzedaz_zakup(byref oSprzedazZakup)
+	dim pozycjeListy()
+	redim pozycjeListy(0)
+	dim tablicaProduktow()
+	redim tablicaProduktow(0)
+	
+	dim size
+	size = 0
+	
+	'************************************************************************************************************************
+	'przepisywanie elementow listy pozycji sprzedazy do tablicy (w celu umozliwienia dostepu do pozycji poprzez 
+	'indeks numeryczny)
+	'************************************************************************************************************************
+	dim pozycjaListy
+	for each pozycjaListy in oSprzedazZakup.listPozycje
+		size = size + 1
+		redim preserve pozycjeListy(size)
+		set pozycjeListy(size - 1) = pozycjaListy
+	next
+	
+	size = 0
+	
+	'************************************************************************************************************************
+	'tablica mówiąca, czy dany element z tablicy pozycjeListy juz zostal przepisany do tablicy tablicaProduktow
+	'************************************************************************************************************************
+	dim znacznikiWykorzystania()
+	redim znacznikiWykorzystania(ubound(pozycjeListy))
+	initializeZnaczniki znacznikiWykorzystania
+	
+	dim pCursor
+	if oSprzedazZakup.type = TYPEID_N5SPRZEDAZ then
+		set pCursor = trans_.createrawcursor(10162,"nTypDok=19 and wrefDokHandl="+cStr(oSprzedazZakup.IdObj),"","")
+	else if oSprzedazZakup.type = TYPEID_N5ZAKUP then
+			set pCursor = trans_.createrawcursor(10162,"nTypDok=18 and wrefDokHandl="+cStr(oSprzedazZakup.IdObj),"","")
+		 end if
+	end if
+	dim oDokMag
+	
+	dim pozMag
+	dim iloscMag
+	dim ilosc
+	dim pomTab
+	dim counter1
+	dim counter2
+	'************************************************************************************************************************
+	'przeszukiwanie tablicy pozycji faktury w celu zsumowania ilosci tych samych produktow
+	'************************************************************************************************************************
+	
+	for counter1 = 0 to (ubound(pozycjeListy)) - 1
+		ilosc = 0
+		if (znacznikiWykorzystania(counter1) = 0 and pozycjeListy(counter1).pProdukt.eRodzaj = N5PRODUKT_TOWAR) then
+			ilosc = pozycjeListy(counter1).curIloscOpak
+			for counter2 = counter1+1 to ubound(pozycjeListy) - 1
+				if (znacznikiWykorzystania(counter2) = 0 and pozycjeListy(counter1).pProdukt.eRodzaj = N5PRODUKT_TOWAR) then
+					if pozycjeListy(counter1).pProdukt.strNazwa = pozycjeListy(counter2).pProdukt.strNazwa then
+						if pozycjeListy(counter1).pProdukt.IdObj = pozycjeListy(counter2).pProdukt.IdObj then
+							if pozycjeListy(counter1).curCenaNettoWal <> pozycjeListy(counter2).curCenaNettoWal then
+								nx_.trace.error "Błąd", "Ten sam produkt: " + pozycjeListy(counter1).pProdukt.strNazwa + " na fakturze " + oSprzedazZakup.strNrDok + " - różne ceny"
+								'pozycjeListy(1000) = 3
+							end if
+							ilosc = ilosc + pozycjeListy(counter2).curIloscOpak
+							znacznikiWykorzystania(counter2) = 1
+						end if
+					end if
+				end if
+			next
+			for each oDokMag in pCursor
+				iloscMag = 0
+				for each pozMag in oDokMag.listPozycje
+					if pozycjeListy(counter1).pProdukt.strNazwa = pozMag.pProdukt.strNazwa then
+						if pozycjeListy(counter1).pProdukt.IdObj = pozMag.pProdukt.IdObj then
+							iloscMag = iloscMag + pozMag.curIloscEwid
+						end if
+					end if
+				next
+				size = size + 1
+				redim preserve tablicaProduktow(size)
+				tablicaProduktow(size - 1) = Array(pozycjeListy(counter1), oDokMag, ilosc, iloscMag)
+			next
+			znacznikiWykorzystania(counter1) = 1
+		end if
+	next
+	
+	prepare_sprzedaz_zakup = tablicaProduktow
+end function
+
+
+'*******************************************************************************************************
+'Funkcja przyjmuje tablicę z danymi wygenerowanymi w funkcji prepare_sprzedaz_uslugi.
+'*******************************************************************************************************
+function wypisz_wiersze_sprzedaz_uslugi(byref tablicaProduktow, byref oMSNav, byref oSprzedazZakup)
+
+	dim counter1 : counter1 = 0
+	dim counter2 : counter2 = 0
+	dim iloscFakt
+	dim iloscMag
+	dim oProdukt
+	dim wiersze()
+	redim wiersze(0)
+	dim wiersz
+	dim cond
+	dim size : size = 0
+	
+	dim wpiszWalute : wpiszWalute = false
+	if oSprzedazZakup.n5sprzedaz_isExport() Then
+		wpiszWalute = true
+	end if
+	
+	dim znacznikiWykorzystania()
+	redim znacznikiWykorzystania(ubound(tablicaProduktow))
+	initializeZnaczniki znacznikiWykorzystania
+	dim wiersz1
+	dim wiersz2
+	dim wartoscNetto : wartoscNetto = 0
+	dim wartoscBrutto : wartoscBrutto = 0
+	dim condMag 'warunek bedzie ustalany w zaleznosci od tego czy mamy do czynienia z f. zakupu czy sprzedazy
+	
+	for counter1 = 0 to ubound(tablicaProduktow)-1
+		wiersz1 = tablicaProduktow(counter1)
+		if znacznikiWykorzystania(counter1) = 0 then
+		
+			wartoscNetto = trans_.afc.convert.round2(wiersz1(0).curCenaNetto * wiersz1(1))
+			wartoscBrutto = trans_.afc.convert.round2(wiersz1(0).curCenaBrutto * wiersz1(1))
+			
+			for counter2 = counter1+1 to ubound(tablicaProduktow)-1
+				if znacznikiWykorzystania(counter2) = 0 then
+					wiersz2 = tablicaProduktow(counter2)
+					if wiersz1(0).pProdukt.pGrupaProd.IdObj = wiersz2(0).pProdukt.pGrupaProd.IdObj then
+
+						wartoscNetto = wartoscNetto + trans_.afc.convert.round2(wiersz2(0).curCenaNetto * wiersz2(1))
+						wartoscBrutto = wartoscBrutto + trans_.afc.convert.round2(wiersz2(0).curCenaBrutto * wiersz2(1))
+						znacznikiWykorzystania(counter2) = 1
+
+					end if
+				end if
+			next
+			
+			size = size + 1
+			redim preserve wiersze(size)
+			wiersze(size-1) = Array(wartoscNetto, wartoscBrutto, wiersz1(0))
+
+			znacznikiWykorzystania(counter1) = 1
+		end if
+	next
+	
+	'***********************************************************************
+	' "wtlaczanie" poszczegolnych wierszy do pliku
+	'***********************************************************************
+	dim sumaN
+	dim sumaB
+	sumaN = 0
+	sumaB = 0
+	dim oMSNAVRow
+	if oSprzedazZakup.type = TYPEID_N5SPRZEDAZ then
+		for counter1=0 to ubound(wiersze)-1
+			set oMSNAVRow=oMSNav.add_new()
+			
+			basic_iRow 1, 2, false, oMSNAVRow, oSprzedazZakup, false, "Faktura sprzedaży usług "
+			if not oSprzedazZakup.pKwalifikatorEx is nothing then
+				oMSNAVRow.m_strMPK = oSprzedazZakup.pKwalifikatorEx.strNazwa
+			end if
+			oMSNAVRow.m_curBrutto = wiersze(counter1)(1)
+			oMSNAVRow.m_curNetto = wiersze(counter1)(0)
+			
+			oMSNAVRow.m_strSymKonto = find_n5sprzedaz_account (nothing, wiersze(counter1)(2), oSprzedazZakup)
+			
+			if StrComp( oMSNAVRow.m_strSymKonto, "nieprzewidziany magazyn", 1) = 0 then
+				nx_.trace.error "Błąd", "Nie odnaleziono numeru konta Wn/Ma dla dokumentu nr: " + oSprzedazZakup.strNrDok
+			end if
+			
+			oMSNAVRow.m_strVATGGK = vat_KG_GGK (oSprzedazZakup)
+			oMSNAVRow.m_strVATTGK = vat_KG_TGK(oSprzedazZakup, (wiersze(counter1)(2)))
+			sumaN = sumaN + wiersze(counter1)(0)
+			sumaB = sumaB + wiersze(counter1)(1)
+		next
+	end if
+	
+	'dim wartNetTow
+	'dim wartBrutTow
+	'wartNetTow = liczWartoscTowarow(oSprzedazZakup, true)
+	'wartBrutTow = liczWartoscTowarow(oSprzedazZakup, false)
+	
+	'if not isEmpty(pierwszyWiersz) then
+	'	pierwszyWiersz.m_curBrutto = pierwszyWiersz.m_curBrutto + (wartBrutTow - sumaB)
+	'	pierwszyWiersz.m_curNetto = pierwszyWiersz.m_curNetto + (wartNetTow - sumaN)
+	'end if
+	
+	'***********************************************************************
+	'ustalanie wiersza VAT
+	'***********************************************************************
+	if oSprzedazZakup.type = TYPEID_N5SPRZEDAZ then
+		if Not oSprzedazZakup.n5sprzedaz_isExport() Then
+			set oMSNAVRow=oMSNAV.add_new()
+			basic_iRow 1, 2, false, oMSNAVRow, oSprzedazZakup, false, "VAT należny faktury sprzedaży usług "
+			if not oSprzedazZakup.pKwalifikatorEx is nothing then
+				oMSNAVRow.m_strMPK = oSprzedazZakup.pKwalifikatorEx.strNazwa
+			end if
+			RowVat oMSNAVRow, oSprzedazZakup, konta_n5sprzedaz_kraj(0)(1)
+		end if
+	end if
+	
+end function
+
+'*******************************************************************************
+'Funkcja do obslugi faktur sprzedazy uslug
+'*******************************************************************************
+function prepare_sprzedaz_uslugi(byref oSprzedazZakup)
+	dim pozycjeListy()
+	redim pozycjeListy(0)
+	dim tablicaProduktow()
+	redim tablicaProduktow(0)
+	
+	dim size
+	size = 0
+	
+	'************************************************************************************************************************
+	'przepisywanie elementow listy pozycji sprzedazy do tablicy (w celu umozliwienia dostepu do pozycji poprzez 
+	'indeks numeryczny)
+	'************************************************************************************************************************
+	dim pozycjaListy
+	for each pozycjaListy in oSprzedazZakup.listPozycje
+		size = size + 1
+		redim preserve pozycjeListy(size)
+		set pozycjeListy(size - 1) = pozycjaListy
+	next
+	
+	size = 0
+	
+	'************************************************************************************************************************
+	'tablica mówiąca, czy dany element z tablicy pozycjeListy juz zostal przepisany do tablicy tablicaProduktow
+	'************************************************************************************************************************
+	dim znacznikiWykorzystania()
+	redim znacznikiWykorzystania(ubound(pozycjeListy))
+	initializeZnaczniki znacznikiWykorzystania
+	
+	dim pCursor
+	set pCursor = trans_.createrawcursor(10162,"nTypDok=19 and wrefDokHandl="+cStr(oSprzedazZakup.IdObj),"","")
+	dim oDokMag
+	
+	dim pozMag
+	dim iloscMag
+	dim ilosc
+	dim pomTab
+	dim counter1
+	dim counter2
+	'************************************************************************************************************************
+	'przeszukiwanie tablicy pozycji faktury w celu zsumowania ilosci tych samych produktow
+	'************************************************************************************************************************
+	
+	for counter1 = 0 to (ubound(pozycjeListy)) - 1
+		ilosc = 0
+		if (znacznikiWykorzystania(counter1) = 0 and pozycjeListy(counter1).pProdukt.eRodzaj = N5PRODUKT_USLUGA) then
+			ilosc = pozycjeListy(counter1).curIloscOpak
+			for counter2 = counter1+1 to ubound(pozycjeListy) - 1
+				if (znacznikiWykorzystania(counter2) = 0 and pozycjeListy(counter1).pProdukt.eRodzaj = N5PRODUKT_USLUGA) then
+					if pozycjeListy(counter1).pProdukt.strNazwa = pozycjeListy(counter2).pProdukt.strNazwa then
+						if pozycjeListy(counter1).pProdukt.IdObj = pozycjeListy(counter2).pProdukt.IdObj then
+							if pozycjeListy(counter1).curCenaNettoWal <> pozycjeListy(counter2).curCenaNettoWal then
+								nx_.trace.error "Błąd", "Ta sama usługa: " + pozycjeListy(counter1).pProdukt.strNazwa + " na fakturze " + oSprzedazZakup.strNrDok + " - różne ceny"
+								'pozycjeListy(1000) = 3
+							end if
+							ilosc = ilosc + pozycjeListy(counter2).curIloscOpak
+							znacznikiWykorzystania(counter2) = 1
+						end if
+					end if
+				end if
+			next
+			size = size + 1
+			redim preserve tablicaProduktow(size)
+			tablicaProduktow(size - 1) = Array(pozycjeListy(counter1), ilosc)
+			znacznikiWykorzystania(counter1) = 1
+		end if
+	next
+	
+	prepare_sprzedaz_uslugi = tablicaProduktow
+end function
+
+
+
+'*******************************************************************************************************
+'Funkcja wypełnia wnetrze kazdego dokumentu magazynowego.
+'*******************************************************************************************************
+
+function inside_dokmag(iKRK,iKRD,byref oDokMag,byref oMSNav,oPozList,iOpis)
+
+dim kontoWn
+dim kontoMa
+dim oMSNAVRow1 : set oMSNAVRow1 = oMSNAV.add_new()
+dim oMSNAVRow2 : set oMSNAVRow2 = oMSNAV.add_new()
+dim czyMM
+czyMM = false
+
+    'wspolne dla wszystkich dokumentow magazynowych pola eksportu
+         oMSNAVRow1.m_iKRK = iKRK
+         oMSNAVRow2.m_iKRK = iKRK
+         oMSNAVRow1.m_iKRD = iKRD
+         oMSNAVRow2.m_iKRD = iKRD
+         oMSNAVRow1.m_strNrDok = oDokMag.strNrDok
+         oMSNAVRow2.m_strNrDok = oDokMag.strNrDok
+         oMSNAVRow1.m_strNrDokObcy = oDokMag.strNrDok
+         oMSNAVRow2.m_strNrDokObcy = oDokMag.strNrDok
+         oMSNAVRow1.m_dDataDok = oDokMag.dDataWyst
+         oMSNAVRow2.m_dDataDok = oDokMag.dDataWyst
+         oMSNAVRow1.m_dDataKsieg = oDokMag.dDataWyst
+         oMSNAVRow2.m_dDataKsieg = oDokMag.dDataWyst
+
+
+
+         select case oDokMag.nTypDok
+
+	          case N5REJESTRDOK__PZ    kontoWn = find_n5dokmag_account(oDokMag,nothing,nothing)(0)
+	                                   kontoMa = find_n5dokmag_account(oDokMag,nothing,nothing)(1)
+	                                   if StrComp(kontoWn,"nieprzewidziany magazyn",1) = 0 Or StrComp(kontoMa,"nieprzewidziany magazyn",1) = 0 then
+                                                      nx_.trace.error "Błąd", "Nie odnaleziono numeru konta Wn/Ma dla dokumentu nr: " + oDokMag.strNrDok + " poszukiwany magazyn: '" + cstr(oDokmag.pMagDocel.strNazwa)+"'"
+                                          end if
+	                                   if oDokMag.curSumaMag = clng(0) then
+                                                nx_.trace.error "Błąd", "Dokument nr: " + oDokMag.strNrDok + " ma zerową wartość"
+                                         end if	
+                                         oMSNAVRow1.m_curBrutto = abs(oDokMag.curSumaMag)
+	                                   oMSNAVRow1.m_curNetto = abs(oDokMag.curSumaMag)
+                                         oMSNAVRow2.m_curBrutto = abs(oDokMag.curSumaMag)
+                                         oMSNAVRow2.m_curNetto = abs(oDokMag.curSumaMag)
+
+                case N5REJESTRDOK__ZD    kontoWn = find_n5dokmag_account(oDokMag,nothing,nothing)(1)
+	                                   kontoMa = find_n5dokmag_account(oDokMag,nothing,nothing)(0)
+	                                   if StrComp(kontoWn,"nieprzewidziany magazyn",1) = 0 Or StrComp(kontoMa,"nieprzewidziany magazyn",1) = 0 then
+                                                      nx_.trace.error "Błąd", "Nie odnaleziono numeru konta Wn/Ma dla dokumentu nr: " + oDokMag.strNrDok + " poszukiwany magazyn: '" + cstr(oDokmag.pMagZrod.strNazwa)+"'"
+                                          end if
+                                         if oDokMag.curSumaMag = clng(0) then
+                                                nx_.trace.error "Błąd", "Dokument nr: " + oDokMag.strNrDok + " ma zerową wartość"
+                                         end if
+                                         oMSNAVRow1.m_curBrutto = abs(oDokMag.curSumaMag)
+	                                   oMSNAVRow1.m_curNetto = abs(oDokMag.curSumaMag)
+                                         oMSNAVRow2.m_curBrutto = abs(oDokMag.curSumaMag)
+                                         oMSNAVRow2.m_curNetto = abs(oDokMag.curSumaMag)
+	
+	          case N5REJESTRDOK__WZ    kontoWn = find_n5dokmag_account(oDokMag,oPozList,nothing)(0)
+                                         kontoMa = find_n5dokmag_account(oDokMag,oPozList,nothing)(1)
+                                         if StrComp(kontoWn,"nieprzewidziany magazyn",1) = 0 Or StrComp(kontoMa,"nieprzewidziany magazyn",1) = 0 then
+                                                      nx_.trace.error "Błąd", "Nie odnaleziono numeru konta Wn/Ma dla dokumentu nr: " + oDokMag.strNrDok + " poszukiwany magazyn: '" + cstr(oDokmag.pMagZrod.strNazwa)+"'"
+                                          end if
+                                         if oDokMag.curSumaMag = clng(0) then
+                                                nx_.trace.error "Błąd", "Dokument nr: " + oDokMag.strNrDok + " ma zerową wartość"
+                                         end if
+                                         oMSNAVRow1.m_curBrutto = abs(oPozList.curWartMag)
+                                         oMSNAVRow1.m_curNetto = abs(oPozList.curWartMag)
+                                         oMSNAVRow2.m_curBrutto = abs(oPozList.curWartMag)
+                                         oMSNAVRow2.m_curNetto = abs(oPozList.curWartMag)
+                                         
+              case N5REJESTRDOK__PP		kontoWn = find_pp_account(oDokMag)(1)
+	                                   if StrComp(kontoWn,"nieprzewidziany magazyn",1) = 0 then
+                                                      nx_.trace.error "Błąd", "Nie odnaleziono numeru konta Wn/Ma dla dokumentu nr: " + oDokMag.strNrDok + " poszukiwany magazyn: '" + cstr(oDokmag.pMagDocel.strNazwa)+"'"
+                                         end if
+                                         kontoMa = find_pp_account(oDokMag)(0)
+	                                   if StrComp(kontoMa,"nieprzewidziany magazyn",1) = 0 then
+                                                      nx_.trace.error "Błąd", "Nie odnaleziono numeru konta Wn/Ma dla dokumentu nr: " + oDokMag.strNrDok + " poszukiwany magazyn: '" + cstr(oDokmag.pMagZrod.strNazwa)+"'"
+                                         end if
+                                         if oDokMag.curSumaMag = clng(0) then
+                                                nx_.trace.error "Błąd", "Dokument nr: " + oDokMag.strNrDok + " ma zerową wartość"
+                                         end if
+                                         oMSNAVRow1.m_curBrutto = abs(oDokMag.curSumaMag)
+										 oMSNAVRow1.m_curNetto =  abs(oDokMag.curSumaMag)
+                                         oMSNAVRow2.m_curBrutto = abs(oDokMag.curSumaMag)
+                                         oMSNAVRow2.m_curNetto = abs(oDokMag.curSumaMag)
+
+	          case N5REJESTRDOK__ZZ    kontoWn = find_n5dokmag_account(oDokMag,oPozList,nothing)(0)
+	                                   kontoMa = find_n5dokmag_account(oDokMag,oPozList,nothing)(1)
+	                                   if StrComp(kontoWn,"nieprzewidziany magazyn",1) = 0 Or StrComp(kontoMa,"nieprzewidziany magazyn",1) = 0 then
+                                                      nx_.trace.error "Błąd", "Nie odnaleziono numeru konta Wn/Ma dla dokumentu nr: " + oDokMag.strNrDok + " poszukiwany magazyn: '" + cstr(oDokmag.pMagZrod.strNazwa)+"'"
+                                          end if
+                                         if oDokMag.curSumaMag = clng(0) then
+                                                nx_.trace.error "Błąd", "Dokument nr: " + oDokMag.strNrDok + " ma zerową wartość"
+                                         end if
+                                         oMSNAVRow1.m_curBrutto = abs(oPozList.curWartMag)
+	                                   oMSNAVRow1.m_curNetto =  abs(oPozList.curWartMag)
+	                                   oMSNAVRow2.m_curNetto = abs(oPozList.curWartMag)
+                                         oMSNAVRow2.m_curBrutto = abs(oPozList.curWartMag)
+	          case N5REJESTRDOK__MM    kontoWn = find_n5dokmag_account(oDokMag,nothing,true)(1)
+	                                   if StrComp(kontoWn,"nieprzewidziany magazyn",1) = 0 then
+                                                      nx_.trace.error "Błąd", "Nie odnaleziono numeru konta Wn/Ma dla dokumentu nr: " + oDokMag.strNrDok + " poszukiwany magazyn: '" + cstr(oDokmag.pMagDocel.strNazwa)+"'"
+                                         end if
+                                         kontoMa = find_n5dokmag_account(oDokMag,nothing,false)(0)
+	                                   if StrComp(kontoMa,"nieprzewidziany magazyn",1) = 0 then
+                                                      nx_.trace.error "Błąd", "Nie odnaleziono numeru konta Wn/Ma dla dokumentu nr: " + oDokMag.strNrDok + " poszukiwany magazyn: '" + cstr(oDokmag.pMagZrod.strNazwa)+"'"
+                                         end if
+                                         if oDokMag.curSumaMag = clng(0) then
+                                                nx_.trace.error "Błąd", "Dokument nr: " + oDokMag.strNrDok + " ma zerową wartość"
+                                         end if
+                                         oMSNAVRow1.m_curBrutto = abs(oDokMag.curSumaMag)
+										 oMSNAVRow1.m_curNetto =  abs(oDokMag.curSumaMag)
+                                         oMSNAVRow2.m_curBrutto = abs(oDokMag.curSumaMag)
+                                         oMSNAVRow2.m_curNetto = abs(oDokMag.curSumaMag)
+         end select
+         oMSNAVRow1.m_strOpis = iOpis +" "+oDokMag.strNrDok		'opis ksieg
+         oMSNAVRow2.m_strOpis = iOpis +" "+oDokMag.strNrDok		'opis ksieg
+
+         if StrComp(kontoWn,"nieprzewidziany magazyn") <> 0 then
+
+                  oMSNAVRow1.m_strSymKonto =  kontoWn
+
+         else
+                 	oMSNAVRow1.m_strSymKonto =  kontoWn
+                  oMSNAVRow1.m_strOpis =  iOpis + " niepowiazany"
+
+         end if
+         if StrComp(kontoMa,"nieprzewidziany magazyn") <> 0 then
+
+                 	oMSNAVRow2.m_strSymKonto =  kontoMa
+         else
+                 	oMSNAVRow2.m_strSymKonto =  kontoMa
+                  oMSNAVRow2.m_strOpis =  iOpis + " niepowiazany"
+         end if
+
+         oMSNAVRow1.m_bWn = true
+         oMSNAVRow2.m_bWn = false
+         dim znak
+
+
+         'dla WZ oraz ZZ dodatkowo ustawiane jest pole kwalfikatora dla pierwszego wiersza
+         if not oDokMag.wrefDokHandl  is nothing then
+         if not oDokMag.wrefDokHandl.pKwalifikatorEx is nothing then
+         if oDokMag.wrefDokHandl.type = TYPEID_N5SPRZEDAZ then
+
+            oMSNAVRow1.m_strMPK = oDokMag.wrefDokHandl.pKwalifikatorEx.strNazwa
+
+         end if
+         end if
+         end if
+end function
+
+function n5sprzedaz_2_msnav(byref oSprzedaz, byref oMSNav)
+	'wiersz pierwszy ---------------------------------------------------------
+	dim oMSNAVRow1 : set oMSNAVRow1 = oMSNAV.add_new()
+	oMSNAVRow1.m_strSymKonto = oSprzedaz.pKlient.strIndeks
+	
+	'***************************************************************************************************************
+	'W zaleznosci od tego czy mamy do czynienia z dokumentem oryginalnym, czy z korekta, przypisujemy rozne dane
+	'***************************************************************************************************************
+	if oSprzedaz.pRejestrDok.IdObj = 98 then
+		basic_iRow 2,2,true,oMSNAVRow1,oSprzedaz,true, "Faktura sprzedaży usług "
+		oMSNAVRow1.m_curBrutto = oSprzedaz.curSumaWalBrutto
+		oMSNAVRow1.m_curNetto = oSprzedaz.curSumaWal
+	elseif oSprzedaz.n5sprzedaz_isKorekta() then
+		'aaa = 0
+		basic_iRow 2,3,false,oMSNAVRow1,oSprzedaz,true, "Korekta f. sprzedaży "
+		oMSNAVRow1.m_curBrutto = abs(oSprzedaz.pPopSprzed.curSumaWalBrutto) - abs(oSprzedaz.curSumaWalBrutto)
+		oMSNAVRow1.m_curNetto = abs(oSprzedaz.pPopSprzed.curSumaWal) - abs(oSprzedaz.curSumaWal)
+		'if oSprzedaz.strNrDok = "00083/2006" then
+		'	oMSNAVRow1.rerepopo = 0
+		'end if
+	else
+		basic_iRow 2,2,true,oMSNAVRow1,oSprzedaz,true, "Faktura sprzedaży "
+		oMSNAVRow1.m_curBrutto = oSprzedaz.curSumaWalBrutto
+		oMSNAVRow1.m_curNetto = oSprzedaz.curSumaWal
+	end if
+
+	'wiersze następne-----------------------------------------------------
+	dim tablicaProduktow
+	if oSprzedaz.pRejestrDok.IdObj = 98 then
+		tablicaProduktow = (prepare_sprzedaz_uslugi (oSprzedaz))
+		wypisz_wiersze_sprzedaz_uslugi tablicaProduktow, oMSNav, oSprzedaz
+	elseif oSprzedaz.n5sprzedaz_isKorekta() then
+		tablicaProduktow = (prepare_ksprzedaz_kzakup (oSprzedaz))
+		wypisz_wiersze_ksprzedaz_kzakup tablicaProduktow, oMSNav, oSprzedaz
+
+	'faktura sprzedazy
+	else
+		tablicaProduktow = (prepare_sprzedaz_zakup (oSprzedaz))
+		wypisz_wiersze_sprzedaz_zakup tablicaProduktow, oMSNav, oSprzedaz
+
+	end if
+end function
+
+function n5dokmag_2_msnav(ByRef oDokMag, ByRef oMSNav)
+	dim oPozList
+
+    Select Case oDokMag.nTypDok
+
+    Case N5REJESTRDOK__PZ
+
+           inside_dokmag 1,4,oDokMag,oMSNAV,nothing,"PZ magazyn "
+
+  Case N5REJESTRDOK__ZD
+
+              inside_dokmag 1,4,oDokMag,oMSNAV,nothing,"ZD magazyn "
+
+  Case N5REJESTRDOK__WZ
+
+        If Not oDokMag.wrefDokHandl Is Nothing Then
+             If oDokMag.wrefDokHandl.Type = TYPEID_N5SPRZEDAZ Then
+
+               dim pozycjaListy
+               dim Lista()
+               dim size
+               size = 0
+	         for each pozycjaListy in oDokMag.listPozycje
+		       size = size + 1
+		       redim preserve Lista(size)
+		       set Lista(size - 1) = pozycjaListy
+               next
+               
+               dim znacznikiWykorzystania()
+               redim znacznikiWykorzystania(Ubound(Lista))
+               initializeZnaczniki znacznikiWykorzystania
+	        dim ptrZew
+	        dim ptrWew
+	        dim suma
+	        dim ilosc
+	        
+              for ptrZew = 0 To Ubound(Lista) - 1
+
+
+                      if znacznikiWykorzystania(ptrZew)=0 then
+
+                               suma = Lista(ptrZew).curWartMag
+                               ilosc = Lista(ptrZew).curIloscOpak
+
+                               for ptrWew = ptrZew + 1 to UBound(Lista) - 1
+                               
+                                   	if znacznikiWykorzystania(ptrWew) = 0  then
+
+                                          if StrComp(Lista(ptrZew).pProdukt.pGrupaProd.strNazwa,Lista(ptrWew).pProdukt.pGrupaProd.strNazwa,1) = 0    then
+
+                                            if not Lista(ptrZew).pKwalifikatorEx is nothing  then
+
+                                                  if StrComp(Lista(ptrZew).pKwalifikatorEx.strNazwa,Lista(ptrWew).pKwalifikatorEx.strNazwa,1) = 0 Then
+                                             
+                                                   znacznikiWykorzystania(ptrWew) = 1
+                                                   suma = suma + Lista(ptrWew).curWartMag
+                                                   ilosc = ilosc + Lista(ptrWew).curIloscOpak
+                                                   
+                                                   end if
+
+                                            else
+
+                                                   znacznikiWykorzystania(ptrWew) = 1
+                                                   suma = suma + Lista(ptrWew).curWartMag
+                                                   ilosc = ilosc + Lista(ptrWew).curIloscOpak
+                                            end if
+                                          end if
+                                    end if
+                               
+                               Next
+
+                               Lista(ptrZew).curWartMag = suma
+                               'Lista(ptrZew).curIloscOpak = ilosc
+                               inside_dokmag 1,6,oDokMag,oMSNAV,Lista(ptrZew),"WZ magazyn"
+
+                      end if
+
+              Next
+
+
+             End If
+        Else
+            nx_.trace.error "Brak eksportu", "Dla dokumentu WZ nr " + oDokMag.strNrDok + " nie odnaleziono odpowiadającego dokumentu handlowego"
+
+        End If
+
+
+    Case N5REJESTRDOK__ZZ
+
+         If Not oDokMag.wrefDokHandl Is Nothing Then
+            If oDokMag.wrefDokHandl.Type = TYPEID_N5SPRZEDAZ Then
+
+               dim ListaZZ()
+               size = 0
+	         for each pozycjaListy in oDokMag.listPozycje
+		       size = size + 1
+		       redim preserve ListaZZ(size)
+		       set ListaZZ(size - 1) = pozycjaListy
+               next
+
+
+               redim znacznikiWykorzystania(Ubound(ListaZZ))
+               initializeZnaczniki znacznikiWykorzystania
+	
+	
+              for ptrZew = 0 To Ubound(ListaZZ) - 1
+
+
+                      if znacznikiWykorzystania(ptrZew)=0 then
+
+                               suma = ListaZZ(ptrZew).curWartMag
+                               ilosc = ListaZZ(ptrZew).curIloscOpak
+
+                               for ptrWew = ptrZew + 1 to UBound(ListaZZ) - 1
+
+                                   	if znacznikiWykorzystania(ptrWew) = 0  then
+
+                                          if StrComp(ListaZZ(ptrZew).pProdukt.pGrupaProd.strNazwa,ListaZZ(ptrWew).pProdukt.pGrupaProd.strNazwa,1) = 0    then
+
+                                            if not ListaZZ(ptrZew).pKwalifikatorEx is nothing  then
+
+                                                  if StrComp(ListaZZ(ptrZew).pKwalifikatorEx.strNazwa,ListaZZ(ptrWew).pKwalifikatorEx.strNazwa,1) = 0 Then
+
+                                                   znacznikiWykorzystania(ptrWew) = 1
+                                                   suma = suma + ListaZZ(ptrWew).curWartMag
+                                                   ilosc = ilosc + ListaZZ(ptrWew).curIloscOpak
+
+                                                   end if
+
+                                            else
+
+                                                   znacznikiWykorzystania(ptrWew) = 1
+                                                   suma = suma + ListaZZ(ptrWew).curWartMag
+                                                   ilosc = ilosc + ListaZZ(ptrWew).curIloscOpak
+                                            end if
+                                          end if
+                                    end if
+
+                               Next
+
+                               ListaZZ(ptrZew).curWartMag = suma
+                              ' ListaZZ(ptrZew).curIloscOpak = ilosc
+                               inside_dokmag 1,6,oDokMag,oMSNAV,ListaZZ(ptrZew),"ZZ magazyn"
+
+                      end if
+
+              Next
+
+
+             End If
+             
+        Else
+        
+            nx_.trace.error "Błąd", "Dla dokumentu ZZ nr " + oDokMag.strNrDok + " nie odnaleziono dokumentu handlowego"
+            
+        End If
+
+
+
+    Case N5REJESTRDOK__MM
+
+                inside_dokmag 1,8,oDokMag,oMSNAV,nothing,"MM magazyn"
+                
+                
+    Case N5REJESTRDOK__PP
+
+                inside_dokmag 1,8,oDokMag,oMSNAV,nothing,"PP magazyn"
+
+
+    End Select
+    
+End Function
+
+'-----------------------------------------------------------------------------
+function n5zakup_2_msnav(byref oZakup,byref oMSNav)
+	
+	'wiersz pierwszy ---------------------------------------------------------
+	dim oMSNAVRow1 : set oMSNAVRow1 = oMSNAV.add_new()
+	oMSNAVRow1.m_strSymKonto = oZakup.pDostawca.strIndeks
+	
+	'***************************************************************************************************************
+	'W zaleznosci od tego czy mamy do czynienia z dokumentem oryginalnym, czy z korekta, przypisujemy rozne dane
+	'***************************************************************************************************************
+	if oZakup.n5zakup_isKorekta() then
+		basic_iRow 3, 3, true, oMSNAVRow1, oZakup, true, "Korekta f. zakupu "
+		oMSNAVRow1.m_curBrutto = trans_.afc.convert.round2(abs(oZakup.pPopZAkup.curSumaBrutto / oZakup.pPopZAkup.curKurs) - abs(oZakup.curSumaBrutto / oZakup.curKurs))
+		oMSNAVRow1.m_curNetto = trans_.afc.convert.round2(abs(oZakup.pPopZAkup.curSumaNetto / oZakup.pPopZAkup.curKurs) - abs(oZakup.curSumaNetto / oZakup.curKurs))
+	else
+		basic_iRow 3, 2, False, oMSNAVRow1, oZakup, true, "Faktura zakupu "
+		oMSNAVRow1.m_curBrutto = abs(trans_.afc.convert.round2(oZakup.curSumaBrutto / oZakup.curKurs))
+		oMSNAVRow1.m_curNetto = abs(trans_.afc.convert.round2(oZakup.curSumaNetto / oZakup.curKurs))
+	end if
+
+	'wiersze następne---------------------------------------------------------
+	
+	dim tablicaProduktow
+	
+	'*****   KOREKTA FAKTURY ZAKUPU   *****************************************************************************  
+	if oZakup.n5zakup_isKorekta() Then
+		tablicaProduktow = (prepare_ksprzedaz_kzakup (oZakup))
+		wypisz_wiersze_ksprzedaz_kzakup tablicaProduktow, oMSNav, oZakup
+
+	'*****   FAKTURA ZAKUPU    *************************************************************************************
+	else
+		tablicaProduktow = (prepare_sprzedaz_zakup (oZakup))
+		wypisz_wiersze_sprzedaz_zakup tablicaProduktow, oMSNav, oZakup
+	end if
+end function
+
+
+#comment '--------------------------------------------------------------------
+#comment '--------------------------------------------------------------------
+dim g_oParamArray : set g_oParamArray = nothing
+
+function fopen()
+	fopen = facquireparam()
+	if not fopen then
+		exit function
+	end if
+	
+	dim pPerf : set pPerf = doc_.performing("Eksport danych do MS NAVISION")
+
+	NX_TRACE_START_STREAM("Eksport danych do MS NAVISION",nothing)
+
+	
+	exportset_n5sprzedaz_2_msnav
+	exportset_n5dokmag_2_msnav
+	exportset_n5zakup_2_msnav
+
+	set pPerf = nothing
+
+	NX_TRACE_SHOW_LOG(1)
+	fopen = false
+end function
+
+function get_default_param()
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+
+	dim oZakresDatParam : set oZakresDatParam = doc_.afc.rap.param.new_date_range("Data dokumentu").bindexpr("%DATADOK%")
+
+	' typ rejestru
+	dim pParamFactory2: set pParamFactory2= doc_.afc.rap.param
+	dim oRejestrParam: Set oRejestrParam= pParamFactory2.new_choice("Rejestr").bindexpr("%REJESTRDOK%")
+	
+	doc_.afc.rap.param.init_on_query oRejestrParam, trans_ , _
+		"select strNazwa , idobj from n5rejestrdok where eTyp in (" +_
+		"N5REJESTRDOK_FAKT_ZAK,N5REJESTRDOK_WNT,N5REJESTRDOK_KOREKTA_WNT,N5REJESTRDOK_KOR_FAKT_ZAK,N5REJESTRDOK_FAKT_IMP,N5REJESTRDOK_KOR_FAKT_IMP,N5REJESTRDOK_FAKT_ZAK_RR,N5REJESTRDOK_KOR_FAKT_ZAK_RR," +_
+		"N5REJESTRDOK_FAKT_SP,N5REJESTRDOK_KOR_FAKT_SP,N5REJESTRDOK_RACH,N5REJESTRDOK_KOR_RACH,N5REJESTRDOK_PARAGON,N5REJESTRDOK_KOR_PARAGON,N5REJESTRDOK_FAKT_EXP,N5REJESTRDOK_KOR_FAKT_EXP,N5REJESTRDOK_KOREKTA_WDT,N5REJESTRDOK_WDT," +_
+		"N5REJESTRDOK__PZ,N5REJESTRDOK__WZ,N5REJESTRDOK__ZD,N5REJESTRDOK__ZZ,N5REJESTRDOK__PW,N5REJESTRDOK__RW,N5REJESTRDOK__PP,N5REJESTRDOK__RP,N5REJESTRDOK__MM,N5REJESTRDOK__MP,N5REJESTRDOK__MR,N5REJESTRDOK__IP,N5REJESTRDOK__IR" +_
+		") order by strNazwa "
+
+	pParamArray.add oZakresDatParam
+	pParamArray.add oRejestrParam
+
+	set get_default_param = pParamArray
+end function
+
+function facquireparam : facquireparam = false
+
+	dim pModRapEngine : set pModRapEngine = doc_.getmodule(60108)
+	dim oParamArray : set oParamArray = get_default_param()
+
+	if pModRapEngine.show_raport_param_dialog(oParamArray,"Parametry eksportu") = 0 then
+		exit function
+	else
+		set g_oParamArray = oParamArray
+	end if
+
+	'--- force generation of where parts in parameters
+	g_oParamArray.Value(0).get_where_part trans_
+	g_oParamArray.Value(1).get_where_part trans_
+	
+	dim strInfo : strInfo = _
+		vbLf + g_oParamArray.Value(0).get_desc() + _
+		vbLf + g_oParamArray.Value(1).get_desc()
+
+	facquireparam = true
+end function
+
+'-----------------------------------------------------------------------
+' file management
+'-----------------------------------------------------------------------
+function common_prepare(byval strFileName)
+	set common_prepare = nothing
+
+	dim strDestPath : strDestPath = getUserDirectory() + "\Eksport do NAVISION\" 
+	
+	Create_FileDriveObject
+
+	'tworzymy teraz katalog ale dla danego user'a i dokumentu
+	if (not pFD.IsFolder( strDestPath )) then
+		if (not pFD.CreatePath(strDestPath)) then
+			exit function
+		end if
+	end if
+	
+	dim oSO : set oSO = doc_.createstreamobj()
+	oSO.attach strDestPath + strFileName
+	set common_prepare = oSO
+end function
+'-----------------------------------------------------------------------
+
+function exportset_n5sprzedaz_2_msnav() : exportset_n5sprzedaz_2_msnav = false
+	strFileName= "konta_n5sprzedaz_kraj"
+	init_sprzedaz_kraj
+	strFileName = "konta_n5sprzedaz_kraj_uslugi"
+	init_sprzedaz_kraj_uslugi
+	strFileName = "konta_n5sprzedaz_WDT"
+	init_sprzedaz_WDT
+	
+	NX_TRACE_SUB_START("Eksport dokumentow sprzedazy")
+
+	dim oRejestrCursor : set oRejestrCursor = trans_.createrawcursor(TYPEID_N5REJESTRDOK, _
+			replace(g_oParamArray.Value(1).get_where_part(trans_),"%REJESTRDOK%","idobj"),_
+				"strNazwa" , "")
+	dim oRejestr
+	for each oRejestr in oRejestrCursor
+
+		dim oSO : set oSO = nothing
+
+		dim oMSNAV : set oMSNAV = new_msnav_export()
+		dim strWhere
+		strWhere = replace(g_oParamArray.Value(0).get_where_part(trans_),"%DATADOK%","dDataWyst") +_
+			" and pRejestrDok = " + cstr(oRejestr.idobj)
+
+		dim oCursor : set oCursor = trans_.createrawcursor(TYPEID_N5SPRZEDAZ , strWhere, "dDataWyst,idobj" , "")
+		dim oSprzedaz
+		for each oSprzedaz in oCursor
+			if oSO is nothing then
+				set oSO = common_prepare(oRejestr.strNazwa + ".txt")
+				if oSO is nothing then
+					nx_.trace.fatal "FEXN001","Nie mozna utworzyc pliku " + oRejestr.strNazwa + ".txt"
+					exit function
+				end if
+			end if
+
+			n5sprzedaz_2_msnav oSprzedaz,oMSNAV
+		next
+		oMSNAV.write oSO
+	next
+
+	exportset_n5sprzedaz_2_msnav = true
+  
+  NX_TRACE_END
+
+end function
+
+function exportset_n5dokmag_2_msnav() : exportset_n5dokmag_2_msnav = false
+	strFileName = "konta_PZ_WNT"
+	init_PZ_WNT
+	strFileName = "konta_PZ_kraj"
+    init_PZ_kraj
+    strFileName = "konta_ZD_WNT"
+    init_ZD_WNT
+    strFileName = "konta_ZD_kraj"
+    init_ZD_kraj
+    strFileName = "konta_MM"
+    init_MM
+    strFileName = "konta_WZ_WDT"
+    init_WZ_WDT
+    strFileName = "konta_WZ_kraj"
+    init_WZ_kraj
+    strFileName = "konta_ZZ_WDT"
+	init_ZZ_WDT
+	strFileName = "konta_ZZ_kraj"
+	init_ZZ_kraj
+	strFileName = "konta_PP"
+	init_PP
+
+	NX_TRACE_SUB_START("Eksport dokumentow magazynowych")
+
+	dim oRejestrCursor : set oRejestrCursor = trans_.createrawcursor(TYPEID_N5REJESTRDOK, _
+			replace(g_oParamArray.Value(1).get_where_part(trans_),"%REJESTRDOK%","idobj"),_
+				"strNazwa" , "")
+	dim oRejestr
+	for each oRejestr in oRejestrCursor
+
+		dim oSO : set oSO = nothing
+		dim oMSNAV : set oMSNAV = new_msnav_export()
+		dim strWhere
+		strWhere = replace(g_oParamArray.Value(0).get_where_part(trans_),"%DATADOK%","dDataWyst") +_
+			" and pRejestrDok = " + cstr(oRejestr.idobj)
+
+		dim oCursor : set oCursor = trans_.createrawcursor(TYPEID_N5DOKMAG , strWhere, "dDataWyst,idobj" , "")
+		dim oDokMag
+		for each oDokMag in oCursor
+			if oSO is nothing then
+				set oSO = common_prepare(oRejestr.strNazwa + ".txt")
+				if oSO is nothing then
+					nx_.trace.fatal "FEXN001","Nie mozna utworzyc pliku " + oRejestr.strNazwa + ".txt"
+					exit function
+				end if
+			end if
+			
+			if not oDokMag.n5dokmag_update_wartosc() then
+				exit function
+			end if
+			
+			n5dokmag_2_msnav oDokMag,oMSNAV
+		next
+		oMSNAV.write oSO
+	next
+	
+	exportset_n5dokmag_2_msnav = true
+  
+  NX_TRACE_END
+
+end function
+
+function exportset_n5zakup_2_msnav() : exportset_n5zakup_2_msnav = false
+	strFileName= "konta_n5zakup_kraj"
+	init_zakup_kraj
+	strFileName= "konta_n5zakup_WNT"
+	init_zakup_WNT
+	
+	NX_TRACE_SUB_START("Eksport dokumentow zakupu")
+	dim oRejestrCursor : set oRejestrCursor = trans_.createrawcursor(TYPEID_N5REJESTRDOK, _
+			replace(g_oParamArray.Value(1).get_where_part(trans_),"%REJESTRDOK%","idobj"),_
+				"strNazwa" , "")
+	dim oRejestr
+	for each oRejestr in oRejestrCursor
+		dim oSO : set oSO = nothing
+		dim oMSNAV : set oMSNAV = new_msnav_export()
+		dim strWhere
+		strWhere = replace(g_oParamArray.Value(0).get_where_part(trans_),"%DATADOK%","dDataOtrzym") +_
+			" and pRejestrDok = " + cstr(oRejestr.idobj)
+		dim oCursor : set oCursor = trans_.createrawcursor(TYPEID_N5ZAKUP , strWhere, "dDataOtrzym,idobj" , "")
+		dim oZakup
+		for each oZakup in oCursor
+			if oSO is nothing then
+				set oSO = common_prepare(oRejestr.strNazwa + ".txt")
+				if oSO is nothing then
+					nx_.trace.fatal "FEXN001","Nie mozna utworzyc pliku " + oRejestr.strNazwa + ".txt"
+					exit function
+				end if
+			end if
+			n5zakup_2_msnav oZakup,oMSNAV
+		next
+		oMSNAV.write oSO
+	next
+	exportset_n5zakup_2_msnav = true
+  
+  NX_TRACE_END
+
+end function
+
+'*********************************************
+'drobne funkcje pomocnicze
+'*********************************************
+function initializeZnaczniki(byref znaczniki)
+	dim i
+	for i=0 to ubound(znaczniki)
+		znaczniki(i) = 0
+	next
+end function
+
+
+
+  ]]> 
+  </script>
+  </config>
+  <body /> 
+  </page>

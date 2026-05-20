@@ -1,0 +1,1874 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1250_raport_macros.h"
+#include "50519"
+
+#define CREATOR_TITLE	Kreator płatności zobowiązań
+
+#define CTRLID_RESULT_TABLE		  101
+#define CTRLID_REDIRECT_CHKBOX	102
+#define CTRLID_REDIRECT_ODWORC  103
+#define CTRLID_CURREDIT_SUMA 	  104
+#define CTRLID_DOK_TYPE         105
+#define CTRLID_NUM_POZ          106
+#define CTRLID_REDIRECT_CHKBOX_AKCEPT		107
+#define CTRLID_RODZAJ_DOK       108
+#define CTRLID_BUTTON_AUTO_PLI  109
+#define CTRLID_BUTTON_PODOBNE   110
+#define CTRLID_BUTTON_FILTRY    111
+#define CTRLID_BUTTON_WSZYSTKO  112
+
+#define PROP_DOK_IDOBJ		      201
+#define PROP_DOK_KWOTA		      202
+#define PROP_DOK_IDREJESTR      203
+#define PROP_DOK_TERMINPLAT     204
+#define PROP_DOK_WALUTA         205
+#define PROP_DOK_AKCEPT					206
+
+-->
+<page style='STYLE_PAGE'>
+	<config>
+		<title>
+	CREATOR_TITLE
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+		<script>
+<![CDATA[
+
+#include "50518"
+#include "50211" 
+#include "50200"
+#include "50122"
+
+'srvDate
+#include "50126"
+
+'glob_profile, get_current_firma
+#include "50203"
+
+dim strSQL
+dim pParamArray : set pParamArray = nothing
+dim pModRapEngine : set pModRapEngine = doc_.getmodule(60108)
+
+'zmienna do blokowania przycisków (domyślnie włączona)
+dim bBlokada : bBlokada = true
+
+'zmienna do określania sposobu sortowania (0 -> asc, 1 -> desc)
+dim iAscDesc : iAscDesc = 0
+
+'zapamiętanie nr wiersza z przyciskiem (opcja -> zaznacz podobne)
+dim iRowNr : iRowNr = 0
+
+'tablice do zapamiętania który dokument był wybrany (checkbox)
+dim pSelectedIdobj	'tablica zawierająca idobj wybranych faktur
+dim pSelectedRows	  'tablica zawierająca 0 lub 1 odpowiadające pozycjom idobj faktur
+dim pSelectedKwoty  'tablica zawierające kwoty wybranych dokumentów
+
+'tablice pomocnicze do zapamiętania wyników poprzedniego select
+dim pSelectedIdobjPomoc
+dim pSelectedRowsPomoc
+dim pSelectedKwotyPomoc
+
+'dodatkowy filtr dodawany dla kolumny
+dim strExtraParam : strExtraParam = ""
+'tablica do zapamiętania idobj kolumn dla których był ustawiany dodatkowy filtr
+dim pSelectedColumn
+'tablica do zapamiętania czy nagłówek danej kolumny ma być czerwony
+dim pSelectedRed
+
+'tablica do przechowania idobj dokumentów do których będzie utworzona płatność
+dim pSelectedIdobjPlat
+
+'tablica do przechowywania idobj utworzonych dokumentów płatności
+dim pIdobjPlatArray
+
+'zapamiętanie bieżącej waluty
+dim strWal : strWal = ""
+
+'tryb pracy (false = tylko transakcje zakupowe, true = tylko transakcje naliczeń płac)
+dim g_bTryb : g_bTryb = false
+  
+'-------------------------------------------------------------
+'-----  standardowa funkcja wolana przy otwarciu strony  -----
+'-------------------------------------------------------------
+function fopen : fopen = false
+
+	'utworz tabele do zapamiętania idobj i indeksów
+	set pSelectedIdobj = doc_.afc.new_navoarray()
+	set pSelectedRows = doc_.afc.new_navoarray()
+  set pSelectedIdobjPomoc = doc_.afc.new_navoarray()
+	set pSelectedRowsPomoc = doc_.afc.new_navoarray()
+  set pSelectedColumn = doc_.afc.new_navoarray()
+  set pSelectedRed = doc_.afc.new_navoarray()
+  set pSelectedKwoty = doc_.afc.new_navoarray()
+  set pSelectedKwotyPomoc = doc_.afc.new_navoarray()
+  set pSelectedIdobjPlat = doc_.afc.new_navoarray()
+  set pIdobjPlatArray = doc_.afc.new_navoarray()
+
+  'ustawienie trybu pracy => w zależności od uprawnień
+  dim pM60106 : set pM60106 = doc_.getmodule(60106)
+  dim oRS : set oRS = trans_.createadors("select nSecId from n5sod where strNazwa = 'Rejestry wynagrodzeń w kreatorze płatności'")
+  if oRS.RecordCount > 0 then
+    dim nAction : nAction = clng(oRS(0).value)
+    g_bTryb = pM60106.FindOnlyRight(nAction)
+  end if
+  
+  if g_bTryb then
+    if MessageBoxCustom("Wybierz rodzaj transakcji:", "Kreator płatności", vbYesNo, vbQuestion, "Zakupowe;Wynagrodzeń") = vbYes then
+      'zakupowe
+      g_bTryb = false
+    else
+      'wynagrodzeń
+    end if
+  end if
+  
+  frefresh
+	fopen = true
+end function
+
+'--------------------------------------------------------------
+'-----  standardowa funkcja wolana na przycisk 'odswiez'  -----
+'--------------------------------------------------------------
+function frefresh
+  dim strOrderBy
+  'usuń dodatkowe parametry dla kolumn
+  if not pParamArray is nothing then
+    dim iter
+    for iter = 4 to pParamArray.upperIndex
+      pParamArray.remove iter
+    next
+    pSelectedColumn.removeall
+    pSelectedRed.removeall
+    strExtraParam = ""
+    pSelectedIdobjPomoc.removeall
+    pSelectedRowsPomoc.removeall
+    pSelectedKwotyPomoc.removeall
+    strWal = ""
+  end if  
+  set pParamArray = get_default_param()
+  if pModRapEngine.show_raport_param_dialog(pParamArray,"CREATOR_TITLE") = 0 then
+  	exit function
+  end if
+  dim pPerforming : set pPerforming = doc_.performing("Trwa przygotowanie danych...")
+  strOrderBy = "z.strNrDok"
+  fill_results pModRapEngine, pParamArray, strOrderBy, 0, strExtraParam
+end function
+
+'------------------------------------------------------
+'-----  tworzenie tablicy parametrow dla raportu  -----
+'------------------------------------------------------
+function get_default_param()
+	set pParamArray = doc_.afc.new_navoarray()
+  dim strRejestrDok, pParam
+  if g_bTryb then
+    strRejestrDok = "N5REJESTRDOK_WYNAGR"
+    pParamArray.add doc_.afc.rap.param.new_date_range("Data naliczenia").bindexpr("t.dDataRozp")
+	  pParamArray.add doc_.afc.rap.param.new_date_range("Termin płatności").bindexpr("t.dDataWym")
+    pParamArray.add doc_.afc.rap.param.new_text("Nazwisko pracownika").bindexpr("p.strNazwisko")
+    set pParam= doc_.afc.rap.param.new_choice("Rejestr").bindexpr("n.pRejestrDok")    
+  else
+#ifdef ENABLE_DB14_A
+    strRejestrDok = "N5REJESTRDOK_FAKT_ZAK,N5REJESTRDOK_FAKT_IMP,N5REJESTRDOK_WNT,N5REJESTRDOK_FAKT_ZAK_RR,N5REJESTRDOK_IMPORT_USLUG"
+#else
+    strRejestrDok = "N5REJESTRDOK_FAKT_ZAK,N5REJESTRDOK_FAKT_IMP,N5REJESTRDOK_WNT,N5REJESTRDOK_FAKT_ZAK_RR"
+#endif		
+    pParamArray.add doc_.afc.rap.param.new_date_range("Data wystawienia").bindexpr("z.dDataWyst")
+	  pParamArray.add doc_.afc.rap.param.new_date_range("Termin płatności").bindexpr("z.dDataPlat")
+    pParamArray.add doc_.afc.rap.param.new_text("Skrót kontrahenta").bindexpr("k.strSkrot")
+    set pParam= doc_.afc.rap.param.new_choice("Rejestr").bindexpr("z.pRejestrDok")
+  end if  
+	doc_.afc.rap.param.init_on_query pParam, trans_ ,"select strNazwa, idobj from n5rejestrdok where eTyp in (" + strRejestrDok + ") order by strNazwa "
+	pParamArray.add pParam 
+
+	set get_default_param = pParamArray
+end function
+
+'----------------------------------
+'-----  wypelnianie wynikami  -----
+'----------------------------------
+function fill_results(byref pModRapEngine,byref pParamArray, byval strOrderBy, byref iAscDesc, byval strExtraParam)
+  
+  'ustawienie sposobu sortowania w zależności od iAscDesc
+  if iAscDesc = 0 then
+    strOrderBy = strOrderBy + " asc"
+    iAscDesc = 1
+  else
+    strOrderBy = strOrderBy + " desc"
+    iAscDesc = 0
+  end if
+  
+  if g_bTryb then
+    strSQL = "select 'z_idobj'=n.idobj,'r_idobj'=r.IdObj,'r_typ_rej'=r.eTyp,'r_nazwa_rej'=r.strNazwa,'z_nr_dok'=lp.strNrDok, " + vbNewLine +_ 
+             "'z_nrdok_obcy'='','z_termin_zalec'=" + trans_.afc.convert.date2SQL(trans_.afc.globals.nulldate()) + ",'p_typ_plat'=3, " +_
+             "'p_ile_dni'=0,'z_data_plat'=t.dDataWym,'ile_dni'=datediff(day,t.dDataRozp,getdate()), " + vbNewLine +_
+             "'pozostalo_dni'=0,'t_curMa'=t.curMa,'t_curWn'=t.curWn,'k_idobj'=p.idobj, " + vbNewLine +_
+             "'k_skrot_kontrah'=p.strNazwisko + ' ' + p.strImie,'j_skrot_wal'=j.strSkrot,'z_akcept_plat'=0 " + vbNewLine +_
+             "from n5transakcja t " + vbNewLine +_
+             "  inner join n5plnaliczenie n on n.pTransakcja = t.idobj " + vbNewLine +_
+             "  inner join n5rejestrdok r on n.pRejestrDok = r.idobj " + vbNewLine +_
+             "  inner join n5pllistaplac lp on n.pListaPlac = lp.idobj " + vbNewLine +_
+             "  inner join n5pracownik p on n.pPracownik = p.idobj " + vbNewLine +_
+             "  inner join n5jednostka j on t.pWaluta = j.idobj " + vbNewLine +_
+             "where (t.curWn <> t.curMa) and %1 and %2 and %3 and %4 " + strExtraParam + vbNewLine +_
+             "order by k_skrot_kontrah asc"
+  else
+	  strSQL = "select 'z_idobj'=z.idobj,'r_idobj'=r.IdObj,'r_typ_rej'=r.eTyp,'r_nazwa_rej'=r.strNazwa,'z_nr_dok'=z.strNrDok, " +_
+             "'z_nrdok_obcy'=z.strNrDokObcy,'z_termin_zalec'=z.dExtra3,'p_typ_plat'=p.eTyp,'p_ile_dni'=p.nDni, " +_
+             "'z_data_plat'=z.dDataPlat,'ile_dni'=datediff(day,z.dDataWyst,getdate()), " +_
+             "'pozostalo_dni'=datediff(day,getdate(),z.dExtra3),'t_curMa'=t.curMa,'t_curWn'=t.curWn,'k_idobj'=k.idobj,'k_skrot_kontrah'=k.strSkrot, " +_
+             "'j_skrot_wal'=j.strSkrot,'z_akcept_plat'=z.curExtra5 " +_
+             "from n5transakcja t " +_
+             "inner join n5zakup z on t.idobj = z.pTransakcja " +_
+             "inner join n5rejestrdok r on z.pRejestrDok = r.idobj " +_
+             "inner join n5sposplat p on z.pSposobPlatnosci = p.idobj " +_
+             "inner join n5klient k on t.wrefPodmiot = k.idobj and t.wrefPodmiot_wrt = TYPEID_N5KLIENT " +_
+             "inner join n5jednostka j on t.pWaluta = j.idobj " +_
+             "where (t.curWn <> t.curMa) and %1 and %2 and %3 and %4 " + strExtraParam +_
+             "order by " + strOrderBy
+  end if         
+     
+  strSQL = pModRapEngine.query_apply_actual_param(strSQL,pParamArray)
+  dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(page_.ctrl(CTRLID_RESULT_TABLE))
+	pTB.section_body.removeall
+  
+  'sprawdz czy zapytanie zwraca jakieś rekordy
+  dim bIsRecord : bIsRecord = false
+  dim oRS : set oRS = trans_.createadors(strSQL)
+  do while not oRS.EOF
+		bIsRecord = true
+    exit do
+	loop
+
+  'gdy zapytanie zwraca jakieś rekordy => utórz nagłówek
+  if bIsRecord then
+    naglowek pTB
+  else
+    'gdy nie zwraca rekordów a nałożony jest dodatkowy filtr => utwórz nagłówek
+    if pParamArray.upperIndex > 3 then
+      naglowek pTB
+      exit function
+    end if
+  end if  
+  
+  'jeśli zapytanie zwraca jakieś rekordy generuj raport
+  if bIsRecord then
+    dim pPerf : set pPerf = doc_.performing("Trwa generowanie raportu...")
+    bBlokada = false
+    oRS.moveFirst
+
+    'skopiuj wyniki poprzedniego select
+    dim iter
+    for iter = 0 to pSelectedIdobj.upperIndex
+      pSelectedIdobjPomoc.add pSelectedIdobj.value(iter)
+      pSelectedRowsPomoc.add pSelectedRows.value(iter)
+      pSelectedKwotyPomoc.add pSelectedKwoty.value(iter)
+    next
+    
+    'usuń stare rekordy i dodawaj nowe
+    pSelectedIdobj.removeall
+    pSelectedRows.removeall
+    pSelectedKwoty.removeall
+    
+    'numery kolejnych rekordów
+    dim iRecNr : iRecNr = 1
+    do while not oRS.EOF
+		  build_row oRS,pTB,iRecNr
+		  oRS.moveNext
+      iRecNr = iRecNr + 1
+	  loop
+    
+    'podsumowanie raportu
+    build_summary oRS, pTB
+    set pPerf = nothing
+    
+  else
+    bBlokada = true
+    pTB.newrow
+	  pTB.row.styleitem = STYLE_TABLE_HEADER
+	  pTB.row.fontsize=4
+	  pTB.newcell.addtext "Brak danych spełniających podane kryteria"
+  end if
+           
+end function
+
+'-----------------------------
+'-----  naglówek tabeli  -----
+'-----------------------------
+function naglowek(byval pTB)
+	pTB.newrow
+	pTB.row.styleitem = STYLE_TABLE_HEADER
+	pTB.row.fontsize = 4
+	pTB.newcell.addtext "Lp  "
+  pTB.cell.width = clng(800)
+  pTB.cell.align = ALIGN_RIGHT
+  buildCell pTB,2,"Rejestr",4000,"Filtrowanie wg typu dokumentu", g_bTryb
+  buildCell pTB,3,"Nr dokumentu",2700,"Filtrowanie wg nr dokumentu", g_bTryb
+  buildCell pTB,4,"Nr dokumentu obcego",2700,"Filtrowanie wg nr dokumentu obcego", g_bTryb
+  hideCell pTB
+  buildCell pTB,5,"Typ płatności",1500,"Filtrowanie wg typu płatności", g_bTryb
+  buildCell pTB,6,"Termin płatności",1700,"Filtrowanie wg terminu płatności", g_bTryb
+  buildCell pTB,7,"Zalecany termin płat",2000,"Filtrowanie wg zalecanego terminu płatności", g_bTryb
+  hideCell pTB
+  buildCell pTB,8,"Minęło dni",1700,"Filtrowanie wg ilości minionych dni", g_bTryb
+  buildCell pTB,9,"Pozost dni",1700,"Filtrowanie wg ilości pozostałych dni", g_bTryb
+  buildCell pTB,10,"Kwota",1500,"Filtrowanie wg kwoty", g_bTryb
+  buildCell pTB,11,"Waluta",900,"Filtrowanie wg skrótu waluty", g_bTryb
+  if g_bTryb then
+    buildCell pTB,12,"Pracownik",2800,"Filtrowanie wg skrótu kontrahenta", g_bTryb
+  else
+    buildCell pTB,12,"Skrót kontrahenta",2800,"Filtrowanie wg skrótu kontrahenta", g_bTryb
+  end if
+	pTB.newcell.addtext "Akcept"
+  pTB.cell.width = clng(300)
+  hideCell pTB
+
+ 'przycisk do zaznaczania/odznaczania pozycji
+  pTB.newcell
+  pTB.cell.width = CLng(2900)
+  pTB.cell.align = ALIGN_CENTER
+  pTB.addctrl CTRL_TYPE_BUTTON,-1
+	with pTB.element
+    .styleitem = STYLE_BUTTON
+    .text = "NIC"
+    set .hli = doc_.createhli()
+    .hli.prop(GVAR_FUNCTION) = "odznaczWszystko"
+  end with
+  'zapamiętanie nr wiersza (NIC)
+  iRowNr = pTB.row.ident
+    
+end function
+
+'----------------------------
+'-----  ukrywa komórkę  -----
+'----------------------------
+sub hideCell(byref pTB)
+  if g_bTryb then
+    pTB.cell.hide = true
+  end if
+end sub
+
+'------------------------------------------------------------
+'-----  zwraca true jeśli link kolumny ma być czerwony  -----
+'------------------------------------------------------------
+function filtrForCol(byval idKolumny) : filtrForCol = false
+  dim iter
+  for iter = 0 to pSelectedColumn.upperIndex
+    if pSelectedColumn.value(iter) = idKolumny and pSelectedRed.value(iter) = 1 then
+      filtrForCol = true
+      exit for
+    end if
+  next  
+end function
+
+'--------------------------------
+'-----  pojedyncza komórka  -----
+'--------------------------------
+sub buildCell(byref pTB,byval iColNr, byval strColName, byval iCellWidth, byval strTip, byval bOption)
+  dim bKolor : bKolor = filtrForCol(iColNr)
+  pTB.newcell
+  pTB.cell.width = CLng(iCellWidth)
+  if not bOption then
+	  with pTB.cell.addnew(CTRL_TYPE_PICTURE,-1)
+		  .image=clng(PICTURE_CHOICE_N5PRODUKT)
+		  .width=Clng(HEIGHT_FOR_12PX)  
+		  .height=Clng(HEIGHT_FOR_12PX)
+		  .tip = strTip
+		  set .hli= doc_.createhli()
+		  .hli.prop(GVAR_FUNCTIONHLI) = "filtrKol"
+		  .hli.prop(110) = CLng(iColNr)
+	  end with
+  end if
+  with pTB.cell.addnew(CTRL_TYPE_STATICEX,-1)
+		.text = strColName
+    if bKolor then
+      .forecolor = RGB(255,0,0)
+    end if
+    if not bOption then
+      set .hli= doc_.createhli()
+		  .hli.prop(GVAR_FUNCTIONHLI) = "sortByKol"
+      .hli.prop(100) = CLng(iColNr)
+    end if
+	end with
+end sub
+
+'-------------------------------
+'-----  pojedynczy wiersz  -----
+'-------------------------------
+function build_row(byref oRS,byref pTB,byval iRecNr)
+
+  'idobj wyswietlanego dokumentu zakupu
+  dim iIdObj : iIdObj = clng(oRS("z_idobj"))
+  pSelectedIdobj.Add iIdObj
+  
+  'typ płatności i ilość dni do zapłaty
+  dim eTypPlat : eTypPlat = clng(oRS("p_typ_plat"))
+  dim nIleDni : nIleDni = clng(oRS("p_ile_dni"))
+  
+  'kwota aktualnego wiersza
+  dim curKwota : curKwota = CCur(oRS("t_curMa"))
+  
+  'skrót waluty
+  dim strWaluta : strWaluta = cstr(oRS("j_skrot_wal"))
+ 
+  pTB.newrow
+  pTB.newcell.addtext(cstr(iRecNr) + "   ").cell.align = ALIGN_RIGHT
+  pTB.newcell
+  pTB.cell.addnew(CTRL_TYPE_STATICEX,-1).text = cstr(oRS("r_nazwa_rej"))
+  dim strNrDokHLI 
+  if g_bTryb then
+    pTB.newcell
+    pTB.cell.addnew(CTRL_TYPE_STATICEX,-1).text = cstr(oRS("z_nr_dok"))
+  else
+    strNrDokHLI = doc_.afc.convert.Formatter("OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5ZAKUP," + cstr(iIdObj) + ",USAGE_VIEW)").done()
+    pTB.newcell.addtexthli cstr(oRS("z_nr_dok")),doc_.createhlistr(strNrDokHLI)
+  end if
+  pTB.newcell
+  pTB.cell.addnew(CTRL_TYPE_STATICEX,-1).text = CStr(oRS("z_nrdok_obcy"))
+  hideCell pTB
+  pTB.newcell.addtext strTypPlat(eTypPlat,nIleDni)
+  pTB.newcell.addtext(doc_.afc.display.fulldate(oRS("z_data_plat")))
+  pTB.newcell.addtext(doc_.afc.display.fulldate(oRS("z_termin_zalec")))
+  hideCell pTB
+  pTB.newcell.addtext(CStr(oRS("ile_dni"))).cell.align = ALIGN_RIGHT
+  if clng(oRS("pozostalo_dni")) <= clng(0) then
+    pTB.newcell.addtext ""
+  else
+    pTB.newcell.addtext(CStr(oRS("pozostalo_dni"))).cell.align = ALIGN_RIGHT
+  end if  
+  pTB.newcell.addtext(doc_.afc.display.money(ccur(oRS("t_curMa")) - ccur(oRS("t_curWn")),"")).cell.align=ALIGN_RIGHT
+  pTB.newcell.addtext cstr(oRS("j_skrot_wal"))
+  dim strSkrotKontrah : strSkrotKontrah = Left(CStr(oRS("k_skrot_kontrah")),14)
+  dim strKlientHLI
+  if g_bTryb then
+    strKlientHLI = doc_.afc.convert.Formatter("OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5PRACOWNIK," + cstr(oRS("k_idobj")) + ",USAGE_VIEW)").done()
+  else
+    strKlientHLI = doc_.afc.convert.Formatter("OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5KLIENT," + cstr(oRS("k_idobj")) + ",USAGE_VIEW)").done()
+  end if
+  pTB.newcell.addtexthli strSkrotKontrah,doc_.createhlistr(strKlientHLI)  
+  
+  'chceckbox akceptacji
+	dim oCBAkcept
+  pTB.newcell
+  pTB.addctrl CTRL_TYPE_CHECKBOX,-1
+	set oCBAkcept = pTB.element
+	pTB.element.addnew CTRL_TYPE_STATIC,-1
+	with oCBAkcept
+		.customredirect = clng(CTRLID_REDIRECT_CHKBOX_AKCEPT)
+		.transfer = page_.createtransfer("custom")
+		.border = 0
+	end with
+  hideCell pTB
+
+  'checkbox oraz przycisk
+	dim pCheckBox
+  pTB.newcell
+  pTB.addctrl CTRL_TYPE_CHECKBOX,-1
+	set pCheckBox = pTB.element
+	with pCheckBox
+		.customredirect = clng(CTRLID_REDIRECT_CHKBOX)
+		.transfer = page_.createtransfer("custom")
+		.border = 0
+	end with
+	pTB.element.addnew CTRL_TYPE_STATIC,-1
+  
+	'ustaw odpowiednio checkbox w zależności od akcji poprzedniego select (domyślnie odznaczony: 0)
+  dim checkValue : checkValue = 0
+  dim iter 
+  for iter = 0 to pSelectedIdobjPomoc.upperIndex
+    if pSelectedIdobjPomoc.value(iter) = iIdObj then
+      'ustaw checkbox jak w poprzednim select
+      checkValue = pSelectedRowsPomoc.value(iter)
+      exit for
+    end if
+  next    
+  pCheckBox.value = CStr(checkValue)
+  pSelectedRows.Add checkValue
+  'jeśli wiersz jest check dodaj kwotę
+  if checkValue = 1 then
+    pSelectedKwoty.Add curKwota
+  else
+    pSelectedKwoty.Add CCur(0)
+  end if
+  
+	pTB.addctrl CTRL_TYPE_BUTTON,-1
+	pTB.element.styleitem = STYLE_BUTTON
+	pTB.element.text = "KW/BR"
+	dim oBtnHLI : set oBtnHLI = doc_.createhli()
+  
+	'ustawienie właściwości dla przycisku
+	oBtnHLI.prop(GVAR_FUNCTIONHLI) = "platPojedyncza"
+	oBtnHLI.prop(100) = clng(iIdObj)            'idobj dokumentu zakupu
+	set pTB.element.hli = oBtnHLI
+  
+  'ustawienie właściwości dla wiersza (zapamiętanie kolejnego nr i kwoty)
+  set pTB.row.userprop = doc_.createhli()
+	with pTB.row.userprop
+		.prop(PROP_DOK_IDOBJ) = CLng(iIdObj)
+		.prop(PROP_DOK_KWOTA) = curKwota
+		.prop(PROP_DOK_WALUTA) = strWaluta		
+		if ccur(oRS("z_akcept_plat")) = ccur(0.0) then
+			.prop(PROP_DOK_AKCEPT) = "0"
+		else
+			.prop(PROP_DOK_AKCEPT) = "1"
+		end if
+		'ustawienie właściwości dla wiersza (zapamiętanie idobj rejestru i terminu płatności)
+		.prop(PROP_DOK_IDREJESTR) = clng(oRS("r_idobj"))
+		.prop(PROP_DOK_TERMINPLAT) = oRS("z_termin_zalec")
+  end with
+  
+  if iRecNr mod 2 = 0 then
+		pTB.row.styleitem = STYLE_ROW_EVEN
+	end if
+  
+end function
+
+'----------------------------------
+'-----  podsumowanie raportu  -----
+'----------------------------------
+function build_summary(byref oRS,byref pTB)
+  
+  pTB.newrow
+  pTB.row.styleitem = STYLE_GROUP_HEADER
+  pTB.row.fontsize = 4
+  pTB.newcell.addtext "Razem:"
+  with pTB.cell
+    if g_bTryb then
+      .colspan = 7
+    else
+      .colspan = 9
+    end if
+    .align = ALIGN_RIGHT
+  end with  
+  pTB.element.bold = true
+  'suma zaznaczonych kwot
+  pTB.newcell.cell.align=ALIGN_RIGHT
+	pTB.addctrl CTRL_TYPE_CURRENCY,-1
+	with pTB.element
+    .disable = true
+    .bold = true
+    .size = 10
+    .precision = 2
+		.unit = ""
+		set .userprop = doc_.createhli()
+		.customredirect = clng(CTRLID_CURREDIT_SUMA)
+		.transfer = page_.createtransfer("custom")
+	end with
+  'suma zaznaczonych pozycji
+  pTB.newcell.cell.align=ALIGN_RIGHT
+	pTB.addctrl CTRL_TYPE_CURRENCY,-1
+	with pTB.element
+    .disable = true
+    .bold = true
+    .precision = 0
+    .size = 4
+		.unit = ""
+		set .userprop = doc_.createhli()
+		.customredirect = clng(CTRLID_NUM_POZ)
+		.transfer = page_.createtransfer("custom")
+	end with  
+  pTB.newcell
+  pTB.cell.colspan = 2
+end function
+
+'---------------------------------------------------
+'-----  wykonuje sortowanie po danej kolumnie  -----
+'---------------------------------------------------
+function sortByKol(byref pHLI)
+  dim strOrderBy
+  dim idKolumny : idKolumny = pHLI.prop(100)
+  pSelectedIdobjPomoc.removeall
+  pSelectedRowsPomoc.removeall
+  pSelectedKwotyPomoc.removeall
+  
+	if idKolumny = 2 then
+    strOrderBy = "r.strNazwa"
+  end if
+  if idKolumny = 3 then
+    strOrderBy = "z.strNrDok"
+  end if
+  if idKolumny = 4 then
+    strOrderBy = "z.strNrDokObcy"
+  end if
+  if idKolumny = 5 then
+    strOrderBy = "p.strNazwa"
+  end if 
+  if idKolumny = 6 then
+    strOrderBy = "z.dDataPlat"
+  end if
+  if idKolumny = 7 then
+    strOrderBy = "z.dExtra3"
+  end if
+  if idKolumny = 8 then
+    strOrderBy = "datediff(day,z.dDataWyst,getdate())"
+  end if
+  if idKolumny = 9 then
+    strOrderBy = "datediff(day,getdate(),z.dExtra3)"
+  end if
+  if idKolumny = 10 then
+    strOrderBy = "t.curMa"
+  end if 
+  if idKolumny = 11 then
+    strOrderBy = "j.strSkrot"
+  end if   
+  if idKolumny = 12 then
+    strOrderBy = "k.strSkrot"
+  end if
+  fill_results pModRapEngine, pParamArray, strOrderBy, iAscDesc, strExtraParam
+end function
+
+'--------------------------------------------------
+'-----  dodatkowy filtr dla wybranej kolumny  -----
+'--------------------------------------------------
+function filtrKol(byref pHLI)
+  dim strOrderBy : strOrderBy = ""
+  dim idKolumny : idKolumny = pHLI.prop(110)
+  dim iParamNr : iParamNr = pParamArray.upperIndex
+  dim pParamArrayExtra : set pParamArrayExtra = doc_.afc.new_navoarray()
+
+  'jeśli dodawano filtr dla danej kolumny usuń stary
+  dim iter
+  dim bIsExtraParam : bIsExtraParam = false
+  for iter = 0 to pSelectedColumn.upperIndex
+    if pSelectedColumn.value(iter) = idKolumny then
+      pParamArray.remove (iter + 4)   '4 - liczba stałych parametrów dla raportu
+      pSelectedColumn.remove iter
+      pSelectedRed.remove iter
+      bIsExtraParam = true
+      exit for
+    end if
+  next
+  
+  'jeśli nie dodawano filtru dla kolumny 'idKolumny' zwiększ parametr: %i => %i+1
+  if not bIsExtraParam then
+    strExtraParam = strExtraParam + " and %" + CStr(5 + iter) + " "
+  end if
+  
+  'dodaj do tabeli 'pSelectedColumn' idobj kolumny
+  pSelectedColumn.add idKolumny
+  
+  'dodaj dodatkowy filtr dla wybranej kolumny
+  if idKolumny = 2 then
+    strOrderBy = "r.strNazwa"
+    dim pParam: Set pParam= doc_.afc.rap.param.new_choice("Rejestr").bindexpr("z.pRejestrDok")
+	  doc_.afc.rap.param.init_on_query pParam, trans_ ,_
+#ifdef ENABLE_DB14_A
+		"select strNazwa , idobj from n5rejestrdok where eTyp in (N5REJESTRDOK_FAKT_ZAK,N5REJESTRDOK_FAKT_IMP,N5REJESTRDOK_WNT,N5REJESTRDOK_IMPORT_USLUG," +_
+#else
+		"select strNazwa , idobj from n5rejestrdok where eTyp in (N5REJESTRDOK_FAKT_ZAK,N5REJESTRDOK_FAKT_IMP,N5REJESTRDOK_WNT," +_
+#endif		
+    "N5REJESTRDOK_FAKT_ZAK_RR) order by strNazwa "
+	  pParamArrayExtra.add pParam
+    if pModRapEngine.show_raport_param_dialog(pParamArrayExtra,"CREATOR_TITLE") = 0 then
+  	  'w przypadku rezygnacji z filtru wyczyść strExtraParam oraz pSelectedColumn
+      strExtraParam = Left(strExtraParam,Len(strExtraParam) - 8)
+      pSelectedColumn.remove pSelectedColumn.upperIndex
+      exit function
+    end if
+    'gdy wybrane zostaną wszystkie rejestry nie zmieniaj koloru linku na czerwony
+    dim bFiltr : bFiltr = false
+    for iter = 0 to pParam.selected.upperIndex
+      if pParam.selected.value(iter) = false then
+        bFiltr = true
+        exit for
+      end if
+    next
+    'gdy w pSelectedRed.value = 1 then kolor czerwony else kolor niebieski
+    if bFiltr then
+      pSelectedRed.add 1
+    else
+      pSelectedRed.add 0
+    end if
+    pParamArray.add pParam
+    fill_results pModRapEngine, pParamArray, strOrderBy, 0, strExtraParam
+  end if
+  if idKolumny = 3 then
+    strOrderBy = "z.strNrDok"
+    pParamArrayExtra.add doc_.afc.rap.param.new_text("Numer dokumentu").bindexpr(strOrderBy)
+    if pModRapEngine.show_raport_param_dialog(pParamArrayExtra,"CREATOR_TITLE") = 0 then
+  	  'w przypadku rezygnacji z filtru wyczyść strExtraParam oraz pSelectedColumn
+      strExtraParam = Left(strExtraParam,Len(strExtraParam) - 8)
+      pSelectedColumn.remove pSelectedColumn.upperIndex    
+  	  exit function
+    end if
+    if pParamArrayExtra.value(0).first_value = "" then
+      pSelectedRed.add 0
+    else
+      pSelectedRed.add 1
+    end if
+    pParamArray.add pParamArrayExtra.value(0)
+    fill_results pModRapEngine, pParamArray, strOrderBy, 0, strExtraParam 
+  end if
+  if idKolumny = 4 then
+    strOrderBy = "z.strNrDokObcy"
+    pParamArrayExtra.add doc_.afc.rap.param.new_text("Numer dokumentu obcego").bindexpr(strOrderBy)
+    if pModRapEngine.show_raport_param_dialog(pParamArrayExtra,"CREATOR_TITLE") = 0 then
+  	  'w przypadku rezygnacji z filtru wyczyść strExtraParam oraz pSelectedColumn
+      strExtraParam = Left(strExtraParam,Len(strExtraParam) - 8)
+      pSelectedColumn.remove pSelectedColumn.upperIndex    
+  	  exit function
+    end if
+    if pParamArrayExtra.value(0).first_value = "" then
+      pSelectedRed.add 0
+    else
+      pSelectedRed.add 1
+    end if    
+    pParamArray.add pParamArrayExtra.value(0)
+    fill_results pModRapEngine, pParamArray, strOrderBy, 0, strExtraParam
+  end if
+  if idKolumny = 5 then
+    strOrderBy = "p.strNazwa"
+    pParamArrayExtra.add doc_.afc.rap.param.new_text("Nazwa płatności").bindexpr(strOrderBy)
+    if pModRapEngine.show_raport_param_dialog(pParamArrayExtra,"CREATOR_TITLE") = 0 then
+  	  'w przypadku rezygnacji z filtru wyczyść strExtraParam oraz pSelectedColumn
+      strExtraParam = Left(strExtraParam,Len(strExtraParam) - 8)
+      pSelectedColumn.remove pSelectedColumn.upperIndex    
+  	  exit function
+    end if
+    if pParamArrayExtra.value(0).first_value = "" then
+      pSelectedRed.add 0
+    else
+      pSelectedRed.add 1
+    end if    
+    pParamArray.add pParamArrayExtra.value(0)
+    fill_results pModRapEngine, pParamArray, strOrderBy, 0, strExtraParam
+  end if 
+  if idKolumny = 6 then
+    strOrderBy = "z.dDataPlat"
+    pParamArrayExtra.add doc_.afc.rap.param.new_date_range("Termin płatności").bindexpr(strOrderBy)
+    if pModRapEngine.show_raport_param_dialog(pParamArrayExtra,"CREATOR_TITLE") = 0 then
+  	  'w przypadku rezygnacji z filtru wyczyść strExtraParam oraz pSelectedColumn
+      strExtraParam = Left(strExtraParam,Len(strExtraParam) - 8)
+      pSelectedColumn.remove pSelectedColumn.upperIndex    
+  	  exit function
+    end if
+    if pParamArrayExtra.value(0).mode = CLng(1) then
+      pSelectedRed.add 0
+    else
+      pSelectedRed.add 1
+    end if     
+    pParamArray.add pParamArrayExtra.value(0)
+    fill_results pModRapEngine, pParamArray, strOrderBy, 0, strExtraParam
+  end if
+  if idKolumny = 7 then
+    strOrderBy = "z.dExtra3"
+    pParamArrayExtra.add doc_.afc.rap.param.new_date_range("Zalecany termin płatności").bindexpr(strOrderBy)
+    if pModRapEngine.show_raport_param_dialog(pParamArrayExtra,"CREATOR_TITLE") = 0 then
+  	  'w przypadku rezygnacji z filtru wyczyść strExtraParam oraz pSelectedColumn
+      strExtraParam = Left(strExtraParam,Len(strExtraParam) - 8)
+      pSelectedColumn.remove pSelectedColumn.upperIndex    
+  	  exit function
+    end if
+    if pParamArrayExtra.value(0).mode = CLng(1) then
+      pSelectedRed.add 0
+    else
+      pSelectedRed.add 1
+    end if    
+    pParamArray.add pParamArrayExtra.value(0)
+    fill_results pModRapEngine, pParamArray, strOrderBy, 0, strExtraParam
+  end if
+  if idKolumny = 8 then
+    strOrderBy = "datediff(day,z.dDataWyst,getdate())"
+    pParamArrayExtra.add doc_.afc.rap.param.new_currency("Minęło dni").bindexpr(strOrderBy)
+    if pModRapEngine.show_raport_param_dialog(pParamArrayExtra,"CREATOR_TITLE") = 0 then
+  	  'w przypadku rezygnacji z filtru wyczyść strExtraParam oraz pSelectedColumn
+      strExtraParam = Left(strExtraParam,Len(strExtraParam) - 8)
+      pSelectedColumn.remove pSelectedColumn.upperIndex    
+  	  exit function
+    end if
+    if pParamArrayExtra.value(0).mode = CLng(1) then
+      pSelectedRed.add 0
+    else
+      pSelectedRed.add 1
+    end if    
+    pParamArray.add pParamArrayExtra.value(0)
+    fill_results pModRapEngine, pParamArray, strOrderBy, 0, strExtraParam
+  end if
+  if idKolumny = 9 then
+    strOrderBy = "datediff(day,getdate(),z.dExtra3)"
+    pParamArrayExtra.add doc_.afc.rap.param.new_currency("Pozostało dni").bindexpr(strOrderBy)
+    if pModRapEngine.show_raport_param_dialog(pParamArrayExtra,"CREATOR_TITLE") = 0 then
+  	  'w przypadku rezygnacji z filtru wyczyść strExtraParam oraz pSelectedColumn
+      strExtraParam = Left(strExtraParam,Len(strExtraParam) - 8)
+      pSelectedColumn.remove pSelectedColumn.upperIndex    
+  	  exit function
+    end if
+    if pParamArrayExtra.value(0).mode = CLng(1) then
+      pSelectedRed.add 0
+    else
+      pSelectedRed.add 1
+    end if     
+    pParamArray.add pParamArrayExtra.value(0)
+    fill_results pModRapEngine, pParamArray, strOrderBy, 0, strExtraParam
+  end if
+  if idKolumny = 10 then
+    strOrderBy = "t.curMa"
+    pParamArrayExtra.add doc_.afc.rap.param.new_currency("Kwota").bindexpr(strOrderBy)
+    if pModRapEngine.show_raport_param_dialog(pParamArrayExtra,"CREATOR_TITLE") = 0 then
+  	  'w przypadku rezygnacji z filtru wyczyść strExtraParam oraz pSelectedColumn
+      strExtraParam = Left(strExtraParam,Len(strExtraParam) - 8)
+      pSelectedColumn.remove pSelectedColumn.upperIndex    
+  	  exit function
+    end if
+    if pParamArrayExtra.value(0).mode = CLng(1) then
+      pSelectedRed.add 0
+    else
+      pSelectedRed.add 1
+    end if    
+    pParamArray.add pParamArrayExtra.value(0)
+    fill_results pModRapEngine, pParamArray, strOrderBy, 0, strExtraParam
+  end if
+  if idKolumny = 11 then
+    strOrderBy = "j.strSkrot"
+    pParamArrayExtra.add doc_.afc.rap.param.new_text("Skrót waluty").bindexpr(strOrderBy)
+    if pModRapEngine.show_raport_param_dialog(pParamArrayExtra,"CREATOR_TITLE") = 0 then
+  	  'w przypadku rezygnacji z filtru wyczyść strExtraParam oraz pSelectedColumn
+      strExtraParam = Left(strExtraParam,Len(strExtraParam) - 8)
+      pSelectedColumn.remove pSelectedColumn.upperIndex    
+  	  exit function
+    end if
+    if pParamArrayExtra.value(0).first_value = "" then
+      pSelectedRed.add 0
+    else
+      pSelectedRed.add 1
+    end if    
+    pParamArray.add pParamArrayExtra.value(0)
+    fill_results pModRapEngine, pParamArray, strOrderBy, 0, strExtraParam
+  end if  
+  if idKolumny = 12 then
+    strOrderBy = "k.strSkrot"
+    pParamArrayExtra.add doc_.afc.rap.param.new_text("Nazwa kontrahenta").bindexpr(strOrderBy)
+    if pModRapEngine.show_raport_param_dialog(pParamArrayExtra,"CREATOR_TITLE") = 0 then
+  	  'w przypadku rezygnacji z filtru wyczyść strExtraParam oraz pSelectedColumn
+      strExtraParam = Left(strExtraParam,Len(strExtraParam) - 8)
+      pSelectedColumn.remove pSelectedColumn.upperIndex    
+  	  exit function
+    end if
+    if pParamArrayExtra.value(0).first_value = "" then
+      pSelectedRed.add 0
+    else
+      pSelectedRed.add 1
+    end if    
+    pParamArray.add pParamArrayExtra.value(0)
+    fill_results pModRapEngine, pParamArray, strOrderBy, 0, strExtraParam
+  end if
+end function
+
+'--------------------------------------------------
+'-----  nazwa płatności w zależności od typu  -----
+'--------------------------------------------------
+function strTypPlat(byval eTypPlat,byval nIleDni) : strTypPlat = ""
+  if eTypPlat = 1 then
+    strTypPlat = "gotówka"
+  end if
+  if eTypPlat = 2 then
+    strTypPlat = "karta płat"
+  end if
+  if eTypPlat = 3 then
+    strTypPlat = "przelew " + CStr(nIleDni) 
+  end if
+  if eTypPlat = 4 then
+    strTypPlat = "przedpłata"
+  end if
+  if eTypPlat = 5 then
+    strTypPlat = "kompensata"
+  end if  
+end function
+
+'--------------------------------------------------
+'-----  usuwa dodatkowe parametry dla kolumn  -----
+'--------------------------------------------------
+function usunExtraParam
+  'gdy blokada oraz brak dodatkowych filtrów dla kolumn => nie wykonuj akcji
+  if bBlokada and pParamArray.upperIndex = 3 then
+    MessageBox "Brak danych" , "Kreator płatności", vbOKOnly, vbInformation
+    exit function
+  end if  
+  dim iter
+  for iter = 4 to pParamArray.upperIndex
+    pParamArray.remove iter
+  next
+  pSelectedColumn.removeall
+  pSelectedRed.removeall
+  strExtraParam = ""
+  dim strOrderBy : strOrderBy = "z.strNrDok"
+  fill_results pModRapEngine, pParamArray, strOrderBy, 0, strExtraParam
+end function
+
+'---------------------------------------------------------
+'-----  wyłącza zaznaczenie dla wszysktich checkbox  -----
+'---------------------------------------------------------
+function odznaczWszystko
+  dim oRow : set oRow = page_.ctrl(clng(iRowNr))
+  set oRow = oRow.nextelement
+  dim iter : iter = 0
+  do while not oRow is nothing
+    if not oRow.userprop is nothing then
+			  if oRow.userprop.exists(PROP_DOK_IDOBJ) and oRow.userprop.exists(PROP_DOK_KWOTA) then
+           'zamień wartość w 'pSelectedRows' na przeciwną 0 <=> 1
+           if pSelectedRows.value(iter) = CLng(1) then
+              pSelectedRows.value(iter) = CLng(0)
+              oRow.cell(14).element(1).value = CStr(0)
+              pSelectedKwoty.value(iter) = CCur(0)
+           end if   
+        end if
+    end if
+    iter = iter + 1
+    set oRow = oRow.nextelement
+	loop
+  strWal = ""
+end function
+
+
+'----------------------------------------
+'-----  zaznacza wszystkie pozycje  -----
+'----------------------------------------
+function zaznaczWszystko
+  dim oRow : set oRow = page_.ctrl(clng(iRowNr))
+  set oRow = oRow.nextelement
+  dim iter : iter = 0
+  do while not oRow is nothing
+    if not oRow.userprop is nothing then
+			  if oRow.userprop.exists(PROP_DOK_IDOBJ) and oRow.userprop.exists(PROP_DOK_KWOTA) then
+           'zamień wartość w 'pSelectedRows' na przeciwną 0 <=> 1
+           if pSelectedRows.value(iter) = CLng(0) then
+              pSelectedRows.value(iter) = CLng(1)
+              oRow.cell(14).element(1).value = CStr(1)
+              pSelectedKwoty.value(iter) = oRow.userprop.prop(PROP_DOK_KWOTA)               
+           end if   
+        end if
+    end if
+    iter = iter + 1
+    set oRow = oRow.nextelement
+	loop
+  strWal = ""
+end function
+
+'-------------------------------------------------------
+'-----  tworzy pojedynczy dokument kasowo-bankowy  -----
+'-------------------------------------------------------
+function platPojedyncza(byref pHLI)
+  dim idDokZak : idDokZak = clng(pHLI.prop(100))
+  dim iCheckValue, iDokType, iter, eRodzajDok
+  'sprawdz czy wybrano rodzaj płatności (KW <=> BR)
+  iDokType = page_.Ctrl(CTRLID_DOK_TYPE).value
+  if iDokType = 0 then
+    MessageBox "Nie wybrano rodzaju dokumentu" , "Kreator płatności", vbOKOnly, vbInformation
+    exit function
+  else
+    if iDokType = 1 then
+      eRodzajDok = clng(N5REJESTRDOK_KASOWY)
+    else
+      eRodzajDok = clng(N5REJESTRDOK_BANKOWY)
+    end if
+  end if  
+
+  'sprawdz czy wybrano dokument
+  for iter = 0 to pSelectedIdobj.upperIndex
+    if pSelectedIdobj.value(iter) = idDokZak then
+      iCheckValue = pSelectedRows.value(iter)
+      exit for
+    end if  
+  next
+  if iCheckValue = 0 then
+     MessageBox "Nie wybrano dokumentu" , "Kreator płatności", vbOKOnly, vbInformation
+     exit function
+  else
+      'dodaj do tablicy idobj dokumentu
+      pSelectedIdobjPlat.add idDokZak
+      dim idDok : idDok = pSelectedIdobjPlat.value(0)
+      dim pDokHandl
+      if idDok > 0 then
+        if g_bTryb then
+          set pDokHandl = trans_.getobj(TYPEID_N5PLNALICZENIE,idDok)
+        else
+          set pDokHandl = trans_.getobj(TYPEID_N5ZAKUP,idDok)
+        end if
+      end if
+      
+      'sprawdzamy stan rozliczenia transakcji
+      if not pDokHandl.pTransakcja is nothing then
+        dim nTypDok : nTypDok = pDokHandl.type
+        'zmieniamy środowisko, ale tylko lokalnie
+        dim pSubTrans
+        set pSubTrans = trans_.createsubtran()
+        
+        trans_.var(APPVAR_REJESTR_TYP) = eRodzajDok
+        trans_.var(GVAR_CURSOR) = clng(0)
+        dim pOpenFormKWBR : set pOpenFormKWBR = doc_.getmodule(60129).prepare_form_open_command(TYPEID_N5PLATNOSC,0,0)
+        if pOpenFormKWBR is nothing then
+	        exit function
+        end if
+        dim pFormKWBR : set pFormKWBR = doc_.getpagehli(pOpenFormKWBR)
+        if pFormKWBR is nothing then
+	        exit function
+        end if 
+        
+        if g_bTryb then
+          if eRodzajDok = N5REJESTRDOK_BANKOWY then
+            pFormKWBR.root.n5platnosc_supply_raport_kasowy()
+          end if     
+        end if  
+
+        if not wypelnijKWBR(pFormKWBR.root,idDok) then
+	        exit function
+        end if
+        
+        pFormKWBR.fsave        
+        set pSubTrans = nothing
+      end if
+ 
+     'wyczyść tabelę
+     pSelectedIdobjPlat.removeall
+  end if
+  'rebuild tabeli
+  dim strOrderBy : strOrderBy = "z.strNrDok"
+  fill_results pModRapEngine, pParamArray, strOrderBy, iAscDesc, strExtraParam
+  
+  MessageBox "Działanie kreatora zakończone powodzeniem" , "Kreator płatności", vbOKOnly, vbInformation
+  
+end function
+
+'-------------------------------------------------------
+'-----  tworzy dokument kasowo-bankowy z automatu  -----
+'-------------------------------------------------------
+function platAutomat(byref pHLI)
+  'gdy blokada nie wykonuj akcji
+  if bBlokada then
+    MessageBox "Brak danych" , "Kreator płatności", vbOKOnly, vbInformation
+    exit function
+  end if 
+
+  dim iCheckValue, iDokType, iter, eRodzajDok, strOrderBy 
+  'sprawdz czy wybrano rodzaj płatności (KW <=> BR)
+  iDokType = page_.Ctrl(CTRLID_DOK_TYPE).value
+  if iDokType = 0 then
+    MessageBox "Nie wybrano rodzaju dokumentu" , "Kreator płatności", vbOKOnly, vbInformation
+    exit function
+  else
+    if iDokType = 1 then
+      eRodzajDok = clng(N5REJESTRDOK_KASOWY)
+    else
+      eRodzajDok = clng(N5REJESTRDOK_BANKOWY)
+    end if
+  end if  
+
+  'gdy iAndMulticash = 1 wykonaj także eksport do MultiCash
+  dim iAndMulticash : iAndMulticash = pHLI.prop(1)
+
+  'kontrola poprawnośći danych => gdy eksport do multicash
+  if iAndMulticash = 1 then
+     dim strInfo : strInfo = ""
+     dim iLicz : iLicz = 0
+     dim bFailedData : bFailedData = false
+     for iter = 0 to pSelectedRows.upperIndex
+       if pSelectedRows.value(iter) = clng(1) then 
+         if not verify_polecenie(pSelectedIdobj.value(iter)) then
+           'zapamiętaj nazwy dokumentów z niepełnymi danymi i usuń z tabeli
+           dim oDok : set oDok = trans_.getobj(TYPEID_N5ZAKUP,pSelectedIdobj.value(iter))
+           if iLicz = 3 then
+             strInfo = strInfo + vbNewLine
+             iLicz = 0
+           end if
+           strInfo = strInfo + oDok.strNrDok + ", "
+           iLicz = iLicz + 1
+           pSelectedRows.value(iter) = clng(0)
+           bFailedData = true
+         end if       
+       end if  
+     next
+     if bFailedData then
+       if MessageBox("Brak poprawności danych dla dokumentów: "+ vbNewLine + strInfo + vbNewLine + vbNewLine +_
+                     "Czy chcesz kontynuować z pominięciem tych dokumentów?", "Kreator płatności", vbYesNo, vbQuestion) <> vbYes then
+           exit function
+       end if
+     end if  
+  end if  
+  
+  'posortuj idobj dokumentów zakupu wg skrótu klienta przed rozpoczęciem tworzenia płatności
+  if not g_bTryb then
+    strOrderBy = "k.strSkrot"
+    sortujWgKlienta pModRapEngine, pParamArray, strOrderBy, 0, strExtraParam
+  end if
+  
+   'dodaj do tablicy idobj dokumentu
+   for iter = 0 to pSelectedRows.upperIndex
+     if pSelectedRows.value(iter) = 1 then 
+       pSelectedIdobjPlat.add pSelectedIdobj.value(iter)
+     end if  
+   next
+   'gdy nie wybrano żadnych elementów
+   if pSelectedIdobjPlat.value(0) = empty then
+     MessageBox "Nie wybrano żadnych dokumentów lub zaznaczone mają niepoprawne dane" , "Kreator płatności", vbOKOnly, vbInformation
+     'gdy zaznaczono dokument z niepełnymi danymi odśwież raport
+     if bFailedData then
+         'rebuild tabeli
+         strOrderBy = "z.strNrDok"
+         fill_results pModRapEngine, pParamArray, strOrderBy, iAscDesc, strExtraParam
+     end if
+     exit function   
+   end if
+   
+   dim pOpenFormKWBR : set pOpenFormKWBR = nothing
+   dim pFormKWBR : set pFormKWBR = nothing
+   dim bNextKlient, bPrevKlient, pSubTrans 
+   
+   'zlicza liczbę transakcji na płatności (max 4 dla tego samego klienta)
+   dim iLiczTrans : iLiczTrans = 0
+   
+   for iter = 0 to pSelectedIdobjPlat.upperIndex   
+      dim idDok : idDok = pSelectedIdobjPlat.value(iter)
+      bNextKlient = false
+      bPrevKlient = false
+      'sprawdz klienta na poprzednim dokumencie
+      if iter > 0 then
+        dim idDokPrev : idDokPrev = pSelectedIdobjPlat.value(iter - 1)
+        bPrevKlient = sprawdzPrevKlient(idDok,idDokPrev)
+        bPoczDok = false
+      else
+        'gdy początek raportu rozpocznij nową transakcję
+        dim bPoczDok : bPoczDok = true
+      end if
+      'sprawdz klienta na następnym dokumencie
+      if iter < pSelectedIdobjPlat.upperIndex then
+        dim idDokNext : idDokNext = pSelectedIdobjPlat.value(iter + 1)
+        bNextKlient = sprawdzNextKlient(idDok,idDokNext)
+      else
+        'gdy koniec raportu zakończ transakcję i zapisz
+        dim bKoniecDok : bKoniecDok = true
+      end if  
+          
+      dim pDokHandl
+      dim nNrTrans : nNrTrans = 4    
+      if idDok > 0 then
+        if g_bTryb then
+          set pDokHandl = trans_.getobj(TYPEID_N5PLNALICZENIE,idDok)
+        else
+         set pDokHandl = trans_.getobj(TYPEID_N5ZAKUP,idDok)
+        end if
+      end if
+      
+      'sprawdzamy stan rozliczenia transakcji
+      if not pDokHandl.pTransakcja is nothing then
+        dim nTypDok : nTypDok = pDokHandl.type
+        
+        'zmieniamy środowisko, ale tylko lokalnie
+        if bPrevKlient or bPoczDok or iLiczTrans = 0 then
+          set pSubTrans = trans_.createsubtran()
+        end if
+        
+        trans_.var(APPVAR_REJESTR_TYP) = eRodzajDok
+        trans_.var(GVAR_CURSOR) = clng(0)
+        if pOpenFormKWBR is nothing then
+          set pOpenFormKWBR = doc_.getmodule(60129).prepare_form_open_command(TYPEID_N5PLATNOSC,0,0)  
+          if pOpenFormKWBR is nothing then
+            exit function
+          end if
+        end if
+
+        if pFormKWBR is nothing or bPrevKlient or bPoczDok or iLiczTrans = 0 then
+          set pFormKWBR = doc_.getpagehli(pOpenFormKWBR)
+          pIdobjPlatArray.add clng(pFormKWBR.root.idobj)
+          if pFormKWBR is nothing then
+            exit function
+          end if
+          if iLiczTrans = 0 then
+            iLiczTrans = iLiczTrans + 1
+          end if
+        else
+          iLiczTrans = iLiczTrans + 1
+        end if  
+        
+        if g_bTryb then
+          if eRodzajDok = N5REJESTRDOK_BANKOWY then
+            pFormKWBR.root.n5platnosc_supply_raport_kasowy()
+          end if
+          nNrTrans = 1
+        end if        
+
+        if not wypelnijKWBR(pFormKWBR.root,idDok) then
+          exit function
+        end if
+        
+        'jeśli klient na następnym dok jest inny, koniec dok
+        'gdy liczba transakcji na 1 płatności 4 pozycje zapisz (tylko transakcje zakupowe)
+        'płatność dla pracownika => zawsze 1 pozycja
+        if bNextKlient or bKoniecDok or iLiczTrans = nNrTrans then
+          pFormKWBR.fsave        
+          set pSubTrans = nothing
+          iLiczTrans = 0
+        end if  
+      end if        
+   next
+   
+   'wyczyść tabelę
+   pSelectedIdobjPlat.removeall
+   
+   'waluta
+   strWal = ""
+
+  'rebuild tabeli
+  strOrderBy = "z.strNrDok"
+  fill_results pModRapEngine, pParamArray, strOrderBy, iAscDesc, strExtraParam
+  
+  MessageBox "Działanie kreatora zakończone powodzeniem" , "Kreator płatności", vbOKOnly, vbInformation
+  
+  'eksport danych do MultiCash
+  if iAndMulticash = 1 then
+    exportMultiCash
+  end if  
+  'usuń idobj płatności z tabeli pomocniczej
+  pIdobjPlatArray.removeall
+end function
+
+'--------------------------------------------------------
+'-----  wypełnia dokument KW/BR odpowienimi polami  -----
+'--------------------------------------------------------
+function wypelnijKWBR(byref pPlatnosc,byval idDok) : wypelnijKWBR = true
+  dim pDok
+  if g_bTryb then
+    set pDok = trans_.getobj(TYPEID_N5PLNALICZENIE,idDok)
+  else
+	  set pDok = trans_.getobj(TYPEID_N5ZAKUP,idDok)
+  end if
+  
+  #ifdef APPCONFIG_KOPIUJ_ADNOTACJE_Z_FAKTUR
+	  pPlatnosc.strOpis = left(pDok.strUwagi,128)
+  #endif
+
+  if g_bTryb then
+    set pPlatnosc.wrefPodmiot = pDok.pPracownik
+  else
+	  set pPlatnosc.wrefPodmiot = pDok.pDostawca
+  end if
+	pPlatnosc.curKwotaPodm = pPlatnosc.curKwotaPodm + (-1 * (pDok.pTransakcja.curMa - pDok.pTransakcja.curWn))
+  set pPlatnosc.pWalutaPodm = pDok.pTransakcja.pWaluta
+	
+  if g_bTryb then
+    pPlatnosc.strOpis = pDok.pTransakcja.strSymTrans
+  end if
+  
+	dim pPozPlatnosc
+	set pPozPlatnosc = pPlatnosc.listPozycje.addnew()
+	pPozPlatnosc.curPozKwotaPodm = pPlatnosc.curKwotaPodm
+	set pPozPlatnosc.pTransakcja = pDok.pTransakcja	
+  
+end function
+
+'---------------------------------------------------------------
+'-----  kontrola poprawności danych eksportu do multicash  -----
+'---------------------------------------------------------------
+function verify_polecenie(byval idDok) : verify_polecenie = false
+  'dane zleceniodawcy i konrahenta
+  dim m_nNRBZ : m_nNRBZ = ""
+  dim m_nNRBK : m_nNRBK = ""
+  dim m_strNrRachZlec : m_strNrRachZlec = ""
+  dim m_strNrRachKontr : m_strNrRachKontr = ""
+  'pobierz obiekt dokumentu zakupu
+  dim oDok
+  dim pPodmiot : set pPodmiot = nothing
+  if idDok > 0 then
+    set oDok = trans_.getobj(TYPEID_N5ZAKUP, idDok)
+    set pPodmiot = oDok.pDostawca
+  end if
+  wypelnijDane pPodmiot, m_nNRBZ, m_strNrRachZlec, m_nNRBK, m_strNrRachKontr
+
+	'zaczynamy od sprawdzania numerów rozliczeniowych banków
+	if len(cstr(m_nNRBZ)) <> 8 then
+		'error_msg "Nieprawidłowa długośc numeru rozliczeniowego banku zleceniodawcy - powinien mieć 8 znaków"
+		exit function
+	else
+		if not isNumeric(cstr(m_nNRBZ)) then
+			'error_msg "Nieprawidłowy numer rozliczeniowy banku zleceniodawcy - nie jest liczbą"
+			exit function
+		end if
+	end if
+
+	if len(cstr(m_nNRBK)) <> 8 then
+		'error_msg "Nieprawidłowa długośc numeru rozliczeniowego banku kontrahenta - powinien mieć 8 znaków"
+		exit function
+	else
+		if not isNumeric(cstr(m_nNRBK)) then
+			'error_msg "Nieprawidłowy numer rozliczeniowy banku kontrahenta - nie jest liczbą"
+			exit function
+		end if
+	end if
+
+	'sprawdam numery kont
+	'konto zleceniodawcy powinno byc w formacie NRB
+
+	'sprawdzam, czy pierwszy człon to numer roziczeniowy
+	dim array_rach:array_rach = split(m_strNrRachZlec,"-")
+	if ubound(array_rach)=1 then
+		if len(array_rach(0)) <> 8 then
+			'error_msg "Pierwszy człon numeru rachunku zleceniodawcy ma nieprawidłową długość - powinno byc 8 znaków"
+			exit function	
+		else
+			if not isNumeric(array_rach(0)) then
+				'error_msg "Pierwszy człon numeru rachunku zleceniodawcy zawiera nieprawidłowe znaki - powinny byc tylko znaki alfanumeryczne"
+				exit function	
+			else
+				if clng(array_rach(0))<> clng(m_nNRBZ) then
+					'error_msg "Pierwszy człon numeru rachunku zleceniodawcy jest nieprawdiłowy - powinien to być kod rozrachunkowy banku"
+					exit function	
+				end if
+			end if
+		end if
+	end if
+
+	if not isNumeric(replace(array_rach(ubound(array_rach))," ","")) then
+		'error_msg "Numer konta zleceniodawcy powinien składać sie tylko ze znaków alfanuumerycznych"
+		exit function
+	end if
+
+	if len(replace(array_rach(ubound(array_rach))," ","")) > 26  then
+		'error_msg "Numer konta zleceniodawcy jest za długi - powinien zawierać maksymalnie 26 znaków"
+		exit function
+	end if
+
+	'numer konta kontrahenta
+	if cstr(m_strNrRachKontr) = "" then
+		'error_msg "Nie podano numeru rachunku kontrahenta"
+		exit function	
+	end if
+	if len(m_strNrRachKontr) > 34 then
+		'error_msg "Numer rachunku kontrahenta jest za długi - powinien zawierać maksymalnie 34 znaki"
+		exit function	
+	end if
+	verify_polecenie = true
+end function
+
+'-----------------------------------------------------------------
+'-----  wypełnia zmienne danymi zleceniodawcy i kontrahenta  -----
+'-----------------------------------------------------------------
+sub wypelnijDane(byval pPodmiot, byref m_nNRBZ, byref m_strNrRachZlec, byref m_nNRBK, byref m_strNrRachKontr)
+	'bank zleceniodawcy
+  dim pBank : set pBank = getCurrentFirma.pBank1
+	if pBank is nothing then
+		m_nNRBZ = ""
+	else
+		m_nNRBZ = pBank.strKodRach			
+	end if
+  'rachunek zleceniodawcy
+  m_strNrRachZlec = getCurrentFirma.strRachunek1
+	
+  'dane kontrahenta
+  get_NRB_NrRach pPodmiot, m_nNRBK, m_strNrRachKontr
+end sub
+
+'------------------------------
+'-----  dane kontrahenta  -----
+'------------------------------
+function get_NRB_NrRach(byval pPodmiot, byref m_nNRBK, byref m_strNrRachKontr)
+  dim strKod : strKod = ""   
+	if pPodmiot.type = TYPEID_N5PRACOWNIK or pPodmiot.type = TYPEID_N5KLIENT or pPodmiot.type = TYPEID_N5INSTYTUCJA or pPodmiot.type = TYPEID_N5FIRMA  then			
+      m_strNrRachKontr = pPodmiot.strRachunek1
+      strKod = Replace(m_strNrRachKontr," ","")
+      m_nNRBK = Mid(strKod,3,8)
+      if m_strNrRachKontr <> "" then
+        exit function
+      end if        
+	end if
+
+	if pPodmiot.type = TYPEID_N5KLIENT or pPodmiot.type = TYPEID_N5INSTYTUCJA or pPodmiot.type = TYPEID_N5FIRMA  then     
+			m_strNrRachKontr = pPodmiot.strRachunek2
+      strKod = Replace(m_strNrRachKontr," ","")
+      m_nNRBK = Mid(strKod,3,8)
+      if m_strNrRachKontr <> "" then
+        exit function
+      end if
+  
+			m_strNrRachKontr = pPodmiot.strRachunek3
+      strKod = Replace(m_strNrRachKontr," ","")
+      m_nNRBK = Mid(strKod,3,8)
+      if m_strNrRachKontr <> "" then
+        exit function
+      end if        
+	end if
+
+	if pPodmiot.type = TYPEID_N5BANK then
+		m_nNRBK = pPodmiot.strKodRach
+		m_strNrRachKontr = ""
+		exit function
+	end if
+
+	'jezeli nie znaleziono to puste
+	m_strNrRachKontr = ""
+	m_nNRBK = ""
+
+end function
+
+'----------------------------------------------------------------
+'-----  wykonuje eksport do MultiCash wybranych dokumentów  -----
+'----------------------------------------------------------------
+function exportMultiCash
+  dim pMCashModule:set pMCashModule = doc_.getmodule(60219)
+ 	dim pOutputStream:set pOutputStream = doc_.createstreamobj()	
+  dim strWhere:strWhere = " ( pRejestrDok in (select idobj from n5rejestrdok where eTyp=N5REJESTRDOK_BANKOWY) and " +_
+                          " (eStatus = 1) and (curKwotaPodm < 0) and idobj in (" + strIdDokToMultiCash + "))"
+
+	dim cursor:set cursor = trans_.createrawcursor(TYPEID_N5PLATNOSC,strWhere,"","")
+	if not cursor.exists(1) then
+		MessageBox "Eksport wpisów bankowych nie udał się - brakuje wpisów odpowiadających kryterium", "Multicash", vbOKOnly, vbInformation
+		exit function
+	end if
+
+	if pMCashModule.init_MultiCash_export(cursor) then
+		if not pMCashModule.process_export(pOutputStream) then
+			MessageBox "Eksport wpisów bankowych nie udał się - przerwano analizę danych lub format niektórych informacji w bazie jest nieprawidłowy", "Multicash", vbOKOnly, vbInformation
+			exit function
+		end if
+    dim strStreamSave : strStreamSave = "C:\" + CStr(Year(Now)) + "-" + addZero(CStr(Month(Now))) + "-" + addZero(CStr(Day(Now))) + " " +_
+                                        addZero(CStr(Hour(Now))) + "-" + addZero(CStr(Minute(Now))) + "-" + addZero(CStr(Second(Now))) + ".pli"
+		pOutputStream.save strStreamSave
+		'zapisujemy datę, do ktorej eksportowaliśmy
+		setglobprofile GLOBPROF_MULTICASH_DATE,cstr(srvDate)
+		trans_.saveobjects()
+	end if
+	MessageBox "Eksport danych zakończony" + vbNewLine + "Dane zapisano w pliku: " + strStreamSave, "Multicash", vbOKOnly, vbInformation
+end function
+
+'--------------------------------------------------------------------
+'-----  uzupełnia część daty o zero na początku  (np. 2 na 02)  -----
+'--------------------------------------------------------------------
+function addZero(byval strElemData) : addZero = ""
+  if Len(strElemData) = CLng(1) then
+    addZero = "0" + strElemData
+  else
+    addZero = strElemData
+  end if
+end function
+
+'------------------------------------------------------------
+'-----  zamienia idobj utworzonych płatności na string  -----
+'------------------------------------------------------------
+function strIdDokToMultiCash : strIdDokToMultiCash = ""
+  dim iter
+  for iter = 0 to pIdobjPlatArray.upperIndex
+    strIdDokToMultiCash = strIdDokToMultiCash + CStr(pIdobjPlatArray.value(iter)) + ","
+  next
+  'usuń przecinek na końcu
+  strIdDokToMultiCash = Left(strIdDokToMultiCash,Len(strIdDokToMultiCash) - 1)  
+end function
+
+'----------------------------------------------------------------------------
+'-----  sortuje idDok wg klienta przed tworzeniem płatności z automatu  -----
+'----------------------------------------------------------------------------
+function sortujWgKlienta(byref pModRapEngine,byref pParamArray, byval strOrderBy, byref iAscDesc, byval strExtraParam)
+  
+  'wyczyść tabele pomocnicze z poprzedniego select
+  pSelectedIdobjPomoc.removeall
+  pSelectedRowsPomoc.removeall
+  pSelectedKwotyPomoc.removeall
+    
+  'ustawienie sposobu sortowania w zależności od iAscDesc
+  if iAscDesc = 0 then
+    strOrderBy = strOrderBy + " asc"
+    iAscDesc = 1
+  else
+    strOrderBy = strOrderBy + " desc"
+    iAscDesc = 0
+  end if
+  
+	strSQL = "select 'z_idobj'=z.idobj,'r_idobj'=r.IdObj,'r_typ_rej'=r.eTyp,'r_nazwa_rej'=r.strNazwa,'z_nr_dok'=z.strNrDok, " +_
+           "'z_nrdok_obcy'=z.strNrDokObcy,'z_termin_zalec'=z.dExtra3,'p_typ_plat'=p.eTyp,'p_ile_dni'=p.nDni, " +_
+           "'z_data_plat'=z.dDataPlat,'ile_dni'=datediff(day,z.dDataWyst,getdate()), " +_
+           "'pozostalo_dni'=datediff(day,getdate(),z.dExtra3),'t_curMa'=t.curMa,'k_idobj'=k.idobj,'k_skrot_kontrah'=k.strSkrot, " +_
+           "'j_skrot_wal'=j.strSkrot " +_           
+           "from n5transakcja t " +_
+           "inner join n5zakup z on t.idobj = z.pTransakcja " +_
+           "inner join n5rejestrdok r on z.pRejestrDok = r.idobj " +_
+           "inner join n5sposplat p on z.pSposobPlatnosci = p.idobj " +_
+           "inner join n5klient k on t.wrefPodmiot = k.idobj and t.wrefPodmiot_wrt = 10108 " +_
+           "inner join n5jednostka j on t.pWaluta = j.idobj " +_           
+           "where (t.curWn <> t.curMa) and %1 and %2 and %3 and %4 " + strExtraParam +_
+           "order by " + strOrderBy 
+     
+  strSQL = pModRapEngine.query_apply_actual_param(strSQL,pParamArray)  
+  
+  'sprawdz czy zapytanie zwraca jakieś rekordy
+  dim bIsRecord : bIsRecord = false
+  dim oRS : set oRS = trans_.createadors(strSQL)
+  do while not oRS.EOF
+		bIsRecord = true
+    exit do
+	loop
+  
+  'jeśli zapytanie zwraca jakieś rekordy przestaw idDok w tabelach pomocniczych
+  if bIsRecord then
+    oRS.moveFirst
+
+    'skopiuj wyniki poprzedniego select
+    dim iter
+    for iter = 0 to pSelectedIdobj.upperIndex
+      pSelectedIdobjPomoc.add pSelectedIdobj.value(iter)
+      pSelectedRowsPomoc.add pSelectedRows.value(iter)
+      pSelectedKwotyPomoc.add pSelectedKwoty.value(iter)
+    next
+    
+    'usuń stare rekordy i dodawaj nowe
+    pSelectedIdobj.removeall
+    pSelectedRows.removeall
+    pSelectedKwoty.removeall
+    
+    do while not oRS.EOF
+      dim iIdObj : iIdObj = clng(oRS("z_idobj"))
+      pSelectedIdobj.Add iIdObj
+      
+      'typ płatności i ilość dni do zapłaty
+      dim eTypPlat : eTypPlat = clng(oRS("p_typ_plat"))
+      dim nIleDni : nIleDni = clng(oRS("p_ile_dni"))
+      
+      'kwota aktualnego wiersza
+      dim curKwota : curKwota = CCur(oRS("t_curMa"))
+      
+	    'ustaw odpowiednio checkbox w zależności od akcji poprzedniego select (domyślnie zaznaczony: 1)
+      dim checkValue : checkValue = 1
+
+      for iter = 0 to pSelectedIdobjPomoc.upperIndex
+        if pSelectedIdobjPomoc.value(iter) = iIdObj then
+          'ustaw checkbox jak w poprzednim select
+          checkValue = pSelectedRowsPomoc.value(iter)
+          exit for
+        end if
+      next    
+      pSelectedRows.Add checkValue
+      'jeśli wiersz jest check dodaj kwotę
+      if checkValue = 1 then
+        pSelectedKwoty.Add curKwota
+      else
+        pSelectedKwoty.Add CCur(0)
+      end if
+      
+		  oRS.moveNext
+	  loop
+  end if
+           
+end function
+
+'-------------------------------------------------------------------
+'-----  sprawdza czy dokument następny ma tego samego klienta  -----
+'-------------------------------------------------------------------
+function sprawdzNextKlient(byval idDok, byval idDokNext) : sprawdzNextKlient = false
+  dim pZakup, pZakupNext
+  if idDok > 0 and idDokNext > 0 then
+    if g_bTryb then
+      set pZakup = trans_.getobj(TYPEID_N5PLNALICZENIE,idDok)
+      set pZakupNext = trans_.getobj(TYPEID_N5PLNALICZENIE,idDokNext)    
+    else
+      set pZakup = trans_.getobj(TYPEID_N5ZAKUP,idDok)
+      set pZakupNext = trans_.getobj(TYPEID_N5ZAKUP,idDokNext)
+    end if
+  end if
+  if g_bTryb then
+    if pZakup.pPracownik.idobj <> pZakupNext.pPracownik.idobj then
+      sprawdzNextKlient = true
+    end if  
+  else
+    if pZakup.pDostawca.idobj <> pZakupNext.pDostawca.idobj then
+      sprawdzNextKlient = true
+    end if  
+  end if
+end function
+
+'-------------------------------------------------------------------
+'-----  sprawdza czy dokument poprzedni ma tego samego klienta  -----
+'-------------------------------------------------------------------
+function sprawdzPrevKlient(byval idDok, byval idDokPrev) : sprawdzPrevKlient = false
+  dim pZakup, pZakupPrev
+  if idDok > 0 and idDokPrev > 0 then
+    if g_bTryb then
+      set pZakup = trans_.getobj(TYPEID_N5PLNALICZENIE,idDok)
+      set pZakupPrev = trans_.getobj(TYPEID_N5PLNALICZENIE,idDokPrev)    
+    else  
+      set pZakup = trans_.getobj(TYPEID_N5ZAKUP,idDok)
+      set pZakupPrev = trans_.getobj(TYPEID_N5ZAKUP,idDokPrev)
+    end if  
+  end if
+  if g_bTryb then
+    if pZakup.pPracownik.idobj <> pZakupPrev.pPracownik.idobj then
+      sprawdzPrevKlient = true
+    end if   
+  else
+    if pZakup.pDostawca.idobj <> pZakupPrev.pDostawca.idobj then
+      sprawdzPrevKlient = true
+    end if 
+  end if
+end function
+
+'----------------------------------------------------------------------
+'-----  wypełnia tablicę wybranymi dokumentami (zaznacz podobne)  -----
+'----------------------------------------------------------------------
+function podobne
+  dim pTab : set pTab = doc_.afc.new_navoarray()
+  dim iter
+  for iter = 0 to pSelectedIdobj.upperIndex
+    if pSelectedRows.value(iter) = 1 then
+      pTab.add pSelectedIdobj.value(iter)
+    end if
+  next
+  'wywołanie funkcji zaznacz podobne z określonym parametrem
+  for iter = 0 to pTab.upperIndex
+    zaznaczPodobne pTab.value(iter)
+  next  
+end function
+
+'---------------------------------------------------------------------------
+'-----  zaznacza dokumenty o tym samym terminie płatności i rejestrze  -----
+'---------------------------------------------------------------------------
+function zaznaczPodobne(byval idDok)
+  'pobierz obiekt dokumentu o idodbj = idDok
+  if idDok > 0 then
+    dim pDokHandl : set pDokHandl = trans_.getobj(TYPEID_N5ZAKUP,idDok)
+  else
+    exit function
+  end if
+  'ustaw id rejestru oraz typ płatności
+  dim idRejestr : idRejestr = pDokHandl.pRejestrDok.IdObj
+  dim dTypPlat : dTypPlat = pDokHandl.dExtra3
+  
+  'pobierz wiersz z przyciskiem 'NIC'
+  dim oRow : set oRow = page_.ctrl(clng(iRowNr))
+  set oRow = oRow.nextelement
+  dim iter : iter = 0
+  do while not oRow is nothing
+    if not oRow.userprop is nothing then
+		  if oRow.userprop.exists(PROP_DOK_IDOBJ) and oRow.userprop.exists(PROP_DOK_KWOTA) then
+         'zaznacz podobne dokumenty
+          dim propIdRejestr : propIdRejestr = oRow.userprop.prop(PROP_DOK_IDREJESTR)
+          dim propTerminPlat : propTerminPlat = oRow.userprop.prop(PROP_DOK_TERMINPLAT)
+          if (pSelectedRows.value(iter) = 0) and (idRejestr = propIdRejestr) and (dTypPlat = propTerminPlat) and oRow.cell(13).element(1).value = CStr(1) then
+             pSelectedRows.value(iter) = CLng(1)
+             oRow.cell(14).element(1).value = CStr(1)
+             pSelectedKwoty.value(iter) = oRow.userprop.prop(PROP_DOK_KWOTA)               
+          end if
+      end if
+    end if
+    iter = iter + 1
+    set oRow = oRow.nextelement
+	loop
+end function
+
+'------------------------
+'ustaw w tabeli pSelectedRows wartość 0 lub 1 w zależności od newValue
+'------------------------
+function changeRow(byval oRow, byval newValue)
+	dim iter
+	if not oRow.userprop is nothing then
+		if oRow.userprop.exists(PROP_DOK_IDOBJ) then
+			dim iDokId : iDokId = oRow.userprop.prop(PROP_DOK_IDOBJ)
+			for iter = 0 to pSelectedIdobj.upperIndex
+				 if pSelectedIdobj.value(iter) = iDokId then
+						pSelectedRows.value(iter) = clng(newValue)
+						'gdy newValue 1 ustaw kwotę w tabeli else ustaw 0
+						if clng(newValue) = 1 then
+							pSelectedKwoty.value(iter) = oRow.userprop.prop(PROP_DOK_KWOTA)
+						else
+							pSelectedKwoty.value(iter) = CCur(0)
+						end if  
+						exit for
+				 end if
+			 next
+		end if
+	end if
+  kontrWaluty
+end function
+
+
+'------------------------------------
+'-----  kontrolki dla checkbox  -----
+'------------------------------------
+function c##CTRLID_REDIRECT_CHKBOX_AKCEPT##_ongetdata(byref oCtrl) : c##CTRLID_REDIRECT_CHKBOX_AKCEPT##_ongetdata = true
+	dim oRow : set oRow = oCtrl.parent.parent
+	oCtrl.value = oRow.userprop.prop(PROP_DOK_AKCEPT)
+	if oCtrl.value = "1" then
+		oRow.cell(14).element(1).disable = false
+	else
+		oRow.cell(14).element(1).disable = true
+	end if
+end function
+
+function c##CTRLID_REDIRECT_CHKBOX_AKCEPT##_ondataentered(byref oCtrl, byval newValue)
+	c##CTRLID_REDIRECT_CHKBOX_AKCEPT##_ondataentered = false
+	dim oRow : set oRow = oCtrl.parent.parent
+	if MessageBox("Czy na pewno chcesz zmienić status akceptacji dokumentu?", "Potwierdzenie", vbYesNo, vbQuestion) = vbYes then
+		oRow.userprop.prop(PROP_DOK_AKCEPT) = newValue
+	else
+		if newValue = "1" then
+			oCtrl.value = "0"
+		else
+			oCtrl.value = "1"
+		end if
+	end if
+	if oCtrl.value = "0" then
+		oRow.cell(14).element(1).value = "0"
+		changeRow oRow, oCtrl.value
+	end if
+	c##CTRLID_REDIRECT_CHKBOX_AKCEPT##_ondataentered = true
+end function
+
+function c##CTRLID_REDIRECT_CHKBOX##_ongetdata(byref oCtrl)
+	c##CTRLID_REDIRECT_CHKBOX##_ongetdata = true
+end function
+
+function c##CTRLID_REDIRECT_CHKBOX##_ondataentered(byref oCtrl, byval newValue)
+	c##CTRLID_REDIRECT_CHKBOX##_ondataentered = false
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+			if oRow.userprop.exists(PROP_DOK_IDOBJ) and oRow.userprop.exists(PROP_DOK_KWOTA) and oRow.userprop.exists(PROP_DOK_WALUTA) then
+         'kontrola zaznaczania pozycji z taką samą walutą
+         if clng(newValue) = 1 then
+           if strWal <> "" then
+             if strWal <> oRow.userprop.prop(PROP_DOK_WALUTA) then
+               'gdy inna waluta => komunikat
+               MessageBox "Niedozwolony wybór transakcji z różnymi walutami" , "Kreator płatności", vbOKOnly, vbInformation
+               oRow.cell(14).element(1).value = CStr(0)
+               exit function
+             end if
+           else
+             strWal = oRow.userprop.prop(PROP_DOK_WALUTA)
+           end if
+         end if
+         'ustaw w tabeli pSelectedRows wartość 0 lub 1 w zależności od newValue
+         changeRow oRow, newValue
+      end if
+  end if
+  c##CTRLID_REDIRECT_CHKBOX##_ondataentered = true
+end function
+
+'-------------------------------------------------------
+'-----  gdy nie wybrano transakcji => strWal = ""  -----
+'-------------------------------------------------------
+sub kontrWaluty
+  dim iter
+  dim bIsCheck : bIsCheck = false
+  for iter = 0 to pSelectedRows.upperIndex
+    if pSelectedRows.value(iter) = clng(1) then
+      bIsCheck = true
+      exit for
+    end if
+  next
+  if not bIsCheck then
+    strWal = ""
+  end if
+end sub
+
+'---------------------------------------------------
+'-----  kontrolki dla edit suma kwoty raportu  -----
+'---------------------------------------------------
+function c##CTRLID_CURREDIT_SUMA##_ongetdata(byref oCtrl)
+	c##CTRLID_CURREDIT_SUMA##_ongetdata = true
+  dim iter
+  dim sumKwota : sumKwota = CCur(0)
+  for iter = 0 to pSelectedKwoty.upperIndex
+    sumKwota = sumKwota + pSelectedKwoty.value(iter)
+  next
+  oCtrl.Value = sumKwota
+end function
+
+function c##CTRLID_CURREDIT_SUMA##_ondataentered(byref oCtrl, byval newValue)
+	c##CTRLID_CURREDIT_SUMA##_ondataentered = true
+end function
+
+'----------------------------------------------------
+'-----  kontrolki - liczba zaznaczonch pozycji  -----
+'----------------------------------------------------
+function c##CTRLID_NUM_POZ##_ongetdata(byref oCtrl)
+	c##CTRLID_NUM_POZ##_ongetdata = true
+  dim iter
+  dim iLiczPoz : iLiczPoz = CCur(0)
+  for iter = 0 to pSelectedRows.upperIndex
+    if pSelectedRows.value(iter) = clng(1) then 
+      iLiczPoz = iLiczPoz + 1
+    end if
+  next
+  oCtrl.Value = iLiczPoz
+end function
+
+function c##CTRLID_NUM_POZ##_ondataentered(byref oCtrl, byval newValue)
+	c##CTRLID_NUM_POZ##_ondataentered = true
+end function
+
+'----------------------------------------------------------
+'-----  kontrolki wyboru rodzaju dokumentu KW <=> BR  -----
+'----------------------------------------------------------
+function c##CTRLID_DOK_TYPE##_ongetdata(byref oCtrl)
+	c##CTRLID_DOK_TYPE##_ongetdata = true
+end function
+
+function c##CTRLID_DOK_TYPE##_ondataentered(byref oCtrl, byval newValue)
+	c##CTRLID_DOK_TYPE##_ondataentered = true
+  oCtrl.value = newValue
+end function
+
+function c##CTRLID_RODZAJ_DOK##_ongetdata(byref oCtrl) : c##CTRLID_RODZAJ_DOK##_ongetdata = true
+  if g_bTryb then
+    oCtrl.width = clng(15000)
+    page_.ctrl(CTRLID_BUTTON_AUTO_PLI).hide = true
+    page_.ctrl(CTRLID_BUTTON_PODOBNE).hide = true
+    page_.ctrl(CTRLID_BUTTON_FILTRY).hide = true
+  else
+    page_.ctrl(CTRLID_BUTTON_WSZYSTKO).hide = true
+    oCtrl.width = clng(12500)
+  end if
+end function
+
+]]>
+</script>
+	</config>
+	<body>
+    <table>
+      <tbody>
+        <tr>
+          <td colspan='6'>
+            <picture image='80139' tip='Wypełnij raport' width='1000' height='1000' href='varFunction="frefresh"' />
+            <t fontsize='6' bold='true'>Zobowiązania nierozliczone</t>
+          </td>
+        </tr>
+        <tr><td colspan='6'><t>&nbsp;</t></td></tr>
+        <tr>
+          <td>
+            <button name='CTRLID_BUTTON_FILTRY' style='STYLE_BUTTON' href='varFunction="usunExtraParam"'>Zdejmij filtry</button>
+          </td>
+          <td align='right' name='CTRLID_RODZAJ_DOK'>
+            <transfer mode='custom' /> 
+            <t fontsize='4' bold='true'>Rodzaj dokumentu:</t>
+          </td>
+          <td align='right' width='2300'>
+            <radio style='STYLE_TABLE_BODY' name='CTRLID_DOK_TYPE' colspan='2'>
+              <transfer mode='custom' />
+              <t>KW</t>
+              <t>BR</t>
+            </radio>
+          </td>
+          <td width='min' align='right'>
+            <button style='STYLE_BUTTON' href='varFunctionHLI="platAutomat" vn1="0"'>KW/BR Automat</button>
+          </td>
+          <td width='min' align='right'>
+            <button name='CTRLID_BUTTON_AUTO_PLI' style='STYLE_BUTTON' href='varFunctionHLI="platAutomat" vn1="1"'>KW/BR + PLI</button>
+          </td>
+          <td width='min' align='right'>
+            <button name='CTRLID_BUTTON_PODOBNE' style='STYLE_BUTTON' href='varFunction="podobne"'>Podobne</button>
+            <button name='CTRLID_BUTTON_WSZYSTKO' style='STYLE_BUTTON' href='varFunction="zaznaczWszystko"'>Wszystko</button>
+          </td>
+        </tr>
+        <tr><td colspan='6'><t>&nbsp;</t></td></tr>        
+        <tr>
+          <td colspan='6'>
+            <table border='1' name='CTRLID_RESULT_TABLE'>
+              <tbody backcolor='white' border='1' bordercolor='white' />
+            </table>
+          </td>
+        </tr> 
+      </tbody>
+    </table>
+  </body>
+</page>

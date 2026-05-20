@@ -1,0 +1,672 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+Grupa produktów - dane klienta
+
+#include "h1000.h"
+#include "h1001.h"
+
+#include "h1232.h"
+
+#include "h1001.h"
+
+#include "h1200.h"
+#include "h1201.h"
+#include "h1220.h"
+#include "h1240.h"
+
+#define CTRLID_CHECKBOX_REDIRECT	100
+-->
+<page>
+<config>
+<title></title>
+<secidread>UAR_MANAGE_KLIENT_GRUPA_PROD</secidread>
+<script>
+<![CDATA[
+
+'harui
+#include "50101"
+
+'setstaticstyle
+#include "50100"
+
+
+'NavoIndex
+#include "50510"
+
+dim g_pPicIdModule : set g_pPicIdModule = nothing
+dim pTreeHost
+
+function fopen(): fopen = false
+
+	if not std_fopen() then
+		exit function
+	end if
+
+	'---- klient idobj (required) ---------
+	dim idKlient
+	if trans_.isvar(APPVAR_PARAM_IDOBJ) then
+		idKlient = trans_.var(APPVAR_PARAM_IDOBJ)
+	else
+		if trans_.isvar(GVAR_OBJECT) then
+			idKlient = trans_.var(GVAR_OBJECT)
+		else
+			exit function
+		end if
+	end if
+
+	'wczytywanie grup - tworzenie indeksow,
+	read_group idKlient
+
+	set g_pPicIdModule = doc_.getmodule(60301)	
+	'-- configure --------
+	set pTreeHost = doc_.getmodule(43006)
+	dim pPB : set pPB = pTreeHost.new_custombuilder()
+
+	dim pTreeDef : set pTreeDef = pTreeHost.prepare_explorer(pPB)
+
+	pTreeDef.add_relation TYPEID_N5GRUPAPRODUKTOW,TYPEID_N5GRUPAPRODUKTOW,"pGrupaNadrzedna","c.strNazwa","",false
+
+	pPB.set_body_builder getref("grupyproduktow_body_builder")
+
+	'funkcje wywolywane w odpowienich momentach
+	'transfery
+	pTreeHost.set_transfer_handler_enter getref("OnTranslateMessage")
+	'fback
+	pTreeHost.set_close_handler getref("OnCloseChoice")
+	'fsave
+	pTreeHost.set_save_handler getref("OnSaveChoice")
+
+	pTreeHost.show pTreeDef,"Grupa produktów - dane klienta",TYPEID_N5GRUPAPRODUKTOW,0
+
+end function
+
+function fclose()
+	set g_pPicIdModule = nothing
+end function
+
+function grupyproduktow_body_builder(byref pBodyCell,byref pObject)
+	pBodyCell.keepline = true
+	
+	dim pPicture : set pPicture = pBodyCell.addnew(CTRL_TYPE_PICTURE, -1)
+	with pPicture
+		.width=Clng( SIZE_FOR_LIST )
+		.height=CLng( SIZE_FOR_LIST )
+		.image = g_pPicIdModule.get_obj_pic_id(pObject.type,pObject.idobj, PICUSE_LISTELEM)
+	end with
+	dim pCheckbox
+	set pCheckbox = pBodyCell.addnew(CTRL_TYPE_CHECKBOX, -1)
+	pCheckbox.border = 0
+
+	dim pText:set pText = pCheckbox.addnew(CTRL_TYPE_STATIC,-1)
+	pText.text = pObject.text
+
+	dim hli:set hli = doc_.createhli()
+	hli.prop(1) = clng(pObject.type)
+	hli.prop(2) = clng(pObject.idobj)
+	set pText.userprop = hli
+
+	'pTreeHost.addxml pCheckbox.ident, "<transfer mode='custom'></transfer>"
+	set pCheckbox.transfer = pTreeHost.createtransfer("custom")
+
+	pCheckbox.customredirect CLng(CTRLID_CHECKBOX_REDIRECT)
+
+
+	dim pTreeNode
+			
+	set pTreeNode=pGrupaNadrzednaINDEX.getindex(pObject.idobj)
+	pTreeNode.varValue.idCtrl=pCheckbox.ident
+	pTreeNode.varValue.idText=pText.ident
+
+	SetCheckBoxStyle pText.ident, pTreeNode, pTreeHost
+
+	if (pTreeNode.varValue.value) then
+		pCheckbox.value="1"
+	end if
+
+	'msgbox cstr(pObject.type)
+
+	grupyproduktow_body_builder = true
+end function
+
+
+
+function SetCheckBoxStyle(byval nIdText, byref pTreeLevel, byref pPage)
+	dim pCtrl
+	set pCtrl=pPage.trygetctrl(nIdText)
+	
+	if (not pCtrl is nothing) then
+		if ((pTreeLevel.varValue.nElems=pTreeLevel.varValue.nSelectedElems) and (pTreeLevel.varValue.nElems>0)) then
+			SetStaticStyle pCtrl, true, false
+		else
+			SetStaticStyle pCtrl, false, false
+		end if
+	end if
+end function
+
+
+
+
+
+'*************************************************************
+'wczytywanie
+
+
+'----------------------------------------------------------------------
+'Klasa reprezentuje jeden element w drzewie
+'----------------------------------------------------------------------
+class CTreeValue
+	public idObj	'identyfikator obiektu
+	public typeId	'typ obiektu
+	public value	'czy zaznaczony checkbox czy tez nie (true/false)
+	public start_value 'wartosc początkowa
+	public idKlient	'id klienta
+
+	public nElems
+	public nSelectedElems
+
+	public idCtrl
+	public idText
+
+	private sub class_initialize()
+		nElems=0
+		nSelectedElems=0
+		idCtrl=0
+		idText=0
+		value=false
+		start_value=false
+	end sub
+
+	public function elems(byval nValChange)
+		nElems=nElems+nValChange
+		value=(nSelectedElems>0)
+	end function
+
+	public function selected_elems(byval nValChange)
+		nSelectedElems=nSelectedElems+nValChange
+		value=(nSelectedElems>0)
+	end function
+
+end class
+
+
+'indeksy przyspieszajace wyszukiwanie grup i elementow grup
+dim pGrupaNadrzednaINDEX
+
+
+'wskaznik na drzewo pabierajace hierarchie pomiedzy grupami 
+'i elementami danej grupy
+dim pTree
+
+
+
+function read_group ( byval nKlient )
+
+	'.........................................
+	' Inicjujemy indexy
+	'.........................................
+
+	set pGrupaNadrzednaINDEX=new CNavoIndex
+
+	'.........................................
+	' Wypelniamy drzewo informacjami o stanie
+	' uprawnien
+	'.........................................
+
+	dim pPerf
+	set pPerf = doc_.performing("Czytanie grup produktów . . . .")
+
+	set pTree=new CNavoTree
+
+	dim pRoot
+	set pRoot=pTree.getRoot()
+
+	dim pTreeValue
+	set pTreeValue=new CTreeValue
+
+	pTreeValue.idObj = CLng(0)
+	pTreeValue.typeId = CLng(TYPEID_N5GRUPAPRODUKTOW)
+	pTreeValue.idKlient = CLng(nKlient)
+
+	set pRoot.pfnOnNewChild=getref("OnNewChild")
+	set pRoot.varValue=pTreeValue
+
+	'zapytanie dla korzenia
+
+	OnNewChild pRoot
+
+	'wypełniamy drzewo informacjami o liczbie zaznaczonych dzieci
+	SetChildrenInfo pRoot
+
+
+	set pPerf = nothing
+
+
+end function
+
+
+'----------------------------------------------------------------------
+'Wypelniamy rekrursywanie drzewo na podstawie już nadanych uprawnien
+'----------------------------------------------------------------------
+function OnNewChild(byref pChild)
+	dim strQuery, pRecordset, pTreeValue
+
+	if ( pChild.varValue.typeId=CLng(TYPEID_N5GRUPAPRODUKTOW) ) then
+
+		'dodaj tree node do indexu grup
+		pGrupaNadrzednaINDEX.Add pChild.varValue.idObj, pChild
+
+		'poinformuj oja o nowym elemencie
+		if (not pChild.pParent is nothing) then
+			pChild.pParent.varValue.elems 1
+		end if
+
+		pChild.varValue.value=false
+
+		'dodaj elementy grupy i zaznacz czy dany element (grupa) posiadal
+		'juz dany klient - czy ma nadaną taką grupę
+		strQuery="select gp.IdObj as IdGrupyProd,ISNULL(kg.IdObj,0) as nExistsGroup from n5grupaproduktow gp " + _
+		"left outer join n5klient_grupaprod kg on kg.klgpr_pGrupaProd = gp.IdObj and kg.klgpr_pKlient=" + CStr(pChild.varValue.idKlient) + " " + _
+		"where gp.pGrupaNadrzedna=" + CStr(pChild.varValue.idObj)
+		set pRecordset=trans_.createadors(strQuery)
+
+		dim nSelected: nSelected=0
+			
+		if (not pRecordset.eof) then
+
+			while not pRecordset.eof
+				set pTreeValue=new CTreeValue
+
+				pTreeValue.idObj=CLng(pRecordset.fields(0).value)
+				pTreeValue.idKlient=CLng(pChild.varValue.idKlient)
+				pTreeValue.typeId=CLng(TYPEID_N5GRUPAPRODUKTOW)
+
+				dim pChildElem
+				set pChildElem=pChild.AddChild( pTreeValue )
+
+				pChildElem.varValue.value=(CLng(pRecordset.fields(1).value)>0)
+				pChildElem.varValue.start_value=pChildElem.varValue.value
+
+				'poinformuj ojca o liczbie elementow
+				if (not pChildElem.pParent is nothing) then
+					'parent liczy sobie liczbe dzieci - dodaj
+					pChildElem.pParent.varValue.elems 1
+				end if
+
+				pRecordset.movenext
+			wend
+		end if
+	end if
+end function
+
+
+function SetChildrenInfo(byref pTreeLevel)
+	if (pTreeLevel.ChildrenCount()=0) then
+		exit function
+	end if
+
+	'ustawiamy wartosci we wszystkich dzieciach
+	dim i, nSelected: nSelected=0
+	for i = 0 to (pTreeLevel.ChildrenCount()-1)
+		SetChildrenInfo pTreeLevel.getChild(i)
+		
+		if (pTreeLevel.getChild(i).varValue.value) then
+			nSelected=nSelected+1
+		end if
+	next
+
+	pTreeLevel.varValue.nSelectedElems=nSelected
+	pTreeLevel.varValue.value=(pTreeLevel.varValue.nSelectedElems>0)
+end function
+
+
+
+
+function SetConstChildrenInfo(byref pTreeLevel, byval bNewValue, byref pPage)
+	if (pTreeLevel.ChildrenCount()=0) then
+		exit function
+	end if
+
+	'ustawiamy wartosci we wszystkich dzieciach
+	dim i
+	for i = 0 to (pTreeLevel.ChildrenCount()-1)
+		SetConstChildrenInfo pTreeLevel.getChild(i), bNewValue, pPage
+	next
+
+	if (bNewValue) then
+		pTreeLevel.varValue.nSelectedElems=pTreeLevel.varValue.nElems
+		pTreeLevel.varValue.value=true
+	else 
+		pTreeLevel.varValue.nSelectedElems=0
+		pTreeLevel.varValue.value=false
+	end if
+
+	SetCheckBoxStyle pTreeLevel.varValue.idText, pTreeLevel, pPage
+end function
+
+
+
+'----------------------------------------------------------------------
+'Zdarzenie na ondataentered dla wszystkich checkbox'ow
+'----------------------------------------------------------------------
+function OnTranslateMessage(byref pCtrl, byval varNewValue,byref pPage ): OnTranslateMessage=false
+	dim pRow:set pRow = pCtrl.parent.parent
+	dim nIndent:nIndent = pRow.userprop.prop(1)
+	dim nTypeID:nTypeId = pCtrl.element(1).userprop.prop(1)
+	dim idObj:idObj = pCtrl.element(1).userprop.prop(2)
+
+
+	'Szukamy elementu, ktorego zmienilismy selekcje
+	'i zaznaczamy jego samego w drzewie i jezeli
+	'byl to element typu grupa zaznaczamy rowniez
+	'wszystkie elementy w tej grupie
+
+	dim bNewValue
+	bNewValue=(varNewValue="1")
+
+	dim pTreeElem
+	set pTreeElem=pGrupaNadrzednaINDEX.getIndex(idObj)
+
+	dim bOldValue, bChangedValue
+	bOldValue=pTreeElem.varValue.value
+	bChangedValue=(bOldValue<>bNewValue)
+
+	'ustaw nowa wartosc dla aktualnego elementu i dla dzieci
+	'tego elementu
+	SetValueInTree pTreeElem, bNewValue, pPage
+
+	if (bChangedValue) then
+		if (not bNewValue) then
+			SetParentInfo pTreeElem.pParent, -1, pPage
+		else
+			SetParentInfo pTreeElem.pParent, 1, pPage
+		end if
+	end if
+
+	SetConstChildrenInfo pTreeElem, bNewValue, pPage
+
+	'zaznaczamy fizycznie to co widac na ekranie
+
+	'pobieramy nastepny wiersz
+	dim pRowNext:set pRowNext = pRow.nextelement
+	dim nIndentNext
+		
+	while true
+		'jezeli nie ma go to spadamy			
+		if pRowNext is nothing then
+			OnTranslateMessage=true
+			exit function
+		end if
+		'sprawdzamy wcięcie
+		nIndentNext = pRowNext.userprop.prop(1)
+		'i dzalamy dalej tylko jesli jest większe
+		if (nIndent < nIndentNext) then
+			ExploreCheckbox pRowNext, varNewValue
+			set pRowNext = pRowNext.nextelement
+		else ' w prezciwnym razie spadamy
+			OnTranslateMessage=true
+			exit function
+		end if
+	wend
+
+	OnTranslateMessage=true
+end function
+
+function ExploreCheckbox(byref pRootElem, byval strNewValue)
+
+	dim pElement
+	for each pElement in pRootElem
+		select case CLng(pElement.type)
+		case CTRL_TYPE_CHECKBOX
+			pElement.value=strNewValue
+
+		case CTRL_TYPE_TABLECELL
+			ExploreCheckbox pElement, strNewValue
+
+		case CTRL_TYPE_TABLEROW
+			ExploreCheckbox pElement, strNewValue
+
+		case CTRL_TYPE_TABLE
+			ExploreCheckbox pElement.body, strNewValue
+
+		end select
+	next
+end function
+
+function SetCellStyle(byref pCell)
+	pCell.border=1
+	pCell.bordercolor=rgb(R_FOR_TABLE_HDR,G_FOR_TABLE_HDR,B_FOR_TABLE_HDR)
+end function
+
+
+
+'----------------------------------------------------------------------
+'Ustaw na wszystkich poziomach nową wartość
+'----------------------------------------------------------------------
+function SetValueInTree(byref pTreeLevel, byval bNewValue, byref pPage)
+	dim bChangedValue, bOldValue
+
+	bOldValue=pTreeLevel.varValue.value
+	pTreeLevel.varValue.value=bNewValue
+	bChangedValue=(bOldValue<>bNewValue)
+
+	'zaznacz ojca jezeli istnieje taka koniecznosc
+	if (bChangedValue) then
+
+		dim pParentValue
+		set pParentValue=pTreeLevel.pParent.varValue
+
+		dim bOldValueChBox
+		bOldValueChBox=pParentValue.value
+
+		bChangedValue=(bOldValueChBox<>pParentValue.value)
+
+		if (bChangedValue) then
+
+			dim pCtrl
+			set pCtrl=pPage.trygetctrl(pParentValue.idCtrl)
+			
+			if (not pCtrl is nothing) then
+				if (pParentValue.value) then
+					pCtrl.value="1"
+				else
+					pCtrl.value="0"
+				end if
+			end if
+
+		end if
+	end if
+
+	'dany poziom znajduje się na końcu drzewa (nie ma dzieci)
+	'to konczymy ustawianie
+	if (pTreeLevel.ChildrenCount()=0) then
+		exit function
+	end if
+
+	'ustawiamy wartosci we wszystkich dzieciach
+	dim i
+	for i = 0 to (pTreeLevel.ChildrenCount()-1)
+		SetValueInTree pTreeLevel.getChild(i), bNewValue, pPage
+	next
+
+end function
+
+
+function SetParentInfo(byref pTreeLevel, byval nRemoveAdd, byref pPage)
+
+	if (pTreeLevel is nothing) then
+		exit function
+	end if
+
+	dim bOldValue
+	bOldValue=pTreeLevel.varValue.value
+	
+	pTreeLevel.varValue.selected_elems nRemoveAdd
+	SetCheckBoxStyle pTreeLevel.varValue.idText, pTreeLevel, pPage
+
+	if (bOldValue<>pTreeLevel.varValue.value) then
+
+		dim pCtrl
+		set pCtrl=pPage.trygetctrl(pTreeLevel.varValue.idCtrl)
+
+		if (not pCtrl is nothing) then
+			if (bOldValue) then
+				pCtrl.value="0"
+			else
+				pCtrl.value="1"
+			end if
+		end if
+
+		if (bOldValue) then
+			SetParentInfo pTreeLevel.pParent, -1, pPage
+		else
+			SetParentInfo pTreeLevel.pParent, 1, pPage
+		end if
+	end if
+end function
+
+
+'------------------------------------
+'zapisanie grup produktów na kliencie
+'------------------------------------
+function SaveGroups(): SaveGroups=false
+
+	dim pDic
+	set pDic = pGrupaNadrzednaINDEX.getDictionary()
+
+	dim pItems
+	pItems = pDic.Items
+
+	dim pTrans
+	set pTrans = trans_.createsubtran()
+
+	dim pPerf
+	set pPerf = doc_.performing("Trwa zapis grup produktów...")
+
+	dim pKlient: set pKlient = nothing
+
+	dim i
+	for i = 1 to (pDic.Count-1)
+		dim pItem
+		set pItem=pItems(i)
+
+		if (pItem.varValue.value<>pItem.varValue.start_value) then
+			dim nKlientGrupProdId
+
+			if (pItem.varValue.value) then
+
+				dim idActiveGroup
+				idActiveGroup = trans_.findobjid(TYPEID_N5GRUPAPRODUKTOW, "IdObj=" + CStr( pItem.varValue.idObj ))
+
+				if (idActiveGroup=pItem.varValue.idObj) then
+
+					dim pActiveGroup
+					set pActiveGroup=trans_.getobj(TYPEID_N5GRUPAPRODUKTOW, pItem.varValue.idObj)
+
+					if (pKlient is nothing) then
+						set pKlient = trans_.getobj(TYPEID_N5KLIENT, pItem.varValue.idKlient)
+					end if
+
+					
+					nKlientGrupProdId = trans_.findobjid(TYPEID_N5KLIENT_GRUPAPROD, "klgpr_pKlient=" + CStr(pItem.varValue.idKlient) + " and klgpr_pGrupaProd=" + CStr(pItem.varValue.idObj))
+					if (nKlientGrupProdId = 0) then
+						if ((not pActiveGroup is nothing) and (not pKlient is nothing))  then
+							dim pObjToAdd
+							set pObjToAdd=trans_.newobj(TYPEID_N5KLIENT_GRUPAPROD)
+
+							set pObjToAdd.klgpr_pGrupaProd = pActiveGroup
+							set pObjToAdd.klgpr_pKlient = pKlient
+						end if
+					end if
+
+				end if
+					
+			else
+				'usuwamy rekord
+				nKlientGrupProdId = trans_.findobjid(TYPEID_N5KLIENT_GRUPAPROD, "klgpr_pKlient=" + CStr(pItem.varValue.idKlient) + " and klgpr_pGrupaProd=" + CStr(pItem.varValue.idObj))
+
+				if (nKlientGrupProdId > 0) then
+					dim pObjToDel
+					set pObjToDel=trans_.getobj(TYPEID_N5KLIENT_GRUPAPROD, nKlientGrupProdId)
+						
+					if (not pObjToDel is nothing) then
+						pObjToDel.markdel=true
+					end if
+					
+				end if
+			end if
+			pItem.varValue.start_value=pItem.varValue.value
+		end if
+	next
+
+	SaveGroups=trans_.saveobjects()
+
+	set pPerf = nothing
+	set pTrans= nothing
+
+end function
+
+'-----------------------------------
+'wywolywanie na zamykanie formularza
+'-----------------------------------
+function OnCloseChoice()
+
+	dim pDic
+	set pDic = pGrupaNadrzednaINDEX.getDictionary()
+
+	dim pItems
+	pItems = pDic.Items
+
+	dim i, pItem, bHasChanges: bHasChanges=false
+	for i = 1 to (pDic.Count-1)
+		set pItem=pItems(i)
+		if (pItem.varValue.value<>pItem.varValue.start_value) then
+			bHasChanges=true
+			exit for
+		end if
+	next
+
+	if (bHasChanges) then
+
+		dim nResult: nResult=doc_.getmodule(60111).message_box(trans_.var(8003), "Dane zmienione. Zachować?", vbQuestion, vbYesNoCancel)
+		if (nResult=vbCancel) then
+			OnCloseChoice=false
+			exit function
+		elseif (nResult=vbNo) then			
+			
+			set pGrupaNadrzednaINDEX = nothing
+			set pTree = nothing
+
+			OnCloseChoice=true
+			exit function
+		end if
+
+		OnCloseChoice=SaveGroups()
+		
+		if OnCloseChoice then
+			set pGrupaNadrzednaINDEX = nothing
+			set pTree = nothing
+		end if
+
+		exit function
+
+	end if 'bHasChanges
+
+	set pGrupaNadrzednaINDEX = nothing
+	set pTree = nothing
+
+	OnCloseChoice=true
+end function
+
+'------------------------------------
+'zapis uprawnień - wywlywane na fsave
+'------------------------------------
+function OnSaveChoice()
+	OnSaveChoice=SaveGroups()
+end function
+
+]]>
+</script>
+</config>
+	<body>
+	</body>
+</page>

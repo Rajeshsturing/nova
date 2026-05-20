@@ -1,0 +1,583 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200.h"
+#include "h1220.h"
+#include "h1231.h"
+#include "h1240.h"
+-->
+<page>
+<config>
+<script>
+<!--
+	utilities produkcyjne
+-->
+<![CDATA[
+'choose_rejestr_dok
+#include "50517"
+#include "50509"
+
+'-----------------------------------------------------------------------------------
+function prepare_rp_on_zlecprod(byref pZlecProd)
+	set prepare_rp_on_zlecprod = nothing
+	
+	trans_.var(APPVAR_REJESTR_TYP) = CLng( N5REJESTRDOK__RP )
+	dim idRejestr : idRejestr = choose_rejestr_dok(CStr( N5REJESTRDOK__RP ), true, "Wybierz rejestr rozchodów na produkcję")
+	if idRejestr <= 0 then
+		exit function
+	end if
+	trans_.var(APPVAR_REJESTR_DOKUMENTOW) = CLng( idRejestr )
+
+	set prepare_rp_on_zlecprod = trans_.newobj( TYPEID_N5DOKMAG )
+	
+	'dowiąż do zlecenia prod
+	set prepare_rp_on_zlecprod.wrefDokHandl = pZlecProd
+end function
+
+'-----------------------------------------------------------------------------------
+function prepare_pp_on_zlecprod(byref pZlecProd)
+	set prepare_pp_on_zlecprod = nothing
+	
+	trans_.var(APPVAR_REJESTR_TYP) = CLng( N5REJESTRDOK__PP )
+	dim idRejestr : idRejestr = choose_rejestr_dok(CStr( N5REJESTRDOK__PP ), true, "Wybierz rejestr przychodów z produkcji")
+	if idRejestr <= 0 then
+		exit function
+	end if
+
+	trans_.var(APPVAR_REJESTR_DOKUMENTOW) = CLng( idRejestr )
+
+	set prepare_pp_on_zlecprod = trans_.newobj( TYPEID_N5DOKMAG )
+	
+	'dowiąż do zlecenia prod
+	set prepare_pp_on_zlecprod.wrefDokHandl = pZlecProd
+end function
+
+'-----------------------------------------------------------------------------------
+function prepare_realprod_on_zlecprod(byref pZlecProd)
+	set prepare_realprod_on_zlecprod = nothing
+	
+	trans_.var(APPVAR_REJESTR_TYP) = CLng( N5REJESTRDOK__REALPROD )
+	dim idRejestr : idRejestr = choose_rejestr_dok(CStr( N5REJESTRDOK__REALPROD ), true, "Wybierz rejestr realizacji produkcji")
+	if idRejestr <= 0 then
+		exit function
+	end if
+
+	trans_.var(APPVAR_REJESTR_DOKUMENTOW) = CLng( idRejestr )
+
+	set prepare_realprod_on_zlecprod = trans_.newobj( TYPEID_N5REALPROD )
+	
+	'dowiąż do zlecenia prod
+	set prepare_realprod_on_zlecprod.pZlecProd = pZlecProd
+end function
+
+'-----------------------------------------------------------------------------------
+function prepare_zlecprod(byref idRejestr, byval bAlwaysChoose)
+	set prepare_zlecprod = nothing
+	
+	trans_.var(APPVAR_REJESTR_TYP) = CLng( N5REJESTRDOK__ZLECPROD )
+	if idRejestr <= 0 or bAlwaysChoose then
+		idRejestr = choose_rejestr_dok(CStr( N5REJESTRDOK__ZLECPROD ), true, "Wybierz rejestr zleceń produkcyjnych")
+		if idRejestr <= 0 then
+			exit function
+		end if
+	end if
+	trans_.var(APPVAR_REJESTR_DOKUMENTOW) = CLng( idRejestr )
+
+	set prepare_zlecprod = trans_.newobj( TYPEID_N5ZLECPROD )
+end function
+
+'messagebox
+#include "50122"
+
+
+'-----------------------------------------------------------------------------------
+'funkcja wypełnia pDestRealProd [TYPEID_N5REALPROD] na podstawie pSrcRecepta [TYPEID_N5RECEPTA]
+'stosując krotnośc wykonania dblKrotnoscRecepty
+'krotnośc ta jest typu DOUBLE i musi być określone przez funkcję wyższego poziomu
+'-----------------------------------------------------------------------------------
+
+dim g_bAsk:g_bAsk = true
+
+function fill_real_prod_poz_on_recepta(byref pDestRealProd,byref pSrcRecepta,byval dblKrotnoscRecepty , byref dhmBalance):fill_real_prod_poz_on_recepta = false
+
+	dim pPozRecepta 'as TYPEID_N5POZRECEPTA
+	dim pPozRealProd
+	'--- wyroby
+	for each pPozRecepta in pSrcRecepta.listWyrob
+		set pPozRealProd = get_pozrealprod(pDestRealProd.listWyrob,pPozRecepta.pProdukt,pPozRecepta.pOpak)
+		pPozRealProd.n5pozrealprod_from_pozrecepta _
+			pPozRecepta,ccur(dblKrotnoscRecepty * pPozRecepta.curIloscOpak) + pPozRealProd.curIloscOpak
+	next
+	'--- surowce
+	dim dhm_balance_item,inx,curIlosc	
+	for each pPozRecepta in pSrcRecepta.listSurowce
+
+		curIlosc = ccur(dblKrotnoscRecepty * pPozRecepta.curIloscOpak)
+
+		if not dhmBalance is nothing then
+			inx = dhmBalance.find_on_prod (pPozRecepta.pProdukt.idobj , pPozRecepta.pOpak.idobj)		
+			if inx > -1 then
+				set dhm_balance_item = dhmBalance.get_pos(inx)
+				if curIlosc > dhm_balance_item.m_curValue(6) then
+					if g_bAsk then
+						g_bAsk = false
+						if MessageBox ("Ilosć surowca na recepcie jest mniejsa niż dostępna na wybranym magazynie surowców. Mozesz przerwać rezlizacje zlecenia lub kontunuowac realizując je z surowców w ilosciach dostępnych Kontynuować?", "Realizacja zlecenia produkcyjnego - wypełnianie dokumentu realizacji produkcji", vbYesNo, vbQuestion) = vbNo then
+							exit function
+						end if								
+					end if
+					curIlosc = dhm_balance_item.m_curValue(6)
+					dhm_balance_item.m_curValue(6) = ccur(0)
+				end if
+
+			end if
+		end if
+		
+		if curIlosc > 0 then
+			set pPozRealProd = get_pozrealprod(pDestRealProd.listPozycje,pPozRecepta.pProdukt,pPozRecepta.pOpak)
+			pPozRealProd.n5pozrealprod_from_pozrecepta _
+				pPozRecepta, curIlosc + pPozRealProd.curIloscOpak
+		end if
+	next
+
+	'---- czynności
+	for each pPozRecepta in pSrcRecepta.listCzynnosci
+		set pPozRealProd = get_pozrealprod(pDestRealProd.listCzynnosc,pPozRecepta.pProdukt,pPozRecepta.pOpak)
+		pPozRealProd.n5pozrealprod_from_pozrecepta _
+			pPozRecepta,ccur(dblKrotnoscRecepty * pPozRecepta.curIloscOpak) + pPozRealProd.curIloscOpak
+	next
+
+
+	fill_real_prod_poz_on_recepta = true
+
+end function
+
+'-----------------------------------------------------------------------------------
+'funkcja wypełnia pDestRP [TYPEID_N5DOKMAG] surowcami na podstawie pSrcRecepta [TYPEID_N5RECEPTA]
+'stosując krotnośc wykonania dblKrotnoscRecepty
+'krotnośc ta jest typu double i musi być określone przez funkcję wyższego poziomu
+'-----------------------------------------------------------------------------------
+function fill_rp_poz_on_recepta(byref pDestRP,byref pSrcRecepta,byval dblKrotnoscRecepty)
+	dim pPozRecepta 'as TYPEID_N5POZRECEPTA
+	dim pPozDokMag
+	'--- surowce
+	for each pPozRecepta in pSrcRecepta.listSurowce
+		set pPozDokMag = pDestRP.n5dokmag_smart_supply_pos(pPozRecepta.pProdukt,pPozRecepta.pOpak)
+		pPozDokMag.n5pozdokmag_from_pozrecepta _
+			pPozRecepta,ccur(dblKrotnoscRecepty * pPozRecepta.curIloscOpak) + pPozDokMag.curIloscOpak
+	next
+	
+end function
+
+'-----------------------------------------------------------------------------------
+'funkcja wypełnia pDestPP [TYPEID_N5DOKMAG] wyrobami na podstawie pSrcRecepta [TYPEID_N5RECEPTA]
+'stosując krotnośc wykonania dblKrotnoscRecepty
+'krotnośc ta jest typu DOUBLE i musi być określone przez funkcję wyższego poziomu
+'-----------------------------------------------------------------------------------
+function fill_pp_poz_on_recepta(byref pDestPP,byref pSrcRecepta,byval dblKrotnoscRecepty)
+	dim pPozRecepta 'as TYPEID_N5POZRECEPTA
+	dim pPozDokMag
+	'--- wyroby
+	for each pPozRecepta in pSrcRecepta.listWyrob
+		set pPozDokMag = pDestPP.n5dokmag_smart_supply_pos(pPozRecepta.pProdukt,pPozRecepta.pOpak)
+		pPozDokMag.n5pozdokmag_from_pozrecepta _
+			pPozRecepta,ccur(dblKrotnoscRecepty * pPozRecepta.curIloscOpak) + pPozDokMag.curIloscOpak
+	next
+	
+end function
+
+'-----------------------------------------------------------------------------------
+'funkcja zamienia ilość wyrobu do wykonania na krotność wykonania recepty
+'zwraca DOUBLE !
+'-----------------------------------------------------------------------------------
+function convert_il_wyrobu_na_krotnosc(byval idWyrobProd,byval idWyrobOpak, _
+	byval curIloscWyrobu,byref pRecepta,byref dblKrotnoscRecepty)
+	convert_il_wyrobu_na_krotnosc = false
+	dblKrotnoscRecepty = cdbl(0.0)
+
+	dim nLP : nLP = pRecepta.n5recepta_scan_for_wyrob(idWyrobProd,idWyrobOpak)
+	if nLP <= 0 then
+		exit function
+	end if
+	if pRecepta.listWyrob.get(nLP).curIloscOpak = ccur(0.0) then
+		exit function
+	end if
+
+	convert_il_wyrobu_na_krotnosc = true
+	dblKrotnoscRecepty = cdbl(curIloscWyrobu) /  cdbl(pRecepta.listWyrob.get(nLP).curIloscOpak)
+end function
+
+'-----------------------------------------------------------------------------------
+'funkcja zamienia ilość surowca do zużycia na krotność wykonania recepty
+'zwraca DOUBLE !
+'-----------------------------------------------------------------------------------
+function convert_il_surowca_na_krotnosc(byval idSurowiecProd,byval idSurowiecOpak, _
+	byval curIloscSurowca,byref pRecepta,byref dblKrotnoscRecepty)
+	convert_il_surowca_na_krotnosc = false
+	dblKrotnoscRecepty = cdbl(0.0)
+
+	dim nLP : nLP = pRecepta.n5recepta_scan_for_surowiec(idSurowiecProd,idSurowiecOpak)
+	if nLP <= 0 then
+		exit function
+	end if
+	if pRecepta.listSurowce.get(nLP).curIloscOpak = ccur(0.0) then
+		exit function
+	end if
+
+	convert_il_surowca_na_krotnosc = true
+	dblKrotnoscRecepty = cdbl(curIloscSurowca) /  cdbl(pRecepta.listSurowce.get(nLP).curIloscOpak)
+end function
+'-----------------------------------------------------------------------------------
+'utils
+' wyszukuje pozycję na liście, której pProdukt [TYPEID_N5PRODUKT] i pOpak [TYPEID_N5OPAKOWANIE] są zgodne
+' zwraca pozycję lub nothing
+'-----------------------------------------------------------------------------------
+private function scan_realprod_list_for_match(byref pList,byref pProdukt,byref pOpak)
+	set scan_realprod_list_for_match = nothing
+	dim pPozRealProd 'as TYPEID_N5POZREALPROD
+	for each pPozRealProd in pList
+		if pPozRealProd.pProdukt is pProdukt and pPozRealProd.pOpak is pOpak then
+			set scan_realprod_list_for_match = pPozRealProd
+			exit function
+		end if
+	next
+end function
+
+'-----------------------------------------------------------------------------------
+' podobna do scan_realprod_list_for_match, ale dodaje jak nie ma 
+'-----------------------------------------------------------------------------------
+private function get_pozrealprod(byref pList,byref pProdukt,byref pOpak)
+	set get_pozrealprod = scan_realprod_list_for_match(pList,pProdukt,pOpak)
+	if get_pozrealprod is nothing then
+		set get_pozrealprod = pList.addnew()
+	end if
+end function
+
+
+'-----------------------------------------------------------------------------------
+' klasa - holder do ustalenia parametrów 'wypełnij zużyciem idealnym'
+'-----------------------------------------------------------------------------------
+class CZuzycieIdealneParam
+	public m_pRecepta
+	public m_eMode
+	public m_pWyrobLubSurowiec
+	public m_idSurowiecAsCriteria
+	public m_curIlosc
+
+	private sub class_initialize()
+		set m_pRecepta = nothing
+		set m_pWyrobLubSurowiec = nothing
+		m_eMode = clng(1)
+		m_curIlosc = ccur(1.0)
+	end sub
+	
+	public property get opakowanie()
+		if m_pWyrobLubSurowiec is nothing then
+			set opakowanie = nothing
+		else
+			set opakowanie = m_pWyrobLubSurowiec.listOpakowania.get(1)
+		end if
+	end property 
+
+	private sub class_terminate() 'OK
+		set m_pRecepta = nothing
+		set m_pWyrobLubSurowiec = nothing
+	end sub
+end class
+
+function new_zuidpa()
+	set new_zuidpa = new CZuzycieIdealneParam
+end function
+
+
+function utworz_recepte_z_recepty(idRecepta)	
+	dim hli:set hli = doc_.getmodule(60129).prepare_form_open_command(TYPEID_N5RECEPTA , 0 , USAGE_EDIT)
+	if hli is nothing then
+		exit function
+	end if 
+	dim form : set form = doc_.getpagehli(hli)
+	if not form is nothing then
+		dim source:set source = trans_.getobj(TYPEID_N5RECEPTA , idRecepta)
+		form.root.n5recepta_copy_from source		
+		form.domodalauto
+	end if
+end function
+
+function utworz_zestaw_z_zestawu(idRecepta)	
+	dim hli:set hli = doc_.getmodule(60129).prepare_form_open_command(TYPEID_N5RECEPTA , 0 , PAGE_FORM_ZESTAW)
+	if hli is nothing then
+		exit function
+	end if 
+	dim form : set form = doc_.getpagehli(hli)
+	if not form is nothing then
+		dim source:set source = trans_.getobj(TYPEID_N5RECEPTA, idRecepta)
+		form.root.n5recepta_copy_from source		
+		form.domodalauto
+	end if
+end function
+
+
+sub plug_dokmag_egzemplarze(byref pContainer, byval list , byval prod , byval opak , byval bRemoveBtn , byref nCountOnly)
+	DEBUG_MESSAGE("plug_dokmag_egzemplarze")
+	'jesli to nie tylko liczenie to
+	if nCountOnly <> 1 then
+		dim pPlugInTable : set pPlugInTable = pContainer.addnew(CTRL_TYPE_TABLE,-1)
+		pPlugInTable.border = 0
+		dim tb : set tb = doc_.afc.new_tb(nothing).attach(pPlugInTable)
+	end if
+
+	dim pos
+	dim lp:lp = 1
+	dim count:count = 0
+	for each pos in list
+		'sprawdam czy dany egzemplarz odpowiada pozycji - zatem czy zgadza sie produkt
+		if can_generate(pos.pdmeg_pEgz.egze_pProdukt , pos.pdmeg_pEgz.egze_pOpak , prod , opak  ) then
+			count = count + 1
+			if nCountOnly <> 1 then
+				tb.newrow.newcell
+				tb.cell.styleitem = STYLE_TABLE_BODY
+				tb.cell.width = CLng(MAXIMIZE_SIZE)
+				tb.addtexthli pos.text , doc_.createhlistr("varFunctionHLI='std_openform_object_hli' vn1='TYPEID_N5EGZEMPLARZ' vn2='"+cstr(pos.pdmeg_pEgz.idobj)+"'")
+
+
+
+				tb.element.width = CLng(MAXIMIZE_SIZE)
+				tb.newcell.cell.keepline = true
+				if bRemoveBtn then
+					tb.addctrl CTRL_TYPE_PICTURE , -1
+					tb.element.image = PICTURE_REMOVE_FILE
+					set tb.element.hli = doc_.createhlistr("varFunctionHLI=remove vn1="+cstr(lp)+"")
+				end if
+			end if
+		end if
+		lp = lp + 1
+	next
+
+	nCountOnly = count
+
+end sub
+
+
+function can_generate (pos_prod , pos_opak , prod , opak ):can_generate = false
+	'jesli podaje mu zero to mam w d... filtrowanie i wyswietlam wszystkie egzempalrze parenta
+	if prod = 0 and opak = 0 then
+		can_generate = true
+		exit function
+	end if
+	
+	can_generate = _
+		pos_prod.idobj = prod and _
+		pos_opak.idobj = opak
+		
+end function 
+
+#comment '-----------------------------------------------------------------------------------
+#comment 'ilosc wyrobu mozliwa do realizacji
+#comment '-----------------------------------------------------------------------------------
+
+#define TMP_WYR_REQ_TABLE_NAME	#t_wyrob_request
+
+class ctree_prod_holder
+	private m_strSPName1
+	private m_strSPName2
+
+  private bDisposed
+
+	'-- tworzy struktury niezbedne do dzialania
+	private sub class_initialize()
+    bDisposed = false
+
+		m_strSPName1 = ""
+		m_strSPName2 = ""
+		'-- create temporary table
+		dim strSQL
+		strSQL = "create table TMP_WYR_REQ_TABLE_NAME " + vbCrLf +_
+		"(" + vbCrLf +_
+		"wr_idWyrProd int not null," + vbCrLf +_
+		"wr_idWyrOpak int not null," + vbCrLf +_
+		"wr_curIlosc  decimal(14,4)," + vbCrLf +_
+		")" + vbCrLf
+		trans_.execsql strSQL
+
+		'-- recreate view if doesn't exist yet
+		strSQL = "if exists (select * from sysobjects where name='view_wyr_sur') drop view view_wyr_sur" + vbCrLf
+		trans_.execsql strSQL
+		
+		strSQL = "create view dbo.view_wyr_sur as" + vbCrLf +_
+		"select" + vbCrLf +_
+		"'vws_idWyrProd' = vlw.c_pprodukt, 'vws_idWyrOpak' = vlw.c_popak," + vbCrLf +_
+		"'vws_idSurProd' = vls.c_pprodukt, 'vws_idSurOpak' = vls.c_popak," + vbCrLf +_
+		"'vws_curLicz' = vls.c_curIloscOpak, 'vws_curMian' = vlw.c_curIloscOpak," + vbCrLf +_
+		"'vws_idRec' = vlw.p_idobj,'vws_strSurInx' = ps.strIndeks" + vbCrLf +_
+		"from vlist_n5recepta_listwyrob vlw" + vbCrLf +_
+		"join vlist_n5recepta_listsurowce vls on vlw.p_idobj=vls.p_idobj" + vbCrLf +_
+		"and vlw.p_idobj = (select min(p_idobj) from vlist_n5recepta_listwyrob vlw2 where vlw2.c_pprodukt = vlw.c_pprodukt)" + vbCrLf +_
+		"join n5produkt ps on vls.c_pprodukt = ps.idobj" + vbCrLf
+		trans_.execsql strSQL
+		
+		'-- recreate function if doesn't exist yet
+		strSQL = "if exists (select * from sysobjects where name='nx_div') drop function nx_div" + vbCrLf
+		trans_.execsql strSQL
+	
+		strSQL = "create function dbo.nx_div( @curlicz_par decimal(14,4),@curmian_par decimal(14,4))" + vbCrLf +_
+		"returns decimal(14,4)" + vbCrLf +_
+		"as" + vbCrLf +_
+		"begin" + vbCrLf +_
+		"declare @result decimal(14,4)" + vbCrLf +_
+		"if @curmian_par = 0" + vbCrLf +_
+		"select @result = 0" + vbCrLf +_
+		"else" + vbCrLf +_
+		"select @result = (@curlicz_par / @curmian_par)" + vbCrLf +_
+		"return @result" + vbCrLf +_
+		"end" + vbCrLf
+		trans_.execsql strSQL
+	end sub
+	'-- tworzy procedure (stare ADODB nie obsluguje WITH(...)SELECT, dlatego obudowano to w procedurze
+	public function get_sql_for_mozliwa_real(byval strIdMag, byval strTop,byval strExtraJoinWhere, byval strOrderBy,_
+		byval cSurowiec, byval cWyrob)
+		'-- init SP Name with date and time as unique holder
+		m_strSPName1 = "ctree_prod_holder1" + CStr(Year(Now)) + "_" + CStr(Month(Now)) + "_" + CStr(Day(Now)) + "_" + CStr(Hour(Now)) + "_" + CStr(Minute(Now))  + "_" + CStr(Second(Now)) + "_" + cstr(Int((230 - 180 + 1) * Rnd + 180))
+		
+		get_sql_for_mozliwa_real = "create procedure " + m_strSPName1 +_
+		" as with cte_tree_prod(idWyrProd, idWyrOpak, idSurProd, idSurOpak, curLicz, curMian, iLevel)" + vbCrLf +_
+		"as" + vbCrLf +_
+		"(" + vbCrLf +_
+		"select wr_idWyrProd, wr_idWyrOpak, wr_idWyrProd, wr_idWyrOpak,convert(decimal(14,4),wr_curIlosc),convert(decimal(14,4), 1.0), convert(int, 1)" + vbCrLf +_
+		"from TMP_WYR_REQ_TABLE_NAME" + vbCrLf +_
+		"union all" + vbCrLf +_
+		"select vws.vws_idWyrProd, vws.vws_idWyrOpak, vws.vws_idSurProd, vws.vws_idSurOpak" + vbCrLf +_
+		",convert(decimal(14,4), curLicz * vws.vws_curLicz,0), convert(decimal(14,4), curMian * vws.vws_curMian), iLevel + 1" + vbCrLf +_
+		"from view_wyr_sur vws" + vbCrLf +_
+		"join cte_tree_prod on vws.vws_idWyrProd = idSurProd and vws.vws_idWyrOpak = idSurOpak" + vbCrLf +_
+		")" + vbCrLf +_
+		"select " + strTop + " idSurProd, idSurOpak" + vbCrLf +_
+		",'curMaxWyr'=dbo.nx_div(isnull((select  sum(gms_curIlosc) from n5gmstan " + vbCrLf +_
+		"where idSurProd = gms_pProd and idSurOpak = gms_pOpak and gms_pMag in (" + strIdMag +")),0)" + vbCrLf +_
+		",sum(case when curMian <> 0 then (curLicz / curMian) else 0.0 end))" + vbCrLf +_
+		",'curNeedSur'=sum(case when curMian <> 0 then (curLicz / curMian) else 0.0 end)" + vbCrLf +_
+		",'curExitsSur'=isnull((select  sum(gms_curIlosc) from n5gmstan " + vbCrLf +_
+		"where idSurProd = gms_pProd and idSurOpak = gms_pOpak and gms_pMag in (" + strIdMag +")),0),'iMaxLevel'= max(iLevel)" + vbCrLf +_
+		"from cte_tree_prod" + vbCrLf +_
+		"join n5produkt ps on idSurProd = ps.idobj and ps.prod_cSurowiec in (" + cSurowiec + ") and ps.prod_cWyrob in (" + cWyrob + ") " + vbCrLf +_
+		strExtraJoinWhere  + vbCrLf +_
+		"group by idSurProd, idSurOpak" + vbCrLf +_
+		strOrderBy + vbCrLf
+	end function
+	'-- tworzy procedure (stare ADODB nie obsluguje WITH(...)SELECT, dlatego obudowano to w procedurze
+	public function get_sql_for_prod_tree(byval bSurowce,byval bWyroby,byval bPolprod)
+		'-- init SP Name with date and time as unique holder
+		m_strSPName2 = "ctree_prod_holder2" + CStr(Year(Now)) + "_" + CStr(Month(Now)) + "_" + CStr(Day(Now)) + "_" + CStr(Hour(Now)) + "_" + CStr(Minute(Now))  + "_" + CStr(Second(Now)) + "_" + cstr(Int((230 - 180 + 1) * Rnd + 180))
+		get_sql_for_prod_tree = "create procedure " + m_strSPName2 +_
+		" as " + vbCrLf +_
+		"with cte_tree_prod(idWyrProd, idWyrOpak, idSurProd, idSurOpak, strPath, curLicz, curMian, iLevel, iSubLP)" + vbCrLf +_
+		"as" + vbCrLf +_
+		"(" + vbCrLf +_
+		"select wr_idWyrProd, wr_idWyrOpak, wr_idWyrProd, wr_idWyrOpak" + vbCrLf +_
+		",convert(nvarchar(1024),pw.strIndeks)" + vbCrLf +_
+		",convert(decimal(14,4),wr_curIlosc), convert(decimal(14,4), 1.0)" + vbCrLf +_
+		",convert(int, 0), convert(int, 1)" + vbCrLf +_
+		"from TMP_WYR_REQ_TABLE_NAME join n5produkt pw on wr_idWyrProd = pw.idobj" + vbCrLf +_
+		"union all" + vbCrLf +_
+		"select vws.vws_idWyrProd, vws.vws_idWyrOpak, vws.vws_idSurProd, vws.vws_idSurOpak" + vbCrLf +_
+		",convert(nvarchar(1024),rtrim(strPath) + '/' + vws.vws_strSurInx)" + vbCrLf +_
+		",convert(decimal(14,4), curLicz * vws.vws_curLicz,0), convert(decimal(14,4), curMian * vws.vws_curMian)" + vbCrLf +_
+		",iLevel + 1, convert(int, row_number() over(order by vws.vws_strSurInx))" + vbCrLf +_
+		"from view_wyr_sur vws" + vbCrLf +_
+		"join cte_tree_prod on vws.vws_idWyrProd = idSurProd and vws.vws_idWyrOpak = idSurOpak" + vbCrLf +_
+		")" + vbCrLf +_
+		"select idWyrProd, idWyrOpak, idSurProd, idSurOpak" + vbCrLf +_
+		",strPath" + vbCrLf +_
+		",curLicz, curMian" + vbCrLf +_
+		",'iLP'=row_number() over(order by strPath),iLevel, iSubLP" + vbCrLf +_
+		"from cte_tree_prod" + vbCrLf +_
+		"join n5produkt ps on idSurProd = ps.idobj and ("
+		if bSurowce then
+			get_sql_for_prod_tree = get_sql_for_prod_tree + "(ps.prod_cSurowiec='1' and ps.prod_cWyrob='0') or "
+		end if
+		if bWyroby then
+			get_sql_for_prod_tree = get_sql_for_prod_tree + "(ps.prod_cSurowiec='0' and ps.prod_cWyrob='1') or "
+		end if
+		if bPolprod then
+			get_sql_for_prod_tree = get_sql_for_prod_tree + "(ps.prod_cSurowiec='1' and ps.prod_cWyrob='1') or "
+		end if
+		get_sql_for_prod_tree = get_sql_for_prod_tree + " (1=0) ) order by strPath" + vbCrLf +_
+		"" + vbCrLf
+	end function
+	'-- wypelnia tabele 'żądaniem' ile chcemy miec wyprodukowane (ile potrzebne)
+	'-- ta wersja wstawia jeden rekord
+	public sub fill_request_one(byval idWyrobProd,byval idWyrobOpak,byval curIlosc)
+		dim strSQL
+		strSQL = trans_.afc.convert.Formatter("insert into TMP_WYR_REQ_TABLE_NAME values(%1,%2,%3)")_
+			.add(idWyrobProd).add(idWyrobOpak)_
+			.add(trans_.afc.convert.cur2sql(curIlosc)).done() + vbCrLf
+		trans_.execsql strSQL	
+	end sub
+	'-- zwraca ilosc mozliwa do realizacji biorac pod uwage wskazane magazyny
+	'-- podaj strIdMag = "0" jesli nie ma brac pod uwage zadnego magazynu, podaj "" jesli ma brac domyslnie wszystkie
+	public function get_ilosc_wyr_mozliwa_do_real(strIdMag)
+		if strIdMag ="" then
+			strIdMag = "select idobj from n5magazyn where eTyp <> N5TYPMAG_ZWROTY"
+		end if
+		dim strSQL : strSQL = get_sql_for_mozliwa_real(strIdMag,"top 1","","order by curMaxWyr","'1'","'0'")
+		trans_.execsql strSQL
+		
+		dim oRS :set oRS = trans_.createadors("exec " + m_strSPName1)
+		if oRS.EOF then
+			get_ilosc_wyr_mozliwa_do_real = ccur(0.0)
+		else
+			get_ilosc_wyr_mozliwa_do_real = ccur(oRS.fields("curMaxWyr"))
+		end if
+	end function
+	'-- zwraca kursor ktory pokazuje zlecenia niezbedne do realizacji zadania
+	public function get_potrzebne_zlecenia_prod(strIdMag)
+		if strIdMag ="" then
+			strIdMag = "select idobj from n5magazyn where eTyp <> N5TYPMAG_ZWROTY"
+		end if
+		dim strSQL : strSQL = get_sql_for_mozliwa_real(strIdMag,"","","order by max(iLevel) desc","'0','1'","'1'")
+		trans_.execsql strSQL
+		set get_potrzebne_zlecenia_prod = trans_.createadors("exec " + m_strSPName1)
+	end function
+	'-- zwraca kursor ktory pokazuje drzewko produkcyjne
+	public function get_drzewo_produkcji(byval bSurowce,byval bWyroby,byval bPolprod)	
+		dim strSQL : strSQL = get_sql_for_prod_tree(bSurowce, bWyroby, bPolprod)
+		trans_.execsql strSQL
+		set get_drzewo_produkcji = trans_.createadors("exec " + m_strSPName2)
+	end function
+  
+public sub manual_done()
+  if not bDisposed then
+    bDisposed = true
+    
+    '-- drop temporary table
+		dim strSQL
+		
+		if m_strSPName1 <> "" then
+			strSQL =  "drop procedure " + m_strSPName1 + vbCrLf
+			trans_.execsql strSQL
+		end if
+		if m_strSPName2 <> "" then
+			strSQL =  "drop procedure " + m_strSPName2 + vbCrLf
+			trans_.execsql strSQL
+		end if
+		
+		strSQL = "drop table TMP_WYR_REQ_TABLE_NAME" + vbCrLf
+		trans_.execsql strSQL
+    
+  end if
+end sub
+
+	'-- robi porzadki and leaves Kansas ;)
+	private sub class_terminate()   'OK
+    manual_done()
+	end sub
+end class
+
+function new_tree_prod_holder
+	set new_tree_prod_holder = new ctree_prod_holder
+end function
+]]>
+</script>
+</config>
+	<body>
+	</body>
+</page>

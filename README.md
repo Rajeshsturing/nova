@@ -1,33 +1,37 @@
-# NAVO Cocoon Source Docker Build
+# NAVO Cocoon Docker Runtime
 
-This repository contains the NAVO Cocoon source and Windows Docker files for
-building/running the WebHost service.
+This repository contains the Docker-runnable NAVO Cocoon WebHost package.
 
-NAVO Cocoon is a Windows-only container workload because the WebHost targets
-.NET Framework 4.8 and creates the Windows COM object `navo2002.client`.
-It cannot run as a Linux container.
+NAVO Cocoon is a Windows-only .NET Framework 4.8 Web API bridge over the NAVO/EuroBusiness COM runtime. It does not provide a browser UI. The health endpoints can run without a database login, while business endpoints require a registered `navo2002.client` COM runtime and a reachable SQL Server database.
 
-## Required Private Dependencies
+## Run
 
-A fresh clone still needs the private NAVO/EuroBusiness runtime files:
-
-- `docker/eb-runtime`: installer/registration files for `navo2002.client`.
-
-Those files are proprietary and are not included here. Without them the image
-can build, but the service cannot connect to EuroBusiness at runtime.
-
-## Run On Windows
-
-Use a Windows host with Docker switched to Windows containers:
+Use a Windows Docker host with Windows containers enabled:
 
 ```powershell
-docker compose up --build
+docker compose -f docker-compose.windows.yml up -d --build navo-cocoon
+docker compose -f docker-compose.windows.yml ps
+curl http://localhost:7901/api/v4/health/ws
 ```
 
-Health check:
+Expected health response:
 
-```powershell
-Invoke-WebRequest http://localhost:7901/api/v4/health/ws
+```text
+"NAVO.Cocoon for EuroBusiness 5.0 2024.11.23.00"
 ```
 
-See [docker/README.md](docker/README.md) for more details.
+## Included Runtime Pieces
+
+- `navo.cocoon/` - WebHost and Web API source.
+- `global_output/` - NAVO/EuroBusiness runtime DLL/EXE/OCX files used for build and COM registration.
+- `sprzedaz/trunk/` - EuroBusiness application XML/forms/scripts referenced by NAVO registry settings.
+- `docker/eb-runtime/` - container install and COM registration scripts.
+
+## Useful Endpoints
+
+- `GET /api/v4/health/ws`
+- `GET /api/v4/health/version`
+- `GET /api/v4/health/full_name`
+- `POST /api/v4/login`
+
+`POST /api/v4/login` needs SQL Server/database settings and valid EuroBusiness credentials.

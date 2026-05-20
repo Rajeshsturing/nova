@@ -1,0 +1,659 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1001.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1222.h"
+#include "h1200.h"
+-->
+<page style='STYLE_PAGE'>
+<!--
+
+#define FORM_SPAN		4
+#define RCELL_SPAN		3
+
+
+#define CTRLID_NUMDOK			1
+#define CTRLID_TABLE_RESULT		2
+#define CTRLID_DOWKSIEG			4
+#define CTRLID_SCHEMAT			5
+#define CTRLID_REJDOK			6
+#define CTRLID_TRIGGER			7
+
+
+#define SECID_REJESTRACJA		1001
+
+-->
+<config>
+	<title>
+Lista płac
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+<typeid>TYPEID_N5PLLISTAPLAC</typeid>
+<script>
+  <![CDATA[
+
+'nx_trace
+#include "50519"
+
+'getuserprofile
+#include "50203"
+
+
+'std_choice_list_hli
+#include "50200"
+
+
+'sections
+#include "50222"
+
+'messagebox	
+#include "50122"
+
+function fopen : fopen = true
+	on_record_change
+  trans_.var(GVAR_COPY_PLNALICZENIE) = 0
+end function
+
+
+QVE_REF_OPEN_FORM(CTRLID_DOWKSIEG,lppl_pDowodKsieg)
+QVE_REF_OPEN_FORM(CTRLID_SCHEMAT,lppl_pSchematDekr)
+QVE_REF_OPEN_FORM(CTRLID_REJDOK,lppl_pRejestrDok)
+QVE_NRDOK_FROM_REJESTR(CTRLID_NUMDOK,lppl_pRejestrDok,strNrDok)
+
+
+function c##CTRLID_TRIGGER##_ongetdata(byref oCtrl): c##CTRLID_TRIGGER##_ongetdata=true
+	on_record_change
+	g_IdObject = page_.root.IdObj
+end function
+
+
+dim g_IdObject: g_IdObject = -1
+dim bEditMode:bEditMode = false
+
+function on_record_change
+	if g_IdObject = page_.root.idobj then
+		exit function
+	end if
+	fill_dok_table
+end function
+
+function frefresh()
+	frefresh = true
+	fill_dok_table
+end function
+
+function foptions
+	FORCE_REALOAD_OBJECT(page_.root.lppl_pRejestrDok)
+
+	if doc_.getmodule(60175).dok_rej_preferences(page_.root.lppl_pRejestrDok.idobj,TYPEID_N5PLLISTAPLAC) then
+		
+		FORCE_REALOAD_OBJECT(page_.root.lppl_pRejestrDok)
+
+		'apply settings
+		'rebuild_configuration
+		g_IdObject = -1
+	end if
+end function
+
+function fill_dok_table
+
+	page_.ctrl(CTRLID_TABLE_RESULT).removeall
+
+	dim oRS : set oRS = trans_.createadors(_
+		"select 'c_prac_nazwisko_imie'=t_prac.strNazwisko + ' ' + t_prac.strImie, " +_
+		"'c_prac_id'=t_prac.idobj,'c_nal_id'=t_nal.idobj " +_
+		"from n5plnaliczenie t_nal inner join n5pracownik t_prac on t_nal.pPracownik = t_prac.idobj " +_
+		"where t_nal.pListaPlac=" + cstr(page_.root.idobj) +_
+		" order by c_prac_nazwisko_imie")
+
+	if oRS.EOF then
+		with page_.ctrl(CTRLID_TABLE_RESULT).addnew(CTRL_TYPE_STATIC,-1)
+			.styleitem = STYLE_OPTION_PAD
+			.text = "Ta lista jest pusta i nie posiada żadnych naliczeń"
+			.width = clng(MAXIMIZE_SIZE)
+		end with
+		exit function
+	end if
+	dim pPlugInTable : set pPlugInTable = page_.ctrl(CTRLID_TABLE_RESULT).addnew(CTRL_TYPE_TABLE,-1)
+	pPlugInTable.styleitem = STYLE_TABLE_BODY
+	dim pTB : set pTB = doc_.afc.new_tb(page_).attach(pPlugInTable)
+
+	pTB.newrow
+	pTB.row.styleitem = STYLE_TABLE_HEADER
+	pTB.newcell.addtext("Nazwisko i imię").element.bold = true	
+	pTB.cell.width = clng(MINIMIZE_SIZE)
+	pTB.newcell.addtext("Data pocz.").element.bold = true
+	pTB.cell.width = clng(MINIMIZE_SIZE)
+	pTB.newcell.addtext("Data końcowa").element.bold = true
+	pTB.cell.width = clng(MINIMIZE_SIZE)
+	pTB.newcell.addtext("Data naliczenia").element.bold = true
+	pTB.cell.width = clng(MINIMIZE_SIZE)
+	
+	'domyslny widok = konta wymagane (BRUTTO,WYPLATA)
+	pTB.newcell.addtext("Brutto").element.bold = true
+	pTB.cell.width = clng(MINIMIZE_SIZE)
+	pTB.newcell.addtext("Do wypłaty").element.bold = true
+	pTB.cell.width = clng(MINIMIZE_SIZE)
+
+	do while not oRS.EOF
+
+		pTB.newrow
+		pTB.row.border = 0
+		dim pNaliczenie : set pNaliczenie = trans_.getobj(TYPEID_N5PLNALICZENIE,clng(oRS("c_nal_id")))
+
+		dim strHLI : strHLI = trans_.afc.convert.Formatter("OPEN_FORM_PROXY_HLI(TYPEID_N5PLNALICZENIE,%1)") _
+				(pNaliczenie.idobj).done()
+		pTB.newcell.addtexthli cstr(oRS("c_prac_nazwisko_imie")),doc_.createhlistr(strHLI)
+		pTB.element.ignoresysdisable true
+
+		pTB.newcell.addtext(trans_.afc.display.fulldate(pNaliczenie.dDataOd))
+		pTB.cell.styleitem = STYLE_OPTION_PAD
+		pTB.newcell.addtext(trans_.afc.display.fulldate(pNaliczenie.dDataDo))
+		pTB.newcell.addtext(trans_.afc.display.fulldate(pNaliczenie.dDataNal))
+		pTB.cell.styleitem = STYLE_OPTION_PAD
+		pTB.newcell.addtext(trans_.afc.display.money(pNaliczenie.n5plnaliczenie_sumakonta("BRUTTO"),"PLN")).cell.align = ALIGN_RIGHT
+		pTB.newcell.addtext(trans_.afc.display.money(pNaliczenie.n5plnaliczenie_sumakonta("WYPLATA"),"PLN")).cell.align = ALIGN_RIGHT
+		pTB.cell.styleitem = STYLE_OPTION_PAD
+		oRS.MoveNext
+	loop
+end function
+
+function create_new_naliczenie
+	if not fsave() then
+		exit function
+	end if
+	doc_.postcommand "OPEN_FORM_PROXY_HLI(TYPEID_N5PLNALICZENIE,0) appvar_listaplac=" + cstr(page_.root.idobj) +_
+	" appvar_rejestr_dokumentow=" + cstr(page_.root.lppl_pRejestrDok.idobj)
+end function
+
+function create_naliczenia
+	if not fsave() then
+		exit function
+	end if
+
+	NX_TRACE_START_STREAM("Tworzenie listy plac " + page_.root.strNrDok,nothing)
+	dim pM60192 : set pM60192 = doc_.getmodule(60192)
+
+	dim pNBP : set pNBP = pM60192.new_naliczenia_batch_param()
+	pNBP.idlistaplac = page_.root.idobj
+		
+	if not pM60192.create_naliczenia_on_batch(pNBP) then
+		MessageBox "Wykonanie naliczeń nieudane.", "Tworzenie naliczeń",vbOkOnly,vbInformation
+		NX_TRACE_SHOW_LOG(1)
+		trans_.discard
+		exit function
+	end if
+	
+	if not trans_.saveobjects() then
+		MessageBox "Zachowanie danych nieudane. Przyczynę znajdziesz w komunikatach ", "Tworzenie naliczeń",vbOkOnly,vbInformation
+		trans_.discard
+		exit function
+	end if
+
+	frefresh
+
+	NX_TRACE_SHOW_LOG(1)
+
+	if MessageBox("Tworzenie naliczeń zakończone. Czy wyświetlić utworzoną listę płac ? ", "Tworzenie naliczeń", vbYesNo, vbQuestion) <> vbYes then
+		exit function
+	end if
+
+	show_zbiorcza_lista
+end function
+
+function delete_naliczenia
+	dim cursor_nal : set cursor_nal = trans_.createrawcursor(TYPEID_N5PLNALICZENIE,"pListaPlac=" + cstr(page_.root.idobj),"","")
+	dim pNaliczenie
+	for each pNaliczenie in cursor_nal
+		pNaliczenie.markdel = true
+	next
+	if trans_.saveobjects() then
+		frefresh
+	end if
+end function
+
+function recalc_naliczenia
+	NX_TRACE_START_STREAM("Przeliczenie listy plac " + page_.root.strNrDok,nothing)
+
+	dim pModule : set pModule = doc_.getmodule(60192)
+	dim pPerf : set pPerf = doc_.performing("Rozpoczynam tworzenie naliczeń...")
+
+	dim cursor_nal : set cursor_nal = trans_.createrawcursor(TYPEID_N5PLNALICZENIE,"pListaPlac=" + cstr(page_.root.idobj),"","")
+	
+	dim pNaliczenie
+	for each pNaliczenie in cursor_nal
+		pPerf.text = "Przeliczanie dla " + pNaliczenie.pPracownik.text
+		dim oNalHost : set oNalHost = pModule.new_nal_host()
+		dim pNalStorage : set pNalStorage = pModule.load_naliczenie(pNaliczenie)
+		if not pModule.compute_naliczenie(oNalHost,pNaliczenie,pNalStorage, nothing) then
+			set pPerf = nothing
+			NX_TRACE_SHOW_LOG(1)
+'			MessageBox "Wykonanie naliczeń dla " + pNaliczenie.pPracownik.text + " nieudane.", "Tworzenie naliczeń",vbOkOnly,vbInformation
+			exit function
+		end if
+		set oNalHost = nothing
+	next
+	pPerf.text = "Trwa zachowywanie zmian.."
+	if trans_.saveobjects() then
+		frefresh
+	end if
+	set pPerf = nothing
+	NX_TRACE_SHOW_LOG(1)
+end function
+
+function show_zbiorcza_lista
+#comment '--------- przygotowanie parametrów dla raportu
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+	
+	'dowolne nazwisko
+	dim pParamNazwisko
+	set pParamNazwisko = doc_.afc.rap.param.new_text("Nazwisko").bindexpr("t_prac.strNazwisko")
+	pParamNazwisko.mode = PARAM_TEXT_MODE_ANY_TEXT
+	pParamArray.add pParamNazwisko
+
+		'dowolne imie
+	dim pParamImie
+	set pParamImie = doc_.afc.rap.param.new_text("Imię").bindexpr("t_prac.strImie")
+	pParamImie.mode = PARAM_TEXT_MODE_ANY_TEXT
+	pParamArray.add pParamImie
+
+	'nasza lista płac
+	dim pParamLP
+	set pParamLP = doc_.afc.rap.param.new_text("Lista płac").bindexpr("t_listaplac.strNrDok")
+	pParamArray.add pParamLP
+	pParamLP.mode = PARAM_TEXT_MODE_EQUAL
+	pParamLP.first_value = page_.root.strNrDok
+
+	dim pParamDate
+	set pParamDate = doc_.afc.rap.param.new_date_range("Data naliczenia").bindexpr("t_nal.dDataNal") 
+	pParamArray.add pParamDate
+	with pParamDate
+		.mode = PARAM_DATE_MODE_ANY_DATE
+	end with
+	
+	'parametr lista wyboru
+	dim pParam : set pParam = doc_.afc.rap.param.new_choice("Widok")
+	doc_.afc.rap.param.init_on_query  pParam , trans_ ,  "select strNazwa,IdObj from choicelist where nTypeId=TYPEID_N5PLSUBKONTO order by strNazwa"
+	pParam.multiple = false
+	if pParam.values.count() <= 1 then
+		pParam.mode = PARAM_CHOICE_MODE_ALL
+	end if
+	pParamArray.add pParam
+
+	doc_.getmodule(60136).make_raport_place_zbiorcza_param pParamArray
+end function
+
+
+
+function show_zbiorcza(Hli)
+#comment '--------- przygotowanie parametrów dla raportu
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+	
+	'dowolne nazwisko
+	dim pParamNazwisko
+	set pParamNazwisko = doc_.afc.rap.param.new_text("Nazwisko").bindexpr("t_prac.strNazwisko")
+	pParamNazwisko.mode = PARAM_TEXT_MODE_ANY_TEXT
+	pParamArray.add pParamNazwisko
+
+		'dowolne imie
+	dim pParamImie
+	set pParamImie = doc_.afc.rap.param.new_text("Imię").bindexpr("t_prac.strImie")
+	pParamImie.mode = PARAM_TEXT_MODE_ANY_TEXT
+	pParamArray.add pParamImie
+
+	'nasza lista płac
+	dim pParamLP
+	set pParamLP = doc_.afc.rap.param.new_text("Lista płac").bindexpr("t_listaplac.strNrDok")
+	pParamArray.add pParamLP
+	pParamLP.mode = PARAM_TEXT_MODE_EQUAL
+	pParamLP.first_value = page_.root.strNrDok
+
+	dim pParamDate
+	set pParamDate = doc_.afc.rap.param.new_date_range("Data naliczenia").bindexpr("t_nal.dDataNal") 
+	pParamArray.add pParamDate
+	with pParamDate
+		.mode = PARAM_DATE_MODE_ANY_DATE
+	end with
+	
+	'parametr lista wyboru
+	dim pParam : set pParam = doc_.afc.rap.param.new_choice("Widok")
+	doc_.afc.rap.param.init_on_query  pParam , trans_ ,  "select strNazwa,IdObj from choicelist where nTypeId=TYPEID_N5PLSUBKONTO order by strNazwa"
+	pParam.multiple = false
+	if pParam.values.count() <= 1 then
+		pParam.mode = PARAM_CHOICE_MODE_ALL
+	end if
+	pParamArray.add pParam
+#ifdef _IOW
+if Hli.exists(1) then
+	if Hli.prop(1) = 1 then
+	trans_.var(618) = 1
+	else
+	trans_.var(618) = 0
+	end if
+end if
+#endif
+	doc_.getmodule(60136).make_raport_place_zbiorcza_param pParamArray
+end function
+
+'realize_publication
+#include "50518"
+function drukuj_seryjnie
+
+	dim idDPC : idDPC = trans_.findobjid(TYPEID_N5DPC, "pub_nInnyTyp=" + CStr(N5DPC_PUBTYPE_INNY_POLECENIE_PRZELEWU_NAL))
+	if idDPC < 1 then
+		idDPC = fire_choice_list( TYPEID_N5DPC , "Publikacja typu 'Naliczenie płac'" ,"strNazwa","pub_nInnyTyp=" + CStr(N5DPC_PUBTYPE_INNY_POLECENIE_PRZELEWU_NAL) ,"",""	)	
+		if idDPC = 0 then
+			exit function
+		end if
+	end if
+
+	if MessageBox("Wybrano opcję wydruku wszystkich naliczeń wybranej listy płac. Czy napewno chcesz drukowac wszystkie te dokumenty?", "Wydruk naliczeń", vbYesNo, vbQuestion)<>vbYes then
+		exit function
+	end if
+
+
+	dim bPreview:bPreview = true
+	if MessageBox("Czy chcesz wyświetlić wcześniej podgląd wydruku?", "Wydruk naliczeń", vbYesNo, vbQuestion)<>vbYes then
+		bPreview = false
+	end if
+
+
+	dim cursor_nal : set cursor_nal = trans_.createrawcursor(TYPEID_N5PLNALICZENIE,"pListaPlac=" + cstr(page_.root.idobj),"","")
+	
+	dim pNaliczenie
+	for each pNaliczenie in cursor_nal
+		realize_publication idDPC , pNaliczenie , bPreview ,nothing
+	next
+	
+
+end function
+
+function drukuj_fiszki
+  if page_.root.isnew() then
+    trans_.message 1002 , 0 , "Dokument musi byc najpierw zapisany"
+    exit function
+  end if
+  
+	dim idDPC : idDPC = trans_.findobjid(TYPEID_N5DPC, "pub_nInnyTyp=" + CStr(N5DPC_PUBTYPE_INNY_WYDRUK_FISZEK))
+	if idDPC < 1 then
+		idDPC = fire_choice_list(TYPEID_N5DPC,"Publikacja typu 'Wydruk fiszek'" ,"strNazwa","pub_nInnyTyp=" + CStr(N5DPC_PUBTYPE_INNY_WYDRUK_FISZEK),"","")	
+		if idDPC = 0 then
+			exit function
+		end if
+	end if
+	realize_publication idDPC, page_.root, true, nothing
+end function
+
+function drukuj_seryjnie_fiszki
+
+#ifdef _AMPLUS
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+	
+	'dowolne nazwisko
+	dim pParamNazwisko
+	set pParamNazwisko = doc_.afc.rap.param.new_text("Nazwisko").bindexpr("t_prac.strNazwisko")
+	'pParamNazwisko.mode = PARAM_TEXT_MODE_ANY_TEXT
+	pParamArray.add pParamNazwisko
+
+		'dowolne imie
+	dim pParamImie
+	set pParamImie = doc_.afc.rap.param.new_text("Imię").bindexpr("t_prac.strImie")
+	'pParamImie.mode = PARAM_TEXT_MODE_ANY_TEXT
+	pParamArray.add pParamImie
+
+	'nasza lista płac
+	dim pParamLP
+	set pParamLP = doc_.afc.rap.param.new_text("Lista płac").bindexpr("t_listaplac.strNrDok")
+	pParamArray.add pParamLP
+	pParamLP.mode = PARAM_TEXT_MODE_EQUAL
+	pParamLP.first_value = page_.root.strNrDok
+
+	dim pParamDate
+	set pParamDate = doc_.afc.rap.param.new_date_range("Data naliczenia").bindexpr("t_nal.dDataNal") 
+	pParamArray.add pParamDate
+	with pParamDate
+		.mode = PARAM_DATE_MODE_ANY_DATE
+	end with
+	
+	'parametr lista wyboru
+	dim pParam : set pParam = doc_.afc.rap.param.new_choice("Widok")
+	doc_.afc.rap.param.init_on_query  pParam , trans_ ,  "select strNazwa,IdObj from choicelist where nTypeId=TYPEID_N5PLSUBKONTO order by strNazwa"
+	pParam.multiple = false
+	if pParam.values.count() <= 1 then
+		pParam.mode = PARAM_CHOICE_MODE_ALL
+	end if
+	pParamArray.add pParam
+
+	doc_.getmodule(60136).make_raport_place_zbiorcza_amplus_param pParamArray
+#else
+
+#ifdef _ARTECH
+	dim idDPC : idDPC = trans_.findobjid(TYPEID_N5DPC, "pub_nInnyTyp=" + CStr(N5DPC_PUBTYPE_NALICZENIE_PLAC) + " and strNazwa <> 'Naliczenie płac - wydruk zbiorczej listy płac'")
+#else
+	dim idDPC : idDPC = trans_.findobjid(TYPEID_N5DPC, "pub_nInnyTyp=" + CStr(N5DPC_PUBTYPE_NALICZENIE_PLAC))
+#endif
+	if idDPC < 1 then
+		idDPC = fire_choice_list( TYPEID_N5DPC , "Publikacja typu 'Naliczenie płac'" ,"strNazwa","pub_nInnyTyp=" + CStr(N5DPC_PUBTYPE_NALICZENIE_PLAC) ,"",""	)	
+		if idDPC = 0 then
+			exit function
+		end if
+	end if
+
+	if MessageBox("Wybrano opcję wydruku wszystkich fiszek wybranej listy płac. Czy napewno chcesz drukowac wszystkie te dokumenty?", "Wydruk fiszek", vbYesNo, vbQuestion)<>vbYes then
+		exit function
+	end if
+
+
+	dim bPreview:bPreview = true
+	if MessageBox("Czy chcesz wyświetlić wcześniej podgląd wydruku?", "Wydruk fiszek", vbYesNo, vbQuestion)<>vbYes then
+		bPreview = false
+	end if
+
+
+	dim cursor_nal : set cursor_nal = trans_.createrawcursor(TYPEID_N5PLNALICZENIE,"pListaPlac=" + cstr(page_.root.idobj),"","")
+	
+	dim pNaliczenie
+	for each pNaliczenie in cursor_nal
+		realize_publication idDPC , pNaliczenie , bPreview ,nothing
+	next
+#endif	
+
+end function
+
+function drukuj_liste
+
+  dim oRS : set oRS = trans_.createadors(_
+		"select 'c_prac_nazwisko_imie'=t_prac.strNazwisko + ' ' + t_prac.strImie, " +_
+		"'c_prac_id'=t_prac.idobj,'c_nal_id'=t_nal.idobj " +_
+		"from n5plnaliczenie t_nal inner join n5pracownik t_prac on t_nal.pPracownik = t_prac.idobj " +_
+		"where t_nal.pListaPlac=" + cstr(page_.root.idobj) +_
+		" order by c_prac_nazwisko_imie")
+
+	if oRS.EOF then
+    MessageBox "Lista jest pusta i nie posiada żadnych naliczeń", "Wydruk listy płac", vbOkOnly, vbInformation
+		exit function
+	end if
+
+  dim strNumerDok : strNumerDok = ""
+  dim dDataPocz, dDataKonc
+  strNumerDok = page_.root.strNrDok
+  dDataPocz = page_.root.dDataOd
+  dDataKonc = page_.root.dDataDo
+	doc_.postcommand "varCmd=CMD_OPEN_STATIC_PAGE varDestPage=60140 appvar_raport_type=95184 vs110='" + strNumerDok + "' vs111='" + CStr(dDataPocz) + "' vs112='" + CStr(dDataKonc) + "'"
+
+end function
+
+function copy
+  trans_.var(GVAR_COPY_PLNALICZENIE) = page_.root.IdObj
+  MessageBox "Lista została skopiowana.", "Kopiowanie listy płac", vbOkOnly, vbInformation
+end function
+
+function paste
+  if page_.root.isnew() then
+    trans_.message 7000, 0, "Lista  płac musi być najpierw zapisana."
+    exit function
+  end if
+
+  dim strMsg: strMsg = "Przed wklejeniem należy najpierw skopiować listę płac."
+  dim nIdList: nIdList = clng(0)
+  if trans_.isvar(GVAR_COPY_PLNALICZENIE) then
+    if trans_.var(GVAR_COPY_PLNALICZENIE) > clng(0) then
+      if trans_.var(GVAR_COPY_PLNALICZENIE) <> page_.root.IdObj then
+        nIdList = trans_.var(GVAR_COPY_PLNALICZENIE)
+      else
+        strMsg = "Aby wkleić dane ze skopiowanej listy, należy ustawić się na nowo zapisanej."
+      end if
+    end if
+  end if
+  
+  if nIdList = clng(0) then
+    trans_.message 7000, 0, strMsg
+    exit function    
+  end if
+  
+  dim pCursor: set pCursor = trans_.createrawcursor(TYPEID_N5PLNALICZENIE,"pListaPlac = " + cstr(nIdList),"IdObj","")
+  dim oNalOld, oNalNew
+  for each oNalOld in pCursor
+    set oNalNew = trans_.newobj(TYPEID_N5PLNALICZENIE)
+    set oNalNew.pPracownik = oNalOld.pPracownik
+    oNalNew.dDataRej = page_.root.dDataNal
+    oNalNew.dDataOd = page_.root.dDataOd
+    oNalNew.dDataDo = page_.root.dDataDo
+    set oNalNew.pUzytRej = oNalOld.pUzytRej
+    set oNalNew.pUzytModyf = oNalOld.pUzytModyf
+    set oNalNew.pRejestrDok = oNalOld.pRejestrDok
+    oNalNew.dDataNal = page_.root.dDataNal
+    set oNalNew.pListaPlac = page_.root
+    
+    'składniki płacowe
+    dim oSkladnikOld
+    for each oSkladnikOld in oNalOld.listSkladnik
+      dim oSkladnikNew: set oSkladnikNew = oNalNew.listSkladnik.addnew()
+      with oSkladnikNew
+        set .wrefDokument = oSkladnikOld.wrefDokument
+        .nLPDokZrodl = oSkladnikOld.nLPDokZrodl
+      end with
+    next
+    
+    'dekrety płacowe
+    dim oDekretOld
+    for each oDekretOld in oNalOld.listDekret
+      dim oDekretNew: set oDekretNew = oNalNew.listDekret.addnew()
+      with oDekretNew
+        set .pPracownik = oDekretOld.pPracownik
+        set .pSubKonto = oDekretOld.pSubKonto
+        .curKwota = oDekretOld.curKwota
+        .dDataNal = oNalNew.dDataNal
+        .strOpis = page_.root.strNrDok
+        .wrefDokument = oDekretOld.wrefDokument
+        .nLPDokZrodl = oDekretOld.nLPDokZrodl
+      end with
+    next
+    
+    'zapis
+    if not trans_.saveobjects() then
+      trans_.message 7000, 0, "Zapis listy nieudany."
+      exit function     
+    end if    
+  next
+  
+  'odśwież
+  frefresh()
+  
+  trans_.var(GVAR_COPY_PLNALICZENIE) = clng(0)
+end function
+
+'------------------------------------
+'wydruk zbiorczej listy płac (Artech)
+'------------------------------------
+function wydruk_listy_plac()
+
+	dim idDPC : idDPC = trans_.findobjid(TYPEID_N5DPC, "pub_nInnyTyp=" + CStr(N5DPC_PUBTYPE_NALICZENIE_PLAC) + " and strNazwa = 'Naliczenie płac - wydruk zbiorczej listy płac'")
+	if idDPC < 1 then
+		idDPC = fire_choice_list(TYPEID_N5DPC, "Publikacja typu 'Naliczenie płac'","strNazwa","pub_nInnyTyp=" + CStr(N5DPC_PUBTYPE_NALICZENIE_PLAC) ,"",""	)	
+		if idDPC = 0 then
+			exit function
+		end if
+	end if
+	
+	realize_publication idDPC, page_.root, true, nothing
+
+end function
+ 
+
+]]></script>
+</config>
+<header>
+</header>
+<body>
+QXF_BEGIN
+	<tr>	
+		QXC_LABEL_REQ(Numer dokumentu,1)
+		QXC_EDIT_CUSTOM(CTRLID_NUMDOK,20,RCELL_SPAN)
+	</tr>
+
+	<tr>
+		<td width='max'>
+			QXE_LABEL(Data początkowa)
+			<t name='CTRLID_TRIGGER' size='1'>
+				<transfer mode='custom'/>
+			</t>
+		</td>
+		QXC_DATE_FIELD(-1,dDataOd,1)
+		QXC_LABEL(Data końcowa,1)
+		QXC_DATE_FIELD(-1,dDataDo,1)
+	</tr>
+	<tr>
+		QXC_LABEL(Termin naliczenia,1)
+		QXC_DATE_FIELD(-1,dDataNal,RCELL_SPAN)
+	</tr>
+	QXR_SEPARATOR(FORM_SPAN)
+	<tr>
+		<td colspan='FORM_SPAN' name='CTRLID_TABLE_RESULT' />
+	</tr>
+	QXR_SEPARATOR(FORM_SPAN)
+
+	QXS_BEGIN_OPT(SECID_REJESTRACJA,Rejestracja,FORM_SPAN)
+		QXR_TEXT_REF_OPEN(Rejestr dokumentów,CTRLID_REJDOK,-1,25,lppl_pRejestrDok,strNazwa,RCELL_SPAN)
+		QXX_DOWOD_KSIEGOWY_SCHEMAT_OBJ(CTRLID_DOWKSIEG,-1,CTRLID_SCHEMAT,-1,lppl_,1)
+	QXS_END_OPT(FORM_SPAN)
+	<tr style='STYLE_ROW_BTN'>
+		<td colspan='FORM_SPAN'>
+			QXE_BUTTON(-1,0,Nowe naliczenie,varFunction="create_new_naliczenie")
+			<t size='5' />
+      QXE_BUTTON(-1,0,Utwórz wg szablonu,varFunction="create_naliczenia")
+      QXE_BUTTON(-1,0,Przelicz,varFunction="recalc_naliczenia")
+      QXE_BUTTON(-1,0,Usuń wszystkie,varFunction="delete_naliczenia")
+      QXE_BUTTON(-1,0,Zbiorcza lista płac,varFunctionHLI="show_zbiorcza" vn1=0)
+#ifdef _IOW
+      QXE_BUTTON(-1,0,Zbiorcza lista płac bez nazwisk,varFunctionHLI="show_zbiorcza" vn1=1)
+#endif
+#ifdef _HJORT
+      QXE_BUTTON(-1,0,Drukuj fiszki,varFunction="drukuj_fiszki")
+#else
+      QXE_BUTTON(-1,0,Drukuj fiszki,varFunction="drukuj_seryjnie_fiszki")
+#endif    
+      QXE_BUTTON(-1,0,Drukuj przelewy,varFunction="drukuj_seryjnie")
+#ifdef _ARTECH
+      QXE_BUTTON(-1,0,Wydruk listy płac,varFunction="wydruk_listy_plac")
+#endif	  
+#ifdef _IOW
+      QXE_BUTTON(-1,0,Zest. składn. płacowych,varFunction="drukuj_liste")
+#endif      
+      <t size='5' />
+      QXE_BUTTON(-1,0,Kopiuj,varFunction="copy")
+      QXE_BUTTON(-1,0,Wklej,varFunction="paste")      
+    </td>
+	</tr>
+QXF_END
+</body>
+<footer>
+</footer>
+</page>

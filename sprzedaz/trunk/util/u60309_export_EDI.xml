@@ -1,0 +1,1395 @@
+<?xml version="1.0" encoding="windows-1250"?>
+<!--
+#comment NX_READY
+
+export do insERT EDI++
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1231.h"
+
+#comment sposób kodowania polskich znaków
+#comment CP852 (DOS Latin II)
+
+#define WIN_CP_a   165
+#define WIN_CP_c   134
+#define WIN_CP_e   169
+
+#define WIN_CP_l   136 
+#define WIN_CP_n   228
+#define WIN_CP_o   162 
+
+#define WIN_CP_s   152 
+#define WIN_CP_z1  171 
+#define WIN_CP_z2  190
+
+#define WIN_CP_A   164
+#define WIN_CP_C   143
+#define WIN_CP_E   168
+ 
+#define WIN_CP_L   157
+#define WIN_CP_N   227
+#define WIN_CP_O   224
+ 
+#define WIN_CP_S   151
+#define WIN_CP_Z1  141
+#define WIN_CP_Z2  189
+
+--> 
+<page xmlns="http://tempuri.org/u60309_export_EDI.xsd">
+<config>
+<script>
+<![CDATA[ 
+
+#include "50212"
+#include "50203"
+#include "50519"
+
+'tablica przechowująca parametry tworzonego eksportu
+dim g_oParamArray : set g_oParamArray = nothing
+dim dToday: dToday = trans_.var(GVAR_TODAY)
+
+'-----------------------------------------
+' funkcja eksportu dokumentów sprzedaży
+'-----------------------------------------
+function export_edi_sprzedaz(byref oSprzedaz, byref oSO, byref eTyp)
+   
+   'pobiera obiekt firmy
+   if (trans_.isvar(GVAR_FIRMA)) then
+		  dim currentFirma: set currentFirma = trans_.getobj(TYPEID_N5FIRMA, trans_.var(GVAR_FIRMA))
+	 end if
+   'sposób płatności
+   dim strSposPlat: strSposPlat = oSprzedaz.pSposobPlatnosci.strNazwa
+   dim kwotaPrzyOdb
+   'gdy w tym samym dniu był wystawiany dok. płatności pobierz kwotę z transakcji (kwota przy odbiorze)
+   if not oSprzedaz.pTransakcja is nothing then
+     dim idTrans : idTrans = oSprzedaz.pTransakcja.idobj
+   end if
+   dim strSQL : strSQL = "select c_ptransakcja from vlist_n5platnosc_listPozycje where c_ptransakcja = " + CStr(idTrans) +_
+                         " and p_ddataoper = " + trans_.afc.convert.date2SQL(oSprzedaz.dDataWyst)
+   dim oRS : set oRS = trans_.createadors(strSQL)
+   dim bIsPlat : bIsPlat = false
+   do while not oRS.EOF
+     bIsPlat = true
+     exit do
+   loop
+   
+   if bIsPlat then
+      kwotaPrzyOdb = conSum(oSprzedaz.pTransakcja.curMa)
+   else
+      kwotaPrzyOdb = "0.00"
+   end if
+   
+   'zlicza ilosc pozycji na dokumencie
+   dim pozDok
+   dim iLiczPoz : iLiczPoz = 0
+   for each pozDok in oSprzedaz.listPozycje
+     iLiczPoz = iLiczPoz + 1
+   next
+   
+   'podsumowanie w przypadku korekt
+   dim strPodsum : strPodsum = ""
+   if (not oSprzedaz.pPopsprzed is nothing) then
+       strPodsum = conSum(oSprzedaz.curSumaNetto - oSprzedaz.pPopSprzed.curSumaNetto) + "," + conSum(oSprzedaz.curSumaVAT - oSprzedaz.pPopSprzed.curSumaVAT) + "," + conSum(oSprzedaz.curSumaBrutto - oSprzedaz.pPopSprzed.curSumaBrutto)
+   else
+     strPodsum = conSum(oSprzedaz.curSumaNetto) + "," + conSum(oSprzedaz.curSumaVAT) + "," + conSum(oSprzedaz.curSumaBrutto)
+	 end if
+        
+   'nagłówek dokumentu
+   dim naglowek_dok: naglowek_dok = ""
+   naglowek_dok = "[NAGLOWEK]" + newLine(1) +_
+                  """" + eTyp + """" + "," + "1" + ",," + Right(oSprzedaz.strNrDok,4) + ",,," + """" + oSprzedaz.strNrDok + """" + "," +_
+                  ",,,," + dispKontrahent(oSprzedaz.pKlient) + ",,," + """" + currentFirma.pMiejscowosc.strNazwa + """" + "," +_
+                  conDate(oSprzedaz.dDataWyst) + "," + conDate(oSprzedaz.dDataSprzed) + ",," + CStr(iLiczPoz) + ",,," + strPodsum + ",,,," +_
+                  """" + strSposPlat + """" + "," + conDate(oSprzedaz.dDataPlat) + "," + kwotaPrzyOdb + "," + conSum(oSprzedaz.curSumaBrutto) +_
+                  "," + "0" + "," + "0" + "," + "1" + ",," + """" + oSprzedaz.pUzytRej.strNazwa + """" + ",,," + "0.00" + "," + "0.00" + "," +_
+                  """" + oSprzedaz.pWaluta.strSkrot + """" + "," + conSum(oSprzedaz.curKurs) + "," + """" + oSprzedaz.strUwagi + """" + ",,,,," +_
+                  "0,0" + ",,,,," + """" + oSprzedaz.pKlient.pKraj.strNazwa + """" + "," + """" + oSprzedaz.pKlient.pKraj.strSkrot + """" + "," + newLine(2)
+                 
+    'zawartość dokumentu
+    dim zawartosc 
+    zawartosc = "[ZAWARTOSC]" + newLine(1) + zawrtoscDokObrot(oSprzedaz)
+                
+    oSO.write convertToLatinII(naglowek_dok) + convertToLatinII(zawartosc) + newLine(1)              
+ 
+end function
+
+
+'-------------------------------------
+' funkcja eksportu dokumentów zakupu
+'-------------------------------------
+function export_edi_zakup(byref oZakup, byref oSO, byref eTyp)
+     
+   'pobiera obiekt firmy
+   if (trans_.isvar(GVAR_FIRMA)) then
+		  dim currentFirma: set currentFirma = trans_.getobj(TYPEID_N5FIRMA, trans_.var(GVAR_FIRMA))
+	 end if  
+   'sposób płatności
+   dim strSposPlat: strSposPlat = oZakup.pSposobPlatnosci.strNazwa
+   dim kwotaPrzyOdb 
+   'gdy w tym samym dniu był wystawiany dok. płatności pobierz kwotę z transakcji (kwota przy odbiorze)
+   if not oZakup.pTransakcja is nothing then
+     dim idTrans : idTrans = oZakup.pTransakcja.idobj
+   end if
+   dim strSQL : strSQL = "select c_ptransakcja from vlist_n5platnosc_listPozycje where c_ptransakcja = " + CStr(idTrans) +_
+                         " and p_ddataoper = " + trans_.afc.convert.date2SQL(oZakup.dDataWyst)
+   dim oRS : set oRS = trans_.createadors(strSQL)
+   dim bIsPlat : bIsPlat = false
+   do while not oRS.EOF
+     bIsPlat = true
+     exit do
+   loop
+   
+   if bIsPlat then
+      kwotaPrzyOdb = conSum(oZakup.pTransakcja.curWn)
+   else
+      kwotaPrzyOdb = "0.00"
+   end if
+   
+   'zlicza ilosc pozycji na dokumencie
+   dim pozDok
+   dim iLiczPoz : iLiczPoz = 0
+   for each pozDok in oZakup.listPozycje
+     iLiczPoz = iLiczPoz + 1
+   next
+   
+   'podsumowanie w przypadku korekt
+   dim strPodsum : strPodsum = ""
+   if (not oZakup.pPopZakup is nothing) then
+     strPodsum = conSum(oZakup.curSumaNetto - oZakup.pPopZakup.curSumaNetto) + "," + conSum(oZakup.curSumaVAT - oZakup.pPopZakup.curSumaVAT) + "," + conSum(oZakup.curSumaBrutto - oZakup.pPopZakup.curSumaBrutto)
+   else
+     strPodsum = conSum(oZakup.curSumaNetto) + "," + conSum(oZakup.curSumaVAT) + "," + conSum(oZakup.curSumaBrutto)
+	 end if   
+   
+   dim strNrDok, strNrDokSkrot
+#ifdef _GRAJEWSCY
+   if eTyp = "FZ" or eTyp = "KFZ" then
+     strNrDok = oZakup.strNrDokObcy
+     strNrDokSkrot = oZakup.strNrDokObcy
+     if InStr(strNrDokSkrot,"/") > 0 then
+       strNrDokSkrot = Mid(strNrDokSkrot,1,InStr(strNrDokSkrot,"/")-1)
+     end if
+   else
+     strNrDok = oZakup.strNrDok
+     strNrDokSkrot = Right(strNrDok,4)
+   end if
+#else
+   strNrDok = oZakup.strNrDok
+   strNrDokSkrot = Right(strNrDok,4)
+#endif   
+   
+   'nagłówek dokumentu 
+   dim naglowek_dok: naglowek_dok = ""                
+   naglowek_dok = "[NAGLOWEK]" + newLine(1) +_
+                  """" + eTyp + """" + "," + "1" + ",," + strNrDokSkrot + "," + """" + oZakup.strNrDokObcy + """" + ",," + """" + strNrDok + """" + "," +_
+                  ",,,," + dispKontrahent(oZakup.pDostawca) + ",,," + """" + currentFirma.pMiejscowosc.strNazwa + """" + "," +_
+                  conDate(oZakup.dDataWyst) + "," + conDate(oZakup.dDataOtrzym) + "," + conDate(oZakup.dDataZakupu) +_
+                  "," + CStr(iLiczPoz) + ",,," + strPodsum + ",,,," + """" + strSposPlat + """" +_
+                  "," + conDate(oZakup.dDataPlat) + "," + kwotaPrzyOdb + "," + conSum(oZakup.curSumaBrutto) + "," + "0" + "," + "0" + "," +_
+                  "1" + ",," + """" + oZakup.pUzytRej.strNazwa + """" + ",,," + "0.00" + "," + "0.00" + "," + """" + oZakup.pWaluta.strSkrot +_
+                  """" + "," + conSum(oZakup.curKurs) + "," + """" + oZakup.strUwagi + """" + ",,,,," + "0,0" + ",,,,," +_
+                  """" + oZakup.pDostawca.pKraj.strNazwa + """" + "," + """" + oZakup.pDostawca.pKraj.strSkrot + """" + "," + newLine(2)               
+    
+    'zawartość dokumentu
+    dim zawartosc 
+    zawartosc = "[ZAWARTOSC]" + newLine(1) + zawrtoscDokObrot(oZakup)
+                
+    oSO.write convertToLatinII(naglowek_dok) + convertToLatinII(zawartosc) + newLine(1)
+   
+end function
+
+
+'-------------------------------------------
+' funkcja eksportu dokumentów magazynowych
+'-------------------------------------------
+function export_edi_dokmag(byref oDokMag, byref oSO, byref eTyp)
+    
+   'pobiera obiekt firmy
+   if (trans_.isvar(GVAR_FIRMA)) then
+		  dim currentFirma: set currentFirma = trans_.getobj(TYPEID_N5FIRMA, trans_.var(GVAR_FIRMA))
+	 end if 
+   'inne dane kontrahenta
+   dim daneKontrah
+   if not oDokMag.pKlient is nothing then
+      daneKontrah = """" + oDokMag.pKlient.pKraj.strNazwa + """" + "," + """" + oDokMag.pKlient.pKraj.strSkrot + """"
+   else
+      daneKontrah = "," 
+   end if
+   dim naglowek_dok: naglowek_dok = ""
+   dim pozycje_dok: pozycje_dok = ""
+   'zlicza ilosc pozycji na dokumencie
+   dim pozDok
+   dim iLiczPoz : iLiczPoz = 0
+   for each pozDok in oDokMag.listPozycje
+     iLiczPoz = iLiczPoz + 1
+   next
+   'osoba odbierająca dokument
+   dim strOsOdb : strOsOdb = ""
+   if not oDokMag.pKlientPracownik is nothing then
+     strOsOdb = oDokMag.pKlientPracownik.strImie + " " + oDokMag.pKlientPracownik.strNazwisko
+   end if
+   
+   naglowek_dok = "[NAGLOWEK]" + newLine(1) +_
+                  """" + eTyp + """" + "," + "1" + ",," + Right(oDokMag.strNrDok,4) + ",,," + """" + oDokMag.strNrDok + """" + "," +_
+                  ",,,," + dispKontrahent(oDokMag.pKlient) + ",,," + """" + currentFirma.pMiejscowosc.strNazwa + """" + "," +_
+                  conDate(oDokMag.dDataWyst) + "," + conDate(oDokMag.dDataWyst) + "," + conDate(oDokMag.dDataWyst) + "," +_
+                  CStr(iLiczPoz) + ",,," + conSum(oDokMag.curSumaMag) + ",0.00," + conSum(oDokMag.curSumaMag) + "," + conSum(oDokMag.curSumaMag) +_
+                  ",,,," + conDate(oDokMag.dDataWyst) + ",," + conSum(oDokMag.curSumaMag) + "," + "0" + "," + "0" + "," + "1" + ",," +_
+                  """" + oDokMag.pUzytRej.strNazwa + """" + "," + """" + strOsOdb + """" + ",," + "0.00" + "," + "0.00" + "," + """PLN""" + ",1.000," + """" +_
+                  oDokMag.strUwagi + """" + ",,,,," + "0,0" + ",,,,," + daneKontrah + "," + newLine(2)
+   'usun niepotrzebne apostrofy
+   dim iter
+   dim strAp1 : strAp1 = ","""","
+   naglowek_dok = Replace(naglowek_dok,strAp1,",,")
+   
+    'pozycje dokumentu
+    dim zawartosc: zawartosc = "[ZAWARTOSC]" + newLine(1)
+    
+    'zapis do pliu nagłówka dokumentu i jego pozycji              
+    oSO.write convertToLatinII(naglowek_dok) + convertToLatinII(zawartosc) + convertToLatinII(pozycje_dok) + newLine(1)
+    
+end function
+
+
+'-------------------------------------------------
+' funkcja eksportu dokumentów kasowo - bankowych
+'-------------------------------------------------
+function export_edi_platnosc(byref oPlatnosc, byref oSO)
+     
+   dim naglowek_dok: naglowek_dok = ""
+   dim strPodmiot: strPodmiot = ""
+   dim strdokNazwa, ddokData, oDok, idDok
+   'wybor typu odbiorcy
+   select case oPlatnosc.wrefPodmiot.type
+	 	  case TYPEID_N5KLIENT, TYPEID_N5FIRMA
+          'nazwa dokumentu do którego został wystawiony dokument kasowy/bankowy
+          strdokNazwa = doc_.afc.convert.str2SQL(oPlatnosc.listPozycje.get(1).pTransakcja.strSymTrans)
+          'data dokumentu do którego został wystawiony dokument kasowy
+          idDok = trans_.findobjid(TYPEID_N5SPRZEDAZ,"strNrDok = '" + strdokNazwa + "'")
+          if idDok > 0 then
+            set oDok = trans_.getobj(TYPEID_N5SPRZEDAZ, idDok)
+            ddokData = oDok.dDataWyst
+          else
+            idDok = trans_.findobjid(TYPEID_N5ZAKUP,"strNrDok = '" + strdokNazwa + "'")
+            if idDok > 0 then
+              set oDok = trans_.getobj(TYPEID_N5ZAKUP, idDok)
+              ddokData = oDok.dDataWyst
+            else
+              'próba odszukania po numerze obcym
+              idDok = trans_.findobjid(TYPEID_N5ZAKUP,"strNrDokObcy = '" + strdokNazwa + "'")
+              if idDok > 0 then
+                set oDok = trans_.getobj(TYPEID_N5ZAKUP, idDok)
+                ddokData = oDok.dDataWyst
+              end if  
+            end if  
+          end if 
+        if oPlatnosc.wrefPodmiot.type = TYPEID_N5KLIENT then 
+				  strPodmiot = "1" + "," + dispKontrahent(oPlatnosc.wrefPodmiot) + ",,,,,,,,,,,,,,,,,,,,,,,," + """" +_
+                         strdokNazwa + """" + ",," + conDate(ddokData) + ",,,"   
+        end if               
+        if oPlatnosc.wrefPodmiot.type = TYPEID_N5FIRMA then                
+				  strPodmiot = "1" + ",," + """" + addApostrophe(oPlatnosc.wrefPodmiot.strSkrot) + """" + "," + """" +_
+                       addApostrophe(oPlatnosc.wrefPodmiot.strNazwa) + """" + "," + """" + oPlatnosc.wrefPodmiot.pMiejscowosc.strNazwa +_
+                       """" + "," + """" + oPlatnosc.wrefPodmiot.strKod + """" + "," + """" + oPlatnosc.wrefPodmiot.strUlica + " " +_
+                       oPlatnosc.wrefPodmiot.strNrDomu + """" + "," + """" + oPlatnosc.wrefPodmiot.strNip + """" + ",,,,,,,,,,,,,,,,,,,,,,,," +_
+                       """" + strdokNazwa + """" + ",," + conDate(ddokData) + ",,,"               
+			  end if
+      case TYPEID_N5PRACOWNIK
+          dim strGmina: strGmina = ""
+          dim strWojewodztwo: strWojewodztwo = ""
+          'gdy obiekt gmina będzie zdefiniowany pobież nazwę gminy
+          if not oPlatnosc.wrefPodmiot.pMiejscowosc.mie_pGmina is Nothing then
+             strGmina = oPlatnosc.wrefPodmiot.pMiejscowosc.mie_pGmina.gmi_strNazwa
+          end if
+					'gdy obiekt województwo będzie zdefiniowany pobież nazwę woj.
+          if not oPlatnosc.wrefPodmiot.pMiejscowosc.pWojewodztwo is Nothing then
+             strWojewodztwo = oPlatnosc.wrefPodmiot.pMiejscowosc.pWojewodztwo.strNazwa
+          end if
+          'nazwa dokumentu do którego został wystawiony dokument kasowy/bankowy
+          strdokNazwa = oPlatnosc.listPozycje.get(1).pTransakcja.strSymTrans
+          'data dokumentu do którego został wystawiony dokument kasowy
+          idDok = trans_.findobjid(TYPEID_N5SPRZEDAZ,"strNrDok = '" + strdokNazwa + "'")
+          if idDok > 0 then
+            set oDok = trans_.getobj(TYPEID_N5SPRZEDAZ, idDok)
+            ddokData = oDok.dDataWyst
+          else
+            idDok = trans_.findobjid(TYPEID_N5ZAKUP,"strNrDok = '" + strdokNazwa + "'")
+            if idDok > 0 then
+              set oDok = trans_.getobj(TYPEID_N5ZAKUP, idDok)
+              ddokData = oDok.dDataWyst
+            end if  
+          end if
+          strPodmiot = "1" + "," + """" + oPlatnosc.wrefPodmiot.strPESEL + """" + ",,,,,,," + """" + oPlatnosc.wrefPodmiot.strNazwisko +_
+                       """" + "," + """" + oPlatnosc.wrefPodmiot.strImie + """" + "," + """" + oPlatnosc.wrefPodmiot.strImie2 + """" + "," +_
+                       """" + oPlatnosc.wrefPodmiot.strprac_Imie_matki + """" + "," + """" + oPlatnosc.wrefPodmiot.strprac_Imie_ojca + """" + "," +_
+                       conDate(oPlatnosc.wrefPodmiot.dDataUr) + "," + """" + oPlatnosc.wrefPodmiot.strMiejsceUr + """" + "," +_
+                       """" + oPlatnosc.wrefPodmiot.strNIP + """" + "," + """" + oPlatnosc.wrefPodmiot.strUlica + """" + "," +_
+                       """" + oPlatnosc.wrefPodmiot.strNrDomu + """" + "," + """" + oPlatnosc.wrefPodmiot.strNrLokalu + """" + "," +_ 
+                       """" + oPlatnosc.wrefPodmiot.strKod + """" + "," + """" + oPlatnosc.wrefPodmiot.pMiejscowosc.strNazwa + """" + "," +_ 
+                       """" + strGmina + """" + "," + """" + strWojewodztwo + """" + "," + """" + oPlatnosc.wrefPodmiot.pKraj.strNazwa + """" +_
+                       ",,,,,,,," + """" + strdokNazwa + """" + ",," + conDate(ddokData) + ",,," 
+      case TYPEID_N5INSTYTUCJA, TYPEID_N5BANK
+          'nazwa dokumentu do którego został wystawiony dokument kasowy/bankowy
+          strdokNazwa = oPlatnosc.listPozycje.get(1).pTransakcja.strSymTrans
+          'data dokumentu do którego został wystawiony dokument kasowy
+          idDok = trans_.findobjid(TYPEID_N5SPRZEDAZ,"strNrDok = '" + strdokNazwa + "'")
+          if idDok > 0 then
+            set oDok = trans_.getobj(TYPEID_N5SPRZEDAZ, idDok)
+            ddokData = oDok.dDataWyst
+          else
+            idDok = trans_.findobjid(TYPEID_N5ZAKUP,"strNrDok = '" + strdokNazwa + "'")
+            if idDok > 0 then
+              set oDok = trans_.getobj(TYPEID_N5ZAKUP, idDok)
+              ddokData = oDok.dDataWyst
+            end if  
+          end if
+					strPodmiot = "1" + "," + """" + oPlatnosc.wrefPodmiot.strNazwa + """" + ",,,,,,,,,,,,,,,,,,,,,,," + """" + oPlatnosc.wrefPodmiot.strUlica +_
+                       """" + "," + """" + oPlatnosc.wrefPodmiot.strNrDomu + """" + "," + """" + oPlatnosc.wrefPodmiot.pMiejscowosc.strNazwa + """" +_
+                       "," + """" + oPlatnosc.wrefPodmiot.strKod + """" + "," + """" + oPlatnosc.wrefPodmiot.strPoczta + """" + ",,," +_
+                       """" + strdokNazwa + """" + ",," + conDate(ddokData) + ",,,"  
+	 end select 
+   'podział na KP i BP
+   dim strKodKasy :strKodKasy = ""
+   dim strNazwaKasy : strNazwaKasy = ""
+   dim strNazwaBanku : strNazwaBanku = ""
+   dim strNrRach : strNrRach = ""
+   'jeśli eksportujemy KP
+   if Left(oPlatnosc.strNrDok,2) = "KP" or Left(oPlatnosc.strNrDok,2) = "KW" then
+     strKodKasy = Left(oPlatnosc.pRejestrDok.strNazwa,3)
+     strNazwaKasy = oPlatnosc.pRejestrDok.strNazwa   
+     'nagłówek dokumentu
+     naglowek_dok = "[NAGLOWEK]" + newLine(1) +_
+                    """" + Left(oPlatnosc.strNrDok,2) + """" + "," + CStr(oPlatnosc.eStatus - 1) + "," + Right(oPlatnosc.strNrDok,4) + "," +_
+                    """" + oPlatnosc.strNrDok + """" + "," + conDate(oPlatnosc.dDataOper) + "," + strPodmiot + conSum(Abs(oPlatnosc.curKwotaPodm)) +_
+                    "," + conSum(Abs(oPlatnosc.curKwotaStan)) + ",,,,," + """" + oPlatnosc.pUzytRej.strNazwa + """" + ",," +_
+                    """" + strKodKasy + """" + "," + """" + strNazwaKasy + """" + ",,,,," + newLine(1)
+   end if 
+   'jeśli eksportujemy BP
+   if Left(oPlatnosc.strNrDok,2) = "BP" or Left(oPlatnosc.strNrDok,2) = "BW" or Left(oPlatnosc.strNrDok,2) = "BR" then
+     select case oPlatnosc.wrefPodmiot.type
+	 	  case TYPEID_N5KLIENT or TYPEID_N5PRACOWNIK or TYPEID_N5INSTYTUCJA or TYPEID_N5FIRMA
+        if not oPlatnosc.wrefPodmiot.pBank1 is nothing then 
+          strNazwaBanku = oPlatnosc.wrefPodmiot.pBank1.strNazwa
+          strNrRach = oPlatnosc.wrefPodmiot.pBank1.strKodRach
+        end if
+       case TYPEID_N5BANK
+        if not oPlatnosc.wrefPodmiot is nothing then 
+          strNazwaBanku = oPlatnosc.wrefPodmiot.strNazwa
+          strNrRach = oPlatnosc.wrefPodmiot.strKodRach
+        end if 
+      end select
+      
+       'nagłówek dokumentu
+       naglowek_dok = "[NAGLOWEK]" + newLine(1) +_
+                      """" + Left(oPlatnosc.strNrDok,2) + """" + "," + CStr(oPlatnosc.eStatus - 1) + "," + Right(oPlatnosc.strNrDok,4) + "," +_
+                      """" + oPlatnosc.strNrDok + """" + "," + conDate(oPlatnosc.dDataOper) + "," + strPodmiot + conSum(Abs(oPlatnosc.curKwotaPodm)) +_
+                      "," + conSum(Abs(oPlatnosc.curKwotaStan)) + ",,,,," + """" + oPlatnosc.pUzytRej.strNazwa + """" + ",," +_
+                      """" + strNazwaBanku + """" + "," + """" + strNrRach + """" + ",,,,," + newLine(1)
+   end if
+                  
+    'zapis do pliu nagłówka dokumentu i jego pozycji              
+    oSO.write convertToLatinII(naglowek_dok) + newLine(1)
+    
+end function
+
+
+'-----------------------------------------------------------------------
+' funkcja dokonująca eksportu w zależności od typu dokumentu sprzedaży  
+'-----------------------------------------------------------------------
+function n5sprzedaz_edi(byref oSprzedaz, byref oSO)
+  
+  'faktura vat sprzedazy 
+	if oSprzedaz.pRejestrDok.eTyp = N5REJESTRDOK_FAKT_SP then
+		  export_edi_sprzedaz oSprzedaz, oSO, "FS"
+  'korekta faktury vat sprzedazy  
+	elseif oSprzedaz.pRejestrDok.eTyp = N5REJESTRDOK_KOR_FAKT_SP then
+		  export_edi_sprzedaz oSprzedaz, oSO, "KFS"
+  'rachunki    
+	elseif oSprzedaz.pRejestrDok.eTyp = N5REJESTRDOK_RACH then
+      export_edi_sprzedaz oSprzedaz, oSO, "RS"
+  'korekta rachunków    
+  elseif oSprzedaz.pRejestrDok.eTyp = N5REJESTRDOK_KOR_RACH then
+      export_edi_sprzedaz oSprzedaz, oSO, "KRS"
+  'paragony    
+	elseif oSprzedaz.pRejestrDok.eTyp = N5REJESTRDOK_PARAGON then
+      export_edi_sprzedaz oSprzedaz, oSO, "PA" 
+	'korekta paragonów
+  elseif oSprzedaz.pRejestrDok.eTyp = N5REJESTRDOK_KOR_PARAGON then
+      export_edi_sprzedaz oSprzedaz, oSO, "KPA" 
+  end if
+end function
+
+
+'--------------------------------------------------------------------
+' funkcja dokonująca eksportu w zależności od typu dokumentu zakupu  
+'--------------------------------------------------------------------
+function n5zakup_edi(byref oZakup, byref oSO)
+  
+  'faktura VAT zakupu 
+	if oZakup.pRejestrDok.eTyp = N5REJESTRDOK_FAKT_ZAK then
+		  export_edi_zakup oZakup, oSO, "FZ"
+  'korekta faktury VAT zakupu  
+	elseif oZakup.pRejestrDok.eTyp = N5REJESTRDOK_KOR_FAKT_ZAK then
+		  export_edi_zakup oZakup, oSO, "KFZ"
+  'faktura zakupu VAT RR    
+	elseif oZakup.pRejestrDok.eTyp = N5REJESTRDOK_FAKT_ZAK_RR then
+      export_edi_zakup oZakup, oSO, "FR"
+  'korekta faktury zakupu VAT RR
+  elseif oZakup.pRejestrDok.eTyp = N5REJESTRDOK_KOR_FAKT_ZAK_RR then
+      export_edi_zakup oZakup, oSO, "KFR"
+  end if
+end function
+
+
+'--------------------------------------------------------------------------
+' funkcja dokonująca eksportu w zależności od typu dokumentu magazynowego  
+'--------------------------------------------------------------------------
+function n5dokmag_edi(byref oDokMag, byref oSO)
+  
+  'przychody zewnętrzne
+	if oDokMag.pRejestrDok.eTyp = N5REJESTRDOK__PZ then
+		  export_edi_dokmag oDokMag, oSO, "PZ"
+  'wydanie zewnętrzne  
+	elseif oDokMag.pRejestrDok.eTyp = N5REJESTRDOK__WZ then
+		  export_edi_dokmag oDokMag, oSO, "WZ"
+  'przychody wewnętrzne    
+	elseif oDokMag.pRejestrDok.eTyp = N5REJESTRDOK__PW then
+      export_edi_dokmag oDokMag, oSO, "PW"
+  'rozchody wewnętrzne
+  elseif oDokMag.pRejestrDok.eTyp = N5REJESTRDOK__RW then
+      export_edi_dokmag oDokMag, oSO, "RW"
+  'przesunięcia międzymagazynowe    
+  elseif oDokMag.pRejestrDok.eTyp = N5REJESTRDOK__MM then
+      export_edi_dokmag oDokMag, oSO, "MMW"
+  end if
+end function
+
+
+'------------------------------------------------------------------------------------
+' funkcja dokonująca eksportu w zależności od typu dokumentu bankowego lub kasowego  
+'------------------------------------------------------------------------------------
+function n5platnosc_edi(byref oPlatnosc, byref oSO)
+  
+  'kasa przyjmie/wyda 
+	if oPlatnosc.pRejestrDok.eTyp = N5REJESTRDOK_KASOWY then
+		  export_edi_platnosc oPlatnosc, oSO
+  'bank przyjmie/wyda  
+	elseif oPlatnosc.pRejestrDok.eTyp = N5REJESTRDOK_BANKOWY then
+		  export_edi_platnosc oPlatnosc, oSO
+  end if
+end function
+
+
+'-----------------------------
+' funkcja inicjująca eksport
+'-----------------------------
+function fopen()
+	fopen = facquireparam()
+	if not fopen then
+		exit function
+	end if
+	
+	dim pPerf : set pPerf = doc_.performing("Eksport danych do insERT EDI++")
+
+	NX_TRACE_START_STREAM("Eksport danych do insERT EDI++",nothing)
+	
+  'rozpocznij ekport dokumentów sprzedaży
+	 exportset_n5sprzedaz_edi
+  'rozpocznij ekport dokumentów zakupu
+	 exportset_n5zakup_edi
+  'rozpocznij ekport dokumentów magazynowych
+	 exportset_n5dokmag_edi
+  'rozpocznij ekport dokumentów kasowo-bankowych
+	 exportset_n5platnosc_edi
+
+	set pPerf = nothing
+
+	NX_TRACE_SHOW_LOG(1)
+	fopen = false
+end function
+
+
+'---------------------------------------------------
+' funkcja tworząca parametry wykonywanego eksportu
+'---------------------------------------------------
+function get_default_param()
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+
+	dim oZakresDatParam : set oZakresDatParam = doc_.afc.rap.param.new_date_range("Data dokumentu").bindexpr("%DATADOK%")
+
+	' typ rejestru
+	dim pParamFactory2: set pParamFactory2= doc_.afc.rap.param
+	dim oRejestrParam: Set oRejestrParam= pParamFactory2.new_choice("Rejestr").bindexpr("%REJESTRDOK%")
+	
+	doc_.afc.rap.param.init_on_query oRejestrParam, trans_ , _
+	    "select strNazwa , idobj from n5rejestrdok where eTyp in (" +_
+		  "N5REJESTRDOK_FAKT_ZAK,N5REJESTRDOK_KOR_FAKT_ZAK,N5REJESTRDOK_FAKT_ZAK_RR,N5REJESTRDOK_KOR_FAKT_ZAK_RR,N5REJESTRDOK_FAKT_SP," +_
+      "N5REJESTRDOK_KOR_FAKT_SP,N5REJESTRDOK_RACH,N5REJESTRDOK_KOR_RACH,N5REJESTRDOK_PARAGON,N5REJESTRDOK_KOR_PARAGON,N5REJESTRDOK__PZ," +_
+      "N5REJESTRDOK__WZ,N5REJESTRDOK__PW,N5REJESTRDOK__RW,N5REJESTRDOK__MM,N5REJESTRDOK_KASOWY,N5REJESTRDOK_BANKOWY) order by strNazwa "
+
+	pParamArray.add oZakresDatParam
+	pParamArray.add oRejestrParam
+
+	set get_default_param = pParamArray
+end function
+
+
+'----------------------------------------------------------------
+' funkcja otwierająca okno dialogowe wyboru parametrów eksportu
+'----------------------------------------------------------------
+function facquireparam : facquireparam = false
+
+	dim pModRapEngine : set pModRapEngine = doc_.getmodule(60108)
+	dim oParamArray : set oParamArray = get_default_param()
+
+	if pModRapEngine.show_raport_param_dialog(oParamArray,"Parametry eksportu") = 0 then
+		exit function
+	else
+		set g_oParamArray = oParamArray
+	end if
+
+	'--- force generation of where parts in parameters
+	g_oParamArray.Value(0).get_where_part trans_
+	g_oParamArray.Value(1).get_where_part trans_
+
+	dim strInfo : strInfo = _
+		vbLf + g_oParamArray.Value(0).get_desc() + _
+		vbLf + g_oParamArray.Value(1).get_desc()
+
+	facquireparam = true
+end function
+
+
+'--------------------------------------------------------------------------------------------
+' funkcja tworząca katalog (dla konkretnego użytkownika) do którego będą eksportowane pliki  
+'--------------------------------------------------------------------------------------------
+function common_prepare(byval strFileName)
+	set common_prepare = nothing
+
+	dim strDestPath : strDestPath = getUserDirectory() + "\Eksport do insERT EDI++\" 
+	
+	Create_FileDriveObject
+
+	'tworzymy teraz katalog ale dla danego user'a i dokumentu
+	if (not pFD.IsFolder( strDestPath )) then
+		if (not pFD.CreatePath(strDestPath)) then
+			exit function
+		end if
+	end if
+	
+	dim oSO : set oSO = doc_.createstreamobj()
+	oSO.attach strDestPath + strFileName
+	set common_prepare = oSO
+end function
+
+
+'-------------------------------------------------------------------------
+' funkcja tworzy pliki dla każdego wybranego rejestru dokumentów sprzedaży
+'-------------------------------------------------------------------------
+function exportset_n5sprzedaz_edi() : exportset_n5sprzedaz_edi = false
+	
+	NX_TRACE_SUB_START("Eksport dokumentow sprzedazy")
+
+	dim oRejestrCursor : set oRejestrCursor = trans_.createrawcursor(TYPEID_N5REJESTRDOK, _
+			replace(g_oParamArray.Value(1).get_where_part(trans_),"%REJESTRDOK%","idobj"),_
+				"strNazwa" , "")
+     
+	dim oRejestr, iter:iter = 0
+  'tablica przechowująca indeksy kontrahentów
+  dim strTabKontrah(), i
+  
+	for each oRejestr in oRejestrCursor
+
+		dim oSO : set oSO = nothing
+    dim bZapis : bZapis = false
+    ReDim strTabKontrah(0) : strTabKontrah(0) = ""
+    dim indeks : indeks = 0
+   
+		dim strWhere
+		strWhere = replace(g_oParamArray.Value(0).get_where_part(trans_),"%DATADOK%","dDataWyst") +_
+			" and pRejestrDok = " + cstr(oRejestr.idobj)
+
+		dim oCursor : set oCursor = trans_.createrawcursor(TYPEID_N5SPRZEDAZ , strWhere, "dDataWyst,idobj" , "")
+		dim oSprzedaz
+		for each oSprzedaz in oCursor
+			
+      if oSO is nothing then
+        bZapis = true
+				set oSO = common_prepare(oRejestr.strNazwa + "_" + CStr(Year(dToday)) + "_" + CStr(Month(dToday)) + "_" + CStr(Day(dToday)) + ".epp")
+				if oSO is nothing then
+					nx_.trace.fatal "FEXN001","Nie mozna utworzyc pliku " + oRejestr.strNazwa + "_" + CStr(Year(dToday)) + "_" + CStr(Month(dToday)) + "_" + CStr(Day(dToday)) + ".epp"
+					exit function
+				end if
+			end if
+      
+      'zapamiętaj indeks kontrahenta
+      if oSprzedaz.pKlient.strIndeks <> "" then
+        'sprawdz czy w tablicy nie występuje już kontrahent
+        dim j, bDopisz : bDopisz = false
+        for j = 0 to ubound(strTabKontrah)
+          if strTabKontrah(j) = oSprzedaz.pKlient.strIndeks then
+            bDopisz = true
+            exit for
+          end if
+        next
+        if not bDopisz then  
+          ReDim preserve strTabKontrah(indeks)
+          strTabKontrah(indeks) = oSprzedaz.pKlient.strIndeks
+          indeks = indeks + 1
+        end if  
+      end if  
+      
+      'tylko raz zapisz do pliku nagłówek [INFO]
+      if iter = 0 then
+        oSO.write convertToLatinII(naglowekPliku)
+      end if
+
+      iter = iter + 1
+      
+			n5sprzedaz_edi oSprzedaz, oSO
+		next
+    'zapisz do pliku kartotekę kontrahentów
+    if strTabKontrah(0) <> "" and bZapis then
+      'nagłówek kartoteki
+      oSO.write "[NAGLOWEK]" + newLine(1) + """KONTRAHENCI""" + newLine(2) + "[ZAWARTOSC]" + newLine(1)
+      for i = 0 to ubound(strTabKontrah)
+         'pobież obiekt kontrahenta
+         dim oKontrah : set oKontrah = trans_.getobj(TYPEID_N5KLIENT , trans_.findobjid(TYPEID_N5KLIENT ,"strIndeks='" + strTabKontrah(i) + "'"))
+         'zapisz kontrahentów do pliku
+         oSO.write convertToLatinII(dopiszKontrah(oKontrah))
+      next
+      oSO.write newLine(1)
+    end if  
+    iter = 0
+	next
+	exportset_n5sprzedaz_edi = true
+  
+  NX_TRACE_END
+
+end function
+
+
+'------------------------------------------------------------------------
+' funkcja tworzy pliki dla każdego wybranego rejestru dokumentów zakupu
+'------------------------------------------------------------------------
+function exportset_n5zakup_edi() : exportset_n5zakup_edi = false
+	
+	NX_TRACE_SUB_START("Eksport dokumentow zakupu")
+
+	dim oRejestrCursor : set oRejestrCursor = trans_.createrawcursor(TYPEID_N5REJESTRDOK, _
+			replace(g_oParamArray.Value(1).get_where_part(trans_),"%REJESTRDOK%","idobj"),_
+				"strNazwa" , "")
+     
+	dim oRejestr, iter:iter = 0
+  'tablica przechowująca indeksy kontrahentów
+  dim strTabKontrah(), i
+  
+	for each oRejestr in oRejestrCursor
+
+		dim oSO : set oSO = nothing
+    dim bZapis : bZapis = false
+    ReDim strTabKontrah(0) : strTabKontrah(0) = ""
+    dim indeks : indeks = 0
+    
+		dim strWhere
+		strWhere = replace(g_oParamArray.Value(0).get_where_part(trans_),"%DATADOK%","dDataWyst") +_
+			" and pRejestrDok = " + cstr(oRejestr.idobj)
+
+		dim oCursor : set oCursor = trans_.createrawcursor(TYPEID_N5ZAKUP , strWhere, "dDataWyst,idobj" , "")
+		dim oZakup
+		for each oZakup in oCursor
+			
+      if oSO is nothing then
+        bZapis = true
+				set oSO = common_prepare(oRejestr.strNazwa + "_" + CStr(Year(dToday)) + "_" + CStr(Month(dToday)) + "_" + CStr(Day(dToday)) + ".epp")
+				if oSO is nothing then
+					nx_.trace.fatal "FEXN001","Nie mozna utworzyc pliku " + oRejestr.strNazwa + "_" + CStr(Year(dToday)) + "_" + CStr(Month(dToday)) + "_" + CStr(Day(dToday)) + ".epp"
+					exit function
+				end if
+			end if
+      
+      'zapamiętaj indeks kontrahenta
+      if oZakup.pDostawca.strIndeks <> "" then
+        'sprawdz czy w tablicy nie występuje już kontrahent
+        dim j, bDopisz : bDopisz = false
+        for j = 0 to ubound(strTabKontrah)
+          if strTabKontrah(j) = oZakup.pDostawca.strIndeks then
+            bDopisz = true
+            exit for
+          end if
+        next
+        if not bDopisz then  
+          ReDim preserve strTabKontrah(indeks)
+          strTabKontrah(indeks) = oZakup.pDostawca.strIndeks
+          indeks = indeks + 1
+        end if  
+      end if  
+      
+      'tylko raz zapisz do pliku nagłówek [INFO]
+      if iter = 0 then
+        oSO.write convertToLatinII(naglowekPliku)
+      end if
+
+      iter = iter + 1
+      
+			n5zakup_edi oZakup, oSO
+		next
+    'zapisz do pliku kartotekę kontrahentów
+    if strTabKontrah(0) <> "" and bZapis then
+      'nagłówek kartoteki
+      oSO.write "[NAGLOWEK]" + newLine(1) + """KONTRAHENCI""" + newLine(2) + "[ZAWARTOSC]" + newLine(1)
+      for i = 0 to ubound(strTabKontrah)
+         'pobież obiekt kontrahenta
+         dim oKontrah : set oKontrah = trans_.getobj(TYPEID_N5KLIENT , trans_.findobjid(TYPEID_N5KLIENT ,"strIndeks='" + strTabKontrah(i) + "'"))
+         'zapisz kontrahentów do pliku
+         oSO.write convertToLatinII(dopiszKontrah(oKontrah))
+      next
+    end if  
+    iter = 0
+	next
+	exportset_n5zakup_edi = true
+  
+  NX_TRACE_END
+
+end function
+
+
+'------------------------------------------------------------------------------
+' funkcja tworzy pliki dla każdego wybranego rejestru dokumentów magazynowych
+'------------------------------------------------------------------------------
+function exportset_n5dokmag_edi() : exportset_n5dokmag_edi = false
+	
+	NX_TRACE_SUB_START("Eksport dokumentow magazynowych")
+
+	dim oRejestrCursor : set oRejestrCursor = trans_.createrawcursor(TYPEID_N5REJESTRDOK, _
+			replace(g_oParamArray.Value(1).get_where_part(trans_),"%REJESTRDOK%","idobj"),_
+				"strNazwa" , "")
+	dim oRejestr, iter:iter = 0
+	for each oRejestr in oRejestrCursor
+
+		dim oSO : set oSO = nothing
+    
+		dim strWhere
+		strWhere = replace(g_oParamArray.Value(0).get_where_part(trans_),"%DATADOK%","dDataWyst") +_
+			" and pRejestrDok = " + cstr(oRejestr.idobj)
+
+		dim oCursor : set oCursor = trans_.createrawcursor(TYPEID_N5DOKMAG , strWhere, "dDataWyst,idobj" , "")
+		dim oDokMag
+		for each oDokMag in oCursor
+			if oSO is nothing then
+				set oSO = common_prepare(oRejestr.strNazwa + "_" + CStr(Year(dToday)) + "_" + CStr(Month(dToday)) + "_" + CStr(Day(dToday)) + ".epp")
+				if oSO is nothing then
+					nx_.trace.fatal "FEXN001","Nie mozna utworzyc pliku " + oRejestr.strNazwa + "_" + CStr(Year(dToday)) + "_" + CStr(Month(dToday)) + "_" + CStr(Day(dToday)) + ".epp"
+					exit function
+				end if
+			end if
+      iter = iter + 1
+      'tylko raz zapisz do pliku nagłówek [INFO]
+      if iter = 1 then
+        oSO.write convertToLatinII(naglowekPliku)
+      end if
+      
+			n5dokmag_edi oDokMag, oSO
+		next
+    iter = 0
+	next
+	exportset_n5dokmag_edi = true
+  
+  NX_TRACE_END
+
+end function
+
+
+'----------------------------------------------------------------------------------
+' funkcja tworzy pliki dla każdego wybranego rejestru dokumentów kasowo-bankowych
+'----------------------------------------------------------------------------------
+function exportset_n5platnosc_edi() : exportset_n5platnosc_edi = false
+	
+	NX_TRACE_SUB_START("Eksport dokumentow kasowo-bankowych")
+
+	dim oRejestrCursor : set oRejestrCursor = trans_.createrawcursor(TYPEID_N5REJESTRDOK, _
+			replace(g_oParamArray.Value(1).get_where_part(trans_),"%REJESTRDOK%","idobj"),_
+				"strNazwa" , "")
+	dim oRejestr, iter:iter = 0
+	for each oRejestr in oRejestrCursor
+
+		dim oSO : set oSO = nothing
+    
+		dim strWhere
+		strWhere = replace(g_oParamArray.Value(0).get_where_part(trans_),"%DATADOK%","dDataOper") +_
+			" and pRejestrDok = " + cstr(oRejestr.idobj)
+
+		dim oCursor : set oCursor = trans_.createrawcursor(TYPEID_N5PLATNOSC , strWhere, "dDataOper,idobj" , "")
+		dim oPlatnosc
+		for each oPlatnosc in oCursor
+			if oSO is nothing then
+				set oSO = common_prepare(oRejestr.strNazwa + "_" + CStr(Year(dToday)) + "_" + CStr(Month(dToday)) + "_" + CStr(Day(dToday)) + ".epp")
+				if oSO is nothing then
+					nx_.trace.fatal "FEXN001","Nie mozna utworzyc pliku " + oRejestr.strNazwa + "_" + CStr(Year(dToday)) + "_" + CStr(Month(dToday)) + "_" + CStr(Day(dToday)) + ".epp"
+					exit function
+				end if
+			end if
+      iter = iter + 1
+      'tylko raz zapisz do pliku nagłówek [INFO]
+      if iter = 1 then
+        oSO.write convertToLatinII(naglowekPliku)
+      end if
+      
+			n5platnosc_edi oPlatnosc, oSO
+		next
+    iter = 0
+	next
+	exportset_n5platnosc_edi = true
+  
+  NX_TRACE_END
+
+end function
+
+
+'-------------------------------
+' dodatkowe funkcje pomocnicze
+'-------------------------------
+
+'tworzy okres z którego pochodzą eksportowene dokumenty
+function okresDok()
+   dim strPocz, strKoniec, iPos
+   dim strDateParam:strDateParam = g_oParamArray.Value(0).get_desc()
+
+   if strDateParam = "" then
+      strPocz = "0"
+      strKoniec = "0"
+   else
+      strDateParam = Replace(strDateParam, "Pole 'Data dokumentu' ", "")
+      iPos = InStr(strDateParam, "bieżącym roku")
+      if iPos <> 0 then
+         strPocz = CStr(Year(dToday)) + "0101000000"
+         strKoniec = CStr(Year(dToday)) + "1231000000"
+      end if
+      iPos = InStr(strDateParam, "bieżącym miesiącu")
+      if iPos <> 0 then
+         if Month(dToday) < 10 then
+            strPocz = CStr(Year(dToday)) + "0" + CStr(Month(dToday)) + "01000000"
+            strKoniec = CStr(Year(dToday)) + "0" + CStr(Month(dToday)) + CStr(numMothDay(dToday)) + "000000"
+         else
+            strPocz = CStr(Year(dToday)) + CStr(Month(dToday)) + "01000000"
+            strKoniec = CStr(Year(dToday)) + CStr(Month(dToday)) + CStr(numMothDay(dToday)) + "000000"
+         end if
+      end if
+      iPos = InStr(strDateParam, "dniu dzisiejszym")
+      if iPos <> 0 then
+         strPocz = Left(Replace(Replace(Replace(CStr(dToday),"-",""),":","")," ",""),8) + "000000"
+         strKoniec = strPocz
+      end if
+      iPos = InStr(strDateParam, "przed")
+      if iPos <> 0 then
+         strPocz = ""
+         strKoniec = Replace(Mid(strDateParam, iPos + 6, 10), "-", "") + "000000"
+      end if
+      iPos = InStr(strDateParam, "po ")
+      if iPos <> 0 then
+         strPocz = Replace(Mid(strDateParam, iPos + 3, 10), "-", "") + "000000"
+         strKoniec = ""
+      end if
+      iPos = InStr(strDateParam, "pomiędzy")
+      if iPos <> 0 then
+         strPocz = Replace(Mid(strDateParam, iPos + 9, 10), "-", "") + "000000"
+         strKoniec = Replace(Mid(strDateParam, iPos + 22, 10), "-", "") + "000000"
+      end if     
+   end if
+   if strPocz <> "0" or strKoniec <> "0" then
+      okresDok = "1" + "," + strPocz + "," + strKoniec
+   else
+      okresDok = "0" + "," + strPocz + "," + strKoniec
+   end if   
+    
+end function
+
+'tworzy nagłówek pliku
+function naglowekPliku()
+  
+   dim naglowek:naglowek = ""
+  
+   'pobiera obiekt firmy
+   if (trans_.isvar(GVAR_FIRMA)) then
+		  dim currentFirma: set currentFirma = trans_.getobj(TYPEID_N5FIRMA, trans_.var(GVAR_FIRMA))
+	 end if
+
+   'pobiera obiekt zalogowanego uzytkownika
+   if (trans_.var(GVAR_USER)) then
+		  dim currentUser: set currentUser = trans_.getobj(TYPEID_N5UZYTKOWNIK, trans_.var(GVAR_USER))
+	 end if
+   
+   dim strKodNadawcy: strKodNadawcy = ""
+#ifdef _GRAJEWSCY
+   strKodNadawcy = "GRAJ"
+#endif
+#ifdef _PAKART
+   strKodNadawcy = "PAKART" 
+#endif
+   
+   naglowek = "[INFO]" + newLine(1) +_
+              """1.05""" + "," + "0" + "," + "852" + "," + """EuroBusiness 5.0""" + "," + """" + strKodNadawcy + """" + "," +_ 
+              """" + currentFirma.strSkrot + """" + "," + """" + currentFirma.strNazwa + """" + "," +_
+              """" + currentFirma.pMiejscowosc.strNazwa + """" + "," + """" + currentFirma.strKod + """" + "," + """" + currentFirma.strUlica +_ 
+              " " + currentFirma.strNrDomu + """" + "," + """" + Replace(currentFirma.strNIP,"-","") + """" + "," + """MAG""" + "," +_
+              """MAGAZYN GŁÓWNY""" + "," + """Opis magazynu głównego...""" + ",," + okresDok + "," +_
+              """" + currentUser.strNazwa + """" + "," + Replace(Replace(Replace(CStr(dToday),"-",""),":","")," ","") + "," +_
+              """" + currentFirma.pKraj.strNazwa + """" + "," + """" + currentFirma.pKraj.strSkrot + """" + "," + """PL " +_
+              Replace(currentFirma.strNIP,"-","") + """" + "," + "1" + newLine(2)            
+         
+   naglowekPliku = naglowek             
+end function
+
+'wyswietla dane o kontrahencie
+function dispKontrahent(byval oObject)
+   dim kontrahent
+   if not oObject is nothing then
+     'gdy w polu strCecha1 zostanie podany indeks kontrahenta => pobież ten indeks
+     dim strIndeksKontrah
+     if oObject.strCecha1 <> "" then
+        strIndeksKontrah = oObject.strCecha1
+     else
+        strIndeksKontrah = oObject.strIndeks
+     end if
+#ifdef _PAKART
+     strIndeksKontrah = oObject.strIndeks
+#endif
+     kontrahent = """" + strIndeksKontrah + """" + "," + """" + addApostrophe(oObject.strSkrot) + """" + "," + """" + addApostrophe(oObject.strNazwa) +_
+                  """" + "," + """" + oObject.pMiejscowosc.strNazwa + """" + "," + """" + oObject.strKod + """" + "," + """" + oObject.strUlica +_ 
+                  " " + oObject.strNrDomu + """" + "," + """" + oObject.strNip + """"
+   else
+     kontrahent = ",,,,,,"
+   end if
+   dispKontrahent = kontrahent             
+end function
+
+'dodaje do łańcucha zadaną liczbę <enter>
+function newLine(byval nrLines)
+  dim iter, line:line = ""
+  for iter = 1 to nrLines
+     line = line + vbNewLine
+  next
+  newLine = line
+end function
+
+'konwertuje danę z np. 2008-01-18 na 20080118000000 gdzie 000000 czas
+function conDate(byval Date)
+  if Date <> Empty then
+     conDate = Replace(CStr(Date),"-","") + "000000"
+  else
+     conDate = ""
+  end if   
+end function
+
+'konwertuje kwotę zamieniając , na .
+function conSum(byval sum)
+   conSum = Replace(CStr(Sum),",",".")
+end function
+
+'zwraca liczbę dni miesiąca
+function numMothDay(byval dDate)
+  dim dDateNext: dDateNext = DateSerial(Year(dDate),Month(DateAdd("m",1,dDate)),1)
+  numMothDay = Day(DateAdd("d",-1,dDateNext))
+end function
+
+'funkcja wyznaczająca zawartość dokumentów obrotowych
+function zawrtoscDokObrot(byval oDok) : zawrtoscDokObrot = ""
+
+  'wartość dok w stawce 0%
+  dim strStawka0 : strStawka0 = ""
+  if oDok.curNetto0 <> 0 then
+	  if oDok.Type = TYPEID_N5SPRZEDAZ  then
+			if (not oDok.pPopsprzed is nothing) then
+        if (oDok.pPopSprzed.curNetto0 - oDok.curNetto0 <> 0) then
+				    strStawka0 = """0""" + ",0.00," + conSum(oDok.curNetto0 - oDok.pPopSprzed.curNetto0) + ",0.00," + conSum(oDok.curNetto0 - oDok.pPopSprzed.curNetto0) + newLine(1) 
+			  end if
+      else
+					strStawka0 = """0""" + ",0.00," + conSum(oDok.curNetto0) + ",0.00," + conSum(oDok.curNetto0) + newLine(1) 
+			end if
+	  else
+		if oDok.Type = TYPEID_N5ZAKUP then
+			if (not oDok.pPopZakup is nothing) then
+        if (oDok.pPopZakup.curNetto0 - oDok.curNetto0 <> 0 ) then
+				  strStawka0 = """0""" + ",0.00," + conSum(oDok.curNetto0 - oDok.pPopZakup.curNetto0) + ",0.00," + conSum(oDok.curNetto0 - oDok.pPopZakup.curNetto0) + newLine(1) 
+			  end if
+      else
+				strStawka0 = """0""" + ",0.00," + conSum(oDok.curNetto0) + ",0.00," + conSum(oDok.curNetto0) + newLine(1) 
+			end if
+		end if	
+	end if
+  end if
+  'wartość dok w stawce zwoln.
+  dim strStawkaZw : strStawkaZw = ""
+  if oDok.curNettoZw <> 0 then
+  	if oDok.Type = TYPEID_N5SPRZEDAZ  then
+			if (not oDok.pPopsprzed is nothing) then
+        if (oDok.pPopSprzed.curNettoZw - oDok.curNettoZw <> 0) then
+				  strStawkaZw = """zw""" + ",0.00," + conSum(oDok.curNettoZw - oDok.pPopSprzed.curNettoZw) + ",0.00," + conSum(oDok.curNettoZw - oDok.pPopSprzed.curNettoZw) + newLine(1) 
+			  end if
+      else
+				strStawkaZw = """zw""" + ",0.00," + conSum(oDok.curNettoZw) + ",0.00," + conSum(oDok.curNettoZw) + newLine(1) 
+			end if
+	  else
+		if oDok.Type = TYPEID_N5ZAKUP then
+			if (not oDok.pPopZakup is nothing) then
+        if (oDok.pPopZakup.curNettoZw - oDok.curNettoZw <> 0 ) then
+				   strStawkaZw = """zw""" + ",0.00," + conSum(oDok.curNettoZw - oDok.pPopZakup.curNettoZw) + ",0.00," + conSum(oDok.curNettoZw - oDok.pPopZakup.curNettoZw) + newLine(1) 
+			  end if
+      else
+				strStawkaZw = """zw""" + ",0.00," + conSum(oDok.curNettoZw) + ",0.00," + conSum(oDok.curNettoZw) + newLine(1) 
+			end if
+		end if
+	  end if	
+  end if
+  'wartość dok w stawce nie podlega
+  dim strStawkaNp : strStawkaNp = ""
+  if oDok.curNettoNp <> 0 then
+   	if oDok.Type = TYPEID_N5SPRZEDAZ  then
+		 if (not oDok.pPopsprzed is nothing) then
+       if (oDok.pPopSprzed.curNettoNp - oDok.curNettoNp <> 0) then
+			   strStawkaNp = """np""" + ",0.00," + conSum(oDok.curNettoNp - oDok.pPopSprzed.curNettoNp) + ",0.00," + conSum(oDok.curNettoNp - oDok.pPopSprzed.curNettoNp) + newLine(1) 
+		   end if
+     else
+  		    strStawkaNp = """np""" + ",0.00," + conSum(oDok.curNettoNp) + ",0.00," + conSum(oDok.curNettoNp) + newLine(1) 
+		 end if
+	  else
+		if oDok.Type = TYPEID_N5ZAKUP then
+			if (not oDok.pPopZakup is nothing) then
+        if (oDok.pPopZakup.curNettoNp - oDok.curNettoNp <> 0) then
+				  strStawkaNp = """np""" + ",0.00," + conSum(oDok.curNettoNp - oDok.pPopZakup.curNettoNp) + ",0.00," + conSum(oDok.curNettoNp - oDok.pPopZakup.curNettoNp) + newLine(1) 
+			  end if
+      else
+				strStawkaNp = """np""" + ",0.00," + conSum(oDok.curNettoNp) + ",0.00," + conSum(oDok.curNettoNp) + newLine(1) 
+			end if
+		end if	
+	  end if
+  end if
+  'wartość dok w stawce 2%
+  dim strStawka2 : strStawka2 = ""
+  if oDok.curNetto2 <> 0 then
+   	if oDok.Type = TYPEID_N5SPRZEDAZ then
+		 if (not oDok.pPopsprzed is nothing) then
+       if (oDok.pPopSprzed.curNetto2 - oDok.curNetto2 <> 0) then
+			   strStawka2 = """2""" + ",2.00," + conSum(oDok.curNetto2 - oDok.pPopSprzed.curNetto2) + "," + conSum(oDok.curVat2 - oDok.pPopSprzed.curVat2) +  "," + conSum(oDok.curBrutto2 - oDok.pPopSprzed.curBrutto2) + newLine(1) 
+		   end if
+     else
+            strStawka2 = """2""" + ",2.00," + conSum(oDok.curNetto2) + "," + conSum(oDok.curVat2) + "," + conSum(oDok.curBrutto2) + newLine(1) 
+		 end if
+	  else
+		if oDok.Type = TYPEID_N5ZAKUP  then
+			if (not oDok.pPopZakup is nothing) then
+        if (oDok.pPopZakup.curNetto2 - oDok.curNetto2 <> 0) then
+				  strStawka2 = """2""" + ",2.00," + conSum(oDok.curNetto2 - oDok.pPopZakup.curNetto2) + "," + conSum(oDok.curVat2 - oDok.pPopZakup.curVat2) + "," + conSum(oDok.curBrutto2 - oDok.pPopZakup.curBrutto2) + newLine(1) 
+			  end if
+      else
+				strStawka2 = """2""" + ",2.00," + conSum(oDok.curNetto2) + "," + conSum(oDok.curVat2) + "," + conSum(oDok.curBrutto2) + newLine(1) 
+			end if
+		end if
+	  end if	
+  end if
+  'wartość dok w stawce 3%
+  dim strStawka3 : strStawka3 = ""
+  if oDok.curNetto3 <> 0 then
+  	  if oDok.Type = TYPEID_N5SPRZEDAZ then
+		 if (not oDok.pPopsprzed is nothing) then
+       if (oDok.pPopSprzed.curNetto3 - oDok.curNetto3 <> 0) then
+    	    strStawka3 = """3""" + ",3.00," + conSum(oDok.curNetto3 - oDok.pPopSprzed.curNetto3) + "," + conSum(oDok.curVat3 - oDok.pPopSprzed.curVat3) +  "," + conSum(oDok.curBrutto3 - oDok.pPopSprzed.curBrutto3) + newLine(1) 
+		   end if
+     else
+    		strStawka3 = """3""" + ",3.00," + conSum(oDok.curNetto3) + "," + conSum(oDok.curVat3) + "," + conSum(oDok.curBrutto3) + newLine(1) 
+		 end if
+	  else
+		if oDok.Type = TYPEID_N5ZAKUP then
+			if (not oDok.pPopZakup is nothing) then
+        if (oDok.pPopZakup.curNetto3 - oDok.curNetto3 <> 0) then
+				  strStawka3 = """3""" + ",3.00," + conSum(oDok.curNetto3 - oDok.pPopZakup.curNetto3) + "," + conSum(oDok.curVat3 - oDok.pPopZakup.curVat3) + "," + conSum(oDok.curBrutto3 - oDok.pPopZakup.curBrutto3) + newLine(1) 
+			  end if
+      else
+				strStawka3 = """3""" + ",3.00," + conSum(oDok.curNetto3) + "," + conSum(oDok.curVat3) + "," + conSum(oDok.curBrutto3) + newLine(1) 
+			end if
+		end if	
+	  end if
+  end if   
+  'wartość dok w stawce 4%
+  dim strStawka4 : strStawka4 = ""
+  if oDok.curNetto4 <> 0 then
+   if oDok.Type = TYPEID_N5SPRZEDAZ then
+		if (not oDok.pPopsprzed is nothing) then
+      if (oDok.pPopSprzed.curNetto4 - oDok.curNetto4 <> 0 ) then
+			  strStawka4 = """4""" + ",4.00," + conSum(oDok.curNetto4 - oDok.pPopSprzed.curNetto4) + "," + conSum(oDok.curVat4 - oDok.pPopSprzed.curVat4) +  "," + conSum(oDok.curBrutto4 - oDok.pPopSprzed.curBrutto4) + newLine(1) 
+		  end if
+    else
+			strStawka4 = """4""" + ",4.00," + conSum(oDok.curNetto4) + "," + conSum(oDok.curVat4) + "," + conSum(oDok.curBrutto4) + newLine(1) 
+		end if
+	  else
+		if oDok.Type = TYPEID_N5ZAKUP then
+			if (not oDok.pPopZakup is nothing) then
+        if (oDok.pPopZakup.curNetto4 - oDok.curNetto4 <> 0 ) then
+				  strStawka4 = """4""" + ",4.00," + conSum(oDok.curNetto4 - oDok.pPopZakup.curNetto4) + "," + conSum(oDok.curVat4 - oDok.pPopZakup.curVat4) + "," + conSum(oDok.curBrutto4 - oDok.pPopZakup.curBrutto4) + newLine(1) 
+			  end if
+      else
+				strStawka4 = """4""" + ",4.00," + conSum(oDok.curNetto4) + "," + conSum(oDok.curVat4) + "," + conSum(oDok.curBrutto4) + newLine(1) 
+			end if
+		end if
+	  end if	
+  end if
+  'wartość dok w stawce 7%
+  dim strStawka7 : strStawka7 = ""
+  if oDok.curNetto7 <> 0 then
+   if oDok.Type = TYPEID_N5SPRZEDAZ then
+		if (not oDok.pPopsprzed is nothing) then 
+      if (oDok.pPopSprzed.curNetto7 - oDok.curNetto7 <> 0) then
+			  strStawka7 = """7""" + ",7.00," + conSum(oDok.curNetto7 - oDok.pPopSprzed.curNetto7) + "," + conSum(oDok.curVat7 - oDok.pPopSprzed.curVat7) +  "," + conSum(oDok.curBrutto7 - oDok.pPopSprzed.curBrutto7) + newLine(1) 
+		  end if
+    else
+			strStawka7 = """7""" + ",7.00," + conSum(oDok.curNetto7) + "," + conSum(oDok.curVat7) + "," + conSum(oDok.curBrutto7) + newLine(1) 
+		end if
+	  else
+		if oDok.Type = TYPEID_N5ZAKUP  then
+			if  (not oDok.pPopZakup is nothing) then
+        if (oDok.pPopZakup.curNetto7 - oDok.curNetto7 <> 0) then
+				  strStawka7 = """7""" + ",7.00," + conSum(oDok.curNetto7 - oDok.pPopZakup.curNetto7) + "," + conSum(oDok.curVat7 - oDok.pPopZakup.curVat7) + "," + conSum(oDok.curBrutto7 - oDok.pPopZakup.curBrutto7) + newLine(1) 
+			  end if
+      else
+				strStawka7 = """7""" + ",7.00," + conSum(oDok.curNetto7) + "," + conSum(oDok.curVat7) + "," + conSum(oDok.curBrutto7) + newLine(1) 
+			end if
+		end if
+	  end if	
+  end if
+  'wartość dok w stawce 12%
+  dim strStawka12 : strStawka12 = ""
+  if oDok.curNetto12 <> 0 then
+    if oDok.Type = TYPEID_N5SPRZEDAZ  then
+		  if (not oDok.pPopsprzed is nothing) then
+        if (oDok.pPopSprzed.curNetto12 - oDok.curNetto12 <> 0) then
+			    strStawka12 = """12""" + ",12.00," + conSum(oDok.curNetto12 - oDok.pPopSprzed.curNetto12) + "," + conSum(oDok.curVat12 - oDok.pPopSprzed.curVat12) +  "," + conSum(oDok.curBrutto12 - oDok.pPopSprzed.curBrutto12) + newLine(1) 
+		    end if
+      else
+ 		    strStawka12 = """12""" + ",12.00," + conSum(oDok.curNetto12) + "," + conSum(oDok.curVat12) + "," + conSum(oDok.curBrutto12) + newLine(1) 
+		  end if
+	  else
+		if oDok.Type = TYPEID_N5ZAKUP then
+			if (not oDok.pPopZakup is nothing) then
+        if (oDok.pPopZakup.curNetto12 - oDok.curNetto12 <> 0) then
+				  strStawka12 = """12""" + ",12.00," + conSum(oDok.curNetto12 - oDok.pPopZakup.curNetto12) + "," + conSum(oDok.curVat12 - oDok.pPopZakup.curVat12) + "," + conSum(oDok.curBrutto12 - oDok.pPopZakup.curBrutto12) + newLine(1) 
+			  end if
+      else
+				strStawka12 = """12""" + ",12.00," + conSum(oDok.curNetto12) + "," + conSum(oDok.curVat12) + "," + conSum(oDok.curBrutto12) + newLine(1) 
+			end if
+		end if
+	  end if	
+  end if
+  'wartość dok w stawce 17%
+  dim strStawka17 : strStawka17 = ""
+  if oDok.curNetto17 <> 0 then
+   if oDok.Type = TYPEID_N5SPRZEDAZ  then
+		if (not oDok.pPopsprzed is nothing) then
+      if (oDok.pPopSprzed.curNetto17 - oDok.curNetto17 <> 0) then
+			   strStawka17 = """17""" + ",17.00," + conSum(oDok.curNetto17 - oDok.pPopSprzed.curNetto17) + "," + conSum(oDok.curVat17 - oDok.pPopSprzed.curVat17) +  "," + conSum(oDok.curBrutto17 - oDok.pPopSprzed.curBrutto17) + newLine(1) 
+		  end if
+    else
+		    strStawka17 = """17""" + ",17.00," + conSum(oDok.curNetto17) + "," + conSum(oDok.curVat17) + "," + conSum(oDok.curBrutto17) + newLine(1) 
+		end if
+	  else
+		if oDok.Type = TYPEID_N5ZAKUP  then
+			if  (not oDok.pPopZakup is nothing) then
+        if (oDok.pPopZakup.curNetto17 - oDok.curNetto17 <> 0) then
+				  strStawka17 = """17""" + ",17.00," + conSum(oDok.curNetto17 - oDok.pPopZakup.curNetto17) + "," + conSum(oDok.curVat17 - oDok.pPopZakup.curVat17) + "," + conSum(oDok.curBrutto17 - oDok.pPopZakup.curBrutto17) + newLine(1) 
+			  end if
+      else
+				strStawka17 = """17""" + ",17.00," + conSum(oDok.curNetto17) + "," + conSum(oDok.curVat17) + "," + conSum(oDok.curBrutto17) + newLine(1)
+			end if	
+		end if
+	  end if	
+  end if
+  'wartość dok w stawce 22%
+  dim strStawka22 : strStawka22 = ""
+  if oDok.curNetto22 <> 0 then
+   if oDok.Type = TYPEID_N5SPRZEDAZ  then
+		if (not oDok.pPopsprzed is nothing) then
+      if (oDok.pPopSprzed.curNetto22 - oDok.curNetto22 <> 0) then
+			   strStawka22 = """22""" + ",22.00," + conSum(oDok.curNetto22 - oDok.pPopSprzed.curNetto22) + "," + conSum(oDok.curVat22 - oDok.pPopSprzed.curVat22) +  "," + conSum(oDok.curBrutto22 - oDok.pPopSprzed.curBrutto22) + newLine(1) 
+		  end if
+    else
+			strStawka22 = """22""" + ",22.00," + conSum(oDok.curNetto22) + "," + conSum(oDok.curVat22) + "," + conSum(oDok.curBrutto22) + newLine(1) 
+		end if
+	  else
+		if oDok.Type = TYPEID_N5ZAKUP then
+			if  (not oDok.pPopZakup is nothing) then
+        if (oDok.pPopZakup.curNetto22 - oDok.curNetto22 <> 0) then
+				   trStawka22 = """22""" + ",22.00," + conSum(oDok.curNetto22 - oDok.pPopZakup.curNetto22) + "," + conSum(oDok.curVat22 - oDok.pPopZakup.curVat22) + "," + conSum(oDok.curBrutto22 - oDok.pPopZakup.curBrutto22) + newLine(1) 
+			  end if
+      else
+				strStawka22 = """22""" + ",22.00," + conSum(oDok.curNetto22) + "," + conSum(oDok.curVat22) + "," + conSum(oDok.curBrutto22) + newLine(1) 
+			end if
+		end if
+	  end if	
+  end if
+  'wartość dok w stawce 5%
+  dim strStawka5 : strStawka5 = ""
+  if oDok.curNetto5 <> 0 then
+   if oDok.Type = TYPEID_N5SPRZEDAZ then
+		if (not oDok.pPopsprzed is nothing) then
+      if (oDok.pPopSprzed.curNetto5 - oDok.curNetto5 <> 0) then
+			   strStawka5 = """5""" + ",5.00," + conSum(oDok.curNetto5 - oDok.pPopSprzed.curNetto5) + "," + conSum(oDok.curVat5 - oDok.pPopSprzed.curVat5) +  "," + conSum(oDok.curBrutto5 - oDok.pPopSprzed.curBrutto5) + newLine(1) 
+		  end if
+    else
+			strStawka5 = """5""" + ",5.00," + conSum(oDok.curNetto5) + "," + conSum(oDok.curVat5) + "," + conSum(oDok.curBrutto5) + newLine(1) 
+		end if
+	 else
+		if oDok.Type = TYPEID_N5ZAKUP then
+			if (not oDok.pPopZakup is nothing) then
+        if (oDok.pPopZakup.curNetto5 - oDok.curNetto5 <> 0) then
+				   strStawka5 = """5""" + ",5.00," + conSum(oDok.curNetto5 - oDok.pPopZakup.curNetto5) + "," + conSum(oDok.curVat5 - oDok.pPopZakup.curVat5) + "," + conSum(oDok.curBrutto5 - oDok.pPopZakup.curBrutto5) + newLine(1) 
+			  end if
+      else
+				strStawka5 = """5""" + ",5.00," + conSum(oDok.curNetto5) + "," + conSum(oDok.curVat5) + "," + conSum(oDok.curBrutto5) + newLine(1) 
+			end if
+		end if
+	  end if	
+  end if
+  
+  'wartość dok w stawce 8%
+  dim strStawka8 : strStawka8 = ""
+  if oDok.curNetto8 <> 0 then
+   if oDok.Type = TYPEID_N5SPRZEDAZ then
+		if (not oDok.pPopsprzed is nothing) then
+      if (oDok.pPopSprzed.curNetto8 - oDok.curNetto8 <> 0) then
+			   strStawka8 = """8""" + ",8.00," + conSum(oDok.curNetto8 - oDok.pPopSprzed.curNetto8) + "," + conSum(oDok.curVat8 - oDok.pPopSprzed.curVat8) +  "," + conSum(oDok.curBrutto8 - oDok.pPopSprzed.curBrutto8) + newLine(1) 
+		  end if
+    else
+			strStawka8 = """8""" + ",8.00," + conSum(oDok.curNetto8) + "," + conSum(oDok.curVat8) + "," + conSum(oDok.curBrutto8) + newLine(1) 
+		end if
+	 else
+		if oDok.Type = TYPEID_N5ZAKUP then
+			if (not oDok.pPopZakup is nothing) then
+        if (oDok.pPopZakup.curNetto8 - oDok.curNetto8 <> 0) then
+				   strStawka8 = """8""" + ",8.00," + conSum(oDok.curNetto8 - oDok.pPopZakup.curNetto8) + "," + conSum(oDok.curVat8 - oDok.pPopZakup.curVat8) + "," + conSum(oDok.curBrutto8 - oDok.pPopZakup.curBrutto8) + newLine(1) 
+			  end if
+      else
+				strStawka8 = """8""" + ",8.00," + conSum(oDok.curNetto8) + "," + conSum(oDok.curVat8) + "," + conSum(oDok.curBrutto8) + newLine(1) 
+			end if
+		end if
+	  end if	
+  end if  
+  
+  'wartość dok w stawce 23%
+  dim strStawka23 : strStawka23 = ""
+  if oDok.curNetto23 <> 0 then
+   if oDok.Type = TYPEID_N5SPRZEDAZ then
+		if (not oDok.pPopsprzed is nothing) then
+      if (oDok.pPopSprzed.curNetto23 - oDok.curNetto23 <> 0) then
+			   strStawka23 = """23""" + ",23.00," + conSum(oDok.curNetto23 - oDok.pPopSprzed.curNetto23) + "," + conSum(oDok.curVat23 - oDok.pPopSprzed.curVat23) +  "," + conSum(oDok.curBrutto23 - oDok.pPopSprzed.curBrutto23) + newLine(1) 
+		  end if
+    else
+			strStawka23 = """23""" + ",23.00," + conSum(oDok.curNetto23) + "," + conSum(oDok.curVat23) + "," + conSum(oDok.curBrutto23) + newLine(1) 
+		end if
+	 else
+		if oDok.Type = TYPEID_N5ZAKUP then
+			if (not oDok.pPopZakup is nothing) then
+        if (oDok.pPopZakup.curNetto23 - oDok.curNetto23 <> 0) then
+				   strStawka23 = """23""" + ",23.00," + conSum(oDok.curNetto23 - oDok.pPopZakup.curNetto23) + "," + conSum(oDok.curVat23 - oDok.pPopZakup.curVat23) + "," + conSum(oDok.curBrutto23 - oDok.pPopZakup.curBrutto23) + newLine(1) 
+			  end if
+      else
+				strStawka23 = """23""" + ",23.00," + conSum(oDok.curNetto23) + "," + conSum(oDok.curVat23) + "," + conSum(oDok.curBrutto23) + newLine(1) 
+			end if
+		end if
+	  end if	
+  end if    
+  
+  zawrtoscDokObrot = strStawka0 + strStawkaZw + strStawkaNp + strStawka2 + strStawka3 + strStawka4 +_
+                     strStawka7 + strStawka12 + strStawka17 + strStawka22 + strStawka5 + strStawka8 + strStawka23
+  
+end function
+
+function dopiszKontrah(byval oKontrah)
+   
+   dim strBankNazwa : strBankNazwa = ""
+   dim strRachBank : strRachBank = ""
+   
+   if not oKontrah.pBank1 is nothing then
+     strBankNazwa = oKontrah.pBank1.strNazwa
+     strRachBank = oKontrah.pBank1.strKodRach
+   end if
+   
+   'gdy w polu strCecha1 zostanie podany indeks kontrahenta => pobież ten indeks
+     dim strIndeksKontrah
+     if oKontrah.strCecha1 <> "" then
+        strIndeksKontrah = oKontrah.strCecha1
+     else
+        strIndeksKontrah = oKontrah.strIndeks
+     end if
+#ifdef _PAKART
+        strIndeksKontrah = oKontrah.strIndeks 
+#endif     
+   
+   dopiszKontrah = "0," + """" + strIndeksKontrah + """" + "," + """" + addApostrophe(oKontrah.strSkrot) + """" + "," + """" +_
+                  addApostrophe(oKontrah.strNazwa) + """" + "," + """" + oKontrah.pMiejscowosc.strNazwa + """" + "," + """" + oKontrah.strKod +_
+                  """" + "," + """" + oKontrah.strUlica + " " + oKontrah.strNrDomu + """" + "," + """" + oKontrah.strNip + """" + "," +_
+                  """" + oKontrah.strREGON + """" + "," + """" + oKontrah.strTel1 + """" + "," + """" + oKontrah.strFax + """" + ",," +_
+                  """" + oKontrah.strEmail + """" + "," + """" + oKontrah.strWWW + """" + "," + """" + oKontrah.strNazwisko + " " +_
+                  oKontrah.strImie + """" + ",,,,,,,,,,," + """" + strBankNazwa + """" + "," + """" + strRachBank + """" + "," + """" +_
+                  oKontrah.pKrajSDB.strNazwa + """" + "," + """" + oKontrah.pKrajSDB.strSkrot + """" + "," + NewLine(1)
+   'usun niepotrzebne apostrofy
+   dim iter
+   dim strAp1 : strAp1 = ","""","
+   dim strAp2 : strAp2 = ","" "","
+   for iter = 0 to 1 
+     dopiszKontrah = Replace(dopiszKontrah,strAp1,",,")
+     dopiszKontrah = Replace(dopiszKontrah,strAp2,",,")
+   next
+   
+end function
+
+'gdy w łańcuchu znaków pojawi sie podwójny apostrof dodaje jeszcze jeden
+function addApostrophe(byval strNazwa)
+  dim iter
+  for iter = 2 to Len(strNazwa)-1
+    if Mid(strNazwa,iter,1) = chr(34) then
+      dim strLeft : strLeft = Mid(strNazwa,1,iter - 1)
+      dim strRight : strRight = Mid(strNazwa,iter + 1,Len(strNazwa)-iter)
+      strNazwa = strLeft + chr(34) + chr(34) + strRight
+      iter = iter + 1
+    end if
+  next
+  if Mid(strNazwa,1,1) = chr(34) then
+    strNazwa = chr(34) + chr(34) + Right(strNazwa,Len(strNazwa)-1)
+  end if
+  if Mid(strNazwa,Len(strNazwa),1) = chr(34) then
+    strNazwa = Left(strNazwa,Len(strNazwa)-1) + chr(34) + chr(34)
+  end if
+  addApostrophe = strNazwa
+end function
+
+'funkcja do kodowania polskich znaków na standard CP852 (DOS Latin II)
+function convertToLatinII(byval strNazwa)
+
+  strNazwa = replace(strNazwa,"ą",chr(WIN_CP_a))
+  strNazwa = replace(strNazwa,"ć",chr(WIN_CP_c))
+  strNazwa = replace(strNazwa,"ę",chr(WIN_CP_e))
+  strNazwa = replace(strNazwa,"ł",chr(WIN_CP_l))
+  strNazwa = replace(strNazwa,"ń",chr(WIN_CP_n))
+  strNazwa = replace(strNazwa,"ó",chr(WIN_CP_o))
+  strNazwa = replace(strNazwa,"ś",chr(WIN_CP_s))
+  strNazwa = replace(strNazwa,"ź",chr(WIN_CP_z1))
+  strNazwa = replace(strNazwa,"ż",chr(WIN_CP_z2))
+  strNazwa = replace(strNazwa,"Ą",chr(WIN_CP_A))
+  strNazwa = replace(strNazwa,"Ć",chr(WIN_CP_C))
+  strNazwa = replace(strNazwa,"Ę",chr(WIN_CP_E))
+  strNazwa = replace(strNazwa,"Ł",chr(WIN_CP_L))
+  strNazwa = replace(strNazwa,"Ń",chr(WIN_CP_N))
+  strNazwa = replace(strNazwa,"Ó",chr(WIN_CP_O))
+  strNazwa = replace(strNazwa,"Ś",chr(WIN_CP_S))
+  strNazwa = replace(strNazwa,"Ź",chr(WIN_CP_Z1))
+  strNazwa = replace(strNazwa,"Ż",chr(WIN_CP_Z2))
+  convertToLatinII = strNazwa
+  
+end function
+
+
+  ]]> 
+  </script>
+  </config>
+  <body /> 
+  </page>

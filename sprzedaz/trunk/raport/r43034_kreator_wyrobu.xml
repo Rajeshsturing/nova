@@ -1,0 +1,612 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+TODO:
+- po usunięciu ostatniego dziecka kontrolki ilosc/cena sa ukryte
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200.h"
+#include "h1220.h"
+#include "h1224.h"
+#include "h1231.h"
+#include "h1240.h"
+
+#define CTRLID_TREE_TABLE			101
+
+#define CTRLID_EDITCENA				201
+#define CTRLID_EDITILOSC			202
+#define CTRLID_TEXTWARTOSC			203
+
+#define CTRLID_TOTALWARTOSC			301
+#define CTRLID_CENAMODE				302
+#define CTRLID_SR_CENA_MAG			303
+
+#define CENA_MODE_OST_ZAKUP			1
+#define CENA_MODE_SREDNIA_MAG		2
+-->
+<page style='STYLE_PAGE'>
+<config>
+	<title>
+	Kreator wyrobu
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+<script>
+<![CDATA[
+
+#include "50111"
+#include "50222"
+#include "50203"
+#include "50523"
+#include "50509"
+
+#define MAX_INDENT		7
+
+dim g_oRootMaterialTree : set g_oRootMaterialTree = nothing
+dim g_idRootReceptura : g_idRootReceptura = 0
+dim g_eCenaMode : g_eCenaMode = clng(CENA_MODE_OST_ZAKUP)
+
+function c##CTRLID_EDITCENA##_ondataentered(pCtrl, varValue):c##CTRLID_EDITCENA##_ondataentered = true
+	dim pTableRow : set pTableRow = pCtrl.parent.parent
+	dim oMaterialNode : set oMaterialNode = g_oRootMaterialTree.get_node(pTableRow.userprop.prop(1))
+	oMaterialNode.cena = ccur(varValue)
+end function
+
+function c##CTRLID_EDITILOSC##_ondataentered(pCtrl, varValue):c##CTRLID_EDITILOSC##_ondataentered = true
+	dim pTableRow : set pTableRow = pCtrl.parent.parent
+	dim oMaterialNode : set oMaterialNode = g_oRootMaterialTree.get_node(pTableRow.userprop.prop(1))
+	oMaterialNode.ilosc = ccur(varValue)
+end function
+
+function c##CTRLID_TEXTWARTOSC##_ondataentered(pCtrl, varValue):c##CTRLID_TEXTWARTOSC##_ondataentered = true
+end function
+
+function c##CTRLID_TOTALWARTOSC##_ondataentered(pCtrl, varValue):c##CTRLID_TOTALWARTOSC##_ondataentered = true
+end function
+
+
+function c##CTRLID_EDITCENA##_ongetdata(pCtrl):c##CTRLID_EDITCENA##_ongetdata = true
+end function
+
+function c##CTRLID_EDITILOSC##_ongetdata(pCtrl):c##CTRLID_EDITILOSC##_ongetdata = true
+end function
+
+function c##CTRLID_TEXTWARTOSC##_ongetdata(pCtrl):c##CTRLID_TEXTWARTOSC##_ongetdata = true
+	dim pTableRow : set pTableRow = pCtrl.parent.parent
+	update_row pTableRow,g_oRootMaterialTree.get_node(pTableRow.userprop.prop(1))
+end function
+
+function c##CTRLID_TOTALWARTOSC##_ongetdata(pCtrl):c##CTRLID_TOTALWARTOSC##_ongetdata = true
+	dim oMaterialNode : set oMaterialNode = g_oRootMaterialTree.get_node(1)
+	pCtrl.text = doc_.afc.display.money(ccur(oMaterialNode.wartosc), _
+		getCurrentFirma().pWaluta.strSkrot)
+end function
+
+function c##CTRLID_CENAMODE##_ongetdata(pCtrl):c##CTRLID_CENAMODE##_ongetdata = true
+	pCtrl.value = g_eCenaMode
+end function
+
+function c##CTRLID_CENAMODE##_ondataentered(pCtrl, varValue):c##CTRLID_CENAMODE##_ondataentered = true
+	if g_eCenaMode <> varValue then
+		g_eCenaMode = varValue
+		update_cena g_oRootMaterialTree.get_node(1)
+	end if
+end function
+
+function remove_element_hli(byref pHLI)
+	'TODO: kontrolki ilosc/cena parent są ukryte jesli usuwamy ostatnie dziecko
+
+	dim idMN : idMN = clng(pHLI.prop(2))
+	dim oMaterialNode : set oMaterialNode = g_oRootMaterialTree.get_node(idMN)
+	
+	remove_mn oMaterialNode
+
+	dim idRow : idRow = clng(pHLI.prop(1))
+	dim pRow : set pRow = page_.ctrl(idRow)
+
+	dim nIndent : nIndent = pRow.userprop.prop(3)
+	dim pNextRow : set pNextRow = pRow.nextelement
+	dim pLastRow : set pLastRow = nothing
+	do while not pNextRow is nothing
+		if pNextRow.userprop.prop(3) <= nIndent then
+			exit do
+		end if
+		set pLastRow = pNextRow
+		set pNextRow = pNextRow.nextelement
+	loop
+	dim pSection : set pSection = pRow.parent
+	if not pLastRow is nothing then
+		set pNextRow = pRow.nextelement
+		do while true
+			pSection.remove pNextRow
+			if pNextRow is pLastRow then
+				exit do
+			end if
+			set pNextRow = pNextRow.nextelement
+		loop 
+	end if
+	pSection.remove pRow
+end function
+
+function expcol_hli(byref pHLI)
+	dim pPicture : set pPicture = page_.ctrl(clng(pHLI.prop(PROPC_CONTROL)))
+	dim idRow : idRow = clng(pHLI.prop(2))
+
+	if pPicture.image = PICTURE_SMALL_PLUS then
+		pPicture.image = clng(PICTURE_SMALL_MINUS)
+		pPicture.tip = "Zwiń"
+		dim oMaterialNode : set oMaterialNode = g_oRootMaterialTree.get_node(pHLI.prop(1))
+		rebuild_from_mn oMaterialNode,page_.ctrl(CTRLID_TREE_TABLE),idRow
+	else
+		pPicture.image = clng(PICTURE_SMALL_PLUS)
+		pPicture.tip = "Rozwiń"
+		dim pRow : set pRow = page_.ctrl(idRow)
+
+		dim nIndent : nIndent = pRow.userprop.prop(3)
+		dim pNextRow : set pNextRow = pRow.nextelement
+		dim pLastRow : set pLastRow = nothing
+		do while not pNextRow is nothing
+			if pNextRow.userprop.prop(3) <= nIndent then
+				exit do
+			end if
+			set pLastRow = pNextRow
+			set pNextRow = pNextRow.nextelement
+		loop
+		if not pLastRow is nothing then
+			dim pSection : set pSection = pRow.parent
+			set pNextRow = pRow.nextelement
+			do while true 
+				pSection.remove pNextRow
+				if pNextRow is pLastRow then
+					exit do
+				end if
+				set pNextRow = pNextRow.nextelement
+			loop 
+		end if
+
+	end if
+end function
+
+function add_choose_product_hli(byref pHLI)
+	dim pM60271 : set pM60271 = doc_.getmodule(60271)
+	dim nLP
+	dim pProdukt
+	set pProdukt = pM60271.choose_produkt_obj("eAktywny=N5PRODUKT_AKTYWNY and prod_cWyrob='1'", "strNazwa", nLP)
+	if pProdukt is nothing then
+		exit function
+	end if
+
+	dim oParentMN : set oParentMN = g_oRootMaterialTree.get_node(clng(pHLI.prop(1)))
+
+	dim oCMN : set oCMN = oParentMN.add_new_component()
+	with oCMN
+		.idprodukt = pProdukt.idobj
+		.idopak = pProdukt.listOpakowania.get(1).idobj
+		.ilosc = ccur(1.0)
+		
+		dim idReceptura,curIloscWyrobu
+
+		if query_default_receptura_for_wyrob(.idprodukt,.idopak, _
+			idReceptura,curIloscWyrobu) then
+			build_mn_from_receptura trans_.getobj(TYPEID_N5RECEPTA,idReceptura), oCMN
+		end if
+	end with
+	dim pTable : set pTable = page_.ctrl(CTRLID_TREE_TABLE)
+	dim pTableRow : set pTableRow = page_.ctrl(clng(pHLI.prop(2)))
+	rebuild_row pTableRow,oCMN
+	
+	build_add_item_row oParentMN,pTable,pTableRow.ident
+
+end function
+
+function fopen()
+	set g_oRootMaterialTree = doc_.system.activex("eb5prod.material_tree")
+
+	g_idRootReceptura = trans_.var(APPVAR_PARAM_IDOBJ)
+
+	dim pReceptura : set pReceptura = trans_.getobj(TYPEID_N5RECEPTA,g_idRootReceptura)
+	dim oTopMN : set oTopMN = g_oRootMaterialTree.new_root()
+	oTopMN.ilosc = ccur(1.0)
+	build_mn_from_receptura pReceptura,oTopMN
+	update_cena g_oRootMaterialTree.get_node(1)
+	rebuild_from_mn g_oRootMaterialTree.get_node(1),page_.ctrl(CTRLID_TREE_TABLE),-1
+
+	if not doc_.getmodule(60253).gm_ensure_accuracy_ui(true) then
+		page_.ctrl(CTRLID_SR_CENA_MAG).disable = true
+	end if
+	fopen = true
+end function
+
+function fok()
+	dim pReceptura : set pReceptura = trans_.getobj(TYPEID_N5RECEPTA,g_idRootReceptura)
+	update_receptura pReceptura,g_oRootMaterialTree.get_node(1)
+
+	page_.result = 1
+	page_.goback
+end function
+
+function fcancel()
+	page_.goback
+end function
+
+function update_receptura(byref pReceptura,byref oMaterialNode)
+	pReceptura.listSurowce.deleteall
+	pReceptura.listCzynnosci.deleteall
+	
+	dim iter
+	dim oCMN
+	dim pPozReceptura
+	dim pProdukt
+	dim pOpak 
+
+	for iter = 0 to oMaterialNode.get_component_count() - 1
+		set oCMN = oMaterialNode.get_component(iter)
+		set pPozReceptura = pReceptura.listSurowce.addnew()
+		with pPozReceptura
+			set pProdukt = trans_.getobj(TYPEID_N5PRODUKT,oCMN.idprodukt)
+			set pOpak = pProdukt.listOpakowania.get(pProdukt.listOpakowania.findonid(oCMN.idopak))
+			.pProdukt = pProdukt
+			.pOpak = pOpak
+			.curIloscOpak = ccur(oCMN.ilosc)
+		end with
+	next
+
+	for iter = 0 to oMaterialNode.get_service_count() - 1
+		set oCMN = oMaterialNode.get_service(iter)
+		set pPozReceptura = pReceptura.listCzynnosci.addnew()
+		with pPozReceptura
+			set pProdukt = trans_.getobj(TYPEID_N5PRODUKT,oCMN.idprodukt)
+			set pOpak = pProdukt.listOpakowania.get(pProdukt.listOpakowania.findonid(oCMN.idopak))
+			.pProdukt = pProdukt
+			.pOpak = pOpak
+			.curIloscOpak = ccur(oCMN.ilosc)
+		end with
+	next
+end function
+
+function rebuild_row(byref pTableRow,byref oMaterialNode)
+	pTableRow.removeall
+	set pTableRow.userprop = doc_.createhli()
+	pTableRow.userprop.prop(1) = clng(oMaterialNode.ident)
+	pTableRow.userprop.prop(3) = clng(oMaterialNode.level)
+
+	dim iter 
+	for iter = 1 to clng(oMaterialNode.level - 1)
+		pTableRow.addnew CTRL_TYPE_TABLECELL,-1
+	next
+
+	dim pTCPicture : set pTCPicture = pTableRow.addnew(CTRL_TYPE_TABLECELL,-1)
+
+	if oMaterialNode.has_children() then
+		dim pPicturePlus : set pPicturePlus = pTCPicture.addnew(CTRL_TYPE_PICTURE, -1)
+		with pPicturePlus
+			.image = clng(PICTURE_SMALL_PLUS)
+			.tip = "Rozwiń"
+			set .hli = doc_.createhlistr(doc_.afc.convert.formatter( _
+			 "varFunctionHLI='expcol_hli' vn1=%1 vn2=%2") _
+				(clng(oMaterialNode.ident))(pTableRow.ident).Done())
+		end with
+	else
+		pTCPicture.addnew(CTRL_TYPE_STATIC,-1).text = "    "
+	end if
+
+	dim pTCName
+	set pTCName = pTableRow.addnew(CTRL_TYPE_TABLECELL,-1)
+	pTCName.colspan = MAX_INDENT - clng(oMaterialNode.level)
+	
+	dim pStatic : set pStatic = pTCName.addnew(CTRL_TYPE_STATIC,-1)
+
+	dim pProdukt : set pProdukt = trans_.getobj(TYPEID_N5PRODUKT,oMaterialNode.idprodukt)
+	dim pOpak : set pOpak = pProdukt.listOpakowania.get(pProdukt.listOpakowania.findonid(oMaterialNode.idopak))
+	pStatic.text = pProdukt.text
+
+	dim pTCIlosc
+	set pTCIlosc = pTableRow.addnew(CTRL_TYPE_TABLECELL,-1)
+
+	dim pEditIlosc 
+	set pEditIlosc = pTCIlosc.addnew(CTRL_TYPE_CURRENCY,-1)
+
+	with pEditIlosc
+		.customredirect = clng(CTRLID_EDITILOSC)
+		.transfer = page_.createtransfer("custom")
+		.unit = pOpak.pJednOpak.strSkrot
+		.precision = pOpak.pJednOpak.nDokladnosc - 1
+	end with
+
+	dim pTCCena
+	set pTCCena = pTableRow.addnew(CTRL_TYPE_TABLECELL,-1)
+	
+	dim pEditCena 
+	set pEditCena = pTCCena.addnew(CTRL_TYPE_CURRENCY,-1)
+	
+	with pEditCena
+		.customredirect = clng(CTRLID_EDITCENA)
+		.transfer = page_.createtransfer("custom")
+		.precision = 2
+		.unit = getCurrentFirma().pWaluta.strSkrot
+	end with
+
+	dim pTCWartosc
+	set pTCWartosc = pTableRow.addnew(CTRL_TYPE_TABLECELL,-1)
+	pTCWartosc.align = ALIGN_RIGHT
+	dim pStWartosc 
+	set pStWartosc = pTCWartosc.addnew(CTRL_TYPE_STATIC,-1)
+	with pStWartosc
+		.customredirect = clng(CTRLID_TEXTWARTOSC)
+		.transfer = page_.createtransfer("custom")
+	end with
+
+	dim pTCUdzial
+	set pTCUdzial = pTableRow.addnew(CTRL_TYPE_TABLECELL,-1)
+	pTCUdzial.align = ALIGN_RIGHT
+	dim pStUdzial
+	set pStUdzial = pTCUdzial.addnew(CTRL_TYPE_STATIC,-1)
+
+	dim pTCOper
+	set pTCOper = pTableRow.addnew(CTRL_TYPE_TABLECELL,-1)
+	dim pPictRemove : set pPictRemove = pTCOper.addnew(CTRL_TYPE_PICTURE,-1)
+	with pPictRemove
+		.image = CLng(PICTURE_REMOVE_FILE)
+		.width = SIZE_FOR_GRID
+		.height = SIZE_FOR_GRID
+		.tip = "Usuń"
+		set .hli=doc_.createhli()
+		.hli.prop(GVAR_FUNCTIONHLI) = "remove_element_hli"
+		.hli.prop(1) = clng(pTableRow.ident)
+		.hli.prop(2) = clng(oMaterialNode.ident)
+	end with
+end function
+
+function build_add_item_row(byref oParentMN,byref pTable,byref idRow)
+	dim pTableRow
+	set pTableRow = pTable.body.insertnew(CTRL_TYPE_TABLEROW,idRow,-1)
+	set pTableRow.userprop = doc_.createhli()
+	with pTableRow.userprop
+		.prop(1) = clng(0)
+		.prop(3) = clng(oParentMN.level + 1)
+	end with
+
+	idRow = pTableRow.ident
+
+	dim iter 
+	for iter = 0 to clng(oParentMN.level)
+		pTableRow.addnew CTRL_TYPE_TABLECELL,-1
+	next
+
+	dim pTCSeparator
+	set pTCSeparator = pTableRow.addnew(CTRL_TYPE_TABLECELL,-1)
+	pTCSeparator.colspan = MAX_INDENT - clng(oParentMN.level) + 5 - 1
+	
+	pTCSeparator.addnew(CTRL_TYPE_STATIC, -1).text = " "
+
+	dim pPicturePlus : set pPicturePlus = pTCSeparator.addnew(CTRL_TYPE_PICTURE, -1)
+	with pPicturePlus
+		.image = clng(PICTURE_CHOICE_N5PRODUKT)
+		.tip = "Dodaj składnik"
+		set .hli = doc_.createhlistr( _
+			doc_.afc.convert.formatter("varFunctionHLI='add_choose_product_hli' vn1=%1 vn2=%2") _
+				(oParentMN.ident)(idRow).Done())
+	end with
+end function
+
+function update_row(byref pTableRow,byref oMaterialNode)
+	pTableRow.cell(oMaterialNode.level + 2).element(1).value = ccur(oMaterialNode.ilosc)
+	pTableRow.cell(oMaterialNode.level + 3).element(1).value = ccur(oMaterialNode.cena)
+
+	pTableRow.cell(oMaterialNode.level + 4).element(1).text = _
+		doc_.afc.display.money(ccur(oMaterialNode.wartosc), _
+			getCurrentFirma().pWaluta.strSkrot)
+
+	dim curUdzial : curUdzial = ccur(0.0)
+	dim curTotalWartosc 
+	curTotalWartosc = ccur(g_oRootMaterialTree.get_node(1).wartosc)
+	if curTotalWartosc <> 0 then
+		curUdzial = 100 * ccur(oMaterialNode.wartosc) / curTotalWartosc
+	end if
+
+	pTableRow.cell(oMaterialNode.level + 5).element(1).text  = doc_.afc.display.money(curUdzial,"%")
+end function
+
+function rebuild_from_mn(byref oParentMN,byref pTable,byval idRow)
+	dim iter
+	dim pTableRow
+
+	for iter = 0 to oParentMN.get_component_count() - 1
+		set pTableRow = pTable.body.insertnew(CTRL_TYPE_TABLEROW,idRow,-1)
+
+		rebuild_row pTableRow,oParentMN.get_component(iter)
+		
+		idRow = pTableRow.ident
+	next
+
+	for iter = 0 to oParentMN.get_service_count() - 1
+		set pTableRow = pTable.body.insertnew(CTRL_TYPE_TABLEROW,idRow,-1)
+		rebuild_row pTableRow,oParentMN.get_service(iter)
+		idRow = pTableRow.ident
+	next
+
+	build_add_item_row oParentMN,pTable,idRow
+
+end function
+
+function build_mn_from_receptura(byref pReceptura,byref oParentMN)
+	dim oCMN
+	dim idReceptura
+	dim curIloscWyrobu
+
+	dim pSurowiec
+	for each pSurowiec in pReceptura.listSurowce
+		set oCMN = oParentMN.add_new_component()
+		with oCMN
+			.idprodukt = pSurowiec.pProdukt.idobj
+			.idopak = pSurowiec.pOpak.idobj
+			.ilosc = pSurowiec.curIloscOpak
+			
+			if query_default_receptura_for_wyrob(.idprodukt,.idopak, _
+				idReceptura,curIloscWyrobu) then
+				build_mn_from_receptura trans_.getobj(TYPEID_N5RECEPTA,idReceptura), oCMN
+			end if
+
+		end with
+	next
+	dim pCzynnosc
+	for each pCzynnosc in pReceptura.listCzynnosci
+		set oCMN = oParentMN.add_new_service()
+		with oCMN
+			.idprodukt = pCzynnosc.pProdukt.idobj
+			.idopak = pCzynnosc.pOpak.idobj
+			.ilosc = pCzynnosc.curIloscOpak
+
+			if query_default_receptura_for_wyrob(.idprodukt,.idopak, _
+				idReceptura,curIloscWyrobu) then
+				build_mn_from_receptura trans_.getobj(TYPEID_N5RECEPTA,idReceptura), oCMN
+			end if
+
+		end with
+	next
+end function
+
+function remove_mn(byref oMaterialNode)
+	'remove children first
+	do while oMaterialNode.get_component_count() > 0
+		 remove_mn oMaterialNode.get_component(0)
+	loop
+	do while oMaterialNode.get_service_count() > 0
+		 remove_mn oMaterialNode.get_service(0)
+	loop
+	'remove itself
+	dim oParentMN : set oParentMN = oMaterialNode.parent
+	oParentMN.remove_component_on_ident(oMaterialNode.ident)
+	oParentMN.remove_service_on_ident(oMaterialNode.ident)
+end function
+
+function update_cena(byref oParentMN)
+	dim iter
+	dim oMaterialNode
+	for iter = 0 to oParentMN.get_component_count() - 1
+		 set oMaterialNode = oParentMN.get_component(iter)
+		 oMaterialNode.cena = get_cena_kalkulacyjna(oMaterialNode.idprodukt,oMaterialNode.idopak)
+		 if oMaterialNode.has_children() then
+			update_cena oMaterialNode
+		 end if
+	next
+	for iter = 0 to oParentMN.get_service_count() - 1
+		set oMaterialNode = oParentMN.get_service(iter)
+		 oMaterialNode.cena = get_cena_kalkulacyjna(oMaterialNode.idprodukt,oMaterialNode.idopak)
+		 if oMaterialNode.has_children() then
+			update_cena oMaterialNode
+		 end if
+	next
+end function
+
+function get_cena_kalkulacyjna(byval idProdukt,byval idOpak)
+	get_cena_kalkulacyjna = ccur(0.0)
+	dim pProdukt : set pProdukt = trans_.getobj(TYPEID_N5PRODUKT,idProdukt)
+	dim curKwotaIn
+	dim pWalutaIn 
+	dim curKwotaOut
+
+	if pProdukt.eRodzaj = N5PRODUKT_USLUGA then
+			curKwotaIn = pProdukt.listOpakowania.get(1).curCenaNetto1
+			set pWalutaIn = pProdukt.listOpakowania.get(1).pWaluta
+			if not kantor(curKwotaIn, pWalutaIn, getCurrentFirma().pWaluta, _
+				trans_.var(GVAR_TODAY), N5KURSWALUT_SPRZEDAZY, curKwotaOut) then
+				curKwotaOut = curKwotaIn
+			end if
+
+			get_cena_kalkulacyjna = curKwotaOut
+	else
+		dim rs
+		select case g_eCenaMode
+		case CENA_MODE_OST_ZAKUP 'ostatnia cena zakupu
+			dim idWalutaIn
+			if not get_ost_cena_zakupu(idProdukt,idOpak,curKwotaIn,idWalutaIn) then
+				exit function
+			end if
+			set pWalutaIn = trans_.getobj(TYPEID_N5JEDNOSTKA,idWalutaIn)
+
+			if not kantor(curKwotaIn, pWalutaIn, getCurrentFirma().pWaluta, _
+				trans_.var(GVAR_TODAY), N5KURSWALUT_SPRZEDAZY, curKwotaOut) then
+				curKwotaOut = curKwotaIn
+			end if
+
+			get_cena_kalkulacyjna = curKwotaOut
+		case CENA_MODE_SREDNIA_MAG 'sr. cena mag
+			set rs = trans_.createadors( _
+				"select isnull(sum(r##ound(gms_curIlosc * gms_curCena,2)),0),isnull(sum(gms_curIlosc),0) from n5gmstan " +_
+				" where gms_pProd=" + cstr(idProdukt) + " and gms_pOpak=" + cstr(idOpak))
+			if rs.EOF then
+				exit function
+			end if
+			dim curWartoscGM : curWartoscGM = ccur(rs(0))
+			dim curIloscGM : curIloscGM = ccur(rs(1))
+			if curIloscGM = 0.0 then
+				exit function
+			end if
+
+			get_cena_kalkulacyjna = trans_.afc.convert.round2(ccur(curWartoscGM/curIloscGM))
+
+		end select
+	end if
+end function
+
+]]>
+</script>
+</config>
+	<body>
+		<table name='CTRLID_TREE_TABLE' border='0'>
+			<thead style='STYLE_TABLE_HEADER'>
+				<tr>
+					<td colspan='MAX_INDENT'>
+						<t>Nazwa</t>
+					</td>
+					<td>
+						<t>Ilość</t>
+					</td>
+					<td>
+						<t>Cena</t>
+					</td>
+					<td>
+						<t>Wartość</t>
+					</td>
+					<td>
+						<t>Udział (%)</t>
+					</td>
+					<td />
+				</tr>
+			</thead>
+			<tbody>
+			</tbody>
+			<tfoot style='STYLE_TABLE_HEADER'>
+				<tr bold='true'>
+					<td colspan='MAX_INDENT'>
+						<t>RAZEM</t>
+					</td>
+					<td />
+					<td />
+					<td align='right'>
+						<t name='CTRLID_TOTALWARTOSC'>
+							<transfer mode='custom' />
+						</t>
+					</td>
+					<td align='right'>
+						<t>100%</t>
+					</td>
+					<td />
+				</tr>
+			</tfoot>
+		</table>
+		<t>&nbsp;</t><br/>
+		<p border='1' style='STYLE_ROW_BTN' print='false'>
+			<t>Wycena</t><br/>
+			<radio name='CTRLID_CENAMODE' border='0'>
+				<t>Ostatnia cena zakupu</t>
+				<t name='CTRLID_SR_CENA_MAG'>Średnia cena magazynowa</t>
+				<transfer mode='custom' />
+			</radio>
+		</p>
+		<t>&nbsp;</t><br/>
+		XFCANCELOKBUTTONS(fok,fcancel)
+	</body>
+</page>

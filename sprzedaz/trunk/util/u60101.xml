@@ -1,0 +1,693 @@
+#include "h1000.h"
+#include "h1001.h"
+
+<?xml version="1.0" encoding="windows-1250" ?>
+<page>
+<config>
+<script>
+<!--
+	Eksport strony do Excel'a
+-->
+<![CDATA[
+
+#include "50201"
+
+class CExcelCell
+
+	public bEmpty		'Czy komórka została już wypełniona
+
+	public nRealX		'Rzeczywisty numer kolumny w tabelce
+	public nRealY		'Rzeczywisty numer wiersza w tabelce
+
+	public nColSpan		'Colspan komórki
+	public nRowSpan		'Rowspan komórki
+
+	public nMoveY		'Przesunięcie w dol po Y
+	public nMoveX		'Przesuniecie w prawo po X
+	
+	public nWidth		'Szerokosc w komorkach
+	public nHeight		'Wysokosc w komorkach
+
+	public pParent		'Wskaznik na ojca komorki - CExcelRow
+	public pChildTable	'Table in table - CExcelTable
+
+	public varValue		'Wartosc komorki gdy pChildTable is nothing
+	
+	public backcolor	'Kolor tła komórki
+	public forecolor	'Kolor tekstu z komórki
+	public bold			'Czy teks pogrubiony
+	public italic		'Czy kursywa
+
+	private sub class_initialize()
+		nRealX = 0
+		nRealY = 0
+
+		varValue = ""
+
+		nWidth  = 0
+		nHeight = 0
+
+		nMoveY  = 0
+		nMoveX  = 0
+
+		bold	= false
+		italic	= false
+		bEmpty	= true
+
+		set pChildTable = nothing
+	end sub
+
+	'--------------------------------------------------------------------------------
+	' Eksportuje pojedyncza komorke
+	'
+	' pCell      - komorka NE
+	' nRowNo     - numer wiersza
+	' nCellNo    - numer komorki - x
+	' pParentRow - ojciec komorki CExcelRow
+	'--------------------------------------------------------------------------------
+	public function export(byref pCell, byval nRowNo, byval nCellNo, byref pParentRow)
+
+		nRealY = nRowNo
+		nRealX = nCellNo
+		nColSpan = pCell.colspan
+
+		set pParent = pParentRow
+
+		backcolor = convert_rgb(pCell.backcolor)
+		
+		dim pElement
+		for each pElement in pCell
+
+			on error resume next
+			forecolor = convert_rgb(pElement.forecolor)
+			on error goto 0
+
+			if (pElement.type=CTRL_TYPE_TABLE or _
+				pElement.type=CTRL_TYPE_GRID) then
+				
+				set pChildTable = new CExcelTable
+
+				pChildTable.nMoveY = nMoveY + (nRealY-1)
+				pChildTable.nMoveX = nMoveX + (nRealX-1)
+
+				set pChildTable.pParent = me
+				pChildTable.export pElement
+
+				'Szereokość komórki równa jest szerokości
+				'znajdującej się w niej tabelki
+				nWidth = pChildTable.nWidth
+
+				'Tak samo jest z wysokością
+				nHeight = pChildTable.nHeight
+
+				'Obecnie tylko jedna tabelka jest eksportowana
+				'z jednej komorki
+				exit function
+	
+			else
+
+				'Ustawiaj tekst dla komórki
+				on error resume next
+
+				bold = pElement.bold
+				italic = pElement.italic
+
+				on error goto 0
+				
+				export_element2value pElement, varValue
+			end if
+		next
+
+		'Jeżeli nie było tabelki w tabelce to 
+		'musimy ustawić wielkość komórki zależną od
+		'colspan i rowspan
+		nWidth = pCell.colspan
+		nHeight = 1
+
+	end function
+
+end class
+
+class CExcelRow
+
+	public nWidth  'Szerokosc w komorkach
+	public nHeight 'Wysokosc w komorkach
+	
+	public nRealY  'Rzeczywisty numer wiersza w tabelce
+
+	public pParent 'Wskaznik na ojca wiersza - CExcelTable
+	public pCells  'Komorki danego wiersza - CExcelCell()
+
+	private sub class_initialize()
+		nWidth = 0
+		nHeight = 0
+
+		nRealY = 0
+		
+		set pParent = nothing
+		set pCells = trans_.afc.new_navoarray()
+	end sub
+
+	'--------------------------------------------------------------------------------
+	' Kopiuj informacje do aktualnej komórki z komórki znajdującej się
+	' bezpośrednio nad nią
+	'--------------------------------------------------------------------------------
+	public function copyCellInfo(byref pExcelCell, byval nCellIndex)
+
+		'Kopiujemy z komórki nadrzednej informacje o przesunięciu
+		'po X by zachować odpowiednie ulożenie kolumn w przypadku
+		'tabelek w tabelce
+
+		if (not pParent is nothing) then
+
+			dim nUpperRowIndex
+			nUpperRowIndex = (nRealY - 2)
+
+			if (nUpperRowIndex>=0) then
+				'Mamy wiersz znajdujacy sie nad nami
+				dim pUpperRow
+				set pUpperRow = pParent.pRows.Value(nUpperRowIndex)
+
+				if (pUpperRow.pCells.UpperIndex()>=nCellIndex) then
+					dim pUpperCell
+					set pUpperCell = pUpperRow.pCells.Value(nCellIndex)
+				end if
+
+			end if
+			
+		end if
+	end function
+
+	'--------------------------------------------------------------------------------
+	' Pobierz nastepna wolna komorke lub dodaj ja gdy nie ma nastepnej
+	' wolnej
+	'--------------------------------------------------------------------------------
+	public function getNextEmptyCell(byref iCellPos)
+		dim iCells
+		dim pCell
+		
+		for iCells = 0 to pCells.UpperIndex()
+			set pCell = pCells.Value( iCells )
+
+			if (pCell.bEmpty) then
+				iCellPos = (iCells + 1)
+				
+				'Zanzacz jako wykorzystana - juz nie pusta
+				pCell.bEmpty = false
+
+				set getNextEmptyCell = pCell
+				exit function
+			end if
+		next
+
+		set pCell = new CExcelCell
+		pCell.bEmpty = false
+		pCells.Add pCell
+
+		iCellPos = pCells.Count()
+		set getNextEmptyCell = pCell
+		copyCellInfo getNextEmptyCell, (iCellPos-1)
+	end function
+
+	'--------------------------------------------------------------------------------
+	' Dodaj komórki tak by bylo ich nCelNumber i zwracaj
+	' obiekt komorki ostatniej
+	'--------------------------------------------------------------------------------
+	public function getCell(byval nCelNumber, byval bEmpty)
+		if (pCells.Count() < nCelNumber) then
+			
+			dim iCelsNo
+			for iCelsNo = (pCells.Count()+1) to nCelNumber
+				dim pCell
+				set pCell = new CExcelCell
+				pCell.bEmpty = bEmpty
+
+				pCells.Add pCell
+			next
+
+			'Ostatni wiersz zwracamy
+			set getCell = pCell
+		else
+			set getCell = pCells.Value( nCelNumber - 1)
+		end if
+	end function
+
+	'--------------------------------------------------------------------------------
+	' Eksportujemy jeden wiersz
+	'
+	' pRow   - obiekt wiersza NE
+	' nRowNo - rzeczywisty numer wiersza
+	' pParentTable - ojciec wiersza CExcelTable
+	'--------------------------------------------------------------------------------
+	public function export(byref pRow, byref nRowNo, byref pParentTable)
+	
+		'Ustaw ojca
+		set pParent = pParentTable
+		nRealY = nRowNo
+
+		dim pCell, pExcellCell: set pExcellCell = nothing
+		for each pCell in pRow
+
+			'Komórka na lewo od aktualnej
+			dim pLeftCell
+			set pLeftCell = pExcellCell
+			
+			dim iCellNo
+			set pExcellCell = getNextEmptyCell( iCellNo )
+
+			'Kopiujemy info o colspan i rowspan
+			pExcellCell.nColSpan = pCell.colspan
+			pExcellCell.nRowSpan = pCell.rowspan
+
+			if (not pParent is nothing) then
+				pExcellCell.nMoveY = pExcellCell.nMoveY + pParent.nMoveY
+				pExcellCell.nMoveX = pExcellCell.nMoveX + pParent.nMoveX
+			end if
+
+			'Eksportujemy poszczególne wiersze
+			pExcellCell.export pCell, nRowNo, iCellNo, me
+
+			iCellNo = iCellNo + (pCell.colspan - 1)
+
+			if (pCell.colspan > 1) then
+				'Jeżeli jest jakiś colspan to dodaj puste
+				'komórki, które ten colspan rezprezentują
+				getCell iCellNo, false
+			end if
+
+			if (pCell.rowspan>1) then
+				
+				'Trzeba zrobić wiersze do dołu i wstawić
+				'odpowiednie komórki bo jest rowspan
+				dim pTableRows
+				set pTableRows = pParent.pRows
+
+				dim nCurrentRow
+				for nCurrentRow = (nRowNo+1) to (nRowNo+pCell.rowspan-1)
+					
+					dim pLowerRow
+					set pLowerRow = pParent.getRow(nCurrentRow)
+
+					'Dodawaj komórki puste (do wykorzystania) w podrzednym
+					'wierszu
+					dim nNotEmptyCells: nNotEmptyCells = (iCellNo-pCell.colspan)
+					if (nNotEmptyCells>0) then
+						pLowerRow.getCell nNotEmptyCells, true
+					end if
+
+					'Dodaj komórki wykorzystane (pełne) w podrzędnym
+					'wierszu
+					pLowerRow.getCell iCellNo, false
+				next
+			end if
+
+			if (pExcellCell.nWidth>1) then
+				
+				'Trzeba zrobić wiersze do dołu i wstawić
+				'odpowiednie komórki bo jest rowspan
+				set pTableRows = pParent.pRows
+				set pLowerRow = pParent.getRow(nRowNo+1)
+
+				pLowerRow.getCell iCellNo, true
+
+				'Dodawaj komórki pełne (nie do wykorzystania) w podrzednym
+				'wierszu
+				nNotEmptyCells = (iCellNo-pCell.colspan+pExcellCell.nWidth)
+				if (nNotEmptyCells>0) then
+					pLowerRow.getCell nNotEmptyCells, false
+				end if
+
+			end if
+
+		next
+
+		'Po przeniesieniu komórek określamy szerokość jak
+		'i wysokośc naszego wiersza
+		dim iCell
+		for iCell = 0 to pCells.UpperIndex()
+			set pCell = pCells.Value(iCell)
+			
+			nWidth = nWidth + pCell.nWidth
+			if (pCell.nHeight>nHeight) then
+				nHeight = pCell.nHeight
+			end if
+		next
+
+		if (nHeight > 1) then
+			if (not pParentTable is nothing) then
+				pParentTable.nMoveY = pParentTable.nMoveY + (nHeight - 1)
+			end if
+		end if
+
+	end function
+
+end class
+
+class CExcelTable
+
+	public nWidth	'Szerokosc w komorkach
+	public nHeight	'Wysokosc w komorkach
+
+	public pParent	'Ojciec naszej tabelki - komorka - jezeli istnieje
+	public pRows	'Wiersze tabelki
+
+	public nMoveY	'Przesunięcie po Y w dół
+	public nMoveX	'Przesuniecie po X w prawo
+
+	private sub class_initialize()
+		'domyslnie tabelka zajmuje 0x0
+		nWidth  = 0
+		nHeight = 0
+
+		nMoveY  = 0
+		nMoveX	= 0
+
+		set pParent = nothing
+		set pRows = trans_.afc.new_navoarray()
+	end sub
+
+	'--------------------------------------------------------------------------------
+	' Ekportuje wybrana tabele i wszystkie jej podtabelki
+	'--------------------------------------------------------------------------------
+	public function export(byref pTable)
+
+		dim nY: nY = 0 'rzeczywisty numer wiersza (globalnie)
+					   'jedna numeracja dla header, body, ...
+
+		'Rozpocznij eksport poszczegolnych sekcji tabelki
+		export_section pTable.header, nY
+		export_section pTable.body, nY
+		export_section pTable.footer, nY
+
+	end function
+
+	'--------------------------------------------------------------------------------
+	' Dodaj wiersze tak by bylo ich nRowNumber i zwracaj
+	' obiekt wiersza ostatniego
+	'--------------------------------------------------------------------------------
+	public function getRow(byval nRowNumber)
+		if (pRows.Count() < nRowNumber) then
+			
+			dim iRowsNo
+			for iRowsNo = (pRows.Count()+1) to nRowNumber
+				dim pRow
+				set pRow = new CExcelRow
+
+				pRows.Add pRow
+			next
+
+			'Ostatni wiersz zwracamy
+			set getRow = pRow
+
+		else
+			set getRow = pRows.Value( nRowNumber - 1)
+		end if
+	end function
+
+	'--------------------------------------------------------------------------------
+	' Eksportuje body, footer lub header tabelki - pojedynczas sekcja
+	'--------------------------------------------------------------------------------
+	public function export_section(byref pTableSection, byref nY)
+
+		dim pRow
+		for each pRow in pTableSection
+
+			'Ukrytych wierszy nie ekportujemy
+			if (not pRow.hide) then
+				
+				nY = nY + 1
+
+				dim pExcelRow
+				set pExcelRow = getRow( nY )
+
+				'Eksportuj wiersz tabelki
+				pExcelRow.export pRow, nY, me
+
+				if (pExcelRow.nWidth>nWidth) then
+					nWidth = pExcelRow.nWidth
+				end if
+				nHeight = nHeight + pExcelRow.nHeight
+
+			end if
+		next
+
+	end function
+
+	'--------------------------------------------------------------------------------	
+	' Wstaw wynik tabelki do excela (rendering)
+	'--------------------------------------------------------------------------------
+	public function insert2excel(byref pCExcel, byval vX, byval vY): insert2excel = 0
+
+		dim iRow
+		for iRow = 0 to (pRows.Count()-1)
+			
+			'Dostajemy jeden wiersz naszej tabelki
+			dim pSingleRow
+			set pSingleRow = pRows.Value(iRow)
+
+			dim iCell
+			for iCell = 0 to (pSingleRow.pCells.Count()-1)
+				
+				'Dostajemy komórkę tabelki
+				dim pSingleCell
+				set pSingleCell = pSingleRow.pCells.Value(iCell)
+
+				if (pSingleCell.pChildTable is nothing) then
+
+					dim nPosX
+					nPosX = pSingleCell.nRealX + pSingleCell.nMoveX
+
+					dim nPosY
+					nPosY = pSingleCell.nRealY + pSingleCell.nMoveY + vY
+
+					'Wyświetlamy tylko komórki, które nie są puste
+					if (nPosX>0 and nPosY>0) then
+						pCExcel.InsertValueXY nPosX, nPosY, pSingleCell.varValue
+						pCExcel.SetBkgColor nPosX, nPosY, pSingleCell.backcolor
+						pCExcel.SetTextColor nPosX, nPosY, pSingleCell.forecolor
+
+						if (pSingleCell.bold) then
+							pCExcel.MakeBoldXY nPosX, nPosY, true
+						end if
+
+						if (pSingleCell.nColSpan>1 or pSingleCell.nRowSpan>1) then
+							pCExcel.MergeXY nPosX, nPosY, nPosX + (pSingleCell.nColSpan-1), nPosY + (pSingleCell.nRowSpan-1)
+						end if
+					end if 'nPosX>0 && nPosY>0
+
+				else
+					pSingleCell.pChildTable.insert2excel pCExcel, vX, vY
+				end if
+
+			next 'cell
+
+		next 'row
+
+	end function
+
+end class
+
+function excel_table(byref pCExcel, byref pTable)
+	dim pExcelTable
+	set pExcelTable = new CExcelTable
+
+	pExcelTable.export pTable
+
+	pExcelTable.insert2excel pCExcel, 0, g_currentY
+	g_currentY = g_currentY + pExcelTable.nHeight + 1
+end function
+
+dim g_currentY
+dim g_Value
+
+function excel_single_element(byref pCExcel, byref pCtrl)
+	'ukrytych nie eksportujemy
+	if (pCtrl.hide) then
+		exit function
+	end if
+
+	dim pElement
+
+	'w zaleznosci od typu kontrolki roznie dodajemy tekst na strone
+	select case pCtrl.type
+
+		case CTRL_TYPE_PARAGRAPH
+			for each pElement in pCtrl
+				excel_single_element pCExcel, pElement
+			next
+
+		case CTRL_TYPE_PAGEMAN, CTRL_TYPE_TOPLEVELPAGE
+			for each pElement in pCtrl
+				excel_single_element pCExcel, pElement
+			next
+		
+		case CTRL_TYPE_TABLE, CTRL_TYPE_GRID
+			if (CStr(g_Value)<>"") then
+				pCExcel.InsertValueXY 1, g_currentY, g_Value
+				pCExcel.VerticalToTop 1, g_currentY
+				g_currentY = g_currentY + 1
+			end if
+			g_Value = ""
+
+			excel_table pCExcel, pCtrl
+
+		case else
+			export_element2value pCtrl, g_Value
+	
+	end select
+
+
+end function
+
+function export_separator2value(byref varValue)
+	if (CStr(varValue)<>"") then
+		varValue = CStr(varValue)
+		if (left(varValue,1) <> Chr(10)) then
+			varValue = varValue + " "
+		end if
+	end if
+end function
+
+function export_element2value(byref pElement, byref varValue)
+
+	if (pElement.hide) then
+		exit function
+	end if
+
+	dim i
+	select case pElement.type
+	
+	case CTRL_TYPE_STATIC, CTRL_TYPE_STATICEX, _
+		 CTRL_TYPE_EDIT, CTRL_TYPE_CURRENCY, _
+		 CTRL_TYPE_INTEDIT
+			 
+			if (CStr(varValue)="") then
+				varValue = pElement.value
+			else
+				if (CStr(pElement.value)<>"") then
+					varValue = CStr(varValue) + " " + CStr(pElement.value)
+				end if
+			end if
+
+	case CTRL_TYPE_RICHEDIT
+		dim so
+		set so = doc_.createstreamobj
+		so.attach pElement.value
+
+		export_separator2value varValue
+		varValue = CStr(varValue) + replace(CStr(so.getstring), vbNewLine, Chr(10))
+					
+	case CTRL_TYPE_MULTILINE
+		export_separator2value varValue
+		varValue = CStr(varValue) + replace(CStr(pElement.value), vbNewLine, Chr(10))
+
+	case CTRL_TYPE_BREAKLINE
+		varValue = CStr(varValue) + Chr(10)
+
+	case CTRL_TYPE_DATE
+		if (CDate(pElement.value)<>trans_.afc.globals.nulldate()) then
+			export_separator2value varValue
+			varValue = CStr(varValue) + CStr(pElement.value)
+		end if
+
+	case CTRL_TYPE_RADIO
+		dim pRadioElem: i=1
+		dim strRadio: strRadio = ""
+
+		for each pRadioElem in pElement
+		
+			if (i=pElement.value) then
+				select case pRadioElem.type
+				case CTRL_TYPE_STATIC, CTRL_TYPE_STATICEX
+					if (strRadio<>"") then
+						strRadio = strRadio + ";"
+					end if
+
+					strRadio=strRadio + pRadioElem.text
+				end select
+			end if
+			
+			i=i+1
+		next
+
+		varValue = CStr(varValue) + strRadio
+
+	case CTRL_TYPE_CHECKBOX
+		dim strCheckBox: strCheckBox=""
+		dim pCtrlElem: i=1
+
+		for each pCtrlElem in pElement
+			
+			if (mid(pElement.value, i, 1)="1") then
+				select case pCtrlElem.type
+				case CTRL_TYPE_STATIC, CTRL_TYPE_STATICEX
+					if (strCheckBox<>"") then
+						strCheckBox=strCheckBox + ";"
+					end if
+					strCheckBox=strCheckBox + pCtrlElem.text
+				end select
+			end if
+
+			i=i+1
+		next
+
+		varValue = CStr(varValue) + strCheckBox
+
+	case CTRL_TYPE_PARAGRAPH
+		varValue = CStr(varValue) + Chr(10)
+
+		dim pContainerElem
+		for each pContainerElem in pElement
+			export_element2value pContainerElem, varValue
+		next
+
+		varValue = CStr(varValue) + Chr(10)
+	end select
+end function
+
+function export_page_to_xls(byref pPage, byval strFileName): export_page_to_xls = false
+	dim pExcel
+	set pExcel = new CExcel
+
+	if (not pExcel.NewExcel()) then
+		exit function
+	end if
+
+	g_currentY = 0
+
+	excel_single_element pExcel, pPage.topelement
+
+	if (CStr(g_Value)<>"") then
+		pExcel.InsertValueXY 1, g_currentY, g_Value
+		pExcel.VerticalToTop 1, g_currentY
+		g_currentY = g_currentY + 1
+	end if
+
+	pExcel.SetFileName strFileName
+	pExcel.MakeWholeFrame
+
+	pExcel.AutoFitWhole
+
+#ifdef _DEBUG
+	'debug:
+	pExcel.ManualClose()
+	pExcel.Maximize()
+	'end of debug
+#else
+	pExcel.CloseExcel
+#endif
+
+	export_page_to_xls = true
+end function
+
+function convert_rgb(byval rgbval)
+	convert_rgb = clng(clng(rgbval mod 256) * 65536 + clng((rgbval \ 256) mod 256) * 256 + clng(rgbval \ 65536))
+end function
+
+]]>
+</script>
+</config>
+	<body>
+		<t>Eksport strony w postaci Excel</t>
+	</body>
+</page>

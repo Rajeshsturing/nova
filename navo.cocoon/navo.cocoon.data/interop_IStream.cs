@@ -4,10 +4,10 @@
  */
 
 
+using navo2012.proxy;
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
-using System.Runtime.InteropServices.ComTypes;
 
 namespace navo.cocoon.data.utils
 {
@@ -27,45 +27,50 @@ namespace navo.cocoon.data.utils
             throw new NotImplementedException();
         }
 
-        public void Commit(int grfCommitFlags)
-        {
-            m_oStream.Flush();
-        }
-
-        public void LockRegion(long libOffset, long cb, int dwLockType)
+        public void Commit(uint grfCommitFlags)
         {
             throw new NotImplementedException();
         }
 
-        public void CopyTo(IStream pstm, long cb, IntPtr pcbRead, IntPtr pcbWritten)
+        public void LockRegion(_ULARGE_INTEGER libOffset, _ULARGE_INTEGER cb, uint dwLockType)
         {
             throw new NotImplementedException();
         }
 
-        public void Read(byte[] pv, int cb, IntPtr pcbRead)
+        public void RemoteCopyTo(IStream pstm, _ULARGE_INTEGER cb, out _ULARGE_INTEGER pcbRead, out _ULARGE_INTEGER pcbWritten)
         {
-            int iRead = m_oStream.Read(pv, 0, cb);
-            if (pcbRead != IntPtr.Zero)
+            throw new NotImplementedException();
+        }
+
+        public void RemoteRead(out byte pv, uint cb, out uint pcbRead)
+        {
+            unsafe
             {
-                Marshal.WriteInt32(pcbRead, iRead);
+                fixed (byte* pBuffer = &pv)
+                {
+                    byte[] arrBuffer = new byte[cb];
+                    pcbRead = (uint)m_oStream.Read(arrBuffer, 0, (int)cb);
+                    Marshal.Copy(arrBuffer, 0, new IntPtr(pBuffer), (int)pcbRead);
+                }
             }
         }
 
-        public void Seek(long dlibMove, int dwOrigin, IntPtr plibNewPosition)
+        public void RemoteSeek(_LARGE_INTEGER dlibMove, uint dwOrigin, out _ULARGE_INTEGER plibNewPosition)
         {
-            long iPosition = m_oStream.Seek(dlibMove, (SeekOrigin)dwOrigin);
-            if (plibNewPosition != IntPtr.Zero)
-            {
-                Marshal.WriteInt64(plibNewPosition, iPosition);
-            }
+            plibNewPosition.QuadPart = (ulong)m_oStream.Seek(dlibMove.QuadPart, (SeekOrigin)dwOrigin);
         }
 
-        public void Write(byte[] pv, int cb, IntPtr pcbWritten)
+        public void RemoteWrite(ref byte pv, uint cb, out uint pcbWritten)
         {
-            m_oStream.Write(pv, 0, cb);
-            if (pcbWritten != IntPtr.Zero)
+            unsafe
             {
-                Marshal.WriteInt32(pcbWritten, cb);
+                fixed (byte* pBuffer = &pv)
+                {
+                    byte[] arrBuffer = new byte[cb];
+                    Marshal.Copy(new IntPtr(pBuffer), arrBuffer, 0, (int)cb);
+                    m_oStream.Write(arrBuffer, 0, (int)cb);
+                    pcbWritten = cb;
+                }
             }
         }
 
@@ -74,17 +79,17 @@ namespace navo.cocoon.data.utils
             throw new NotImplementedException();
         }
 
-        public void SetSize(long libNewSize)
+        public void SetSize(_ULARGE_INTEGER libNewSize)
         {
-            m_oStream.SetLength(libNewSize);
+            m_oStream.SetLength((long)libNewSize.QuadPart);
         }
 
-        public void Stat(out System.Runtime.InteropServices.ComTypes.STATSTG pstatstg, int grfStatFlag)
+        public void Stat(out tagSTATSTG pstatstg, uint grfStatFlag)
         {
-            pstatstg = new System.Runtime.InteropServices.ComTypes.STATSTG();
+            pstatstg = new tagSTATSTG();
         }
 
-        public void UnlockRegion(long libOffset, long cb, int dwLockType)
+        public void UnlockRegion(_ULARGE_INTEGER libOffset, _ULARGE_INTEGER cb, uint dwLockType)
         {
             throw new NotImplementedException();
         }

@@ -1,0 +1,789 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1222.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1250_raport_macros.h"
+
+#define CREATOR_TITLE	Kreator zmiany surowców
+
+#define CTRLID_ROW_BUTTONS       101
+#define CTRLID_RESULT_TABLE      102
+#define CTRLID_ACTION_TABLE      103
+#define CTRLID_PREV_BUTTON       104
+#define CTRLID_NEXT_BUTTON       105
+#define CTRLID_ROW_CHECKBOX      106
+#define CTRLID_PRODUKT           107
+#define CTRLID_WSPOLCZYNNIK      108
+#define CTRLID_REALIZE_BUTTON    109
+#define CTRLID_CHOOSE_BUTTON     110
+
+#define PROP_ROW_IDENT           201
+#define PROP_REC_NUM             202
+#define PROP_REC_IDOBJ           203
+#define PROP_REC_ILOSC           204
+#define PROP_REPLACE_ADD         205
+
+#define MAX_ROW_NR       20
+#define CELL_BUTTON_NR   2
+#define ELEM_BUTTON_PREV 1
+#define ELEM_BUTTON_NEXT 2
+#define CELL_CHECKBOX    1
+#define ELEM_CHECKBOX    1
+
+#comment Kolejne numery kolumn na raporcie
+#define KOL_RECEPT_NAZWA        2
+#define KOL_RECEPT_NORMA        3
+#define KOL_RECEPT_ILOSC        4
+
+#define BORDER_COLOR            RGB(0,102,151)
+
+#comment pierwsza kolumna
+#define KOL_FIRST              KOL_RECEPT_NAZWA
+#comment ostatnia kolumna
+#define KOL_LAST               KOL_RECEPT_ILOSC
+
+-->
+<page style='STYLE_PAGE'>
+  <config>
+    <title>
+      CREATOR_TITLE
+      #ifdef _DEBUG
+      [THIS_FILE]
+      #endif
+    </title>
+    <script>
+      <![CDATA[
+      
+'przelaczniki konfiguracyjne
+dim g_bMultiSel : g_bMultiSel = true
+'surowiec wybrany do edycji
+dim oProd
+'parametry nowego/zastępczego produktu
+dim oProdParam
+'wiersz z nagłowkiem tabeli
+dim iRowTabHead
+'zaznacz/odznacz
+dim bChooseAll : bChooseAll = false
+
+'MessageBox
+#include "50122"
+
+'cObjectReport,cBuildQuery,cDrawReport,cButton,cRepDict
+#include "50526"
+
+'fire_choice_list
+#include "50200"
+  
+'-----------------
+'rekord zaznaczony
+'-----------------
+class cSimpleRecord
+  public m_idRec           'idobj receptury
+  public m_idPozRec        'idobj pozycji receptury
+  public m_curIlosc        'ilość surowca
+  
+  public sub class_initialize()
+    m_idRec = clng(0)
+    m_idPozRec = clng(0)
+    m_curIlosc = ccur(0.0)
+  end sub
+  
+  public sub setDataObj(byval idRec, byval idPozRec, byval curIlosc)
+    m_idRec = idRec
+    m_idPozRec = idPozRec
+    m_curIlosc = curIlosc
+  end sub
+end class
+
+'-------------------------------------
+'parametry nowego/zastępczego produktu
+'-------------------------------------
+class cProdParam
+  public m_IdProd              'idobj nowego/zastępczego produktu
+  public m_strNazwaProd        'nazwa produktu
+  public m_curWspolczynnik     'współczynnik
+  
+  public sub class_initialize()
+    m_IdProd = clng(0)
+    m_strNazwaProd = ""
+    m_curWspolczynnik = ccur(1.0)
+  end sub  
+end class
+  
+'-----------------------------------------------
+'standardowa funkcja wolana przy otwarciu strony
+'-----------------------------------------------
+function fopen : fopen = false
+  
+  'inicjalizacja obiektów
+  initialObjects
+  
+  'wybrany produkt
+  set oProd = new cProdParam  
+  
+  'parametry nowego/zstępczego produtku
+  set oProdParam = new cProdParam
+  
+  'obiekt raportu
+  createObjects g_oRep
+  
+  'wybór surowca
+  dim idSur : idSur = chooseRawMat
+  if idSur = clng(0) then
+    exit function
+  end if
+  oProd.m_IdProd = clng(idSur)
+  oProd.m_strNazwaProd = trans_.getobj(TYPEID_N5PRODUKT,oProd.m_IdProd).strNazwa
+  
+  'parametry raportu
+  repParam g_oRep
+  g_oRep.m_pParamArray.value(0).first_value = CStr(idSur)
+  g_oRep.m_pParamArray.value(0).mode = 2
+  
+  dim oPerf : set oPerf = doc_.performing("CREATOR_TITLE - trwa generowanie raportu ")
+  'realizuj zapytanie
+  g_oRep.realizeQuery g_oRep.m_pParamArray, true
+  
+  'rysuj raport
+  drawRaport g_oDrawRep, g_oRep
+  set oPerf = nothing
+  
+  fopen = true
+end function
+
+'-------------
+'wybór surowca
+'-------------
+function chooseRawMat : chooseRawMat = clng(0)
+  dim strWhere : strWhere = "n5produkt.prod_cSurowiec='1' and n5produkt.eAktywny=1 and n5produkt.eRodzaj=1"
+  chooseRawMat = fire_choice_list(TYPEID_N5PRODUKT,"Wybór produktu","strIndeks",strWhere,"","")  
+end function
+  
+'---------------
+'obiekty raportu
+'---------------
+sub createObjects(byref g_oRep)
+  dim oObjRep : set oObjRep = new cObjectReport
+  g_oRep.m_pArrayObj.add oObjRep.createObj(0, "", "", "vl_id_rec", "vl.p_idobj", "", "", "", 0, "", 0, 0, 0)
+  g_oRep.m_pArrayObj.add oObjRep.createObj(0, "", "", "vl_idpoz_rec", "vl.c_idobj", "", "", "", 0, "", 0, 0, 0)
+  g_oRep.m_pArrayObj.add oObjRep.createObj(KOL_RECEPT_NAZWA, "Nazwa receptury", "", "vl_nazwa", "vl.p_strnazwa", "", "", "asc", 11500, "", 1, 1, 0)
+  g_oRep.m_pArrayObj.add oObjRep.createObj(KOL_RECEPT_NORMA, "Norma", "", "vl_norma", "vl.p_strnorma", "", "", "asc", 4000, "", 1, 1, 0)
+  g_oRep.m_pArrayObj.add oObjRep.createObj(KOL_RECEPT_ILOSC, "Ilość surowca", "", "vl_ilosc", "vl.c_curiloscopak", "", "", "asc", 2300, "", 1, 1, 0)
+
+  'from
+  g_oRep.m_strFrom = "from vlist_n5recepta_listSurowce vl"
+  
+end sub
+
+'-----------------------
+'parametry stałe raportu
+'-----------------------
+sub repParam(byref g_oRep)
+  'parametry stałe
+  g_oRep.m_pParamArray.add g_oRep.createTextParam("","vl.c_pprodukt")
+end sub 
+
+'-----------------
+'rysuj cały raport
+'-----------------
+sub drawRaport(byref g_oDrawRep, byref g_oRep)
+  set g_oDrawRep.m_oRep = g_oRep
+  if g_oDrawRep.m_oRep.m_oRS.RecordCount <> 0 then
+    g_oDrawRep.setRangeNr
+    drawPageButtons
+    drawResultTable g_oDrawRep
+    drawActionTable
+  else
+    drawBrakDanych     
+  end if
+end sub
+
+'--------------------------------
+'przyciski do przełączania strony
+'--------------------------------
+sub drawPageButtons
+  dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(page_.ctrl(CTRLID_ROW_BUTTONS))
+  pTB.newrow.newcell
+  dim pNewHli
+
+  'button zaznacz/odznacz
+  set pNewHli = doc_.createhli()
+  pNewHli.prop(GVAR_FUNCTIONHLI) = "chooseAll"
+  pNewHli.prop(PROP_ROW_IDENT) = pTB.row.ident    
+  pTB.addctrl CTRL_TYPE_BUTTON, -1
+  with pTB.element
+    .customredirect = clng(CTRLID_CHOOSE_BUTTON)
+	  .transfer = page_.createtransfer("custom")
+    set .hli = pNewHli
+    .size = 12
+    .styleitem = STYLE_BUTTON
+  end with  
+  pTB.cell.align = ALIGN_LEFT
+
+  pTB.newcell
+  'button prev
+  set pNewHli = doc_.createhli()
+  pNewHli.prop(GVAR_FUNCTIONHLI) = "prevPage"
+  pNewHli.prop(PROP_ROW_IDENT) = pTB.row.ident    
+  pTB.addctrl CTRL_TYPE_BUTTON, -1
+  with pTB.element
+    .customredirect = clng(CTRLID_PREV_BUTTON)
+	  .transfer = page_.createtransfer("custom")
+    set .hli = pNewHli
+    .text = "<<"
+    .size = 9
+    .styleitem = STYLE_BUTTON
+  end with  
+  pTB.cell.align = ALIGN_RIGHT
+
+  'button next
+  set pNewHli = doc_.createhli()
+  pNewHli.prop(GVAR_FUNCTIONHLI) = "nextPage"
+  pNewHli.prop(PROP_ROW_IDENT) = pTB.row.ident
+  pTB.addctrl CTRL_TYPE_BUTTON, -1
+  with pTB.element
+    .customredirect = clng(CTRLID_NEXT_BUTTON)
+	  .transfer = page_.createtransfer("custom")
+    set .hli = pNewHli
+    .text = ">>"
+    .size = 9
+    .styleitem = STYLE_BUTTON      
+  end with  
+  pTB.cell.align = ALIGN_RIGHT
+end sub
+
+'-----------------
+'tabela z wynikami
+'-----------------
+sub drawResultTable(byref g_oDrawRep)
+  dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(page_.ctrl(CTRLID_RESULT_TABLE))
+  pTB.section_body.removeall
+  drawHeader pTB, g_oDrawRep
+  drawBody pTB, g_oDrawRep
+  'drawFooter pTB
+end sub
+
+'------------
+'tabela akcji
+'------------
+sub drawActionTable
+  dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(page_.ctrl(CTRLID_ACTION_TABLE))
+  pTB.newrow.newcell.addtext("")
+  pTB.cell.colspan = 4
+  'wybór produktu zastępczego/nowego
+  pTB.newrow
+  g_oDrawRep.drawCell     pTB, "Produkt zastępczy/nowy", "Verdana", ALIGN_LEFT, 0, 0, ""
+  pTB.element.bold = true
+  pTB.cell.width = clng(4400)
+  g_oDrawRep.drawCellEdit pTB, CTRLID_PRODUKT, 30, 1, "Verdana", WHITE_COLOR
+  pTB.cell.backcolor = WHITE_COLOR
+  pTB.element.bordercolor = BORDER_COLOR
+  pTB.cell.colspan = 2
+  pTB.newcell
+  g_oDrawRep.drawPicture  pTB, PICTURE_CHOICE_N5PRODUKT, "Wybór z listy", "chooseProd", 0
+  pTB.cell.width = clng(MAXIMIZE_SIZE)
+  'współczynnik
+  pTB.newrow
+  g_oDrawRep.drawCell     pTB, "Współczynnik", "Verdana", ALIGN_LEFT, 0, 0, ""
+  pTB.element.bold = true
+  pTB.cell.width = clng(4400)
+  g_oDrawRep.drawCellCur  pTB, CTRLID_WSPOLCZYNNIK, 0, "Verdana", 4, 10, "", WHITE_COLOR
+  pTB.element.border = 1
+  pTB.element.bordercolor = BORDER_COLOR
+  pTB.cell.width = clng(MINIMIZE_SIZE)  
+  pTB.newcell
+  pTB.cell.colspan = 2
+  'przyciski
+  pTB.newrow.newcell
+  dim giveButton : set giveButton = new cButton
+  giveButton.newButton pTB, CTRLID_REALIZE_BUTTON, "repOrAddRawMat", "Zamień", 8, ALIGN_LEFT, true
+  pTB.element.hli.prop(PROP_REPLACE_ADD) = CLng(1)
+  giveButton.newButton pTB, CTRLID_REALIZE_BUTTON, "repOrAddRawMat", "Dodaj", 8, ALIGN_LEFT, true
+  pTB.element.hli.prop(PROP_REPLACE_ADD) = CLng(2)
+  giveButton.newButton pTB, CTRLID_REALIZE_BUTTON, "deleteRawMat", "Usuń", 8, ALIGN_LEFT, true
+  giveButton.newButton pTB, CTRLID_REALIZE_BUTTON, "cancel", "Anuluj", 8, ALIGN_LEFT, true
+  pTB.cell.align = ALIGN_RIGHT
+  pTB.cell.colspan = 4
+end sub 
+
+'----------------------------------
+'komunikat w przypadku braku danych
+'----------------------------------
+sub drawBrakDanych
+  dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(page_.ctrl(CTRLID_RESULT_TABLE))
+  pTB.section_body.removeall
+  pTB.newrow
+  pTB.row.styleitem = STYLE_TABLE_HEADER
+  pTB.row.fontsize=4
+  pTB.newcell.addtext "Brak danych spełniających podane kryteria"  
+end sub 
+
+'---------------------
+'rysuj nagłowek tabeli
+'---------------------
+sub drawHeader(byref pTB, byref g_oDrawRep)
+  dim oObjRep, iter, bOption
+  pTB.newrow
+  pTB.row.styleitem = STYLE_TABLE_HEADER
+  pTB.row.fontsize = 4
+  'kolejne komórki
+  if g_bMultiSel then
+    g_oDrawRep.drawCellHead pTB, 1, "", 600, "", 1, 1, false
+  end if
+  g_oDrawRep.drawCellHead pTB, 1, "LP", 600, "", 1, 1, false
+  for iter = KOL_FIRST to KOL_LAST
+    bOption = false      
+    set oObjRep = g_oDrawRep.m_oRep.getObj(iter)
+    g_oDrawRep.drawCellHead pTB, oObjRep.m_nNrCol, oObjRep.m_strNazwa, oObjRep.m_nCellWidth, oObjRep.m_strTip, oObjRep.m_nRowSpan, oObjRep.m_nColSpan, bOption
+  next
+  'wiersz z nagłowkiem tabeli
+  iRowTabHead = pTB.row.ident
+end sub
+
+'---------------
+'kolejne wiersze
+'---------------
+sub drawBody(byref pTB, byref g_oDrawRep)
+  'zlicza do MAX_ROW_NR wierszy
+  dim iter : iter = 1
+  'pierwszy wiersz przedziału
+  dim nFirstRow : nFirstRow = (g_oDrawRep.m_nRange - 1) * MAX_ROW_NR + 1
+  g_oDrawRep.m_oRep.m_oRS.movefirst
+  g_oDrawRep.m_oRep.m_oRS.move (g_oDrawRep.m_nRange - 1) * MAX_ROW_NR
+  do while not g_oDrawRep.m_oRep.m_oRS.EOF
+    drawRow pTB, g_oDrawRep.m_oRep.m_oRS, g_oDrawRep, nFirstRow + (iter - 1)
+    g_oDrawRep.m_oRep.m_oRS.movenext
+    if iter = MAX_ROW_NR then
+      exit do
+    end if
+    iter = iter + 1
+  loop
+end sub
+
+'-------------------
+'podsumowanie tabeli
+'-------------------
+sub drawFooter(byref pTB)
+  'TODO:
+end sub
+
+'-----------------------
+'rysuj pojedynczy wiersz
+'-----------------------
+sub drawRow(byref pTB, byref oRS, byref g_oDrawRep, byval nLP)
+  'id pozycji receptury
+  dim iRowIdent : iRowIdent = oRS("vl_idpoz_rec").value
+  pTB.newrow
+  'ustawienie właściwości dla wiersza
+  set pTB.row.userprop = doc_.createhli()
+  pTB.row.userprop.prop(PROP_ROW_IDENT) = iRowIdent
+  pTB.row.userprop.prop(PROP_REC_NUM) = nLP
+  pTB.row.userprop.prop(PROP_REC_IDOBJ) = oRS("vl_id_rec").value
+  pTB.row.userprop.prop(PROP_REC_ILOSC) = oRS("vl_ilosc").value  
+  
+  'checkbox
+  if g_bMultiSel then    
+    dim pCheckBox
+    pTB.newcell
+    pTB.addctrl CTRL_TYPE_CHECKBOX,-1
+    set pCheckBox = pTB.element
+    with pCheckBox
+      .customredirect = clng(CTRLID_ROW_CHECKBOX)
+      .transfer = page_.createtransfer("custom")
+      .border = 0
+    end with
+    pTB.element.addnew CTRL_TYPE_STATIC, -1
+  end if
+  
+  'właściwości całego wiersza
+  pTB.row.fontsize = 3
+  dim crColor
+  if nLP mod 2 = 0 then
+    pTB.row.backcolor = ROW_COLOR
+    crColor = ROW_COLOR
+  else
+    crColor = WHITE_COLOR
+  end if
+  
+  'gdy wiersz był wybrany => ustaw kolor na żółty
+  if g_oRepDict.exists(iRowIdent) then
+    if g_bMultiSel then
+      pCheckBox.value = "1"
+    end if
+    pTB.row.backcolor = YELLOW_COLOR
+  end if  
+  
+  g_oDrawRep.drawCell     pTB, cstr(nLP), "Verdana", ALIGN_RIGHT, 0, 0, ""
+  g_oDrawRep.drawCell     pTB, "", "Verdana", ALIGN_LEFT, TYPEID_N5RECEPTA, oRS("vl_id_rec").value, oRS("vl_nazwa").value
+  g_oDrawRep.drawCell     pTB, oRS("vl_norma").value, "Verdana", ALIGN_LEFT, 0, 0, ""
+  g_oDrawRep.drawCellCur  pTB, 0, oRS("vl_ilosc").value, "Verdana", 4, 10, "", crColor
+    
+end sub
+
+'--------------
+'wybór produktu
+'--------------
+function chooseProd(pHLI)
+  dim strWhere : strWhere = "n5produkt.prod_cSurowiec='1' and n5produkt.eAktywny=1 and n5produkt.eRodzaj=1"
+  dim idProd : idProd = fire_choice_list(TYPEID_N5PRODUKT,"Wybór produktu","strIndeks",strWhere,"","")  
+  if idProd > 0 then
+    dim oProd : set oProd = trans_.getobj(TYPEID_N5PRODUKT, clng(idProd))
+    oProdParam.m_IdProd = clng(idProd)
+    oProdParam.m_strNazwaProd = oProd.strNazwa    
+  end if  
+end function
+
+'------------------------
+'zaznacz/odznacz wszystko
+'------------------------
+function chooseAll(pHLI)
+  if bChooseAll then
+    bChooseAll = false
+  else
+    bChooseAll = true
+  end if
+  chooseAllPos bChooseAll
+end function
+
+'-----------------------------------------------------------
+'zaznacza/odznacza wszystkie pozycje w zależności od bOption
+'-----------------------------------------------------------
+function chooseAllPos(byval bOption)
+  dim oRow : set oRow = page_.ctrl(clng(iRowTabHead))
+  set oRow = oRow.nextelement
+  dim iRowIdent, strValue
+  do while not oRow is nothing
+    if not oRow.userprop is nothing then
+      iRowIdent = oRow.userprop.prop(PROP_ROW_IDENT)
+      'dodaj/usuń ze słownika
+      strValue = oRow.cell(CELL_CHECKBOX).element(ELEM_CHECKBOX).value
+      if bOption then
+        if strValue = "0" then
+          dim pSimRec : set pSimRec = new cSimpleRecord
+          dim idRec : idRec = oRow.userprop.prop(PROP_REC_IDOBJ)
+          dim curIlosc : curIlosc = oRow.userprop.prop(PROP_REC_ILOSC)
+          pSimRec.setDataObj idRec, iRowIdent, ccur(curIlosc)
+          g_oRepDict.add iRowIdent, pSimRec
+          strValue = "1"
+        end if
+      else
+        if strValue = "1" then
+          g_oRepDict.removeDictObj iRowIdent
+          strValue = "0"
+        end if
+      end if
+      oRow.cell(CELL_CHECKBOX).element(ELEM_CHECKBOX).value = strValue
+      'kolorowanie
+      changeRowColor oRow, strValue
+    end if 
+    set oRow = oRow.nextelement
+	loop
+end function
+
+'-----------------
+'poprzednia strona
+'-----------------
+function prevPage(pHLI)
+  g_oDrawRep.m_nRange = g_oDrawRep.m_nRange - 1
+  if g_oDrawRep.m_nRange = 1 then
+    dim oRow : set oRow = page_.ctrl(pHLI.prop(PROP_ROW_IDENT))
+    oRow.cell(CELL_BUTTON_NR).element(ELEM_BUTTON_PREV).disable = true
+  end if
+  drawResultTable g_oDrawRep
+end function
+
+'---------------
+'następna strona
+'---------------
+function nextPage(pHLI)
+  g_oDrawRep.m_nRange = g_oDrawRep.m_nRange + 1
+  if g_oDrawRep.m_nRange = g_oDrawRep.m_nNumRange then
+    dim oRow : set oRow = page_.ctrl(pHLI.prop(PROP_ROW_IDENT))
+    oRow.cell(CELL_BUTTON_NR).element(ELEM_BUTTON_NEXT).disable = true
+  end if  
+  drawResultTable g_oDrawRep
+end function
+
+'--------------------------------------------
+'ustawia kolor dla wiersza w zależności od LP
+'--------------------------------------------
+function setRowColor(iLP)
+  if iLP mod 2 = 0 then
+    setRowColor = ROW_COLOR
+  else
+    setRowColor = WHITE_COLOR
+  end if   
+end function
+
+'-------------------
+'kolorowanie wiersza
+'-------------------
+sub changeRowColor(byref oRow, byval newValue)
+  if newValue = "1" then
+    'wiersz na żółto
+    oRow.backcolor = YELLOW_COLOR
+  else
+    'usuń żółty kolor
+    if oRow.userprop.exists(PROP_REC_NUM) then
+      dim iLP : iLP = oRow.userprop.prop(PROP_REC_NUM)
+      oRow.backcolor = setRowColor(iLP)
+    end if
+  end if
+end sub
+
+'---------------
+'zamiana surowca
+'---------------
+function repOrAddRawMat(pHLI)
+  dim idPozRec, oDictObj
+  dim nRepAdd : nRepAdd = pHLI.prop(PROP_REPLACE_ADD)
+  if not checkProdParam then
+    exit function
+  end if
+  if g_oRepDict.getDictionary.count <> 0 then
+    g_oRep.m_oRSAll.movefirst
+    do while not g_oRep.m_oRSAll.EOF
+      idPozRec = clng(g_oRep.m_oRSAll("vl_idpoz_rec").value)
+      if g_oRepDict.exists(idPozRec) then
+        set oDictObj = g_oRepDict.getDictObj(idPozRec)
+        if nRepAdd = 1 then
+          replaceAddPoz oDictObj, true
+        else
+          replaceAddPoz oDictObj, false
+        end if
+      end if
+      g_oRep.m_oRSAll.movenext
+    loop
+    MessageBox "Operacja zakończona" , "Kreator zmiany surowców", vbOKOnly, vbInformation
+  else
+    trans_.message 7000, 0, "Nie wybrano receptury."
+    exit function
+  end if
+  
+  'odśwież raport
+  fRefresh true
+end function
+
+'-----------------
+'usunięcie pozycji
+'-----------------
+function deleteRawMat(pHLI)
+  dim idPozRec, oDictObj
+  if g_oRepDict.getDictionary.count <> 0 then
+    'potwierdzenie usunięcia surowca
+    if MessageBox ("Czy na pewno chcesz usunąć surowiec '" + oProd.m_strNazwaProd + "' z wybranych receptur?", "Kreator zmiany surowców", vbYesNo, vbQuestion) = vbYes then	
+      g_oRep.m_oRSAll.movefirst
+      do while not g_oRep.m_oRSAll.EOF
+        idPozRec = clng(g_oRep.m_oRSAll("vl_idpoz_rec").value)
+        if g_oRepDict.exists(idPozRec) then
+          set oDictObj = g_oRepDict.getDictObj(idPozRec)
+          if not deleteRawMatPoz(oDictObj) then
+            if oDictObj.m_idRec > clng(0) then
+              trans_.message 7000, 0, "Nie można usunąć surowca z receptury: " + trans_.getobj(TYPEID_N5RECEPTA,oDictObj.m_idRec).strNazwa
+            end if
+            exit function        
+          end if
+        end if
+        g_oRep.m_oRSAll.movenext
+      loop
+      MessageBox "Operacja zakończona" , "Kreator zmiany surowców", vbOKOnly, vbInformation
+      'odśwież raport
+      fRefresh true
+    end if    
+  else
+    trans_.message 7000, 0, "Nie wybrano receptury."
+    exit function
+  end if
+end function
+
+'------------------
+'anulowanie raportu
+'------------------
+function cancel(pHLI)
+  page_.goback
+end function
+
+'------------------------------------------------
+'zamienia produkt oraz ilość na pozycji receptury
+'------------------------------------------------
+function replaceAddPoz(byval oDictObj, byval bRepAdd) : replaceAddPoz = false
+  dim oRec : set oRec = trans_.getobj(TYPEID_N5RECEPTA,oDictObj.m_idRec)
+  dim oPozRec
+  if bRepAdd then
+    dim nLP : nLP = oRec.listSurowce.findonid(oDictObj.m_idPozRec)
+    set oPozRec = oRec.listSurowce.get(nLP)
+  else
+    set oPozRec = oRec.listSurowce.addnew()
+  end if
+  set oPozRec.pProdukt = trans_.getobj(TYPEID_N5PRODUKT,oProdParam.m_IdProd)
+  set oPozRec.pOpak = oPozRec.pProdukt.listOpakowania.get(1)
+  oPozRec.curIloscOpak = ccur(oDictObj.m_curIlosc * oProdParam.m_curWspolczynnik)
+  if not trans_.saveobjects then
+    exit function
+  end if
+  replaceAddPoz = true
+end function
+
+'----------------------------------
+'usuwa surowiec z pozycji receptury
+'----------------------------------
+function deleteRawMatPoz(byval oDictObj) : deleteRawMatPoz = false
+  dim oRec : set oRec = trans_.getobj(TYPEID_N5RECEPTA,oDictObj.m_idRec)
+  dim nLP : nLP = oRec.listSurowce.findonid(oDictObj.m_idPozRec)
+  oRec.listSurowce.delete(nLP)
+  if not trans_.saveobjects then
+    exit function
+  end if  
+  deleteRawMatPoz = true
+end function
+
+'--------------------------------------------------------
+'sprawdza poprawność produktu zastępczego i współczynnika
+'--------------------------------------------------------
+function checkProdParam : checkProdParam = false
+  if oProdParam.m_IdProd = clng(0) then
+    trans_.message 7000, 0, "Nie wybrano produktu zastępczego."
+    exit function
+  elseif oProdParam.m_curWspolczynnik <= ccur(0.0) then
+    trans_.message 7000, 0, "Zła wartość współczynnika."
+    exit function    
+  else
+    checkProdParam = true
+  end if  
+end function
+
+'------------------------
+'kontrolki dla przycisków
+'------------------------
+function c##CTRLID_CHOOSE_BUTTON##_ongetdata(byref oCtrl) : c##CTRLID_CHOOSE_BUTTON##_ongetdata = true
+  if bChooseAll then
+    oCtrl.text = "Odznacz wszystko"
+  else
+    oCtrl.text = "Zaznacz wszystko"
+  end if  
+end function
+
+function c##CTRLID_PREV_BUTTON##_ongetdata(byref oCtrl) : c##CTRLID_PREV_BUTTON##_ongetdata = true
+  if g_oRep.m_oRS.RecordCount <> 0 then
+    if g_oDrawRep.m_nRange = 1 then
+      oCtrl.disable = true
+    else
+      oCtrl.disable = false
+    end if
+  else
+    oCtrl.disable = true
+  end if
+end function
+
+function c##CTRLID_NEXT_BUTTON##_ongetdata(byref oCtrl) : c##CTRLID_NEXT_BUTTON##_ongetdata = true
+  if g_oRep.m_oRS.RecordCount <> 0 then  
+    if g_oDrawRep.m_nRange = g_oDrawRep.m_nNumRange then
+      oCtrl.disable = true
+    else
+      oCtrl.disable = false
+    end if
+  else
+    oCtrl.disable = true
+  end if
+end function
+
+function c##CTRLID_REALIZE_BUTTON##_ongetdata(byref oCtrl) : c##CTRLID_REALIZE_BUTTON##_ongetdata = true
+  if g_oRep.m_oRS.RecordCount <> 0 then
+    oCtrl.disable = false
+  else
+    oCtrl.disable = true
+  end if
+end function
+
+'-------------------------
+'kontrolki dla checkbox'ów
+'-------------------------
+function c##CTRLID_ROW_CHECKBOX##_ongetdata(byref oCtrl) : c##CTRLID_ROW_CHECKBOX##_ongetdata = true
+end function
+
+function c##CTRLID_ROW_CHECKBOX##_ondataentered(byref oCtrl, byval newValue) : c##CTRLID_ROW_CHECKBOX##_ondataentered = false
+  dim iRowIdent
+  dim bAddRem : bAddRem = true
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+    iRowIdent = oRow.userprop.prop(PROP_ROW_IDENT)
+    'dodaj/usuń ze słownika
+    if newValue = "1" then
+      dim pSimRec : set pSimRec = new cSimpleRecord
+      dim idRec : idRec = oRow.userprop.prop(PROP_REC_IDOBJ)
+      dim curIlosc : curIlosc = oRow.userprop.prop(PROP_REC_ILOSC)
+      pSimRec.setDataObj idRec, iRowIdent, ccur(curIlosc)
+      g_oRepDict.add iRowIdent, pSimRec     
+    else
+      g_oRepDict.removeDictObj iRowIdent
+    end if
+    oCtrl.value = newValue
+    'kolorowanie
+    changeRowColor oRow, newValue
+  end if
+  c##CTRLID_ROW_CHECKBOX##_ondataentered = true
+end function
+
+'-----------------------------
+'kontrolka dla wyboru produktu
+'-----------------------------
+function c##CTRLID_PRODUKT##_ongetdata(byref oCtrl) : c##CTRLID_PRODUKT##_ongetdata = true
+  oCtrl.value = cstr(oProdParam.m_strNazwaProd)
+  oCtrl.disable = true
+end function
+
+'---------------------------
+'kontrolka dla współczynnika
+'---------------------------
+function c##CTRLID_WSPOLCZYNNIK##_ongetdata(byref oCtrl) : c##CTRLID_WSPOLCZYNNIK##_ongetdata = true
+  oCtrl.value = ccur(oProdParam.m_curWspolczynnik)
+end function
+
+function c##CTRLID_WSPOLCZYNNIK##_ondataentered(byref oCtrl, newValue) : c##CTRLID_WSPOLCZYNNIK##_ondataentered = true
+  oProdParam.m_curWspolczynnik = ccur(newValue)
+end function
+
+'---------------------
+'blokowanie przycisków
+'---------------------
+function c##CTRLID_REALIZE_BUTTON##_ongetdata(byref oCtrl) : c##CTRLID_REALIZE_BUTTON##_ongetdata = true
+end function
+
+]]>
+    </script>
+  </config>
+  <body>
+    <table border="0">
+      <tbody>
+        <tr>
+          <td>
+            <table name='CTRLID_ROW_BUTTONS'>
+              <tbody />
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <table border='1' name='CTRLID_RESULT_TABLE'>
+              <tbody backcolor='white' bordercolor='#006697' />
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td align='left'>
+            <table name='CTRLID_ACTION_TABLE'>
+              <tbody />
+            </table>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </body>
+</page>

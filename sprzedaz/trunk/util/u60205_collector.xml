@@ -1,0 +1,420 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1230.h"
+
+MODULE_COLLECTOR
+
+-->
+<page>
+<config>
+
+<script>
+<![CDATA[
+'class CProgressPage
+#include "50632"
+
+'messagebox
+#include "50122"
+
+'---------------------------------------------------------------------------------
+' dodaje pozycje wczytane z kolektora (klasa CTestDataSource)
+'
+'	pDestDok				- dokument docelowy, np. PZ
+'	dokid					- id dokumentu pDestDok (potrzebne do transkacji)
+'	doc_typeid				- TYPEID_ dokumentu
+'	on_add_record_callback	- funkcja (podana przez GetRef)
+'---------------------------------------------------------------------------------
+function DodajPozycjeZKolektoraExt(byref pDestDok, byval bMode)
+trans_.message 0, 0, "____Rozpoczęto komunikację z kolektorem"
+	DodajPozycjeZKolektoraExt = false
+
+	'obiekt komunikacyjny
+	dim pM60224 : set pM60224 = doc_.getmodule(60224)
+	dim pM60277EDI : set pM60277EDI = doc_.getmodule(60277)
+
+	dim pTransfer : set pTransfer = pM60224.new_Cipher_CPT_711_720_Transfer()
+
+	'pętla odczytująca dane
+	dim strRecordData
+	dim nRecordNr : nRecordNr = 0
+	dim answer:answer = -100
+	dim strLP: strLP = ""
+
+	if pTransfer.begin_receive() then
+		
+		dim pPP : set pPP = new CProgressPage
+		pPP.init "Pobieranie danych z kolektora"		
+
+		do while pTransfer.receive(nRecordNr,strRecordData)
+		
+#ifdef _DEBUG
+			'strRecordData = "201502,9.0000,243.0000,Uszczelnienie,09 01 03 / 09 01 04,2107379"
+			trans_.message 0, 0, "Dane z kolektora:[" + strRecordData + "]"
+#endif			
+			dim strKod,curIlosc,curCena,strNazwa,curKrotnosc,strNrEwidPrac,strIndeks,strOznaczProd,strOpis
+			
+			if bMode then
+				if not pM60224.crack_cipher_record_ext(strRecordData,strKod,curIlosc,strNrEwidPrac) then
+					exit function
+				end if      
+			else
+#ifdef _IOW
+				if not pM60224.crack_cipher_record_iow(strRecordData,strIndeks,curCena,curIlosc,strNazwa,strOznaczProd,strOpis) then
+#else
+				if not pM60224.crack_cipher_record(strRecordData,strKod, curCena,curIlosc,strNazwa) then
+#endif        
+					exit function
+				end if
+			end if      
+			
+#ifdef _DEBUG		
+#ifdef _HJORT
+			trans_.message 0, 0, "Indeks="+ cstr(strKod) + ",ilosc=" + cstr(curIlosc) + ",cena="+cstr(curCena)
+#else
+			trans_.message 0, 0, "EAN="+ cstr(strKod) + ",ilosc=" + cstr(curIlosc) + ",cena="+cstr(curCena)
+#endif
+#endif
+			
+			pPP.update "Wczytano rekord nr " + cstr(nRecordNr)
+
+			if pPP.is_broken() then
+				exit function
+			end if			
+      
+#ifdef _IOW
+			dim bIsNewPos: bIsNewPos = true
+#endif
+				
+			if pDestDok.type = TYPEID_N5DOKMAG or pDestDok.type = TYPEID_N5ZAMOWIENIE then
+#ifdef _IOW
+				dim pPozDokMag : set pPozDokMag = get_position(pDestDok,strIndeks,strOznaczProd,bIsNewPos)
+#else
+				dim pPozDokMag : set pPozDokMag = pDestDok.listPozycje.AddNew()
+#endif        
+				
+#ifdef _HJORT
+				if not pM60277EDI.get_position_by_indeks(strKod,pPozDokMag) then
+					pDestDok.listPozycje.delete(pDestDok.listPozycje.count())
+					'zapytamy
+					if answer = -100 or answer = vbYes then
+						answer=MessageBoxCustom("Nie można znależć pozycji w bazie dla Indeksu = " + strKod + ". Mozesz pominac te jedna pozycje, pomijac wszystkie podobne lub przerwac wczytywanie", "BRak pozycji", vbYesNoCancel, vbQuestion, "Pomiń;Pomiń wszystkie;Przerwij")
+					end if
+					if answer = vbCancel then
+						exit function
+					end if
+				end if
+        
+				'rozpoznanie pracownika po numerze ewidencyjnym Kolektor danych (rozszerzone)
+				if bMode then
+					if not pM60277EDI.get_prac_by_nrewid(strNrEwidPrac,pPozDokMag) then
+						strLP = strLP + CStr(pDestDok.listPozycje.count()) + ", "
+					end if        
+				end if        
+#else
+#ifdef _IOW
+				if not pM60277EDI.get_position_by_indeks_and_oznacz_prod(strIndeks,strOznaczProd,pPozDokMag) then
+					pDestDok.listPozycje.delete(pDestDok.listPozycje.count())
+					'zapytamy
+					if answer = -100 or answer = vbYes then
+						answer=MessageBoxCustom("Nie można znależć pozycji w bazie dla indeksu = " + strIndeks + ". Mozesz pominac te jedna pozycje, pomijac wszystkie podobne lub przerwac wczytywanie", "Brak pozycji", vbYesNoCancel, vbQuestion, "Pomiń;Pomiń wszystkie;Przerwij")
+					end if
+					if answer = vbCancel then
+						exit function
+					end if
+				end if
+#else
+				if not pM60277EDI.get_position_by_ean(strKod,pPozDokMag) then
+					pDestDok.listPozycje.delete(pDestDok.listPozycje.count())
+					'zapytamy
+					if answer = -100 or answer = vbYes then
+						answer=MessageBoxCustom("Nie można znależć pozycji w bazie dla kodu EAN = " + strKod + ". Mozesz pominac te jedna pozycje, pomijac wszystkie podobne lub przerwac wczytywanie", "BRak pozycji", vbYesNoCancel, vbQuestion, "Pomiń;Pomiń wszystkie;Przerwij")
+					end if
+					if answer = vbCancel then
+						exit function
+					end if
+				end if
+#endif        
+#endif
+
+				' i tu zabawa z kartonami
+				'pobieramy krotnosc z ostatniego opakowania
+				if not pPozDokMag.pProdukt is nothing then
+#ifdef _GRAJEWSCY
+					curKrotnosc = 1
+					pPozDokMag.curIloscOpak = ccur(curIlosc)
+#else
+					curKrotnosc = pPozDokMag.pProdukt.listOpakowania.get(pPozDokMag.pProdukt.listOpakowania.count()).currKrotnosc
+#ifdef _IOW
+					if bIsNewPos then
+						pPozDokMag.curIloscOpak = ccur(curIlosc * curKrotnosc)
+					else
+						pPozDokMag.curIloscOpak = pPozDokMag.curIloscOpak + ccur(curIlosc * curKrotnosc)
+					end if
+#else
+					pPozDokMag.curIloscOpak = ccur(curIlosc * curKrotnosc)
+#endif          
+#endif
+				'	pPozDokMag.curCenaMag = ccur(curCena)
+				end if
+
+				set pPozDokMag = nothing
+			else
+				if pDestDok.type = TYPEID_N5REALPROD then
+#ifdef _IOW
+					dim pPozRealProd : set pPozRealProd = get_position(pDestDok,strIndeks,strOznaczProd,bIsNewPos)
+#else        
+					dim pPozRealProd : set pPozRealProd = pDestDok.listPozycje.AddNew()
+#endif          
+					
+#ifdef _IOW
+					if not pM60277EDI.get_position_by_indeks_and_oznacz_prod(strIndeks,strOznaczProd,pPozRealProd) then
+#else        
+					if not pM60277EDI.get_position_by_ean(strKod,pPozRealProd) then
+#endif          
+						pDestDok.listPozycje.delete(pDestDok.listPozycje.count())
+						'zapytamy
+						if answer = -100 or answer = vbYes then
+#ifdef _IOW
+							answer=MessageBoxCustom("Nie można znależć pozycji w bazie dla indeksu = " + strIndeks + ". Mozesz pominac te jedna pozycje, pomijac wszystkie podobne lub przerwac wczytywanie", "BRak pozycji", vbYesNoCancel, vbQuestion, "Pomiń;Pomiń wszystkie;Przerwij")
+#else
+							answer=MessageBoxCustom("Nie można znależć pozycji w bazie dla kodu EAN = " + strKod + ". Mozesz pominac te jedna pozycje, pomijac wszystkie podobne lub przerwac wczytywanie", "BRak pozycji", vbYesNoCancel, vbQuestion, "Pomiń;Pomiń wszystkie;Przerwij")
+#endif              
+						end if
+						if answer = vbCancel then
+							exit function
+						end if
+					end if
+
+					if not pPozRealProd.pProdukt is nothing then
+#ifdef _GRAJEWSCY
+					curKrotnosc = 1
+					pPozDokMag.curIloscOpak = ccur(curIlosc)
+#else
+						curKrotnosc = pPozRealProd.pProdukt.listOpakowania.get(pPozRealProd.pProdukt.listOpakowania.count()).currKrotnosc
+#ifdef _IOW
+					if bIsNewPos then
+						pPozRealProd.curIloscOpak = ccur(curIlosc * curKrotnosc)
+					else
+						pPozRealProd.curIloscOpak = pPozRealProd.curIloscOpak + ccur(curIlosc * curKrotnosc)
+					end if            
+#else
+						pPozRealProd.curIloscOpak = ccur(curIlosc * curKrotnosc)
+#endif            
+#endif
+						pPozRealProd.curCenaMag = ccur(curCena)
+					end if
+
+					set pPozRealProd = nothing
+				end if
+
+				if pDestDok.type = TYPEID_N5ZLECPROD then
+#ifdef _IOW
+					dim pPozZlecProd : set pPozZlecProd = get_position(pDestDok,strIndeks,strOznaczProd,bIsNewPos)
+#else        
+					dim pPozZlecProd : set pPozZlecProd = pDestDok.listPozycje.AddNew()
+#endif          
+
+#ifdef _IOW
+					if not pM60277EDI.get_position_by_indeks_and_oznacz_prod(strIndeks,strOznaczProd,pPozZlecProd) then
+#else          
+					if not pM60277EDI.get_position_by_ean(strKod,pPozZlecProd) then
+#endif          
+						pDestDok.listPozycje.delete(pDestDok.listPozycje.count())
+						'zapytamy
+						if answer = -100 or answer = vbYes then
+#ifdef _IOW
+							answer=MessageBoxCustom("Nie można znależć pozycji w bazie dla indeksu = " + strIndeks + ". Mozesz pominac te jedna pozycje, pomijac wszystkie podobne lub przerwac wczytywanie", "BRak pozycji", vbYesNoCancel, vbQuestion, "Pomiń;Pomiń wszystkie;Przerwij")
+#else
+							answer=MessageBoxCustom("Nie można znależć pozycji w bazie dla kodu EAN = " + strKod + ". Mozesz pominac te jedna pozycje, pomijac wszystkie podobne lub przerwac wczytywanie", "BRak pozycji", vbYesNoCancel, vbQuestion, "Pomiń;Pomiń wszystkie;Przerwij")
+#endif              
+						end if
+						if answer = vbCancel then
+							exit function
+						end if
+					end if
+
+					if not pPozZlecProd.pProdukt is nothing then
+#ifdef _GRAJEWSCY
+					curKrotnosc = 1
+					pPozDokMag.curIloscOpak = ccur(curIlosc)
+#else
+						curKrotnosc = pPozZlecProd.pProdukt.listOpakowania.get(pPozZlecProd.pProdukt.listOpakowania.count()).currKrotnosc
+#ifdef _IOW
+					if bIsNewPos then
+						pPozZlecProd.curIloscOpak = ccur(curIlosc * curKrotnosc)
+					else
+						pPozZlecProd.curIloscOpak = pPozZlecProd.curIloscOpak + ccur(curIlosc * curKrotnosc)
+					end if             
+#else
+						pPozZlecProd.curIloscOpak = ccur(curIlosc * curKrotnosc)
+#endif            
+#endif
+						'pPozZlecProd.curCenaMag = ccur(curCena)
+					end if
+
+					set pPozZlecProd = nothing
+
+				end if
+			end if
+
+			nRecordNr = nRecordNr + 1
+		loop
+
+		pTransfer.end_receive
+		set pPP = nothing
+    
+		if strLP <> "" then
+			strLP = Left(strLP,Len(strLP)-2)
+			MessageBox "Nie rozpoznano pracownika na pozycji: " + strLP , "Informacje o pracownikach", vbOKOnly, vbInformation
+		end if
+    
+	end if
+	
+
+	if pTransfer.get_last_error() <> "" then
+		MessageBox pTransfer.get_last_error(), "Pobieranie danych", vbOKOnly, vbInformation
+	end if
+
+'	if not trans_.saveobjects() then			
+'		trans_.discard
+'	end if
+
+'	set pSubTrans = nothing
+
+	DodajPozycjeZKolektoraExt = true
+end function
+
+function get_position(byref pDestDok,byref strIndeks, byref strOznaczProd, byref bIsNewPos)
+  'pobierz produkt
+  dim pProd: set pProd = nothing
+  dim idProd: idProd = trans_.findobjid(TYPEID_N5PRODUKT,"strIndeks = '" + trans_.afc.convert.DoubleApostrophe(strIndeks) + "'")
+  if idProd > clng(0) then
+    set pProd = trans_.getobj(TYPEID_N5PRODUKT,idProd)
+  else
+    'wyszukaj po oznaczeniu producenta
+    idProd = trans_.findobjid(TYPEID_N5PRODUKT,"strCecha1 = '" + trans_.afc.convert.DoubleApostrophe(strOznaczProd) + "'")
+    if idProd > clng(0) then
+      set pProd = trans_.getobj(TYPEID_N5PRODUKT,idProd)
+    end if  
+  end if
+  
+  if not pProd is nothing then
+    dim pPos
+    for each pPos in pDestDok.listPozycje
+      if not pPos.pProdukt is nothing then
+        if pProd.IdObj = pPos.pProdukt.IdObj then
+          bIsNewPos = false
+          set get_position = pPos
+          exit function
+        end if
+      end if
+    next
+  end if
+  
+  set get_position = pDestDok.listPozycje.AddNew()
+end function
+
+function DodajPozycjeZKolektora(byref pDestDok)
+  DodajPozycjeZKolektora = DodajPozycjeZKolektoraExt(pDestDok,false)
+end function
+
+'---------------------------------------------------------
+' kursor musi zawierać kolumny:
+' ean
+' nazwa
+' cena
+' ilosc
+'---------------------------------------------------------
+
+
+function navo_ceil(curValue)						
+	dim curTmp : curTmp = fix(curValue)				
+	if curTmp <> curValue then						
+	  curTmp = curTmp + ccur(1.0)					
+	end if											
+	navo_ceil = curTmp								
+end function
+
+function send_products_to_collector(byref pADOCursor)
+
+	'obiekt komunikacyjny
+	dim pM60224 : set pM60224 = doc_.getmodule(60224)
+	dim pTransfer : set pTransfer = pM60224.new_Cipher_CPT_711_720_Transfer()
+	dim pPP : set pPP = new CProgressPage
+	pPP.init "Wysyłanie danych do kolektora"
+	if pTransfer.begin_send() then
+		do while not pADOCursor.eof
+
+			dim strKodEAN : strKodEAN = cstr(pADOCursor("ean"))
+			dim curCena : curCena = ccur(pADOCursor("cena"))
+			dim curStanMag : curStanMag = ccur(pADOCursor("ilosc"))
+			dim strNazwa : strNazwa = cstr(pADOCursor("nazwa"))
+#ifdef _IOW
+			dim strIndeks : strIndeks = cstr(pADOCursor("indeks"))
+			dim strOznaczProd : strOznaczProd = cstr(pADOCursor("oznacz_prod"))  
+			dim strOpis : strOpis = cstr(pADOCursor("opis")) 
+#endif
+
+			'zabawa z kartonami
+			dim pProdukt:set pProdukt = trans_.getobj(TYPEID_N5PRODUKT ,clng(pADOCursor("prod_id")) )
+			dim curKrotnosc : curKrotnosc = pProdukt.listOpakowania.get(ccur(pADOCursor("lp"))).currKrotnosc
+			if curKrotnosc > 1 then
+				curStanMag = ccur(navo_ceil(curStanMag / curKrotnosc))
+			end if
+
+#ifdef _IOW
+			if not pTransfer.send(pM60224.build_cipher_record_ex(strIndeks, curCena, curStanMag, strNazwa, strOznaczProd, strOpis)) then
+#else
+			if not pTransfer.send(pM60224.build_cipher_record(strKodEAN, curCena, curStanMag, strNazwa)) then
+#endif      
+				exit do
+			end if
+			pPP.update "Wysłano " + strNazwa 
+
+			if pPP.is_broken() then
+				exit function
+			end if
+
+			pADOCursor.movenext
+		loop
+		
+		pTransfer.end_send
+	end if
+
+	if pTransfer.get_last_error() <> "" then
+		MessageBox pTransfer.get_last_error(), "Wysyłanie danych", vbOKOnly, vbInformation
+	end if
+
+end function
+
+function AddDataFromCollector_UnitechHT630(byref pDestDok)
+		dim pM60224 : set pM60224 = doc_.getmodule(60224)
+		dim pTransfer : set pTransfer = pM60224.new_Unitech_HT630_Transfer()
+			'zczytywanie danych z kolektora i zapisanie pliku na dysk
+			if not pTransfer.moveFileFromCollecToDisc() then
+				exit function
+			end if
+			if not pTransfer.readDataFromFileToArray() then
+				trans_.message 0,0,"Niepoprawne dane w pliku . Dane z kolektora."
+				exit function
+			end if
+			if not pTransfer.InsertDataFromArrayToDokHandl_HT630(pDestDok) then
+				exit function
+			end if
+end function
+
+function SendDataToCollectorHT630(byref pADOCursor)
+		
+end function
+
+
+]]>
+</script>
+
+</config>
+	<body>
+	</body>
+</page>

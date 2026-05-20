@@ -1,0 +1,940 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1001.h"
+#include "h1004.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1222.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1240_appvar.h"
+#include "h1250_raport_macros.h"
+
+#define CTRLID_RESULT_TABLE		100
+#define CTRLID_SUMA_IL_ZAP		101
+#define CTRLID_REDIRECT_IL_ZAP	102
+#define CTRLID_REDIRECT_CHKBOX	103
+#define CTRLID_FACTOR			104
+
+#define MODE_WSZYSTKO	0
+#define MODE_BRAK_SUR	1
+#define MODE_BRAK_TOW	2
+
+#define PRIV_PROP_IDPROD		1
+#define PRIV_PROP_IDOPAK		2
+#define PRIV_PROP_BILANS		3
+#define PRIV_PROP_PROGNOZA1		4
+#define PRIV_PROP_PROGNOZA2		5
+#define PRIV_PROP_CTRL_ILOSC	6
+#define PRIV_PROP_CUSTOMER		7
+
+#define PRIV_PROP_PICT_IDENT	8
+#define PRIV_PROP_EDIT_IDENT	9
+#define PRIV_PROP_CHCK_IDENT	10
+#define PRIV_PROP_FILTROWANIE	11
+
+
+#define INCLUDE_BULID_DOSTAWCA_CHOICELIST_ROW
+
+#ifdef APPCONFIG_RAPORT_BY_PROD_INX
+#define C_FIELD_PROD_FIRST_EXPR		t_prod.strIndeks
+#define C_FIELD_PROD_SECOND_EXPR	t_prod.strNazwa
+#define C_FIELD_FIRST_HUMANNAME 	Indeks produktu
+#define C_FIELD_SECOND_HUMANNAME 	Nazwa produktu
+#else
+#define C_FIELD_PROD_FIRST_EXPR		t_prod.strNazwa
+#define C_FIELD_PROD_SECOND_EXPR	t_prod.strIndeks
+#define C_FIELD_FIRST_HUMANNAME 	Nazwa produktu
+#define C_FIELD_SECOND_HUMANNAME 	Indeks produktu
+#endif
+
+#ifdef APPCONFIG_ZAMOWIENIE_SHOW_CECHA1
+#define COLSPAN_RAZEM		4
+#else
+#define COLSPAN_RAZEM		3
+#endif
+-->
+<page style='STYLE_PAGE'>
+<config>
+	<title>
+	Kreator zapotrzebowania&nbsp;
+#if appvar_mode = MODE_BRAK_SUR
+	na surowce
+#endif
+#if appvar_mode = MODE_BRAK_TOW
+	na towary
+#endif
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+<script>
+<!--
+
+	mode:
+	brakujące surowce = 1
+	brakujace towary  = 2
+
+-->
+<![CDATA[
+
+
+'BulidDostawcaRow
+#include "50634"
+
+'msgbox
+#include "50122"
+
+'harui
+#include "50101"
+
+'fire_choicelist
+#include "50200"
+
+#include "50111"
+
+'get_n_cena
+#include "50524"
+
+'getcurrentfirma
+#include "50203"
+
+dim g_eMode
+dim g_curSumIlZap
+dim g_iMaxPrec
+dim g_oIloscDict: set g_oIloscDict = createobject("Scripting.Dictionary")
+
+
+function fopen : fopen = false
+	g_eMode = trans_.var(APPVAR_MODE)
+	select case g_eMode
+		case 1
+			if not HARUI(UAR_CMDID(CMDID_RAPORT_ZLECPROD_SUROWCE_BRAK)) then
+				exit function
+			end if
+		case 2
+			if not HARUI(UAR_CMDID(CMDID_RAPORT_TOWARY_BRAK)) then
+				exit function
+			end if
+	end select
+
+	frefresh
+	fopen = true
+end function
+
+VB_PRINT_LANDSCAPE_COMMON
+
+VB_PRINTPREV_LANDSCAPE_COMMON
+
+function frefresh
+	g_curSumIlZap = ccur(0.0)
+	g_iMaxPrec = 0
+	page_.ctrl(CTRLID_FACTOR).value = ccur(100.0)
+
+	dim pModRapEngine : set pModRapEngine = doc_.getmodule(60108)
+	dim pModPM : set pModPM = doc_.getmodule(60227)
+	dim pPlanMag : set pPlanMag = pModPM.new_plan_mag_helper()
+	dim utilProdHierarchy : set utilProdHierarchy = doc_.getmodule(60246)
+	dim pProdHierarchy : set pProdHierarchy = utilProdHierarchy.new_prod_hierarchy()
+
+		dim pParamArray : set pParamArray = get_default_param(pPlanMag)
+		if pModRapEngine.show_raport_param_dialog(pParamArray,"Kryteria selekcji") = 0 then
+			exit function
+		end if
+		dim pPerforming : set pPerforming = doc_.performing("Trwa przygotowywanie danych...")
+		pProdHierarchy.fill_on_prodgrupa_param pGrupaParam
+	
+		dim oParamProdNazwa : set oParamProdNazwa = pParamArray.Value(3)
+		dim oParamProdInx : set oParamProdInx = pParamArray.Value(4)
+		dim strProduktFilter
+		strProduktFilter = oParamProdNazwa.get_where_part(trans_) + " and " +_
+		oParamProdInx.get_where_part(trans_) +_
+		" and (t_prod.eAktywny=N5PRODUKT_AKTYWNY) and t_prod.pGrupaProd in (select tmp_group_idobj from #tmp_prod_hierarchy)"
+
+		pPlanMag.prefill strProduktFilter
+		dim pParamMagazyny : set pParamMagazyny = pParamArray.Value(0)
+		pPlanMag.update_stan pParamMagazyny
+		dim pParamTerminFrwd : set pParamTerminFrwd = pParamArray.Value(1)
+		dim dDateZamFirst,dDateZamLast  
+#ifdef _ABAKUS
+		pPlanMag.update_zam_wl_ex pParamTerminFrwd, pParamArray.Value(8)
+#else
+		pPlanMag.update_zam_wl pParamTerminFrwd
+#endif    
+#ifdef _ABAKUS
+		pPlanMag.update_zam_ob_ex_2 pParamTerminFrwd,dDateZamFirst,dDateZamLast,pRejestrZamParam.get_where_part(trans_), pParamArray.Value(8) 
+#else
+		pPlanMag.update_zam_ob_ex pParamTerminFrwd,dDateZamFirst,dDateZamLast,pRejestrZamParam.get_where_part(trans_) 
+#endif    
+		pPlanMag.update_z_prod pParamTerminFrwd
+		pPlanMag.update_na_prod pParamTerminFrwd
+
+		dim pParamOkresBkwd : set pParamOkresBkwd = pParamArray.Value(2)
+		dim dDateSprzFirst,dDateSprzLast   
+#ifdef _ABAKUS
+		pPlanMag.update_prog_sprz_ex pParamOkresBkwd,dDateSprzFirst,dDateSprzLast, pParamArray.Value(8)
+#else    
+		pPlanMag.update_prog_sprz pParamOkresBkwd,dDateSprzFirst,dDateSprzLast
+#endif    
+		pPlanMag.postprocess compute_factor(dDateZamFirst,dDateZamLast,dDateSprzFirst,dDateSprzLast)
+		
+		fill_results pParamArray
+		
+	set pProdHierarchy = nothing
+	set utilProdHierarchy = nothing
+
+  pPlanMag.manual_done()
+  
+	set pPlanMag = nothing
+	set pModPM = nothing
+end function
+
+function compute_factor(dDateZamFirst,dDateZamLast,dDateSprzFirst,dDateSprzLast)
+	dim nSprzDays : nSprzDays = clng(dDateSprzLast) - clng(dDateSprzFirst) + 1
+	dim nZamDays : nZamDays = clng(dDateZamLast) - clng(dDateZamFirst) + 1
+	if nSprzDays = 0 then
+		compute_factor = ccur(0.0)
+	else
+		compute_factor = ccur(ccur(nZamDays) / ccur(nSprzDays))
+	end if
+end function
+
+function fill_results(byref pParamArray)
+	'------ przelacznik decyduje czy pokazywac tylko te do zamowienia
+	'------ czy wszystkie z ujemnym bilansem
+	dim bAlwaysShow : bAlwaysShow = false
+
+	dim strHaving
+	select case g_eMode
+	case MODE_WSZYSTKO
+		strHaving = "(1=1)"
+	case MODE_BRAK_SUR
+		strHaving = "sum(tpm_curIloscOpakNaProd) > 0.0 and sum(tpm_curIloscOpakAktBil) < min(t_opak.curIloscMin) "
+	case MODE_BRAK_TOW
+		strHaving = "sum(tpm_curIloscOpakAktBil) < min(t_opak.curIloscMin) "
+	end select
+
+	dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(page_.ctrl(CTRLID_RESULT_TABLE))
+	pTB.section_body.removeall	
+	dim pCursor : set pCursor = trans_.createadors( _
+		"select 'c_prod_nazwa'=max(C_FIELD_PROD_FIRST_EXPR),'c_prod_indeks'=max(C_FIELD_PROD_SECOND_EXPR),'c_opak_nazwa'=max(t_opak.strNazwa)," +_
+#ifdef APPCONFIG_ZAMOWIENIE_SHOW_CECHA1
+		"'c_marka'=max(t_prod.strCecha1)," +_
+#endif
+		"'c_stan'=isnull(sum(tpm_curIloscOpakStan),0)," +_
+		"'c_zamo'=isnull(sum(tpm_curIloscOpakZamOb),0)," +_
+		"'c_naprod'=isnull(sum(tpm_curIloscOpakNaProd),0)," +_
+		"'c_aktbil'=isnull(sum(tpm_curIloscOpakAktBil),0)," +_
+		"'c_zamwl'=isnull(sum(tpm_curIloscOpakZamWl),0)," +_
+		"'c_zprod'=isnull(sum(tpm_curIloscOpakZProd),0)," +_
+		"'c_progsp'=isnull(sum(tpm_curIloscOpakHistSp),0)," +_
+		"'c_progbil1'=isnull(sum(tpm_curIloscOpakProgBil1),0)," +_
+		"'c_progbil2'=isnull(sum(tpm_curIloscOpakProgBil2),0)," +_
+		"'c_customer'=isnull(max(t_prod.prod_pDostawca),0)," +_
+		"'c_skrot'=max(t_jedn.strSkrot),'c_dokl'=max(t_jedn.nDokladnosc),'c_wyr'=max(t_prod.prod_cWyrob),'c_sur'=max(t_prod.prod_cSurowiec), " +_
+		"'c_idprod'=tpm_pProdukt,'c_idopak'=tpm_pOpak,'c_stanmin'=min(t_opak.curIloscMin),'c_stanmax'=min(t_opak.curIloscMax) " +_
+		"from #tmp_planmag tpm " +_
+		"inner join n5produkt t_prod on tpm_pProdukt=t_prod.IdObj " +_
+		"inner join n5opakowanie_produktu t_opak on tpm_pOpak=t_opak.IdObj " +_
+		"inner join n5jednostka as t_jedn on t_opak.pJednOpak = t_jedn.IdObj " +_
+		"left outer join n5klient t_dost on t_prod.prod_pDostawca = t_dost.idobj " +_
+		"where t_prod.eRodzaj=N5PRODUKT_TOWAR and " + pParamArray.Value(3).get_where_part(trans_) +_
+		" and " + pParamArray.Value(4).get_where_part(trans_) +_
+		" and " + pParamArray.Value(5).get_where_part(trans_) +_
+		" group by tpm_pProdukt,tpm_pOpak " +_
+		"having " + strHaving + _
+		"order by c_prod_nazwa,c_opak_nazwa")
+	dim nRecNr : nRecNr = 0
+	do while not pCursor.EOF
+		
+		dim curStanMin : curStanMin = ccur(pCursor("c_stanmin"))
+		dim curStanMax : curStanMax = ccur(pCursor("c_stanmax"))
+		dim curProgBil1 : curProgBil1 = ccur(pCursor("c_progbil1"))
+		dim curProgBil2 : curProgBil2 = ccur(pCursor("c_progbil2"))
+		curProgBil2 = curProgBil2 - curStanMin
+		
+		if bAlwaysShow or ((curProgBil2 < 0.0)) then
+
+			pTB.newrow
+			pTB.row.bordercolor = rgb(255,255,255)
+			if nRecNr mod 2 = 0 then
+				pTB.row.styleitem = STYLE_ROW_EVEN
+			end if
+			dim strSkrot : strSkrot = cstr(pCursor("c_skrot"))
+			dim nDokl : nDokl = clng(pCursor("c_dokl")) - 1
+
+			pTB.newcell.addtext(cstr(nRecNr+1)).cell.align=ALIGN_RIGHT
+
+			pTB.newcell.addctrl CTRL_TYPE_CHECKBOX,-1
+			pTB.cell.keepline = true
+			dim pCheckBox : set pCheckBox = pTB.element
+			with pCheckBox
+				.customredirect = clng(CTRLID_REDIRECT_CHKBOX)
+				.transfer = page_.createtransfer("custom")
+				.border = 0
+			end with
+			pTB.element.addnew CTRL_TYPE_STATIC,-1	'pusty tekst ("do zaznaczania")
+			'static z nazwą itd.
+			dim pStatic : set pStatic = pTB.cell.addnew(CTRL_TYPE_STATICEX,-1)
+			pStatic.text = cstr(pCursor("c_prod_nazwa"))
+			dim idProd : idProd = clng(pCursor("c_idprod"))
+			dim idOpak : idOpak = clng(pCursor("c_idopak"))
+
+			set pStatic.hli = doc_.createhlistr("OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5PRODUKT," + cstr(idProd)+",USAGE_VIEW)")
+
+			pTB.newcell
+			pTB.cell.addnew(CTRL_TYPE_STATICEX,-1).text = cstr(pCursor("c_prod_indeks"))
+	#ifdef APPCONFIG_ZAMOWIENIE_SHOW_CECHA1
+			pTB.newcell.addtext pCursor("c_marka")
+	#endif
+			pTB.newcell.addtext strSkrot
+			strSkrot = ""
+			pTB.newcell.addtext(doc_.afc.display.quantity(pCursor("c_stan"),strSkrot,nDokl)).cell.align=ALIGN_RIGHT
+			pTB.newcell.addtext(doc_.afc.display.quantity(pCursor("c_zamo"),strSkrot,nDokl)).cell.align=ALIGN_RIGHT
+			pTB.newcell.cell.align=ALIGN_RIGHT
+			if pCursor("c_sur") = "1" then
+				pTB.addtext doc_.afc.display.quantity(pCursor("c_naprod"),strSkrot,nDokl)
+			end if
+			dim curAktBil : curAktBil = ccur(pCursor("c_aktbil"))
+			pTB.newcell.addtext(doc_.afc.display.quantity(curAktBil,strSkrot,nDokl)).cell.align=ALIGN_RIGHT
+			pTB.element.bold = true
+			if curAktBil < 0.0 then
+				pTB.element.forecolor = RGB(255,0,0)
+			end if
+			pTB.newcell.addtext(doc_.afc.display.quantity(pCursor("c_zamwl"),strSkrot,nDokl)).cell.align=ALIGN_RIGHT
+			pTB.newcell.cell.align=ALIGN_RIGHT
+			if pCursor("c_wyr") = "1" then
+				pTB.addtext doc_.afc.display.quantity(pCursor("c_zprod"),strSkrot,nDokl)
+			end if
+			'-- stan min
+			pTB.newcell.addtext(doc_.afc.display.quantity(curStanMin,strSkrot,nDokl)).cell.align=ALIGN_RIGHT
+			pTB.newcell.addtext(doc_.afc.display.quantity(curStanMax,strSkrot,nDokl)).cell.align=ALIGN_RIGHT
+			pTB.newcell.addtext(doc_.afc.display.quantity(pCursor("c_progsp"),strSkrot,nDokl)).cell.align=ALIGN_RIGHT
+			pTB.newcell.addtext(doc_.afc.display.quantity(curProgBil1,strSkrot,nDokl)).cell.align=ALIGN_RIGHT
+			pTB.element.bold = true
+			
+			if curProgBil1 < 0.0 then
+				pTB.element.forecolor = RGB(255,0,0)
+				pCheckBox.value = "1"
+			end if
+			
+			pTB.newcell.addtext(doc_.afc.display.quantity(curProgBil2,strSkrot,nDokl)).cell.align=ALIGN_RIGHT
+			pTB.element.bold = true
+
+			if curProgBil2 < 0.0 then
+				pTB.element.forecolor = RGB(255,0,0)
+				pCheckBox.value = "1"
+			else
+				'-- aby nie zamawiał ujemnych ilości
+				curProgBil2 = ccur(0.0)
+			end if
+			'--------- zaokraglaj w górę wg receptur
+			if curProgBil2 < 0.0  then
+				if pCursor("c_wyr") = "1" then
+					dim idDummyReceptura
+					dim curIloscWyrobuZReceptury
+					
+					if query_default_receptura_for_wyrob(idProd,idOpak, _
+						idDummyReceptura,curIloscWyrobuZReceptury) then
+						'curProgBil2 - ujemne
+						'Int(ujemne) = ceil(dodatnie)
+						curProgBil2 = curIloscWyrobuZReceptury * Int(curProgBil2 / curIloscWyrobuZReceptury)
+					end if
+				else
+					'minimalna ilość zamawiana
+				end if
+			end if
+
+			pTB.newcell
+			pTB.cell.align = ALIGN_RIGHT
+			pTB.addctrl CTRL_TYPE_CURRENCY , -1
+			
+			dim ident_il
+			with pTB.element
+				.size=7
+				.precision = nDokl
+				.unit = strSkrot
+				.value = ccur(curProgBil2) * (-1)
+				.customredirect = clng(CTRLID_REDIRECT_IL_ZAP)
+				.transfer = page_.createtransfer("custom")
+				ident_il = .ident
+				g_curSumIlZap = g_curSumIlZap + .value
+				g_oIloscDict.Item(ident_il) = .value
+				
+				if nDokl > g_iMaxPrec then
+					g_iMaxPrec = nDokl
+				end if
+			end with
+
+
+
+			'teraz kontrolka (picture + edit) do wyboru klienta
+			pTB.newcell.cell.keepline = true
+			pTB.cell.styleitem = clng(STYLE_CTRL)
+			pTB.cell.border = clng(0)
+			pTB.cell.align = ALIGN_RIGHT
+			pTB.addctrl CTRL_TYPE_PICTURE , -1
+			dim pPict:set pPict = pTB.element
+			pPict.image = clng(PICTURE_CHOICE_N5KLIENT)
+
+			'wybor klienta niefiltrowany
+			pTB.addctrl CTRL_TYPE_PICTURE , -1
+			dim pPict2:set pPict2 = pTB.element
+			pPict2.image = clng(PICTURE_CHOICE_N5GRUPAKLIENT)
+
+
+
+			pTB.addctrl CTRL_TYPE_STATICEX , -1
+			dim pEdit:set pEdit = pTB.element
+			pEdit.size = 15
+			
+			if clng(pCursor("c_customer"))>0 then
+				pEdit.value = trans_.getobj(TYPEID_N5KLIENT , clng(pCursor("c_customer"))).text
+			else
+				pEdit.value = ""
+			end if
+			
+			dim hli_pict:set hli_pict = doc_.createhlistr("varFunctionHLI='choose_customer'")		
+			with hli_pict
+				.prop(PRIV_PROP_EDIT_IDENT) = clng(pEdit.ident)
+				.prop(PRIV_PROP_CHCK_IDENT) = clng(pCheckBox.ident)
+				.prop(PRIV_PROP_FILTROWANIE) = clng(1)
+			end with
+			set pPict.hli = hli_pict
+			pPict.tip = "Wybierz spośród dostawców danego produktu" 
+
+
+			dim hli_pict2:set hli_pict2 = doc_.createhlistr("varFunctionHLI='choose_customer'")		
+			with hli_pict2
+				.prop(PRIV_PROP_EDIT_IDENT) = clng(pEdit.ident)
+				.prop(PRIV_PROP_CHCK_IDENT) = clng(pCheckBox.ident)
+				.prop(PRIV_PROP_FILTROWANIE) = clng(0)
+			end with
+			set pPict2.hli = hli_pict2
+			pPict2.tip = "Wybierz innego dostawcę"  
+
+
+			set pCheckBox.userprop = doc_.createhli()
+
+			with pCheckBox.userprop
+				.prop(PRIV_PROP_IDPROD)		= idProd
+				.prop(PRIV_PROP_IDOPAK)		= clng(pCursor("c_idopak"))
+				.prop(PRIV_PROP_BILANS)		= ccur(curAktBil)
+				.prop(PRIV_PROP_PROGNOZA1)	= ccur(curProgBil1)
+				.prop(PRIV_PROP_PROGNOZA2)	= ccur(curProgBil2)
+				.prop(PRIV_PROP_CTRL_ILOSC) = clng(ident_il)
+				.prop(PRIV_PROP_CUSTOMER)	= clng(pCursor("c_customer"))
+			end with
+		end if
+
+		pCursor.MoveNext
+		nRecNr = nRecNr + 1
+	loop
+end function
+
+
+
+
+
+
+function choose_customer(byref hli)
+	dim pCheck:set pCheck = page_.ctrl(hli.prop(PRIV_PROP_CHCK_IDENT))
+	dim pEdit:set pEdit = page_.ctrl(hli.prop(PRIV_PROP_EDIT_IDENT))
+	dim bFiltr:bFiltr = (hli.prop(PRIV_PROP_FILTROWANIE) = 1)
+
+	'utworz where dla dostawcy
+	dim idProd:idProd = pCheck.userprop.prop(PRIV_PROP_IDPROD)
+	g_choicelist_idprod = idProd
+	dim strWhere
+	dim strWherePolRab	
+	strWherePolRab = " idobj in (select wpKlientGrupa from n5polrab where wpKlientGrupa_wrt = TYPEID_N5KLIENT and wpProdGrupa = " + cstr(idProd) + " and wpProdGrupa_wrt=TYPEID_N5PRODUKT   )"
+	if bFiltr then
+		strWhere = "eAktywny=N5KLIENT_AKTYWNY and ( ( "+ strWherePolRab + " ) or ( idobj in (select p_pDostawca from vlist_n5zakup_listpozycje where c_pProdukt= "+ cstr(idProd) +" ) ) ) "
+	else
+		strWhere = ""	
+	end if
+#ifdef _DEBUG
+	trans_.message 1002 , 0 , "DEBUG: " + strWhere
+#endif
+
+	dim nChoice
+	if bFiltr then
+		nChoice = fire_choice_list_custom (TYPEID_N5KLIENT,"Dostawca","",strWhere,"","",  getref("BulidDostawcaRow") , true)
+	else
+		nChoice = fire_choice_list (TYPEID_N5KLIENT,"Dostawca","",strWhere,"","")
+	end if
+
+	if nChoice > 0 then
+		pCheck.userprop.prop(PRIV_PROP_CUSTOMER) = clng(nChoice)
+		pEdit.value = trans_.getobj(TYPEID_N5KLIENT , nChoice).text
+	else
+		pEdit.value = ""
+	end if
+end function
+
+
+
+dim pGrupaParam
+dim pRejestrZamParam
+
+
+function get_default_param(byref pPlanMag)
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+	'wybór magazynów
+	pParamArray.add pPlanMag.get_mag_filter_param()
+
+	'termin analizy 'w przód'
+	pParamArray.add pPlanMag.get_termin_konc_param()
+	
+	'termin analizy wstecz
+	dim pParamOkresBkwd : set pParamOkresBkwd = pPlanMag.get_okres_sprz_param()
+'	pParamOkresBkwd.Mode = 7 'MODE_RANGE
+'	pParamOkresBkwd.first_value = DateAdd("m",-3,trans_.var(GVAR_TODAY))
+'	pParamOkresBkwd.last_value = trans_.var(GVAR_TODAY)
+	pParamArray.add pParamOkresBkwd
+
+'filtr na pokazywane produkty 
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwa produktu").bindexpr("t_prod.strNazwa")
+	pParamArray.add doc_.afc.rap.param.new_text("Indeks produktu").bindexpr("t_prod.strIndeks")
+'dostawca
+	pParamArray.add doc_.afc.rap.param.new_text("Dostawca").bindexpr("isnull(t_dost.strNazwa,'')")
+	
+	set pGrupaParam = doc_.afc.rap.param.new_text("Grupa produktów").bindexpr("strNazwa")
+	pParamArray.add pGrupaParam
+
+	dim pParamFactory2: set pParamFactory2= doc_.afc.rap.param
+	Set pRejestrZamParam = pParamFactory2.new_choice("Rejestr zamówień obcych").bindexpr("idobj")
+	doc_.afc.rap.param.init_on_query pRejestrZamParam, trans_ ,_
+		"select strNazwa , idobj from n5rejestrdok where eTyp in (N5REJESTRDOK__ZAM_OBCE) order by strNazwa "
+	pParamArray.add pRejestrZamParam
+  
+#ifdef _ABAKUS
+  'rok ksiegowy
+	dim pParamRok: set pParamRok = doc_.afc.rap.param
+  dim pParamRokChoice : set pParamRokChoice = pParamRok.new_choice("Rok").bindexpr("year(p_dDataReal)")
+	pParamRokChoice.multiple = true
+	pParamRok.init_on_query pParamRokChoice, trans_,"select year(dDataRozp),year(dDataRozp) from n5rokksieg order by year(dDataRozp) desc"
+  'zaznacz aktualny rok
+  dim iter
+  for iter = 0 to pParamRokChoice.names.upperIndex
+    if pParamRokChoice.names.value(iter) = year(trans_.var(GVAR_TODAY)) then
+      pParamRokChoice.selected.value(iter) = true
+    else
+      pParamRokChoice.selected.value(iter) = false
+    end if
+  next
+  
+	pParamArray.add pParamRokChoice  
+#endif  
+
+	set get_default_param = pParamArray
+end function
+
+
+
+function scan_selection
+
+	dim pTmpDict : set pTmpDict = doc_.system.activex("scripting.dictionary")
+	'sortowanie slowanika dostawca/produkt
+	set g_customer_array = doc_.afc.new_navoarray()
+	set g_customer_array.Operations = new CNavoArraySupport
+
+	dim pBody : set pBody = page_.ctrl(CTRLID_RESULT_TABLE).body
+	dim pRow
+	dim pDostProd
+	for each pRow in pBody
+		with pRow.cell(2).element(1)
+			if .value = "1" then
+				pTmpDict.Add .userprop.prop(PRIV_PROP_IDOPAK),.userprop
+				'tablica dostawcow/produktow - do grupowania zamowien
+				set pDostProd = new CDostProd
+				pDostProd.m_idProd = clng(.userprop.prop(PRIV_PROP_IDPROD))
+				pDostProd.m_idOpak = clng(.userprop.prop(PRIV_PROP_IDOPAK))
+				pDostProd.m_idDostawca = clng(.userprop.prop(PRIV_PROP_CUSTOMER))
+				g_customer_array.add pDostProd
+			end if
+		end with
+	next
+	'posortujemy g_customer_array po dostawcy
+	g_customer_array.Sort
+	set scan_selection = pTmpDict
+end function
+
+dim g_customer_array
+
+class CDostProd
+	public m_iddostawca
+	public m_idProd
+	public m_idOpak
+end class
+
+
+class CNavoArraySupport
+
+	public mvarAnotherArray
+
+	'-----------------------------------------------------------------------
+	' Zamień dwa elementy ze sobą
+	'-----------------------------------------------------------------------
+	public function swapelements(byref pnavoarray, byref nindexelem1, byref nindexelem2)
+		dim varElem
+		
+		set varElem = pNavoArray.Value(nIndexElem1)
+		set pNavoArray.Value(nIndexElem1) = pNavoArray.Value(nIndexElem2)
+		set pNavoArray.Value(nIndexElem2) = varElem
+	end function
+
+	'-----------------------------------------------------------------------
+	'Czy element elem1 jest < elem2
+	'-----------------------------------------------------------------------
+	public function less(byval elem1, byval elem2)
+		Less = (elem1.m_iddostawca < elem2.m_iddostawca)
+	end function
+
+	'-----------------------------------------------------------------------
+	'Czy element elem1 jest > elem2
+	'-----------------------------------------------------------------------
+	public function more(byval elem1, byval elem2)
+		More = (elem1.m_iddostawca > elem2.m_iddostawca)
+	end function
+
+	'-----------------------------------------------------------------------
+	'Czy element elem1 jest = elem2
+	'-----------------------------------------------------------------------
+	public function equal(byval elem1, byval elem2)
+		Equal = (elem1.m_iddostawca = elem2.m_iddostawca)
+	end function
+
+end class
+
+
+
+function array_2_in_str(byref pProdDict)
+	dim strIn : strIn = "(0"
+	dim iter
+	dim pKeys : pKeys = pProdDict.Keys
+	for iter = 0 to pProdDict.count - 1
+		strIn = strIn + "," + cstr(pKeys(iter))
+	next
+	array_2_in_str = strIn + ")"
+end function
+
+
+function set_cursor_position(byref rs , byval idProdukt , byval idOpak )
+	rs.movefirst
+	dim ustawiony:ustawiony = false
+	do while not ustawiony
+		if clng(rs("p_idobj")) = idProdukt and idOpak = clng(rs("c_idobj")) then
+			ustawiony = true
+		else
+			rs.movenext
+		end if   	
+	loop
+end function
+
+
+function create_zam_wl
+
+	dim pProdDict : set pProdDict = scan_selection()
+	if pProdDict.count = 0 then
+		MessageBox "Nie wybrano żadnego towaru", "Kreator zamówień własnych", vbOKOnly, vbInformation
+		exit function
+	end if
+
+	dim pCursor : set pCursor = trans_.createadors( _
+		"select p_idobj,c_idobj from vlist_n5produkt_listopakowania where c_idobj in " + array_2_in_str(pProdDict) +_
+		" order by p_idobj , coll_lp  ")
+	dim idLastDost : idLastDost = -1
+	dim pFormZamWl : set pFormZamWl = nothing
+
+	dim iter
+	for iter = 0 to g_customer_array.UpperIndex			
+		'iterujem,y sie po posortowanej by customer tablicy
+		'ustawiamy kursor na odpowiednim produkcie/opakowaniu
+		set_cursor_position pCursor , g_customer_array.value(iter).m_idProd , g_customer_array.value(iter).m_idOpak
+
+		
+		dim idProd : idProd = clng(pCursor("p_idobj"))
+		dim idOpak : idOpak = clng(pCursor("c_idobj"))
+		dim pUserProp : set pUserProp = pProdDict.Item(idOpak)
+		dim idDost : idDost = clng(pUserProp.prop(PRIV_PROP_CUSTOMER))
+
+		if idDost <> 0 then
+			if idDost <> idLastDost then
+				if idLastDost <> -1 then
+					'zakończ zamówienie
+					pFormZamWl.domodalauto()
+					set pFormZamWl = nothing
+				end if
+				if pFormZamWl is nothing then
+					'rozpocznij zamowienie
+					trans_.var(APPVAR_REJESTR_TYP) = clng(N5REJESTRDOK__ZAM_WLASNE)
+					dim pOpenFormZamWl : set pOpenFormZamWl = doc_.getmodule(60129).prepare_form_open_command(TYPEID_N5ZAMOWIENIE,0,0)
+					if pOpenFormZamWl is nothing then
+						exit function
+					end if
+					set pFormZamWl = doc_.getpagehli(pOpenFormZamWl)
+					if pFormZamWl is nothing then
+						exit function
+					end if
+				end if
+				idLastDost = idDost
+				if idDost <> 0 then
+					set pFormZamWl.root.pKlient = trans_.getobj(TYPEID_N5KLIENT,idDost)
+				end if
+			end if
+
+							
+			if ccur(page_.ctrl(pUserProp.prop(PRIV_PROP_CTRL_ILOSC)).value) > 0 then
+				dim pPozZam : set pPozZam = pFormZamWl.root.listPozycje.addnew()
+				with pPozZam
+					set .pProdukt = trans_.getobj(TYPEID_N5PRODUKT,idProd)
+					set .pOpak = .pProdukt.listOpakowania.get(.pProdukt.listOpakowania.findonid(idOpak))
+					
+					'dim curIlosc : curIlosc = - ccur(pUserProp.prop(PRIV_PROP_PROGNOZA1))
+					dim curIlosc : curIlosc = ccur(page_.ctrl(pUserProp.prop(PRIV_PROP_CTRL_ILOSC)).value)
+					if curIlosc < ccur(0.0) then
+						curIlosc = ccur(0.0)
+					end if
+					.curIloscOpak = curIlosc 
+				end with
+			end if
+		end if
+	next
+
+'		pCursor.MoveNext
+'	loop
+'----------------
+
+	if idLastDost <> -1 then
+		'zakończ zamówienie
+		pFormZamWl.domodalauto()
+		set pFormZamWl = nothing
+	end if
+end function
+
+function create_zlprod
+	dim pProdDict : set pProdDict = scan_selection()
+	if pProdDict.count = 0 then
+		MessageBox "Nie wybrano żadnego towaru", "Kreator zleceń produkcyjnych", vbOKOnly, vbInformation
+		exit function
+	end if
+	dim pOpenFormZP : set pOpenFormZP = doc_.getmodule(60129).prepare_form_open_command(TYPEID_N5ZLECPROD,0,0)
+	if pOpenFormZP is nothing then
+		exit function
+	end if
+	dim pFormZP : set pFormZP =  doc_.getpagehli(pOpenFormZP)
+	if pFormZP is nothing then
+		exit function
+	end if
+	
+	dim iter
+	dim pKeys : pKeys = pProdDict.Keys
+	for iter = 0 to pProdDict.count - 1
+		dim idOpak : idOpak = clng(pKeys(iter))
+		dim pUserProp : set pUserProp = pProdDict.Item(idOpak)
+		dim pProdukt : set pProdukt = trans_.getobj(TYPEID_N5PRODUKT,clng(pUserProp.prop(PRIV_PROP_IDPROD)))
+		if pProdukt.prod_cWyrob = "1" then
+
+			if ccur(page_.ctrl(pUserProp.prop(PRIV_PROP_CTRL_ILOSC)).value) > 0 then
+				dim pPozZP : set pPozZP = pFormZP.root.listPozycje.addnew()
+				with pPozZP
+					set .pProdukt = pProdukt
+					set .pOpak = .pProdukt.listOpakowania.get(.pProdukt.listOpakowania.findonid(idOpak))
+					'dim curIlosc : curIlosc = - ccur(pUserProp.prop(PRIV_PROP_PROGNOZA1))
+					dim curIlosc : curIlosc = ccur(page_.ctrl(pUserProp.prop(PRIV_PROP_CTRL_ILOSC)).value)
+					if curIlosc < ccur(0.0) then
+						curIlosc = ccur(0.0)
+					end if
+					.curIloscOpak = curIlosc
+				end with
+			end if
+
+		end if
+	next
+	pFormZP.domodalauto()
+end function
+
+function c##CTRLID_REDIRECT_IL_ZAP##_ongetdata(byref oCtrl) : c##CTRLID_REDIRECT_IL_ZAP##_ongetdata = true
+end function
+
+function c##CTRLID_REDIRECT_IL_ZAP##_ondataentered(byref oCtrl, byval newValue)
+	c##CTRLID_REDIRECT_IL_ZAP##_ondataentered = true
+
+	g_curSumIlZap = g_curSumIlZap - g_oIloscDict.Item(oCtrl.ident) + newValue
+	g_oIloscDict.Item(oCtrl.ident) = newValue
+end function
+
+function c##CTRLID_REDIRECT_CHKBOX##_ongetdata(byref oCtrl)
+	page_.ctrl(oCtrl.userprop.prop(PRIV_PROP_CTRL_ILOSC)).disable = (oCtrl.value = "0")
+	c##CTRLID_REDIRECT_CHKBOX##_ongetdata = true
+end function
+
+function c##CTRLID_REDIRECT_CHKBOX##_ondataentered(byref oCtrl, byval newValue)
+	c##CTRLID_REDIRECT_CHKBOX##_ondataentered = true
+	
+	if newValue = "0" then
+		g_curSumIlZap = g_curSumIlZap - g_oIloscDict.Item( oCtrl.userprop.prop(PRIV_PROP_CTRL_ILOSC) )
+	else
+		g_curSumIlZap = g_curSumIlZap + g_oIloscDict.Item( oCtrl.userprop.prop(PRIV_PROP_CTRL_ILOSC) )
+	end if
+end function
+
+function c##CTRLID_SUMA_IL_ZAP##_ongetdata(byref oCtrl) : c##CTRLID_SUMA_IL_ZAP##_ongetdata = true
+	oCtrl.value = nx_.display.quantity(g_curSumIlZap,"",g_iMaxPrec)
+end function
+
+function on_apply_factor()
+	dim curFactor : curFactor = page_.ctrl(CTRLID_FACTOR).value
+	page_.ctrl(CTRLID_FACTOR).value = ccur(100.0)
+	if curFactor <> ccur(100.0) then
+		dim pProdDict : set pProdDict = scan_selection()
+
+		dim iter
+		dim pKeys : pKeys = pProdDict.Keys
+		for iter = 0 to pProdDict.count - 1
+			dim idOpak : idOpak = clng(pKeys(iter))
+			dim pUserProp : set pUserProp = pProdDict.Item(idOpak)
+			dim iCtrlIlosc : iCtrlIlosc = pUserProp.prop(PRIV_PROP_CTRL_ILOSC)
+			dim iPrecision : iPrecision = page_.ctrl(iCtrlIlosc).precision
+			dim curOldIlosc : curOldIlosc = g_oIloscDict.Item( iCtrlIlosc )
+			dim curNewIlosc : curNewIlosc = doc_.afc.convert.roundn(curOldIlosc * curFactor / ccur(100.0),iPrecision)
+			if curNewIlosc <> curOldIlosc then
+				page_.ctrl(iCtrlIlosc).value = curNewIlosc
+				g_curSumIlZap = g_curSumIlZap - g_oIloscDict.Item(iCtrlIlosc) + curNewIlosc
+				g_oIloscDict.Item(iCtrlIlosc) = curNewIlosc
+			end if
+		next
+	end if
+end function
+
+]]>
+</script>
+</config>
+	<body>
+		<table>
+			<tbody>
+				<tr>
+					<td>
+						<picture image='80139' tip='Wypełnij raport' width='1000' height='1000' href='varFunction="frefresh"' />
+						<picture image='PICTURE_CHOICE_N5ZAMOWIENIE' tip='Utwórz zamówienia' width='1000' height='1000' href='varFunction="create_zam_wl"' />
+						<picture image='PICTURE_CHOICE_N5ZLECPROD' tip='Utwórz zlecenia produkcyjne' width='1000' height='1000' href='varFunction="create_zlprod"' />
+						<!--
+						<t size='5'/>
+						<table style='STYLE_TABLE'>
+							<tbody>
+								<tr>
+									<td>
+										<edit disable='true' size='50' style='STYLE_CTRL'></edit>
+										QXE_PICTURE_ACTION(-1,PICTURE_CHOICE_N5KLIENT,varFunction="choose_przychodzprod",Kliknij aby wybrać klienta)
+									</td>
+								</tr>								
+							</tbody>
+						</table>
+						-->
+					</td>
+				</tr>
+				<tr>
+					<td>
+						<table border='1' name='CTRLID_RESULT_TABLE'>
+							<thead style='STYLE_TABLE_HEADER'>
+								<tr>
+									<td width='min' rowspan='2'><t>LP</t></td>
+									<td width='max' rowspan='2'>
+										<text><![CDATA[C_FIELD_FIRST_HUMANNAME]]></text>
+									</td>
+									<td width='max' rowspan='2'>
+										<text><![CDATA[C_FIELD_SECOND_HUMANNAME]]></text>
+									</td>
+#ifdef APPCONFIG_ZAMOWIENIE_SHOW_CECHA1
+									<td width='max' rowspan='2'>
+										<text><![CDATA[Marka]]></text>
+									</td>
+#endif
+									<!--
+									<td width='min' rowspan='2'>
+										<text><![CDATA[j.m.]]></text>
+									</td>
+									-->
+									<td width='min' rowspan='2' align='right'>
+										<text><![CDATA[J.m.]]></text>
+									</td>
+									<td width='min' rowspan='2' align='right'>
+										<text><![CDATA[Stan mag.]]></text>
+									</td>
+									<td width='min' rowspan='2' align='right'>
+										<text><![CDATA[Zamó- wienia obce]]></text>
+									</td>
+									<td width='min' rowspan='2' align='right'>
+										<text><![CDATA[Na prod.]]></text>
+									</td>
+									<td width='min' rowspan='2' align='right'>
+										<text><![CDATA[Bilans]]></text>
+									</td>
+									<td width='min' rowspan='2' align='right'>
+										<text><![CDATA[ Zamó- wienia własne]]></text>
+									</td>
+									<td width='min' rowspan='2' align='right'>
+										<text><![CDATA[Z pro- dukcji]]></text>
+									</td>
+									<td width='min' rowspan='2' align='right'>
+										<text><![CDATA[Stan min.]]></text>
+									</td>									
+									<td width='min' rowspan='2' align='right'>
+										<text><![CDATA[Stan max.]]></text>
+									</td>									
+									<td width='min' colspan='3' align='center'>
+										<text><![CDATA[Prognoza]]></text>
+									</td>
+									<td width='min' rowspan='2' align='right'>
+										<text><![CDATA[Ilosc zapotrze- bowania]]></text>
+									</td>
+									<td width='min' rowspan='2' >
+										<text><![CDATA[Dostawca]]></text>
+									</td>
+								</tr>
+								<tr>
+									<td width='min' align='right'>
+										<text><![CDATA[sprzed]]></text>
+									</td>
+									<td width='min' align='right'>
+										<text><![CDATA[stanu (sprzed)]]></text>
+									</td>
+									<td width='min' align='right'>
+										<text><![CDATA[stanu (zamów)]]></text>
+									</td>
+								</tr>
+							</thead>
+							<tbody backcolor='white'>
+							</tbody>
+							<tfoot>
+								<tr style='STYLE_TABLE_HEADER'>
+									<td colspan='COLSPAN_RAZEM'>
+										<t>Razem</t>
+									</td>
+									<td colspan='12' align='right' bold='false' keepline='true'>
+										<t bold='true'>Mnożnik&nbsp;</t>
+										<currency name='CTRLID_FACTOR' unit='%' prec='0'></currency>
+										<t size='1' />
+										<button style='STYLE_BUTTON' 
+											href='varFunction="on_apply_factor"'>Przelicz</button>
+									</td>
+									<td align='right'>
+										<t name='CTRLID_SUMA_IL_ZAP'>
+											<transfer mode='custom' />
+										</t>
+									</td>
+									<td keepline='true'>
+									</td>
+								</tr>
+							</tfoot>
+						</table>
+					</td>
+				</tr>
+			</tbody>
+		</table>		
+	</body>
+</page>

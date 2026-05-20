@@ -1,0 +1,364 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+
+#include "h1000.h" 
+#include "h1200.h" 
+#include "h1231.h" 
+
+-->
+
+<class>
+
+	<identifier>TYPEID_N5POZRATA</identifier>
+	<table>n5pozrata</table>
+	<humanname>Rata płatności</humanname>
+	<idobj/>
+	<child/>
+	<hidden/>
+
+
+	<embedded>
+		<name>prat_dDataPlat</name>
+		<sqltype>SQLdate</sqltype>
+		<humanname>Termin płatności</humanname>
+		<nonempty/>
+	</embedded>
+
+
+	<ref>
+		<name>prat_pSposobPlatnosci</name>
+		<humanname>Sposób płatności</humanname>
+		<typeid>TYPEID_N5SPOSPLAT</typeid>
+	</ref>
+
+
+	<ref>
+		<name>prat_pPlatnik</name>
+		<humanname>Płatnik</humanname>
+		<typeid>TYPEID_N5KLIENT</typeid>
+	</ref>
+
+	<embedded>
+		<name>prat_curRata</name>
+		<sqltype>SQLcurrency</sqltype>
+		<humanname>Kwota raty</humanname>
+		<nonempty/>
+	</embedded>
+
+	<ref>
+		<name>prat_pTransakcja</name>
+		<humanname>Transakcja</humanname>
+		<typeid>TYPEID_N5TRANSAKCJA</typeid>
+		<optional/>
+	</ref>
+
+
+
+<cursors>
+	<cursor>
+		<identifier>CRSR_DEFAULT</identifier>
+		<humanname>wg klienta</humanname>
+		<join></join>
+		<where></where>
+		<orderby>prat_pKlient , prat_dDataPlat</orderby>
+	</cursor>
+</cursors>
+
+<script>
+<![CDATA[
+
+
+#include "L50523.NXB"
+'dok_handl_*_transaction
+#include "L50227.NXB"
+
+'operacja transakcji
+#include "50525"
+
+function n5pozrata_as_text(): n5pozrata_as_text=""
+end function
+
+
+function n5pozrata_initnew(): n5pozrata_initnew=true
+	if this_.parent.type = TYPEID_N5SPRZEDAZ then
+		this_.prat_pPlatnik = this_.parent.pKlient
+	end if
+end function
+
+
+
+
+function n5pozrata_befins(): n5pozrata_befins=true
+
+	if this_.parent.type <> TYPEID_N5ZAMOWIENIE then
+
+    if not n5pozrata_rebuild_trop(false) then
+      exit function
+    end if
+
+	end if
+
+end function
+
+function n5pozrata_rebuild_trop(byval bMode) : n5pozrata_rebuild_trop = false
+	dim curNaleznoscWal
+	dim curNaleznosc
+  dim oTransOper
+
+	curNaleznoscWal = this_.prat_curRata
+	curNaleznosc = przelicz_walute(curNaleznoscWal, this_.parent.curKurs )
+
+	if this_.parent.type = TYPEID_N5SPRZEDAZ then
+		if not this_.parent.pRozlVat is nothing then
+   
+      'stworzenie obiektu n5transakcja_operacja
+      initialize_transaction_oper this_, oTransOper	
+
+      'stworzenie obiektu transakcji dla dok sprzedazy
+			n5pozrata_initialize_transaction_for_sprzedaz()
+      
+#ifdef ENABLE_DB14
+  update_transaction_oper this_, oTransOper, curNaleznoscWal, curNaleznosc, 0, 0 , ccur(0.0), ccur(0.0)
+#else
+  update_transaction_oper this_, oTransOper, curNaleznoscWal, curNaleznosc, 0, 0
+#endif
+        
+      
+      if trans_.var(GVAR_OPERATION_MODE) = clng(OPERATION_MODE_UPGRADE) then
+        if not oTransOper is nothing then
+          set oTransOper.trop_pTransakcja = this_.prat_pTransakcja
+        end if  
+      end if
+      
+			n5pozrata_update_transaction_for_sprzedaz this_.prat_pTransakcja,curNaleznoscWal,curNaleznosc
+		end if
+	end if
+
+	if this_.parent.type = TYPEID_N5ZAKUP then
+       
+    'stworzenie obiektu n5transakcja_operacja
+    initialize_transaction_oper this_, oTransOper
+
+    'stworzenie obiektu transakcji dla dok zakupu
+		n5pozrata_initialize_transaction_for_zakup()
+    
+#ifdef ENABLE_DB14
+    update_transaction_oper this_, oTransOper, curNaleznoscWal, curNaleznosc, 0, 0, ccur(0.0), ccur(0.0)
+#else
+    update_transaction_oper this_, oTransOper, curNaleznoscWal, curNaleznosc, 0, 0
+#endif
+             
+    if trans_.var(GVAR_OPERATION_MODE) = clng(OPERATION_MODE_UPGRADE) then
+      if not oTransOper is nothing then  
+        set oTransOper.trop_pTransakcja = this_.prat_pTransakcja       
+      end if
+    end if
+
+		n5pozrata_update_transaction_for_zakup this_.prat_pTransakcja,curNaleznoscWal,curNaleznosc		
+	end if
+  
+	this_.prat_pTransakcja.dDataRozp	= this_.parent.dDataWyst
+	this_.prat_pTransakcja.dDataWym = this_.prat_dDataPlat  
+
+  if trans_.var(GVAR_OPERATION_MODE) = clng(OPERATION_MODE_UPGRADE) then
+    n5pozrata_rebuild_trop = true
+  else
+    dim idTransOper, idTrans
+    get_id_trans oTransOper, idTransOper, this_.prat_pTransakcja, idTrans
+    n5pozrata_rebuild_trop = save_transaction_oper(idTransOper, idTrans)
+  end if
+end function
+
+
+function n5pozrata_befupd(): n5pozrata_befupd=true
+
+	dim old_curNaleznoscWal
+	dim curNaleznoscWal
+	dim old_curNaleznosc
+	dim curNaleznosc
+  dim oTransOper  
+
+	if this_.parent.type <> TYPEID_N5ZAMOWIENIE then
+
+		old_curNaleznoscWal = this_.old_prat_curRata
+		curNaleznoscWal = this_.prat_curRata
+		old_curNaleznosc = przelicz_walute(old_curNaleznoscWal, this_.parent.curKurs )
+		curNaleznosc = przelicz_walute(curNaleznoscWal, this_.parent.curKurs )
+
+		if this_.parent.type = TYPEID_N5SPRZEDAZ then		
+			n5pozrata_initialize_transaction_for_sprzedaz
+      
+      'update obiektu n5transakcja_operacja      
+      if not this_.prat_pTransakcja is nothing then
+        set oTransOper = find_transaction_oper(this_,nothing)           
+        
+#ifdef ENABLE_DB14
+        update_transaction_oper this_, oTransOper, curNaleznoscWal, curNaleznosc, 0, 0, ccur(0.0), ccur(0.0)     
+#else
+        update_transaction_oper this_, oTransOper, curNaleznoscWal, curNaleznosc, 0, 0     
+#endif
+
+      end if      
+      
+			n5pozrata_update_transaction_for_sprzedaz this_.old_prat_pTransakcja, - old_curNaleznoscWal, - old_curNaleznosc
+			n5pozrata_update_transaction_for_sprzedaz this_.prat_pTransakcja, curNaleznoscWal , curNaleznosc
+		end if		
+
+		if this_.parent.type = TYPEID_N5ZAKUP then		
+			n5pozrata_initialize_transaction_for_zakup
+      
+      'update obiektu n5transakcja_operacja
+      if not this_.prat_pTransakcja is nothing then
+        set oTransOper = find_transaction_oper(this_,nothing)           
+        
+#ifdef ENABLE_DB14
+        update_transaction_oper this_, oTransOper, curNaleznoscWal, curNaleznosc, 0, 0 , ccur(0.0), ccur(0.0)   
+#else
+        update_transaction_oper this_, oTransOper, curNaleznoscWal, curNaleznosc, 0, 0    
+#endif
+
+      end if  
+      
+			n5pozrata_update_transaction_for_zakup this_.old_prat_pTransakcja, - old_curNaleznoscWal, - old_curNaleznosc
+			n5pozrata_update_transaction_for_zakup this_.prat_pTransakcja, curNaleznoscWal , curNaleznosc
+		end if		
+    
+	end if
+  
+  dim idTransOper, idTrans
+  get_id_trans oTransOper, idTransOper, this_.prat_pTransakcja, idTrans
+  n5pozrata_befupd = save_transaction_oper(idTransOper, idTrans)  
+
+end function
+
+
+
+function n5pozrata_befdel(): n5pozrata_befdel=false
+	dim curNaleznoscWal
+	dim curNaleznosc
+  dim oTransOper   
+
+	if this_.parent.type <> TYPEID_N5ZAMOWIENIE then
+
+		curNaleznoscWal = this_.old_prat_curRata
+		curNaleznosc = przelicz_walute(curNaleznoscWal, this_.parent.old_curKurs )
+
+		if this_.parent.type = TYPEID_N5SPRZEDAZ then
+			n5pozrata_update_transaction_for_sprzedaz this_.old_prat_pTransakcja, - curNaleznoscWal, - curNaleznosc
+		end if
+
+		if this_.parent.type = TYPEID_N5ZAKUP then
+			n5pozrata_update_transaction_for_zakup this_.old_prat_pTransakcja, - curNaleznoscWal, - curNaleznosc
+		end if
+  
+    set oTransOper = find_transaction_oper(this_,nothing)
+    if not oTransOper is nothing then
+       'usuń operację transakcji
+       try_delete_transaction_oper oTransOper.IdObj
+    end if
+
+		dim idTrans : idTrans = clng(0)
+		if not this_.old_prat_pTransakcja is nothing then
+			idTrans = this_.old_prat_pTransakcja.idobj
+		end if
+
+		'--odłącz nas od transakcji
+		set this_.prat_pTransakcja = nothing
+		if not trans_.save() then
+			exit function
+		end if
+
+		try_delete_empty_transaction idTrans
+				
+	end if
+
+	n5pozrata_befdel = true
+
+end function
+
+
+
+private sub n5pozrata_initialize_transaction_for_sprzedaz()
+	n5pozrata_initialize_transaction N5TRANSAKCJA_NALEZNOSC , "sprzed_listRata"
+end sub
+
+private sub n5pozrata_initialize_transaction_for_zakup()
+	n5pozrata_initialize_transaction N5TRANSAKCJA_ZOBOWIAZANIE , "zak_listRata"
+end sub
+
+
+
+private sub n5pozrata_initialize_transaction(eTyp,strListName)
+	if this_.prat_pTransakcja is nothing then
+		trans_.var(GVAR_CURRENT_CUSTOMER) = clng(this_.prat_pPlatnik.idobj)
+		set this_.prat_pTransakcja = trans_.newobj(TYPEID_N5TRANSAKCJA)
+		trans_.var(GVAR_CURRENT_CUSTOMER) = clng(0)
+		with this_.prat_pTransakcja			
+			.strSymTrans = this_.parent.strNrDok + " / rata " + cstr(this_.parent.field(strListName).findonid(this_.idobj))
+			.eTyp = clng(eTyp)
+			.dDataWym = this_.prat_dDataPlat
+			set .pWaluta = this_.parent.pWaluta
+			set .wrefPodmiot = this_.prat_pPlatnik
+		end with
+	end if
+end sub
+
+
+private sub n5pozrata_update_transaction_for_sprzedaz(byref pTransakcja,byval curKwota,byval curKwotaEwid)
+	if not pTransakcja is nothing then
+		with pTransakcja
+#ifndef ENABLE_DB11_TROP
+    .curWn = .curWn + curKwota
+#endif      
+		end with
+	end if
+end sub
+
+
+private sub n5pozrata_update_transaction_for_zakup(byref pTransakcja,byval curKwota,byval curKwotaEwid)
+	if not pTransakcja is nothing then
+		with pTransakcja
+#ifndef ENABLE_DB11_TROP     
+			.curMa = .curMa + curKwota
+#endif		
+    end with   
+	end if
+end sub
+
+
+
+function n5pozrata_prat_curRata_change(oldval):n5pozrata_prat_curRata_change = true
+	select case this_.parent.type
+		case TYPEID_N5SPRZEDAZ
+			this_.parent.sprzed_curRata = this_.parent.sprzed_curRata + oldval - this_.prat_curRata
+		case TYPEID_N5ZAMOWIENIE
+			this_.parent.zam_curRata = this_.parent.zam_curRata + oldval - this_.prat_curRata
+		case TYPEID_N5ZAKUP
+			this_.parent.zak_curRata = this_.parent.zak_curRata + oldval - this_.prat_curRata
+	end select
+end function
+
+
+
+function n5pozrata_listop(byval nInx):n5pozrata_listop = true
+	if nInx < 0 then	'usuwanie
+		select case this_.parent.type
+			case TYPEID_N5SPRZEDAZ
+				this_.parent.sprzed_curRata = this_.parent.sprzed_curRata + this_.prat_curRata
+			case TYPEID_N5ZAMOWIENIE
+				this_.parent.zam_curRata = this_.parent.zam_curRata + this_.prat_curRata
+			case TYPEID_N5ZAKUP
+				this_.parent.zak_curRata = this_.parent.zak_curRata + this_.prat_curRata
+		end select
+	end if
+end function
+
+
+
+]]>
+</script>
+	
+	
+	
+	
+</class>

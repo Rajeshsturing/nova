@@ -1,0 +1,242 @@
+#include "h1000.h" 
+#include "h1200.h" 
+#include "h1201.h" 
+#include "h1231.h" 
+#include "h1232.h" 
+#include "h1240.h" 
+
+<?xml version="1.0" encoding="windows-1250" ?>
+<class>
+	<identifier>TYPEID_N5RULE</identifier>
+	<table>n5rule</table>
+	<humanname>Definicja reguły</humanname>
+	<idobj/>
+
+	<!-- Kod reguły np. G1R1 -->
+	<embedded>
+		<name>strCode</name>
+		<sqltype>SQLc8</sqltype>
+		<humanname>Kod reguły</humanname>
+		<nonempty/>
+	</embedded>
+
+	<!-- Nazwa reguły -->
+	<embedded>
+		<name>strName</name>
+		<sqltype>SQLvc128</sqltype>
+		<humanname>Nazwa reguły</humanname>
+		<nonempty/>
+	</embedded>
+
+	<!-- Widoczna na liście -->
+	<embedded>
+		<name>cVisible</name>
+		<sqltype>SQLc1</sqltype>
+		<humanname>Widoczna na liście</humanname>
+		<default>1</default>
+	</embedded>
+
+	<!-- Warning lub error -->
+	<enum>
+		<name>eSignificance</name>
+		<humanname>Ważność</humanname>
+		<default>1</default>
+		
+		<item>Ostrzeżenie</item>
+		<item>Błąd</item>
+	</enum>
+
+	<embedded>
+		<name>strParam</name>
+		<sqltype>SQLvc7900</sqltype>
+		<humanname>Wartości parametrów</humanname>
+	</embedded>
+
+	<embedded>
+		<name>strOptionalParam</name>
+		<sqltype>SQLvc7900</sqltype>
+		<humanname>Wartości parametrów</humanname>
+	</embedded>
+
+<script>
+<![CDATA[
+
+'string2var
+#include "50126"
+
+'Stałe DELIMITER_...
+#include "50624"
+
+'-------------------------------------------------------------------------
+' Klasa reprezentuje parametry, ktore pojawia sie zgodnie z kolejnościa z 
+' jaka pojawiają sie w kreatorze reguł w kroku ich wypełniania
+' Każdy parametr ma liste wartości jakie zostały mu nadane przez 
+' wypełnienie go przez usera - to wlasnie ta klasa
+'-------------------------------------------------------------------------
+class CParamAtPosition
+
+	public m_pListParams
+	
+	private sub class_initialize()
+		set m_pListParams = trans_.afc.new_navoarray()
+	end sub
+
+	public function addvalue()
+		set addvalue = new CParamValue
+		m_pListParams.Add addvalue
+	end function
+
+	public function params_count()
+		params_count = m_pListParams.Count()
+	end function
+
+	public function getParam(byval nIndex)
+		set getParam = m_pListParams.Value(nIndex)
+	end function
+
+end class
+
+'-------------------------------------------------------------------------
+' Określona przez usera wartość parametru
+'-------------------------------------------------------------------------
+class CParamValue
+	public strSeparator1	'Znak oddzielający wybarne elemnty np. +/-
+	public strSeparator2	'Dodatkowy znak określający parametr np. Wn
+	
+	public varValue			'Wartość wybrana przez usera
+	public nVarType			'Typ zmienne np. vbCurrency
+
+	public nTypeId			'Typeid w przypadku obiektu
+	public strFldName		'Nazwa pola w przypadku obiektu
+
+	public strSavedValue	'Wartośc jaka została zapisana w bazie
+end class
+
+'-------------------------------------------------------------------------
+' Konwertuje zapisany value do obiektu reprezentującego value
+'-------------------------------------------------------------------------
+private function savedvalue2orgvalue(byval strSavedVal, byref pParamValue): savedvalue2orgvalue = false
+	dim pParamArr
+	set pParamArr = trans_.afc.new_navoarray()
+	
+	'Oddzielamy wartość od separatorów
+	'Tablica ma zawsze trzy elementy
+	pParamArr.Separate strSavedVal, DELIMITER_LEVEL_3
+
+	dim strSave
+	strSave = pParamArr.Value(0)
+
+	'Ustawinie separatorów
+	pParamValue.strSeparator1 = pParamArr.Value(1)
+	pParamValue.strSeparator2 = pParamArr.Value(2)
+
+	'Odpowiednie ustawienie parametru + jego konwersja do
+	'odpowiedniego typu strSave - pierwsze trzy znaki to liczba
+	'long - typ parametru
+	dim strVarType
+	strVarType = mid(strSave, 1, 3)
+
+	if (not isNumeric(strVarType)) then
+		exit function
+	end if
+
+	dim nVarType
+	nVarType = CLng(strVarType)
+
+	strSave = mid(strSave, 4, len(strSave)-3)
+
+	pParamValue.nVarType = nVarType
+
+	on error resume next
+	'Podstaw wartość przekonwertowana do opowiedniego typu dest.
+	if (nVarType=vbObject) then
+		dim pObjectParts
+		set pObjectParts = trans_.afc.new_navoarray()
+
+		pObjectParts.Separate strSave, ";"
+
+		pParamValue.nTypeId = CLng(pObjectParts.Value(0))	'typeid
+		pParamValue.varValue = CLng(pObjectParts.Value(1))	'idobj
+		pParamValue.strFldName = CStr(pObjectParts.Value(2))'fldname
+	else
+		pParamValue.varValue = string2var(strSave, nVarType)
+	end if
+
+	if (err.number<>0) then
+		exit function
+	end if
+
+	on error goto 0
+	savedvalue2orgvalue = true
+end function
+
+'-------------------------------------------------------------------------
+' Pobiera tablice parametrów
+'-------------------------------------------------------------------------
+private function getParams(byval strParams): set getParams = nothing
+	dim pParams
+	set pParams = trans_.afc.new_navoarray()
+
+	'Dobieramy sie do grupy parametrow
+	dim pParamPosArr
+	set pParamPosArr = trans_.afc.new_navoarray()
+
+	pParamPosArr.Separate strParams, DELIMITER_LEVEL_1
+
+	dim i
+	for i = 0 to pParamPosArr.UpperIndex()
+
+		dim strParamAtPosition
+		strParamAtPosition = pParamPosArr.Value(i)
+
+		dim pParamAtPosition
+		set pParamAtPosition = new CParamAtPosition
+
+		dim pParamsAtPosArr
+		set pParamsAtPosArr = trans_.afc.new_navoarray()
+
+		pParamsAtPosArr.Separate strParamAtPosition, DELIMITER_LEVEL_2
+
+		dim n
+		for n = 0 to pParamsAtPosArr.UpperIndex()
+			
+			dim pParamValue
+			set pParamValue = pParamAtPosition.addvalue()
+
+			pParamValue.strSavedValue = pParamsAtPosArr.Value(n)
+
+			if (not savedvalue2orgvalue(pParamsAtPosArr.Value(n), pParamValue)) then
+				exit function
+			end if
+
+		next
+
+		pParams.Add pParamAtPosition
+
+	next
+
+	set getParams = pParams
+end function
+
+'-------------------------------------------------------------------------
+' Pobiera tablice wymaganych parametrów
+'-------------------------------------------------------------------------
+function n5rule_getRequiredParams()
+	set n5rule_getRequiredParams = getParams(this_.strParam)
+end function
+
+'-------------------------------------------------------------------------
+' Pobiera tablice opcjonalnych parametrów
+'-------------------------------------------------------------------------
+function n5rule_getOptionalParams()
+	set n5rule_getOptionalParams = getParams(this_.strOptionalParam)
+end function
+
+function n5rule_as_text()
+	n5rule_as_text = this_.strName
+end function
+
+]]>
+</script>
+
+</class>

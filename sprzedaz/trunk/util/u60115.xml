@@ -1,0 +1,477 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1200.h"
+#include "h1201.h"
+#include "h1231.h"
+#include "h1240.h"
+-->
+<page>
+<config>
+<script>
+<!--
+	Standardowe szukanie
+-->
+<![CDATA[
+#include "50518"
+#include "50560"
+#include "50561"
+
+#ifdef _OBSOLETE_JUST_FOR_PATTERN_	
+		dim accessWHERE:accessWHERE=CStr("")
+		dim pAccessUtilPage
+		if (pPage.roottypeid=CLng(TYPEID_N5ZADANIE)) then 
+			set pAccessUtilPage=doc_.getmodule(60106)
+			accessWHERE = pAccessUtilPage.GetWHERE_ForCheckRights(STDR_READ,TYPEID_N5ZADANIE,"n5zadanie",trans_.var(GVAR_USER)	)
+		end if
+		if (pPage.roottypeid=CLng(TYPEID_N5DOKUMENT)) then 
+			set pAccessUtilPage=doc_.getmodule(60106)
+			accessWHERE = pAccessUtilPage.GetWHERE_ForCheckRights(STDR_READ,TYPEID_N5DOKUMENT,"n5dokument",trans_.var(GVAR_USER)	)
+		end if
+		if (pPage.roottypeid=CLng(TYPEID_SEARCHTYPE)) then 
+			set pAccessUtilPage=doc_.getmodule(60106)
+			accessWHERE = pAccessUtilPage.GetWHERE_ForCheckRights(STDR_READ,TYPEID_SEARCHTYPE,"SearchType",trans_.var(GVAR_USER)	)
+		end if
+		if (pPage.roottypeid=CLng(TYPEID_CHOICELIST)) then 
+			set pAccessUtilPage=doc_.getmodule(60106)
+			accessWHERE = pAccessUtilPage.GetWHERE_ForCheckRights(STDR_READ,TYPEID_CHOICELIST,"choicelist",trans_.var(GVAR_USER)	)
+		end if
+#endif
+'------------------------------------------------------------------
+' NX Generation
+'------------------------------------------------------------------
+'
+'  Funkcja obcina pierwsze słowo "JOIN" (jeśli istnieje). Zwraca obciętą wersję
+'  Przydatna jest przy funkcji trans_.createrawcursor().
+'
+'--------------------------------------------------------------------------
+
+function trim_first_join(byval strJoin)
+	dim s : s = LTrim(strJoin)
+
+	'--------------------------------------
+	'	dodatkowo obetnij przedrostki
+	if UCase(Left(s, 5))="LEFT " then
+		s = LTrim(Mid(s, 6))
+	end if
+
+	if UCase(Left(s, 6))="RIGHT " then
+		s = LTrim(Mid(s, 7))
+	end if
+
+	if UCase(Left(s, 6))="OUTER " then
+		s = LTrim(Mid(s, 7))
+	end if
+
+	if UCase(Left(s, 6))="INNER " then
+		s = LTrim(Mid(s, 7))
+	end if
+
+	'---------------------------------------
+
+	if UCase(Left(s, 5))="JOIN " then
+		s = Mid(s, 6)
+	end if
+	trim_first_join = s
+end function
+
+dim g_strAdditionalWhere	'Dodatkowy where
+
+function fopen()
+	g_strAdditionalWhere = ""
+end function
+
+function addAdditionalWhere(byval strNewAdditionalWhere)
+	g_strAdditionalWhere = strNewAdditionalWhere
+end function
+
+'--------------------------------------------------------------------------
+' glowna procedura tworzaca parametr raportu / szukania na podstawie bindingu
+'------------------------------------------------------------------
+function nx_create_param_on_binding(byref oBinding,byref oRPF)
+	dim oMultiChoiceParam
+
+	with oBinding
+		select case .compare_field_info.sqltype
+		case SQLcurrency,SQLqty
+			set nx_create_param_on_binding = oRPF.new_currency(.compare_field_info, .compare_expression, _
+				.binding_expression,.compare_condition,"",2)
+		case SQLdate
+			set nx_create_param_on_binding = oRPF.new_date_range(.compare_field_info,.compare_expression, _
+				.binding_expression,.compare_condition,trans_.var(GVAR_TODAY))
+		case SQLlong
+			if .compare_field_info.reltype = RELT_ENUM then
+				set oMultiChoiceParam = oRPF.new_multichoice(.compare_field_info,.compare_expression, _
+				.binding_expression,.compare_condition)
+					nx_init_choice_param_on_enum oMultiChoiceParam, _
+						.compare_field_info.parent.typeid, .compare_field_info.name
+				set nx_create_param_on_binding = oMultiChoiceParam
+			else
+				set nx_create_param_on_binding = oRPF.new_int(.compare_field_info,.compare_expression, _
+					.binding_expression,.compare_condition)
+			end if
+		case SQLtime
+			set nx_create_param_on_binding = oRPF.new_time(.compare_field_info,.compare_expression, _
+				.binding_expression,.compare_condition)
+		case else
+			dim strCompCondWhere : strCompCondWhere = ""
+			if trim( .compare_condition) <> "" then
+				strCompCondWhere = " where " + replace(.compare_condition,"{0}",.compare_field_info.parent.table_name)
+			end if
+			dim oRSCount : set oRSCount = trans_.createadors("select count(*) from " + _
+				.compare_field_info.parent.table_name + strCompCondWhere)
+			if clng(oRSCount(0)) < 30 then
+				
+				'compare_expression = idobj - ma specjalne znaczenie optymalizujace
+
+				set oMultiChoiceParam = oRPF.new_multichoice(.compare_field_info, "idobj", _
+						.binding_expression,.compare_condition)
+				oMultiChoiceParam.init_on_cursor _
+					trans_.createadors("select " + .compare_expression + ",idobj from " + _
+						.compare_field_info.parent.table_name  + strCompCondWhere +_
+					" order by " + .compare_expression + ",idobj")
+				set nx_create_param_on_binding = oMultiChoiceParam
+			else
+				set nx_create_param_on_binding = oRPF.new_text(.compare_field_info, .compare_expression, _
+					.binding_expression,.compare_condition)
+			end if
+		end select
+	end with
+end function
+
+#comment '------------------------------------------------------------------
+#comment 'buduje tablice parametrow raportu na podstawie RapDef
+#comment '------------------------------------------------------------------
+function nx_build_param_array_on_rapdef(byref oNXArray,byref oNXRapDef)
+	dim oRPF : set oRPF = nx_.new_param_factory()
+	dim oFilter
+	
+	for each oFilter in oNXRapDef.filters
+		dim oBinding
+		for each oBinding in oFilter.bindings
+			dim oParam : set oParam = nx_create_param_on_binding(oBinding,oRPF)
+			if not oParam is nothing then
+				oNXArray.add oParam
+			end if
+		next
+	next
+end function
+
+#comment '------------------------------------------------------------------
+#comment 'buduje tablice parametrow raportu na podstawie tablicy bindings
+#comment '
+#comment 'dostaje tablice Bindings, zwraca tablice RaportParam!
+#comment '------------------------------------------------------------------
+function nx_build_param_array_on_binding_array(byref oBindingNXArray,byref oRPF)
+	set nx_build_param_array_on_binding_array = nothing
+	
+	dim oParamNXArray : set oParamNXArray = nx_.new_array()
+	dim oBinding
+	for each oBinding in oBindingNXArray
+		dim oParam : set oParam = nx_create_param_on_binding(oBinding,oRPF)
+		if not oParam is nothing then
+			oParamNXArray.add oParam
+		end if
+	next
+	
+	set nx_build_param_array_on_binding_array = oParamNXArray
+end function
+
+#comment '------------------------------------------------------------------
+function nx_lookup_raport_definition(byval iTypeId,byval strFixedNamePart)
+	set nx_lookup_raport_definition = nothing
+	dim strName : strName = strFixedNamePart +  cstr(iTypeId) + "@"
+	'search user defined first
+	dim idSearchType : idSearchType = trans_.findobjid(TYPEID_SEARCHTYPE,"Nazwa='" + strName + "' and ResultTypeId=" + cstr(iTypeId))
+	if idSearchType <= 0 then
+		'search repository
+		set nx_lookup_raport_definition = nx_.apprep.objects.get_object(iTypeId) _
+			.raports.get_raport_by_name(strName)
+		exit function
+	end if
+	dim pSearchObj : set pSearchObj = trans_.getobj(TYPEID_SEARCHTYPE,idSearchType)
+	if pSearchObj is nothing then
+		exit function
+	end if
+	set nx_lookup_raport_definition = nx_load_raport_definition(pSearchObj)
+end function
+
+#comment '------------------------------------------------------------------
+#comment 'tworzy strumien z XML strony z kontrolkami do wyswietlenia dialogu
+#comment '------------------------------------------------------------------
+function nx_build_param_dialog_page(byref oNXArray,byval strTitle,byref pSO,byval iTemplate)
+	trans_.var(100) = strTitle
+
+	set pSO = asp_form_stream(iTemplate,0,oNXArray)
+end function
+
+#comment '-------------------------------------------------------
+#comment ' create nx_ raport definition on search type
+#comment '-------------------------------------------------------
+function nx_load_raport_definition(byref pSearchObj)
+	dim oRapDef : set oRapDef = nx_.new_rapdef(pSearchObj.ResultTypeId,pSearchObj.Nazwa)
+    
+	oRapDef.title = pSearchObj.Nazwa
+
+	dim oNXPath
+	dim oFilter 
+	for each oFilter in pSearchObj.listFilter
+		set oNXPath = nx_.load_fp_node_path(oFilter.ComposedPath)
+		oRapDef.addfltr oNXPath
+	next
+	dim oOrder
+	for each oOrder in pSearchObj.listOrder
+		set oNXPath = nx_.load_fp_node_path(oOrder.ComposedPath)
+        oRapDef.addordr oNXPath,(oOrder.cLink = "1"),(oOrder.cGroup = "1"),(oOrder.cDesc = "0")
+	next
+	dim oColumn
+	for each oColumn in pSearchObj.listColumn
+		set oNXPath = nx_.load_fp_node_path(oColumn.ComposedPath)
+		oRapDef.addcol oNXPath,(oColumn.cLink = "1"), (oColumn.cGroup = "1")
+	next
+
+	set nx_load_raport_definition = oRapDef
+end function
+
+'------------------------------------------------------------------
+' wyswietla dialog z parametrami
+' 0 - rezygnacja
+' 1 - 1-szy button
+' 2 - 2-gi button itd.
+'------------------------------------------------------------------
+function nx_display_param_dialog(byref oNXArray,byref pSO,byval iAutoAnswer)
+	nx_display_param_dialog = iAutoAnswer
+
+	dim iter
+	dim bShowDialog : bShowDialog = false
+	dim pParam
+	for each pParam in oNXArray
+		if not pParam.autoanswer then
+			bShowDialog  = true
+			exit for
+		end if
+	next
+
+	if bShowDialog then
+		dim pOpenHLI : set pOpenHLI = doc_.createhli()
+		set pOpenHLI.prop(GVAR_DESTPAGE) = pSO
+		pOpenHLI.prop(GVAR_CMD) = clng(CMD_OPEN_STATIC_PAGE)
+		dim pDialogPage : set pDialogPage = doc_.getpagehli(pOpenHLI)
+		pDialogPage.init_on_params oNXArray
+		dim iResult : iResult = pDialogPage.domodalauto()
+		if iResult  = 0 then
+			nx_display_param_dialog = 0
+			exit function
+		end if
+		pDialogPage.update_params oNXArray
+
+		set pDialogPage = nothing
+		nx_display_param_dialog = iResult
+	end if
+end function
+
+#comment '------------------------------------------------------------------
+#comment ' wstawienie do query wartosci aktualnych z parametru dialogu
+#comment '------------------------------------------------------------------
+function nx_update_query_with_param(byref oNXArray,byval strQuery)
+	dim pParam
+	dim oFormatter : set oFormatter = trans_.afc.convert.Formatter(strQuery)
+	for each pParam in oNXArray
+		oFormatter.add pParam.build_where_part()
+	next
+	nx_update_query_with_param = oFormatter.done()
+end function
+
+#comment '------------------------------------------------------------------
+#comment '(toplevel) odpytanie uzytkownika o wartosci parametrow
+#comment ' podmienia dostarczony strWhere (in/out)
+#comment '
+#comment '------------------------------------------------------------------
+function nx_acquire_parameters_ui(byref oNXParamArray,byval strDialogTitle, _
+	byval iPageTemplate,byref strWhere)
+	nx_acquire_parameters_ui = 0
+	
+	dim pSO : set pSO = doc_.createstreamobj()
+	nx_build_param_dialog_page oNXParamArray,strDialogTitle,pSO,iPageTemplate
+	dim iResult : iResult = nx_display_param_dialog(oNXParamArray,pSO,2)
+	if iResult = 0 then
+		exit function
+	else
+		strWhere = nx_update_query_with_param(oNXParamArray,strWhere)
+	end if
+	nx_acquire_parameters_ui = iResult
+end function
+
+#comment '------------------------------------------------------------------
+#comment 'klasa wspomagajaca tworzenie dialogow z raportami
+#comment 'dodajemy kolejne bindings, a potem tylko wolamy dialog
+#comment '------------------------------------------------------------------
+class nx_dialog_param_helper
+	private m_oNXRapParamFactory
+	private m_nBindingNXArray
+	private m_iTemplate
+	
+	private sub class_initialize()
+		set m_oNXRapParamFactory = nx_.new_param_factory()
+		set m_nBindingNXArray = nx_.new_array()
+		m_iTemplate = 20250
+	end sub
+	
+	private sub class_terminate()   'OK
+		set m_nBindingNXArray = nothing
+		set m_oNXRapParamFactory = nothing
+	end sub
+	
+	public sub add_binding(byval iTypeId,byval strFieldName, _
+			byval strCompareExpression,byval strBindingExpression, _
+			byval strCompareCondition)
+			
+		dim oBinding : set oBinding = m_oNXRapParamFactory.new_binding( _
+			iTypeId,strFieldName,strCompareExpression, _
+			strBindingExpression,strCompareCondition)
+			
+		m_nBindingNXArray.add oBinding
+	end sub
+
+	public sub add_simple_binding(byval iTypeId,byval strFieldName, _
+			byval strCompareExpression)
+		add_binding iTypeId,strFieldName,strCompareExpression,"idobj",""
+	end sub
+	
+	public property let id_dialog_template(byval iTemplate)
+		m_iTemplate = iTemplate
+	end property
+	
+	public function build_param_array()
+		set build_param_array = _
+			nx_build_param_array_on_binding_array(m_nBindingNXArray,m_oNXRapParamFactory)
+	end function
+
+	public function acquire_parameters_ui(byval strTitle,byref strQuery)
+		dim oParamNXArray : set oParamNXArray = build_param_array()
+		acquire_parameters_ui = nx_acquire_parameters_ui(oParamNXArray,strTitle,m_iTemplate,strQuery)
+	end function
+end class
+
+function new_nx_dialog_param_helper()
+	set new_nx_dialog_param_helper = new nx_dialog_param_helper
+end function
+
+'------------------------------------------------------------------
+function std_search(byref pPage) : std_search = false
+'---------------------------------------------------
+' poczatek fragmentu ktory mozna przeniesc do osobnej funkcji
+' 'wybierz sposob szyukania, odpytaj param i zwroc sqlquery
+'---------------------------------------------------
+	dim trans : set trans = trans_.createsubtran()
+	trans_.var(APPVAR_SEARCH_TYPEID) = pPage.root.type
+	trans_.var(APPVAR_SEARCH_KIND) = "S"
+	
+	'wybierz odpowiedni sposób wyszukiwania
+	dim idChoice : idChoice = nx_fire_choice_list( TYPEID_SEARCHTYPE, "Wybór sposobu szukania","ResultTypeId=" + cstr(pPage.root.type) + " and cKind='S' ","")
+	if idChoice = 0 then
+		exit function
+	end if
+	dim pSearchObj:set pSearchObj = trans_.getobj(TYPEID_SEARCHTYPE, idChoice)
+	if pSearchObj is nothing then
+		exit function
+	end if
+
+	dim oNXArray : set oNXArray = nx_.new_array()
+	dim oNXRapDef : set oNXRapDef = nx_load_raport_definition(pSearchObj)
+
+	dim oSQLQuery : set oSQLQuery = oNXRapDef.create_query(nx_.apprep,0) '0=qf_for_raport_obj
+	dim strWhere : strWhere = oSQLQuery.get_sql_where()
+	if g_strAdditionalWhere <> "" then
+		if strWhere = "" then
+			strWhere = g_strAdditionalWhere
+		else
+			strWhere = strWhere + " and " + g_strAdditionalWhere
+		end if
+	end if
+
+#ifdef _DEBUG
+	trans_.message 0,0,oSQLQuery.get_sql()
+#endif
+
+	nx_build_param_array_on_rapdef oNXArray,oNXRapDef
+
+	dim iResult : iResult = nx_acquire_parameters_ui(oNXArray,oNXRapDef.title,20217,strWhere)
+	if iResult = 0 then
+		exit function
+	end if
+
+	set pSearchObj = nothing
+	set trans = nothing
+'---------------------------------------------------
+' koniec fragmentu ktory mozna przeniesc do osobnej funkcji
+'---------------------------------------------------
+' kod pozostajacy w std_search -> wykorzystanie wynikow z w/w funkcji
+'---------------------------------------------------
+
+	dim strTableName : strTableName = pPage.root.getobjdef.Tablename
+	dim strJoin : strJoin = oSQLQuery.get_sql_joins()
+	dim pCursor: set pCursor = trans_.createrawcursor(pPage.roottypeid, _
+		strWhere, oSQLQuery.get_sql_orders(), trim_first_join(strJoin))
+	pCursor.forwardonly = false
+	set pPage.cursoriter = pCursor.createiterator
+
+	
+	if iResult = 1 then 'show list
+		dim strWhereForCL
+		strWhereForCL = strTableName + ".idobj in (select " + strTableName + ".idobj from " +_
+			strTableName + strJoin
+		if strWhere <> "" then
+			strWhereForCL = strWhereForCL + " where " + strWhere	
+		end if
+		strWhereForCL = strWhereForCL + ")"
+
+		dim iChoice : iChoice = nx_fire_choice_list( pPage.roottypeid,"Wybrane rekordy",strWhereForCL,"")
+		if iChoice <> 0 then			
+			dim pChoosenObj:set pChoosenObj = trans_.getobj(pPage.roottypeid, iChoice)
+			
+			if pPage.root.isnew() then
+				pPage.root.ignore = true
+			end if
+
+			'Ustawiamy odpowiedni obiekt
+			set pPage.root = pChoosenObj
+			trans_.discard			
+		end if
+	else
+#ifdef UTWORZ_LISTE_WYBORU_Z_SELEKCJI
+		'------------------- tworzenie listy wyboru --------------
+		dim pPerf : set pPerf = doc_.performing("Trwa tworzenie listy ...")
+		dim oElementNXArray : set oElementNXArray = nx_.new_array()
+		dim oItem
+		for each oItem in pCursor
+			oElementNXArray.add oItem.idobj
+		next
+
+		trans_.var(APPVAR_CHOICELIST_TYPEID) = pPage.roottypeid
+		dim pOpenSORFormHLI : set pOpenSORFormHLI = doc_.getmodule(60129).prepare_form_open_command(TYPEID_CHOICELIST,0,USAGE_EDIT)
+		if not pOpenSORFormHLI is nothing then
+			dim pSORPage : set pSORPage = doc_.getpagehli(pOpenSORFormHLI)
+			dim idElement
+			for each idElement in oElementNXArray
+				pSORPage.root.listElement.addnew().idElement = idElement
+			next
+			set pPerf = nothing
+			pSORPage.domodalauto
+		end if
+		'------------------- 
+#endif
+		pPage.ffirst
+	end if
+
+
+	std_search = true
+end function
+
+]]>
+</script>
+</config>
+	<body>
+		<t>Wyślij stronę</t>
+	</body>
+</page>

@@ -1,0 +1,630 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200.h"
+#include "h1201.h"
+#include "h1220.h"
+#include "h1222.h"
+#include "h1240.h"
+#include "h1231.h"
+
+#define CTRLID_MAGAZYN       101
+#define CTRLID_ILOSC_DOST    102
+#define CTRLID_BRAK_ILOSC    103
+#define CTRLID_ILOSC_POBR    104
+
+#define PROP_TAB_INX         201
+#define PROP_TAB_LP          202
+
+#define ID_TITLE             501
+#define ID_HEADER            502
+#define ID_REPORT            503
+#define ID_BUTTONS           504
+
+#define KOL_FIRST            0
+#define PINK_COLOR           RGB(255,196,196)
+#define COL_BUTTON           10
+#define ELEM_BUTTON_ROZBIJ   1
+#define ELEM_BUTTON_POLACZ   2
+
+#define PAGE_SEPARATOR       <table><tbody><tr><td><t></t></td></tr></tbody></table>
+
+-->
+<page width='9000' style='STYLE_PAGE'>
+<config>
+<script>
+<!--
+	Raport do segragacji surowców na magazynach (tworzenie RP)
+-->
+<![CDATA[
+
+'initialObjects
+#include "50526"
+
+'fire_choice_list
+#include "50200"
+
+dim pGR
+dim pCont : set pCont = nothing
+
+'-------------------------
+'pojedynczy obiekt surowca
+'-------------------------
+class cRawMaterialObj
+  public m_oProdukt         'produkt
+  public m_oOpak            'opakowanie
+  public m_curIlosc         'ilość do produkcji
+  public m_curIloscPob      'ilość pobrana z danego magazynu
+  public m_oMagazyn         'magazyn domyślny
+  public m_curIloscDost     'ilość dostępna na magazynie m_oMagazyn
+  public m_curBrakIlosc     'brakująca ilość
+  public m_strSkrot         'skrót jednostki
+  public m_nPrec            'ilośc miejsc po przecinku
+  public m_bClone           'czy wiersz posiada klona (true/false)
+  public m_bRozb            'czy wiersz powstał z rozbicia (true/false)
+  
+  private sub class_initialize()
+    set m_oProdukt = nothing
+    set m_oOpak = nothing
+    m_curIlosc = ccur(0.0)
+    m_curIloscPob = ccur(0.0)
+    set m_oMagazyn = nothing
+    m_curIloscDost = ccur(0.0)
+    m_curBrakIlosc = ccur(0.0)
+    m_strSkrot = ""
+    m_nPrec = clng(0)
+    m_bClone = false
+    m_bRozb = false
+  end sub
+  
+  private sub class_terminate() 'OK
+    set m_oProdukt = nothing
+    set m_oOpak = nothing
+    set m_oMagazyn = nothing
+  end sub
+  
+end class
+
+'--------------
+'generuj raport
+'--------------
+class cGenReport
+  public m_arrRawMaterial      'tabela do przechowywania surowców
+
+  private sub class_initialize()
+    set m_arrRawMaterial = doc_.afc.new_navoarray()
+  end sub
+  
+  private sub class_terminate() 'OK
+    set m_arrRawMaterial = nothing
+  end sub
+  
+  '--------------------------------------
+  'wypełnia tablicę surowcami ze zlecenia
+  '--------------------------------------
+  public sub fillArray
+    dim pZlecProdPoz
+    dim pM60234 : set pM60234 = doc_.getmodule(60234)
+    dim iter : iter = 0
+    for each pZlecProdPoz in pCont.get_zlec_prod().listPozycje
+      dim curIloscDoReal : curIloscDoReal = CCur(pCont.arrRealizacja.value(iter))
+      if (curIloscDoReal > ccur(0.0)) then
+        dim dblKrotnoscRecepty
+        if not pM60234.convert_il_wyrobu_na_krotnosc( _
+          pZlecProdPoz.pProdukt.idobj, pZlecProdPoz.pOpak.idobj, _
+          curIloscDoReal,pZlecProdPoz.pRecepta,dblKrotnoscRecepty) then
+          exit sub
+        end if
+        addRawMaterial pZlecProdPoz.pRecepta, dblKrotnoscRecepty
+      end if
+      iter = iter + 1
+    next    
+  end sub
+  
+  '--------------------------
+  'dodaje surowiec do tablicy
+  '--------------------------
+  public sub addRawMaterial(byref pRecepta, byref dblKrotnosc)
+    dim pPozRecepta, nIndex
+    for each pPozRecepta in pRecepta.listSurowce
+      dim oRawMat : set oRawMat = new cRawMaterialObj
+      set oRawMat.m_oProdukt = pPozRecepta.pProdukt
+      set oRawMat.m_oOpak = pPozRecepta.pOpak
+      oRawMat.m_curIlosc = ccur(dblKrotnosc * pPozRecepta.curIloscOpak)
+      set oRawMat.m_oMagazyn = getMagazyn(oRawMat.m_oProdukt)
+      getIloscDost oRawMat
+      'gdy surowiec już był dodawany => tylko update ulości
+      nIndex = inxRawInTable(oRawMat)
+      if nIndex <> clng(-1) then
+        'update ilości
+        m_arrRawMaterial.value(nIndex).m_curIlosc = m_arrRawMaterial.value(nIndex).m_curIlosc + oRawMat.m_curIlosc
+        m_arrRawMaterial.value(nIndex).m_curBrakIlosc = getBrakIlosc(m_arrRawMaterial.value(nIndex))
+        m_arrRawMaterial.value(nIndex).m_curIloscPob = getIloscPobr(m_arrRawMaterial.value(nIndex))        
+      else  
+        'dodanie surowca
+        m_arrRawMaterial.add oRawMat
+      end if  
+	  next     
+  end sub
+  
+  '------------------------------------------------------------
+  'gdy surowiec był juz dodawany => zwróć jego indeks w tablicy
+  '------------------------------------------------------------
+  public function inxRawInTable(byref oRawMat) : inxRawInTable = clng(-1)
+    dim iter, oTabElem
+    for iter = 0 to m_arrRawMaterial.upperIndex
+      set oTabElem = m_arrRawMaterial.value(iter)
+      if oTabElem.m_oProdukt.idobj = oRawMat.m_oProdukt.idobj and oTabElem.m_oOpak.idobj = oRawMat.m_oOpak.idobj then
+        inxRawInTable = iter
+        exit function
+      end if
+    next
+  end function
+  
+  '------------------------------------------
+  'kopiuje surowiec z pozycji iPos na iNewPos
+  '------------------------------------------
+  public sub copyRawMaterial(byval iPos, byval iNewPos)
+    set m_arrRawMaterial.value(iNewPos).m_oProdukt = m_arrRawMaterial.value(iPos).m_oProdukt
+    set m_arrRawMaterial.value(iNewPos).m_oOpak = m_arrRawMaterial.value(iPos).m_oOpak
+    m_arrRawMaterial.value(iNewPos).m_curIlosc = m_arrRawMaterial.value(iPos).m_curIlosc 
+    m_arrRawMaterial.value(iNewPos).m_curIloscPob = m_arrRawMaterial.value(iPos).m_curIloscPob
+    set m_arrRawMaterial.value(iNewPos).m_oMagazyn = m_arrRawMaterial.value(iPos).m_oMagazyn
+    m_arrRawMaterial.value(iNewPos).m_curIloscDost = m_arrRawMaterial.value(iPos).m_curIloscDost
+    m_arrRawMaterial.value(iNewPos).m_curBrakIlosc = m_arrRawMaterial.value(iPos).m_curBrakIlosc
+    m_arrRawMaterial.value(iNewPos).m_strSkrot = m_arrRawMaterial.value(iPos).m_strSkrot
+    m_arrRawMaterial.value(iNewPos).m_nPrec = m_arrRawMaterial.value(iPos).m_nPrec
+    m_arrRawMaterial.value(iNewPos).m_bRozb = m_arrRawMaterial.value(iPos).m_bRozb
+  end sub
+  
+  '--------------------------------------------------------------
+  'pobiera obiekt magazynu na podstawie pola Cecha 2 na produkcie
+  '--------------------------------------------------------------
+  public function getMagazyn(byval oProdukt) : set getMagazyn = nothing
+    if not oProdukt is nothing then
+      dim idMagazyn : idMagazyn = trans_.findobjid(TYPEID_N5MAGAZYN,"strNazwa = '" + trim(oProdukt.strCecha2) + "'")
+      if idMagazyn > clng(0) then
+        set getMagazyn = trans_.getobj(TYPEID_N5MAGAZYN,idMagazyn)
+      end if
+    end if
+  end function
+  
+  '--------------------------------------------
+  'pobiera ilość produktu dostępną na magazynie
+  '--------------------------------------------
+  public sub getIloscDost(byref oRawMat)
+    if not oRawMat.m_oProdukt is nothing and not oRawMat.m_oOpak is nothing and not oRawMat.m_oMagazyn is nothing then
+      dim strSQL : strSQL = doc_.getmodule(60300).bqry_stan_mag_for_prod_opak(oRawMat.m_oProdukt.idobj , _
+                            oRawMat.m_oOpak.idobj , oRawMat.m_oMagazyn.idobj)
+      dim oRS : set oRS = trans_.createadors(strSQL)
+      if oRS.RecordCount <> 0 then
+        oRawMat.m_curIloscDost = ccur(oRS.fields("c_ilosc_opak").value)
+        oRawMat.m_strSkrot = cstr(oRS.fields("c_jedn_opak").value)
+        oRawMat.m_nPrec = clng(oRS.fields("c_prec_opak").value) - 1
+        oRawMat.m_curBrakIlosc = getBrakIlosc(oRawMat)
+        oRawMat.m_curIloscPob = getIloscPobr(oRawMat)
+      else
+        oRawMat.m_curIloscDost = ccur(0.0)
+        oRawMat.m_strSkrot = ""
+        oRawMat.m_nPrec = clng(0)
+        oRawMat.m_curBrakIlosc = oRawMat.m_curIlosc
+        oRawMat.m_curIloscPob = ccur(0.0)        
+      end if  
+    end if
+  end sub
+  
+  '---------------
+  'brakująca ilość
+  '---------------
+  public function getBrakIlosc(byref oRawMat) : getBrakIlosc = ccur(0.0)
+    if oRawMat.m_curIloscDost - oRawMat.m_curIlosc < ccur(0.0) then
+      getBrakIlosc = -(oRawMat.m_curIloscDost - oRawMat.m_curIlosc)      
+    end if  
+  end function
+  
+  '-------------
+  'ilość pobrana
+  '-------------
+  public function getIloscPobr(byref oRawMat) : getIloscPobr = ccur(0.0)
+    if oRawMat.m_curBrakIlosc > ccur(0.0) then
+      getIloscPobr = oRawMat.m_curIloscDost
+    else
+      getIloscPobr = oRawMat.m_curIlosc
+    end if
+  end function
+
+  '------------
+  'tytul strony
+  '------------
+  public sub pageTitle(byval strTitle)
+    dim pTitle : set pTitle = page_.ctrl(ID_TITLE)
+    pTitle.text = ""
+    pTitle.fontsize = 5
+    page_.topelement.title = strTitle
+  end sub
+  
+  '----------------
+  'nagłówek raportu
+  '----------------
+  public sub pageHeader(byval strText)
+    dim tab : set tab = doc_.afc.new_tb(page_).attach(page_.ctrl(ID_HEADER))
+    dim strNrZlec : strNrZlec = ""
+    tab.newrow
+    tab.row.styleitem = STYLE_TABLE_INFO
+    'pierwszy element
+    dim idZlec : idZlec = pCont.m_iZlecProd
+    if idZlec > clng(0) then
+      strNrZlec = trans_.getobj(TYPEID_N5ZLECPROD, idZlec).strNrDok
+    end if
+    tab.newcell.addtext(strText).element.bold = true
+    tab.addctrl(CTRL_TYPE_STATIC,-1).element.text = strNrZlec
+    tab.cell.colspan = 3
+  end sub
+  
+  '------------------
+  'tabela z surowcami
+  '------------------
+  public sub tableReport
+    cleanPage
+    dim tab : set tab = doc_.afc.new_tb(page_).attach(page_.ctrl(ID_REPORT))
+    if m_arrRawMaterial.upperIndex > clng(-1) then
+      'nagłowek
+      tab.newrow
+      tab.row.styleitem = STYLE_TABLE_HEADER
+      g_oDrawRep.drawCellHead tab, 1, "LP", 600, "", 1, 1, false
+      g_oDrawRep.drawCellHead tab, 1, "Produkt", 4000, "", 1, 1, false
+      g_oDrawRep.drawCellHead tab, 1, "Indeks", 2000, "", 1, 1, false
+      g_oDrawRep.drawCellHead tab, 1, "Ilość do produkcji", 1800, "", 1, 1, false
+      g_oDrawRep.drawCellHead tab, 1, "Magazyn domyślny", 3000, "", 1, 2, false
+      g_oDrawRep.drawCellHead tab, 1, "Ilość dostępna", 1800, "", 1, 1, false
+      g_oDrawRep.drawCellHead tab, 1, "Brakująca ilość", 1800, "", 1, 1, false
+      g_oDrawRep.drawCellHead tab, 1, "Ilość do pobrania", 1800, "", 1, 1, false
+     
+      'surowce
+      dim iter, crColor
+      dim iLP : iLp = 0
+      for iter = 0 to m_arrRawMaterial.upperIndex
+        tab.newrow
+        
+        'gdy wiersz powstał z rozbicia => nie rysuj: LP, Produkt, Indeks
+        if not m_arrRawMaterial.value(iter).m_bRozb then
+          iLp = iLp + 1
+          crColor = setRowColor(iLp) 
+          tab.row.backcolor = crColor
+          g_oDrawRep.drawCell     tab, cstr(iLp), "Verdana", ALIGN_RIGHT, 0, 0, ""
+          g_oDrawRep.drawCell     tab, cstr(m_arrRawMaterial.value(iter).m_oProdukt.strNazwa), "Verdana", ALIGN_LEFT, 0, 0, ""
+          g_oDrawRep.drawCell     tab, "", "Verdana", ALIGN_LEFT, TYPEID_N5PRODUKT, m_arrRawMaterial.value(iter).m_oProdukt.idobj, _
+                                  m_arrRawMaterial.value(iter).m_oProdukt.strIndeks
+        else
+          tab.newcell
+          tab.cell.colspan = 3
+        end if                          
+        g_oDrawRep.drawCellCur  tab, 0, m_arrRawMaterial.value(iter).m_curIlosc, "Verdana", 4, 10, "", crColor
+        g_oDrawRep.drawCellEdit tab, CTRLID_MAGAZYN, 17, 0, "Verdana", crColor
+        tab.newcell
+        g_oDrawRep.drawPicture  tab, PICTURE_CHOICE_N5MAGAZYN, "Zmiana magazynu domyślnego", "changeMag", iter
+        tab.cell.width = clng(500)
+        g_oDrawRep.drawCellCur  tab, CTRLID_ILOSC_DOST, 0, "Verdana", 4, 10, "", crColor
+        g_oDrawRep.drawCellCur  tab, CTRLID_BRAK_ILOSC, 0, "Verdana", 4, 10, "", crColor
+        g_oDrawRep.drawCellCur  tab, CTRLID_ILOSC_POBR, 0, "Verdana", 4, 10, "", crColor
+        tab.newcell
+        g_oDrawRep.drawButton   tab, "Rozbij", 5, "Rozbicie pozycji na dwa magazyny", "splitPos", iter
+        g_oDrawRep.drawButton   tab, "Połącz", 5, "Usuwa daną pozycję", "joinPos", iter
+        
+        'property dla wiersza
+        set tab.row.userprop = doc_.createhli()
+        tab.row.userprop.prop(PROP_TAB_INX) = iter
+        tab.row.userprop.prop(PROP_TAB_LP) = iLp
+        
+      next
+    end if
+  end sub
+  
+  '---------------------------------------
+  'dodaje odpowiednie przyciski na stronie
+  '---------------------------------------
+  public sub pageButtons
+    dim tab : set tab = doc_.afc.new_tb(page_).attach(page_.ctrl(ID_BUTTONS))
+    tab.newrow.newcell
+    pageAddButton tab, "Zatwierdź", vbOK
+    pageAddButton tab, "Pomiń", vbNo
+    pageAddButton tab, "Anuluj", vbCancel
+  end sub  
+  
+  '-------------------
+  'pojedynczy przycisk
+  '-------------------
+  public sub pageAddButton(byref tab, byval strName, byval nOption)
+    dim pNewHli
+    set pNewHli = doc_.createhli()
+    pNewHli.prop(GVAR_FUNCTIONHLI) = "pageClick"
+    pNewHli.prop(GVAR_MODALRES) = CLng(nOption)
+
+    tab.addctrl CTRL_TYPE_BUTTON,-1
+    tab.cell.keepline = true
+    tab.cell.align = ALIGN_RIGHT
+    set tab.element.hli = pNewHli
+    with tab.element
+      .text = strName
+      .size = 12
+      .styleitem = STYLE_BUTTON
+    end with
+  end sub  
+  
+  '------------------
+  'czyści całą stronę
+  '------------------
+  public sub cleanPage
+    doc_.afc.new_tb(page_).attach(page_.ctrl(ID_REPORT)).removeall
+  end sub  
+  
+  '------------
+  'rysuj raport
+  '------------
+  public sub drawPageRep
+    pageTitle "Segregacja towarów"
+    pageHeader "Wydanie surowców dla zlecenia:  "
+    tableReport
+    pageButtons    
+  end sub
+
+end class
+
+'---------------------
+'otwórz/zamknij stronę
+'---------------------
+function fopen()
+	fopen = true
+end function
+
+function fback()
+	page_.result = vbCancel
+	page_.goback()
+	fback = true
+end function
+
+'----------------------
+'naciśnięcie na klawisz
+'----------------------
+sub pageClick(byref pHli)
+  page_.result = pHli.prop(GVAR_MODALRES)
+  page_.goback
+end sub
+
+'-------------------------------
+'potwierdzenie wydania materiału
+'-------------------------------
+function drawPage(byref pContainer, byref pArrayObj)
+  set pCont = pContainer
+  set pGR = new cGenReport
+  pGR.fillArray
+  'obiekty do budowania raportu
+  initialObjects
+  pGR.drawPageRep
+  drawPage = page_.domodalauto()
+  set pArrayObj = pGR.m_arrRawMaterial
+end function
+
+'--------------------------------------------
+'ustawia kolor dla wiersza w zależności od LP
+'--------------------------------------------
+function setRowColor(iLP)
+  if iLP mod 2 = 0 then
+	  setRowColor = ROW_COLOR
+  else
+    setRowColor = WHITE_COLOR
+  end if   
+end function
+
+'---------------
+'zmiana magazynu
+'---------------
+function changeMag(pHLI)
+  dim iNr : iNr = pHli.prop(100)
+  'gdy wiersz posiada klona => nie pozwól na zmianę magazynu
+  if pGR.m_arrRawMaterial.value(iNr).m_bClone then
+    trans_.message 7000, 0, "Zmiana magazynu niedozwolona"
+    exit function
+  end if
+  dim idMag : idMag = fire_choice_list(TYPEID_N5MAGAZYN,"Wybór magazynu","","","","")
+  if idMag > 0 then
+    set pGR.m_arrRawMaterial.value(iNr).m_oMagazyn = trans_.getobj(TYPEID_N5MAGAZYN, idMag)
+    pGR.getIloscDost pGR.m_arrRawMaterial.value(iNr)
+  end if
+end function
+
+'---------------------
+'rozbicie na 2 pozycje
+'---------------------
+function splitPos(pHLI)
+  dim iNr : iNr = pHli.prop(100)
+  if not pGR.m_arrRawMaterial.value(iNr).m_oMagazyn is nothing then
+    'aktualny magazyn
+    dim idCurMag : idCurMag = pGR.m_arrRawMaterial.value(iNr).m_oMagazyn.idobj
+    dim idMag : idMag = fire_choice_list(TYPEID_N5MAGAZYN,"Wybór magazynu","","idobj <> " + cstr(idCurMag),"","")
+    if idMag > 0 then
+      splitRow iNr, idMag
+      pGR.tableReport
+    end if  
+  end if
+end function
+
+'---------------------------------------
+'tworzy kopię wiersza ze zmianą magazynu
+'---------------------------------------
+sub splitRow(byval iNr, byval idMag)
+  dim iNextNr : iNextNr = iNr + 1
+  'przesunięcie następnego elementu na koniec
+  pGR.m_arrRawMaterial.add new cRawMaterialObj
+  pGR.copyRawMaterial iNextNr, pGR.m_arrRawMaterial.upperIndex
+  pGR.copyRawMaterial iNr, iNextNr
+  'dostępna ilość
+  dim oMag : set oMag = trans_.getobj(TYPEID_N5MAGAZYN,idMag)
+  set pGR.m_arrRawMaterial.value(iNextNr).m_oMagazyn = oMag
+  'przeniesienie brakującej ilości
+  pGR.m_arrRawMaterial.value(iNextNr).m_curIlosc = pGR.m_arrRawMaterial.value(iNr).m_curBrakIlosc
+  pGR.m_arrRawMaterial.value(iNr).m_curBrakIlosc = ccur(0.0)
+  pGR.m_arrRawMaterial.value(iNr).m_bClone = true
+  pGR.getIloscDost pGR.m_arrRawMaterial.value(iNextNr)
+  'gdy powstał z rozbicia
+  pGR.m_arrRawMaterial.value(iNextNr).m_bRozb = true
+end sub
+
+'-----------------
+'sklejenie pozycji
+'-----------------
+function joinPos(pHLI)
+  dim iNr : iNr = pHli.prop(100)
+  'przeniesienie ilości do pobrania na pozycję wyżej
+  dim iPrevNr : iPrevNr = iNr - 1
+  pGR.m_arrRawMaterial.value(iPrevNr).m_curBrakIlosc = pGR.m_arrRawMaterial.value(iNr).m_curBrakIlosc + pGR.m_arrRawMaterial.value(iNr).m_curIloscPob
+  pGR.m_arrRawMaterial.value(iPrevNr).m_bClone = false
+  'usunięcie pozycji
+  pGR.m_arrRawMaterial.remove(iNr)
+  pGR.tableReport
+end function
+
+'----------------------------
+'ustawia aktywność przycisków
+'----------------------------
+function buttonDisable(byref oRow, byval oObjSur, byval nCol, byval nElem, byval bDisable)
+  if oObjSur.m_bRozb then
+    oRow.cell(nCol - 2).element(nElem).disable = bDisable
+  else
+    oRow.cell(nCol).element(nElem).disable = bDisable
+  end if
+end function
+
+'-----------------------------
+'kontrolka dla zmiany magazynu
+'-----------------------------
+function c##CTRLID_MAGAZYN##_ongetdata(byref oCtrl) : c##CTRLID_MAGAZYN##_ongetdata = true
+  dim iNr
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+    if oRow.userprop.exists(PROP_TAB_INX) then 
+      iNr = oRow.userprop.prop(PROP_TAB_INX)
+      if not pGR.m_arrRawMaterial.value(iNr).m_oMagazyn is nothing then
+        oCtrl.value = pGR.m_arrRawMaterial.value(iNr).m_oMagazyn.strNazwa
+      else
+        oCtrl.value = ""
+      end if
+    end if
+  end if
+  oCtrl.disable = true
+end function
+
+'--------------------------
+'kontrolka dostępnej ikości
+'--------------------------
+function c##CTRLID_ILOSC_DOST##_ongetdata(byref oCtrl) : c##CTRLID_ILOSC_DOST##_ongetdata = true
+  dim iNr
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+    if oRow.userprop.exists(PROP_TAB_INX) then 
+      iNr = oRow.userprop.prop(PROP_TAB_INX)
+      oCtrl.value = ccur(pGR.m_arrRawMaterial.value(iNr).m_curIloscDost)
+    end if
+  end if
+  oCtrl.disable = true
+end function
+
+'-------------------------------
+'kontrolka dla brakującej ilości
+'-------------------------------
+function c##CTRLID_BRAK_ILOSC##_ongetdata(byref oCtrl) : c##CTRLID_BRAK_ILOSC##_ongetdata = true
+  dim iNr
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+    if oRow.userprop.exists(PROP_TAB_INX) then 
+      iNr = oRow.userprop.prop(PROP_TAB_INX)
+      if pGR.m_arrRawMaterial.value(iNr).m_curBrakIlosc > ccur(0.0) then
+        oCtrl.value = ccur(pGR.m_arrRawMaterial.value(iNr).m_curBrakIlosc)
+        oRow.backcolor = PINK_COLOR
+      else
+        oCtrl.value = ccur(0.0)
+        oRow.backcolor = setRowColor(oRow.userprop.prop(PROP_TAB_LP))
+      end if
+    end if
+  end if
+  oCtrl.disable = true
+end function
+
+'-------------------------
+'kontrolka ilości pobranej
+'-------------------------
+function c##CTRLID_ILOSC_POBR##_ongetdata(byref oCtrl) : c##CTRLID_ILOSC_POBR##_ongetdata = true
+  dim iNr, oObjSur
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+    if oRow.userprop.exists(PROP_TAB_INX) then      
+      iNr = oRow.userprop.prop(PROP_TAB_INX)
+      set oObjSur = pGR.m_arrRawMaterial.value(iNr)
+      oCtrl.value = ccur(oObjSur.m_curIloscPob)
+      if oObjSur.m_curIloscPob < oObjSur.m_curIlosc and not oObjSur.m_bClone then  
+        oRow.backcolor = PINK_COLOR
+        oCtrl.backcolor = PINK_COLOR
+        buttonDisable oRow, oObjSur, COL_BUTTON, ELEM_BUTTON_ROZBIJ, false
+      else 
+        oRow.backcolor = setRowColor(oRow.userprop.prop(PROP_TAB_LP))
+        oCtrl.backcolor = setRowColor(oRow.userprop.prop(PROP_TAB_LP))
+        buttonDisable oRow, oObjSur, COL_BUTTON, ELEM_BUTTON_ROZBIJ, true
+      end if
+      if oObjSur.m_bClone then
+        oCtrl.disable = true
+      end if
+      if oObjSur.m_bRozb and not oObjSur.m_bClone then
+        buttonDisable oRow, oObjSur, COL_BUTTON, ELEM_BUTTON_POLACZ, false
+      else
+        buttonDisable oRow, oObjSur, COL_BUTTON, ELEM_BUTTON_POLACZ, true
+      end if
+    end if
+  end if
+  oCtrl.border = 1
+end function
+
+function c##CTRLID_ILOSC_POBR##_ondataentered(byref oCtrl, newValue) : c##CTRLID_ILOSC_POBR##_ondataentered = true
+  dim iNr
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+    if oRow.userprop.exists(PROP_TAB_INX) then 
+      iNr = oRow.userprop.prop(PROP_TAB_INX)
+      pGR.m_arrRawMaterial.value(iNr).m_curIloscPob = ccur(newValue)
+      if pGR.m_arrRawMaterial.value(iNr).m_curIloscPob > pGR.m_arrRawMaterial.value(iNr).m_curIloscDost then
+        pGR.m_arrRawMaterial.value(iNr).m_curIloscPob = pGR.m_arrRawMaterial.value(iNr).m_curIloscDost     
+      end if
+    end if
+  end if
+end function
+
+]]>
+</script>
+
+</config>
+	<body>
+		<text width='max' name='t##ID_TITLE'></text>
+		<br/><br/>
+    
+		<table name='t##ID_HEADER'>
+			<tbody> 
+			</tbody>
+		</table>
+
+		PAGE_SEPARATOR
+
+		<table border='1' name='t##ID_REPORT'>
+			<tbody backcolor='white' bordercolor='#006697' />
+		</table>
+    
+		PAGE_SEPARATOR
+    
+		<table name='t##ID_BUTTONS' style='STYLE_ROW_BTN'>
+			<tbody>
+			</tbody>
+		</table>    
+
+	</body>
+</page>
+

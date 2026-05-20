@@ -1,0 +1,319 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1001.h"
+#include "h1220.h"
+#include "h1240_appvar.h"
+
+moduł kontroli wydruku
+
+todo: zaznaczanie wszystkich, całego wiersza lub kolumny
+
+#define CTRLID_SHEETDISPLAY		1
+#define CTRLID_PROGRESS_MSG		2
+#define CTRLID_TITLE			3
+#define CTRLID_OK				4
+#define CTRLID_CANCEL			5
+#define CTRLID_PRINT_ALL		6
+#define CTRLID_PRINT_NONE		7
+#define CTRLID_PRINT_INVERT		8
+#define CTRLID_FIRST_PICTURE	100
+
+#define PICID_DRUKUJ			80098
+#define PICID_NIEDRUKUJ			80099
+#define PICID_WYDRUKOWANO		80100
+
+-->
+<page style='STYLE_PAGE' width='6000'>
+<config>
+	<title>Zarządzanie wydrukiem</title>
+	<startpos>center</startpos>
+<script>
+<![CDATA[
+#include "50203"
+
+sub setup_picture(byref pPicture,byval bOn)
+	if bOn then
+		pPicture.image = clng(PICID_DRUKUJ)
+		pPicture.tip = "Drukuj tę stronę"
+		pPicture.parent.backcolor = rgb(255,255,255)
+	else
+		pPicture.image = clng(PICID_NIEDRUKUJ)
+		pPicture.tip = "Nie drukuj tej strony"
+		pPicture.parent.backcolor = rgb(224,224,224)
+	end if
+end sub
+
+const PSIW_PRINT	= 1
+const PSIW_SKIP		= 2
+const PSIW_CANCEL	= 3
+
+class cstd_print_sink_info
+	private m_pPage
+	private m_nXPage
+	private m_nYPage
+
+	private sub class_initialize()
+		set m_pPage = nothing
+	end sub
+	private sub class_terminate() 'OK
+		set m_pPage = nothing
+	end sub
+	public function on_start_printing_document(title,nXPages,nYPages)
+		set m_pPage = doc_.getpagehli("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=THIS_FILE")
+		
+		build_page m_pPage,title,nXPages,nYPages
+
+		doc_.pushpage m_pPage
+	
+		if (m_pPage.domodal()) = 1 then
+			m_pPage.set_notmodal
+			on_start_printing_document = true
+		else
+			on_start_printing_document = false
+		end if
+	end function
+	
+	public function on_start_printing_page(nXPage,nYPage)
+		m_nXPage = nXPage
+		m_nYPage = nYPage
+
+		dim nAnswer: nAnswer = m_pPage.update_info_befprint(nXPage,nYPage)
+
+		on_start_printing_page = nAnswer
+	end function
+	
+	public sub on_end_printing_page
+		m_pPage.update_info_aftprint m_nXPage,m_nYPage
+	end sub
+	
+	public sub on_end_printing_document
+		doc_.poppage
+	end sub
+	'-------------------
+	private sub build_page(pDestPage,title,nXPages,nYPages)
+		dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(pDestPage.ctrl(CTRLID_SHEETDISPLAY))
+		dim nX,nY
+		
+		'header row
+		pTB.newrow
+		pTB.newcell
+
+		for nX = 1 to nXPages
+			pTB.newcell
+			with pTB.cell
+				.width = clng(MINIMIZE_SIZE)
+				.align = ALIGN_CENTER
+				.addnew(CTRL_TYPE_STATIC,-1).text =  cstr(nX)
+			end with
+		next
+
+		for nY = 1 to nYPages
+			pTB.newrow
+			pTB.newcell
+			with pTB.cell
+				.width = clng(MINIMIZE_SIZE)
+				.align = ALIGN_RIGHT
+				.addnew(CTRL_TYPE_STATIC,-1).text =  cstr(nY)
+			end with
+
+			for nX = 1 to nXPages
+				pTB.newcell
+				pTB.cell.width = clng(MINIMIZE_SIZE)
+				dim pPic : set pPic = pTB.cell.addnew(CTRL_TYPE_PICTURE,picid_for_page(nX,nY) )
+				set pPic.hli = doc_.createhlistr("varFunctionHLI='btnSelect' vn1='" + cstr(nY) + "' vn2='"+ cstr(nX) + "'")
+				setup_picture pPic,true
+			next
+		next
+		pDestPage.ctrl(CTRLID_TITLE).text = title		
+	end sub
+end class
+'---------------------------------------------
+function new_print_sink_info()
+	dim bCreate : bCreate = true
+
+	if trans_.isvar(GVAR_AUTOPRINT) then
+		if trans_.var(GVAR_AUTOPRINT) = 1 then
+			bCreate = false
+		end if
+	end if
+
+	if bCreate then
+		set new_print_sink_info = new cstd_print_sink_info
+	else
+		set new_print_sink_info = nothing
+	end if
+
+end function
+
+'---------------------------------------------
+dim bCancel : bCancel = false
+dim bModeModal : bModeModal = true
+
+sub set_notmodal()
+	bModeModal = false
+end sub
+
+function update_info_befprint(nX,nY)
+	page_.ctrl(CTRLID_PROGRESS_MSG).text = "Drukowanie " + cstr(nX) + "-" + cstr(nY)
+
+	if bCancel then
+		update_info_befprint = PSIW_CANCEL
+	else
+		if page_.ctrl(picid_for_page(nX,nY)).image = clng(PICID_DRUKUJ) then
+			update_info_befprint = PSIW_PRINT
+		else
+			update_info_befprint = PSIW_SKIP
+		end if
+	end if
+	page_.updateview
+end function
+
+function update_info_aftprint(nX,nY)
+	with page_.ctrl(picid_for_page(nX,nY))
+		if .image = clng(PICID_DRUKUJ) then
+			.image = PICID_WYDRUKOWANO
+		end if
+		set .hli = nothing
+		.disable = true
+	end with
+end function
+
+function picid_for_page(nX,nY)
+	picid_for_page = CTRLID_FIRST_PICTURE + nY * 20 + nX
+end function
+'---------------------------------------------
+function btnSelect(byref pHLI)
+	dim nY : nY = pHLI(1)
+	dim nX : nX = pHLI(2)
+	dim pPicture : set pPicture = page_.ctrl(pHLI(PROPC_CONTROL))
+
+	setup_picture pPicture, (pPicture.image <> clng(PICID_DRUKUJ))
+end function
+
+'+3 - select
+'+2 - unselect
+'+1  - invert
+
+function change_selection(byval nMode)
+	dim pTable : set pTable = page_.ctrl(CTRLID_SHEETDISPLAY)
+	dim pBody : set pBody = pTable.body
+	dim pRow
+	dim pCell
+	dim pPicture
+	for each pRow in pBody
+		for each pCell in pRow
+			for each pPicture in pCell
+				if pPicture.type = CTRL_TYPE_PICTURE then
+					select case nMode
+					case 3
+						setup_picture pPicture,true
+					case 2
+						setup_picture pPicture,false
+					case 1
+						setup_picture pPicture,(pPicture.image <> clng(PICID_DRUKUJ))
+					end select
+				end if
+			next
+		next
+	next
+	page_.updateview
+end function
+
+function btnSelectAll
+	change_selection 3
+end function
+
+function btnSelectNone
+	change_selection 2
+end function
+
+function btnSelectInvert
+	change_selection 1
+end function
+'---------------------------------------------
+
+function btnOK
+	page_.ctrl(CTRLID_OK).disable = true
+	page_.result= 1
+	page_.goback
+end function
+
+function btnCancel
+	page_.ctrl(CTRLID_PROGRESS_MSG).text = "Przerywanie wydruku..."
+	page_.ctrl(CTRLID_CANCEL).disable = true
+	page_.updateview
+
+	bCancel = true
+	page_.result= 0
+	if bModeModal then
+		page_.goback
+	end if
+end function
+
+function fopen() 
+	fopen = true
+	page_.cmdenabled(CMD_PRINT) = false
+	page_.cmdenabled(CMD_PRINTPREVIEW) = false
+end function
+
+function get_my_default_printer()
+  dim strDevice : strDevice = "DEFAULT"
+  dim pMyDefaultPrinter: set pMyDefaultPrinter = getuserprofileObj(1097)	'1097 = USERPROF_MY_DEFAULT_PRINTER
+  
+  if not pMyDefaultPrinter is nothing then
+    if pMyDefaultPrinter.Wartosc <> "" then
+	    strDevice = pMyDefaultPrinter.Wartosc
+      if strDevice = "?" then
+        strDevice = ""
+      end if
+    end if
+  end if
+  
+  'trans_.message 0,0, "Drukarka domyślna to: " + strDevice
+  
+  get_my_default_printer = strDevice
+  
+end function
+]]>
+</script>
+
+</config>
+	<body>
+		<table>
+			<tbody>
+				<tr>
+					<td align='center' colspan='2'>
+						<t fontsize='5' bold='true' name='CTRLID_TITLE' />
+					</td>
+				</tr>
+				<tr><td colspan='2'><t size='1' /></td></tr>
+				<tr>
+					<td>
+						<table border='4' borderwidth='2'  name='CTRLID_SHEETDISPLAY' />
+					</td>
+					<td align='right'>
+						<button style='STYLE_BUTTON' name='CTRLID_PRINT_ALL' href='varFunction="btnSelectAll"'>Wszystko</button>
+						<br/>
+						<button style='STYLE_BUTTON' name='CTRLID_PRINT_NONE' href='varFunction="btnSelectNone"'>Nic</button>
+						<br/>
+						<button style='STYLE_BUTTON' name='CTRLID_PRINT_INVERT' href='varFunction="btnSelectInvert"'>Odwróć</button>
+					</td>
+				</tr>
+				<tr><td colspan='2'><t size='1' /></td></tr>
+				<tr>
+					<td colspan='2'>
+						<t fontsize='4' bold='true' name='CTRLID_PROGRESS_MSG'></t>
+					</td>
+				</tr>
+				<tr>
+					<td colspan='2'>
+						<button style='STYLE_BUTTON' name='CTRLID_OK' href='varFunction="btnOK"'>Drukuj</button>
+						<button style='STYLE_BUTTON' name='CTRLID_CANCEL' href='varFunction="btnCancel"'>Anuluj</button>
+					</td>
+				</tr>
+			</tbody>
+		</table>
+	</body>
+</page>
+

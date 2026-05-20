@@ -1,0 +1,231 @@
+#ifndef LIBRARY_50208
+#define LIBRARY_50208
+
+#comment '--------------- "naprawa" GM -------------------------------
+#comment '------------------------------------------------------------
+
+
+function gm_ensure_accuracy_internal(byref varLog)
+
+ if nxm_jse_mode() = NXM_JSE_MODE_NEW then
+	'nxm-jse: fill here
+	gm_ensure_accuracy_internal = false
+ else
+	gm_ensure_accuracy_internal = false
+	dim pNAVOGMSrvr : set pNAVOGMSrvr = trans_.CreateServerExtension("navogm.n5gmsvr") 
+	gm_ensure_accuracy_internal = pNAVOGMSrvr.validate(varLog)
+end if
+
+end function
+
+function gm_check_operations(byref varLog)
+	gm_check_operations = false
+	dim pNAVOGMSrvr : set pNAVOGMSrvr = trans_.CreateServerExtension("navogm.n5gmsvr") 
+	gm_check_operations = pNAVOGMSrvr.check(varLog)
+end function
+
+function gm_ensure_accuracy_automatic(nNumOperOfChange,nAccuracyLevel,byref varLog)
+
+	if nAccuracyLevel = GM_ACCURACY_USE_CURRENT then
+		nAccuracyLevel = trans_.var(GVAR_GM_ACCURACY_LEVEL)
+	end if 
+	
+	select case nAccuracyLevel
+	case GM_ACCURACY_NONE
+		gm_ensure_accuracy_automatic = true
+	case GM_ACCURACY_QUANTITY
+		dim pTestRS
+		'1. sprawdz czy nie bedzie minusa na koncu
+		set pTestRS = trans_.createadors( _
+			"select top 1 gms_pProd from n5gmstan group by gms_pProd,gms_pMag,gms_pOpak having sum(gms_curIlosc) < 0.0")
+		gm_ensure_accuracy_automatic = (pTestRS.EOF)
+		'2. sprawdz dokladniej
+		if gm_ensure_accuracy_automatic then
+			set pTestRS = trans_.createadors("select isnull((select max(gmo_nNumOp) from n5gmop),0) " )
+			'jesli to nie jest ostatnia - sprawdzaj na serwerze
+			if nNumOperOfChange < pTestRS(0).value then
+				gm_ensure_accuracy_automatic = gm_check_operations(varLog)
+			end if
+		end if
+		set pTestRS = nothing
+
+	case GM_ACCURACY_PRICE
+		gm_ensure_accuracy_automatic = gm_check_operations(varLog)
+	case else
+		gm_ensure_accuracy_automatic = false
+	end select
+#ifdef TRACE_GM
+	if gm_ensure_accuracy_automatic then
+		IMPTRACE("gm_ensure_accuracy_automatic PASSED")
+	else
+		IMPTRACE("gm_ensure_accuracy_automatic FAIL")
+	end if
+#endif
+end function
+
+'-------------------------------------------------
+'-----  Zestaw funkcji dla n5ptop, n5ptstan  -----
+'-------------------------------------------------
+function pt_ensure_accuracy_automatic(nAccuracyLevel,byref varLog)
+  select case nAccuracyLevel
+	case GM_ACCURACY_NONE
+		pt_ensure_accuracy_automatic = true
+	case GM_ACCURACY_PRICE
+		pt_ensure_accuracy_automatic = false
+		dim pNAVOGMSrvr : set pNAVOGMSrvr = trans_.CreateServerExtension("navogm.n5gmsvr") 
+		pt_ensure_accuracy_automatic = pNAVOGMSrvr.check_pt(varLog)
+  end select
+end function
+
+function pt_ensure_accuracy_internal(byref varLog)
+	pt_ensure_accuracy_internal = false
+	dim pNAVOGMSrvr : set pNAVOGMSrvr = trans_.CreateServerExtension("navogm.n5gmsvr") 
+	pt_ensure_accuracy_internal = pNAVOGMSrvr.validate_pt(varLog)
+end function
+
+function pt_check_operations(byref varLog)
+	pt_check_operations = false
+	dim pNAVOGMSrvr : set pNAVOGMSrvr = trans_.CreateServerExtension("navogm.n5gmsvr") 
+	pt_check_operations = pNAVOGMSrvr.check_pt(varLog)
+end function
+
+'---------------------------------------	
+
+function gm_create_log_stream()
+	set gm_create_log_stream = createobject("navocomutil.streamobj")
+	gm_create_log_stream.attachtemp
+end function
+
+class cnavogmsrverrorlogparser
+	private m_strLastTag
+	private m_strDesc
+	private m_strProdukt
+	private m_strMagazyn
+	private m_strIlosc
+	private m_strDokument
+
+	public function OnElementStart(byval strTag,byref pAttr)
+		m_strLastTag = strTag
+	end function
+	public function OnElementEnd(byval strTag)
+		select case strTag
+		case "navogmsrvlog"
+		case "error"
+			nx_.trace.error "EGM001", m_strDokument + ": " + m_strDesc + " " + m_strProdukt + " na magazynie " + m_strMagazyn +_
+				", brakuj¹ca iloœæ = " + m_strIlosc
+		end select
+	end function
+	public function OnData(byval strValue)
+		select case m_strLastTag
+		case "code"
+			select case clng(strValue)
+			case 2	'sec_no_such_supply
+				m_strDesc = "brak wskazanej dostawy dla towaru"
+			case 3	'sec_not_enough_quantity
+				m_strDesc = "brak towaru"
+			case 4	'sec_zero_product_quantity
+				m_strDesc = "zerowa iloœæ wyrobu"
+			case 5	'sec_not_supply_at_all
+				m_strDesc = "brak jakiejkolwiek dostawy dla towaru"
+			case 6  'sec_lock_failed
+				m_strDesc = "przekroczono czas oczekiwania na uzyskanie dostêpu. Spróbuj ponownie."
+			end select
+		case "numop"
+			dim idObj : idObj = trans_.FindObjId(TYPEID_N5DOKMAG,"nNumOper=" + cstr(strValue))
+			if idObj <> 0 then
+				m_strDokument = trans_.getobj(TYPEID_N5DOKMAG,idObj).text
+			else
+				idObj = trans_.FindObjId(TYPEID_N5REALPROD,"nNumOper=" + cstr(strValue))
+				if idObj <> 0 then
+					m_strDokument = trans_.getobj(TYPEID_N5REALPROD,idObj).text
+				end if
+			end if
+		case "idprod"
+			if isNumeric(strValue) then
+				m_strProdukt = trans_.getobj(TYPEID_N5PRODUKT,clng(strValue)).text
+			end if
+		case "idmag"
+			if isNumeric(strValue) then
+				m_strMagazyn = trans_.getobj(TYPEID_N5MAGAZYN,clng(strValue)).text
+			end if
+		case "quantity"
+			if isNumeric(strValue) then
+				m_strIlosc = trans_.afc.display.quantity(ccur(strValue),"",4)
+			else
+				m_strIlosc = cstr(strValue)
+			end if
+		end select 
+	end function
+end class
+
+
+function gm_log_2_msg(byref oLog)
+	oLog.rewind
+	dim pNGSELP : set pNGSELP = new cnavogmsrverrorlogparser
+	doc_.parsexml pNGSELP,oLog
+end function
+
+class lock_holder
+  private m_oLock
+  private m_oTransForLock
+  
+  private m_strDebugInfo
+
+	private sub class_initialize()
+    m_strDebugInfo = ""
+    set m_oLock = nothing
+    
+    dim oTrans : set oTrans = trans_.get_this()
+    set m_oTransForLock = trans_.createnewthreadtran()
+
+    'reactivate original transaction
+    oTrans.activate
+	end sub
+
+	private sub class_terminate()	'TODO
+    
+    if not m_oLock is nothing then
+      m_oLock.unlock
+      
+#ifdef _DEBUG    
+      m_oTransForLock.message 0, 0, "freed " + m_strDebugInfo
+#endif
+    end if
+
+    set m_oLock = nothing
+    set m_oTransForLock = nothing
+  end sub
+  
+  public function acquire(byval iType, byval iIdent)
+    set m_oLock = m_oTransForLock.createvlock(iType, iIdent)
+    
+    if not m_oLock.lock() then
+      set m_oLock = nothing
+      acquire = false
+      exit function
+    end if
+    
+#ifdef _DEBUG    
+    m_strDebugInfo = "lock for [" + cstr(iType) + ":" + cstr(iIdent) + "]"
+    m_oTransForLock.message 0, 0, "acquired " + m_strDebugInfo
+#endif
+  
+    acquire = true
+  end function
+  
+  'NOTE: can block execution, NEVER use on server side
+  public function acquire_ui(byval iType, byval iIdent, strMessage)
+  
+    do while not acquire(iType, iIdent)
+      if MessageBox(strMessage, "Dostêp do zasobów",  vbYesNo, vbQuestion) <> vbYes then
+        acquire_ui = false
+        exit function
+      end if
+    loop
+  
+    acquire_ui = true
+  end function
+  
+end class
+
+#endif

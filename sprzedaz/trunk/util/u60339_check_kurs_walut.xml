@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+
+#comment Moduł wywoływany przy automatycznym pobieraniu kursów walut
+
+#include "h1000.h"
+#include "h1230.h"
+#include "h1231.h"
+-->
+<page>
+<config>
+<script>
+<![CDATA[
+
+'log_event
+#include "50611"
+
+function run
+  dim oService
+
+  if has_nxm_feature("get_pl_nbp_exchange_rate") then
+    set oService = nx_.nxm_features.create_financial_data_service()
+  else   
+    trans_.message 7000, 0, "Żądana funkcjonalność jest nieosiągalna lub wymaga odblokowania"
+    exit function
+  end if
+  
+  dim dDateNow: dDateNow = CDate(Now())
+  'data ostatniej aktualizacji
+  dim dDateLast: dDateLast = GetLastDate(dDateNow)
+  dim nDay: nDay = DateDiff("d", dDateLast, dDateNow) - 1
+  dDateNow = DateAdd("d",-nDay,dDateNow)
+  
+  'czy pobrano chociaż 1 walutę
+  dim bIsKurs: bIsKurs = false
+  
+  dim iter
+  for iter = 0 to nDay
+    
+    dim nIdWaluta: nIdWaluta = trans_.findobjid(TYPEID_N5JEDNOSTKA,"eTyp = N5JEDNOSTKA_WALUTA and strSkrot = 'PLN'")
+    if nIdWaluta > clng(0) then
+      dim pWalutaPLN: set pWalutaPLN = trans_.getobj(TYPEID_N5JEDNOSTKA,nIdWaluta)
+      dim pWaluta, pCursor
+    
+      set pCursor = trans_.createrawcursor(TYPEID_N5JEDNOSTKA,"eTyp = N5JEDNOSTKA_WALUTA and strSkrot <> 'PLN'", "" , "")
+      'waluta obca => PLN
+      for each pWaluta in pCursor
+        if not CreateKurs(oService, pWaluta, pWalutaPLN, dDateNow, bIsKurs) then
+          exit function
+        end if
+      next
+    
+      'dodanie loga o zdarzeniu i aktualizacja daty w globprof
+      if bIsKurs then
+        log_event N5EVENTLOG_POBRANIE_KURSOW_WALUT, "Pobrano kursy walut w dniu " + doc_.afc.display.fulldate(dDateNow)
+        'aktualizuj datę
+        setglobprofile GLOBPROF_LAST_DATE_KURSY_WALUT, doc_.afc.convert.date2str(dDateNow)
+        if trans_.saveobjects() then
+        end if
+        bIsKurs = false
+      end if
+    
+      dDateNow = DateAdd("d",1,dDateNow)
+    end if
+  next
+end function
+
+function get_kurs()
+  run
+end function
+
+'------------------------------------------------
+'pobiera datę ostatniej aktualizacji kursów walut
+'------------------------------------------------
+function GetLastDate(byref dDateNow)
+  dim dDateLast: dDateLast = DateAdd("d",-1,dDateNow) 'domyślnie wczoraj
+  dim pGlobProfLastDate: set pGlobProfLastDate = nx_get_globprofile_obj(GLOBPROF_LAST_DATE_KURSY_WALUT)
+  if not pGlobProfLastDate is nothing then
+    dDateLast = doc_.afc.convert.str2date(pGlobProfLastDate.Wartosc)    
+  end if
+  GetLastDate = dDateLast
+end function
+
+'--------------------------------------------
+'dodaje pojedynczy kurs z WalutaZ na WalutaNa
+'--------------------------------------------
+function CreateKurs(byref oService, byref pWalutaZ, byref pWalutaNa, byref dDateNow, byref bIsKurs): CreateKurs = true
+  on error resume next
+  
+  'sprawdź czy nie wprowadzono kursu ręcznie
+#ifdef _IOW
+  dim strWhere: strWhere = trans_.afc.convert.Formatter("pWalZ=%1 and pWalN=%2 and dData=%3") _
+                            (pWalutaZ.IdObj)(pWalutaNa.IdObj)(trans_.afc.convert.date2SQL(AddDay(dDateNow))).Done()
+#else
+  dim strWhere: strWhere = trans_.afc.convert.Formatter("pWalZ=%1 and pWalN=%2 and dData=%3") _
+                            (pWalutaZ.IdObj)(pWalutaNa.IdObj)(trans_.afc.convert.date2SQL(dDateNow)).Done()
+#endif                            
+      
+  if (trans_.findobjid(TYPEID_N5KURSWALUT,strWhere) <> 0) then
+    bIsKurs = true
+    exit function
+  end if    
+  dim curKurs
+
+  if has_nxm_feature("get_pl_nbp_exchange_rate") then
+    curKurs = oService.get_pl_nbp_exchange_rate(pWalutaZ.strSkrot, pWalutaNa.strSkrot, dDateNow)
+  else
+    trans_.message 7000, 0, "Żądana funkcjonalność jest nieosiągalna lub wymaga odblokowania"
+    exit function
+  end if
+  
+  if ccur(curKurs) <> ccur(0.0) then
+    dim pKurs: set pKurs = trans_.newobj(TYPEID_N5KURSWALUT)
+    set pKurs.pWalZ = pWalutaZ
+    set pKurs.pWalN = pWalutaNa
+#ifdef _IOW
+    pKurs.dData = AddDay(dDateNow)
+#else
+    pKurs.dData = dDateNow
+#endif    
+    pKurs.curAverageWal = ccur(curKurs)  
+    
+    if not trans_.saveobjects() then
+#ifdef _DEBUG		
+      trans_.message 7000, 0, "Nie udało się zapisać kursu z " + pWalutaZ.strSkrot + " na " + pWalutaNa.strSkrot
+#endif			
+    else
+#ifdef _DEBUG			
+      trans_.message 7000, 0, "Pobrano kurs z " + pWalutaZ.strSkrot + " na " + pWalutaNa.strSkrot
+#endif			
+      bIsKurs = true
+    end if
+  end if
+  
+  on error goto 0
+end function
+
+'-----------------------------------------------------------------
+'dodaje 1 dzień do aktualnej daty z pominięciem soboty i niedzieli
+'-----------------------------------------------------------------
+function AddDay(byval dDateNow)
+  dDateNow = DateAdd("d", 1, dDateNow)
+  do while true
+    if WeekDay(dDateNow) = 1 or WeekDay(dDateNow) = 7 then '1-niedziela, 7-sobota
+      dDateNow = DateAdd("d", 1, dDateNow)
+    else
+      exit do
+    end if
+  loop
+  AddDay = dDateNow
+end function
+
+
+]]>
+</script>
+</config>
+	<body>
+	</body>
+</page>

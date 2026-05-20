@@ -1,0 +1,830 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!-- 
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1220.h"
+#include "h1240.h"
+
+
+#define _TEST
+#define FILENAME_TEST	"c:\posnet_debug.txt"
+
+
+
+#define MAZOVIA_a  134
+#define MAZOVIA_c  141
+#define MAZOVIA_e  145
+
+#define MAZOVIA_l  146
+#define MAZOVIA_n  164
+#define MAZOVIA_o  162
+
+#define MAZOVIA_s  158
+#define MAZOVIA_x  166
+#define MAZOVIA_z  167
+
+
+#define MAZOVIA_A  143
+#define MAZOVIA_C  149
+#define MAZOVIA_E  144
+
+#define MAZOVIA_L  156
+#define MAZOVIA_N  165
+#define MAZOVIA_O  163
+
+#define MAZOVIA_S  152
+#define MAZOVIA_X  160
+#define MAZOVIA_Z  161
+
+
+
+
+
+
+
+#comment standardy polskich liter
+#comment standard CE'' - uzywany przez Windows
+
+#define WIN_CE_a  185
+#define WIN_CE_c  230
+#define WIN_CE_e  234
+
+#define WIN_CE_l  179
+#define WIN_CE_n  241
+#define WIN_CE_o  243
+
+#define WIN_CE_s  156
+#define WIN_CE_x  159
+#define WIN_CE_z  191
+
+#define WIN_CE_A  165
+#define WIN_CE_C  198
+#define WIN_CE_E  202
+
+#define WIN_CE_L  163
+#define WIN_CE_N  209
+#define WIN_CE_O  211
+
+#define WIN_CE_S  140
+#define WIN_CE_X  143
+#define WIN_CE_Z  175
+
+
+-->
+<page>
+<config>
+	<startpos>center</startpos>
+	<title>
+
+Posnet
+
+	</title>
+<script>
+<![CDATA[
+
+
+
+#ifdef _TEST
+dim g_so
+#endif
+
+'obsluga drukarek fiskalnych
+#include "50132"
+
+
+'str2cur
+#include "50126"
+
+#include "50523"
+
+
+class CPosnetSequence
+
+	public printer
+	public m_pArray
+
+	public sub class_initialize
+	end sub
+
+	private function sequenceStart()
+		sequenceStart = chr(27)
+	end function
+
+	private function sequenceStop()
+		sequenceStop = chr(27) + chr(92)
+	end function
+
+	private function sequenceStartParameters()
+		sequenceStartParameters = "P"
+	end function
+	
+	private function startSeq()
+		startSeq = sequenceStart + sequenceStartParameters
+	end function
+
+	public function checksum(byval strSequence)
+#ifdef _TEST
+'		g_so.write vbTab + vbTab + "checksum: input: " + strSequence + vbNewLine
+#endif
+		dim i,value
+		value = clng(255)
+		for i=1 to len(strSequence)
+			value = clng (value xor clng(asc(mid(strSequence,i,1))))
+#ifdef _TEST
+'			g_so.write vbTab + vbTab + vbTab + "checksum: licze dla znaku o kodzie " + cstr(asc(mid(strSequence,i,1))) + ", wyliczyłem " + cstr(value) + vbNewLine
+#endif
+		next
+		checksum = hex(value)
+#ifdef _TEST
+'			g_so.write vbTab + vbTab + "checksum: output: " + cstr(checksum) + ", " + cstr(value) + vbNewLine
+#endif
+	end function
+
+
+	' rozpoczęcie drukowania paragonu
+	' liczba pozycji - 0 jesli chcemy drukowac na bieżąco
+	public function beginParagon(byval nPositions)
+
+		getPTUs()
+		
+		dim strParagonHead,strParameters
+		strParagonHead = startSeq
+		'parametry rozakzu - ilosc pozycji + sekwencja konczaca
+		strParameters = cstr(nPositions) + "$" + "h"
+		beginParagon = strParagonHead +  strParameters + checksum(strParameters) + sequenceStop
+
+		printer.writeRawAndSend beginParagon
+	
+	end function
+
+
+	public function PositionOfParagon(byval nPos , byval bRabat , byval strProductName , byval nIlosc , byval strPTU , byval nCena , byval nWartosc , byval strJednostka, byval bKorekta , byref suma)		
+		suma = ccur(nIlosc*nCena)
+#ifdef _TEST
+		g_so.write "PositionOfParagon: wysłano: ilosc=" + cstr(nIlosc) + vbNewLine
+		g_so.write "PositionOfParagon: wysłano: cena=" + cstr(nCena) + vbNewLine
+		g_so.write "PositionOfParagon: wysłano: wartosc=" + cstr(nWartosc) + vbNewLine
+		g_so.write "PositionOfParagon: wyliczono: wartosc=ilosc*cena=" + cstr(nIlosc*nCena) + vbNewLine
+#endif
+		dim strPosition,strParameters
+		strPosition = startSeq
+		strParameters = cstr(nPos)
+		if not bRabat then
+			strParameters = strParameters + "$l" + convertToPolish(left(strProductName,40),strJednostka) + chr(13) + pn_cstr_quant(nIlosc,strJednostka) + chr(13) + strPTU + "/" + pn_cstr(nCena) + "/" + pn_cstr(nWartosc) + "/"
+		else
+		end if
+#ifdef _TEST
+		g_so.write "PositionOfParagon: ciąg: " + strParameters + vbNewLine
+#endif
+		PositionOfParagon = strPosition + strParameters + checksum(strParameters) + sequenceStop
+#ifdef _TEST
+		g_so.write "PositionOfParagon: wysylam ciąg: " + PositionOfParagon + vbNewLine
+#endif
+
+		printer.writeRawAndSend PositionOfParagon
+		doc_.system.sleep 200
+	
+		'sprobujemy pisac znak po znaku
+'		dim iter
+'		for iter = 1 to len(PositionOfParagon)
+'			printer.m_comm.write asc(mid(PositionOfParagon,iter,1))
+'		next
+'		printer.m_comm.write asc(vbCr)
+'		printer.m_comm.flush
+
+	end function
+	
+	public function endOfParagon(byval bCancel,byval nRabat,byval strKod , byval nWplata , byval nTotal)
+#ifdef _DEBUG
+		trans_.message 1002 ,0, "wysłano: wartosc=" + cstr(nWplata)
+#endif
+
+		dim strParagonFoot,strParameters
+		strParagonFoot = startSeq
+		if bCancel then
+			strParameters = "0$e"					
+		else
+			strParameters = "1;"+pn_cstr(nRabat)+"$e" + strKod + chr(13) + pn_cstr(nWplata) + "/" + pn_cstr(ntotal) + "/"
+		end if
+		endOfParagon = strParagonFoot + strParameters + checksum(strParameters) + sequenceStop
+
+		printer.writeRawAndSend endOfParagon
+	end function
+
+	'zmiana sposobu obsługi błedów - teraz robi się to przez oprogramowanie bez komunikatów na
+	'wyswietlaczu drukarki
+	public function changeErrorModeSeq()
+		changeErrorModeSeq = startSeq + "1#e88" + sequenceStop
+		printer.writeRawAndSend changeErrorModeSeq
+	end function
+
+	'sekwencja żądania statusu
+	' drukarka wysyla status postaci:
+	'     7	     6	    5	     4	     3	     2	     1	     0
+     '	  0	     1	    1	     0	    FSK	    CMD	    PAR	    TRF
+	'gdzie CMD jest ustawione jesli ostatni rozkaz byl zrealizowany poprawnie
+	public function seqENQ
+		seqENQ = chr(5)
+	end function
+	
+
+	'sekwencja żądania statusu
+	' drukarka wysyla status postaci:
+	'     7	     6	    5	     4	     3	     2	     1	     0
+    '	  0	     1	    1	     1	     0	    ONL	     PE	    ERR
+	'gdzie: 
+	'	ONL = 1 - drukarka jest online
+	'	PE = 1 - brak papieru
+	'	ERR = 1 - błąd mechanizmu sterownika
+	public function seqDLE
+		seqDLE = chr(10)
+	end function
+
+
+	'żądanie statusu - przyslana odpowiedz ESC P 1 # E Pe ESC/
+	' gdzie zachodzą przypadki
+	' CMD = 1 , pe - niewazne - brak błedu
+	' CMD = 2 , pe = 0 - nierozpoznany rozkaz
+	' CMD = 3 , pe > 0 - rozpoznany rozkaz, numer błedu
+	public function seqErrNum()
+		seqErrNum = startSeq + "#n" +  sequenceStop
+	end function
+
+	' funkcja zwracajaca na podstawie otrzymanego od drukarki statusu 
+	' wartość logiczną czy wystąpił bład w trakcie analizy rozkazu
+	public function isError(nStatusSeq)
+#ifdef _TEST
+	g_so.write "isError: otrzymana sekwencja: " + cstr(nStatusSeq) + vbNewLine
+#endif
+		isError = (nStatusSeq = 96) or (nStatusSeq = 102) or (nStatusSeq = 106) or (nStatusSeq = 105)
+#ifdef _TEST
+	g_so.write "isError: wynik: " + cstr(isError) + vbNewLine
+#endif
+	end function
+
+	public function errorNum(strStatusSeq)
+		if len(strStatusSeq) = 8 then
+			errorNum = clng(mid(strStatusSeq,6,1))
+		else
+			errorNum = clng(mid(strStatusSeq,6,1))
+		end if
+#ifdef _TEST
+	g_so.write "errorNum: numer błędu: " + cstr(errorNum) + vbNewLine
+#endif
+	end function
+
+	' funkcja formatujaca otzymaną sekwencję
+	' wycinanie wszystkich znaków od początku az do ESC
+	public function formatSequence(strSequence)
+		dim strFormated,i,bStart
+		bStart=false
+		for i=1 to len(strSequence)
+			if asc(mid(strSequence,i,1)) = 27 then
+				bStart=true
+			end if
+			if bStart then
+				strFormated = strFormated + mid (strSequence,i,1)
+			end if
+		next
+		formatSequence = strFormated
+	end function
+
+	public function getErrorNumber()
+		dim strStatusSeq,c
+		printer.writeRawAndSend seqErrNum()
+		do
+			c = printer.readChar
+			strStatusSeq = strStatusSeq + c
+		loop until c="\"
+
+#ifdef _TEST
+	g_so.write "getErrorNumber: sekwencja zczytana: " + cstr(strStatusSeq) + vbNewLine
+#endif
+
+		getErrorNumber = errorNum(formatSequence(strStatusSeq))
+	end function
+
+	public function seqIsWrong()
+
+		dim p:p=0
+		'chcemy statusu
+		printer.writeRawAndSend seqENQ
+
+		if isError(printer.getFirstChar(17)) then
+			p=getErrorNumber()
+		end if
+
+		seqIsWrong = p
+
+#ifdef _TEST
+	g_so.write "seqIsWrong: " + cstr(p) + vbNewLine
+#endif
+
+	end function
+
+	public function changePTUs(byval strStawki)
+		dim strSeqHead,strParameters,iter,i,stawkiArray
+		strSeqHead = startSeq
+		stawkiArray = split(strStawki,";",-1,1)
+		strParameters = "7$p"
+		for iter=0 to ubound(stawkiArray)
+			strParameters = strParameters + stawkiArray(iter) + "/"
+		next
+		for i=6 to iter step -1
+			strParameters = strParameters + "101" + "/"
+		next
+		
+		changePTUs = strSeqHead + strParameters + checksum(strParameters) + sequenceStop
+
+		printer.writeRawAndSend changePTUs
+		
+	end function
+
+	public function changeHeader(byval strLines)
+		dim strSeqHead,strParameters,iter,i,linesArray
+		strSeqHead = startSeq
+		strParameters = "0$f"
+		linesArray = split(strLines,";",-1,1)
+
+		for iter=0 to ubound(linesArray)
+			strParameters = strParameters + linesArray(iter) + chr(13)
+		next
+
+		strParameters = strParameters + chr(255)
+		
+		changeHeader = strSeqHead + strParameters + checksum(strParameters) + sequenceStop
+
+		printer.writeRawAndSend changeHeader
+
+	end function
+
+	public function ejectPaper(byval nLines)
+
+		dim strSeqHead,strParameters
+		strSeqHead = startSeq
+		strParameters = cstr(nLines) + "#l"
+		ejectPaper = strSeqHead + strParameters + checksum(strParameters) + sequenceStop
+
+		printer.writeRawAndSend ejectPaper
+		
+	end function
+
+	'funkcja sterująca wuswietlaczem i szufladą
+	' mode - tryb prac
+	'	1 - otwarcie szyflady
+	'	2 - wyslanie stringa do wyswietlacza
+	'	3 - przelaczenie w tryb kasowy
+	'	4 - wyswietlenie day i godziny
+	'	5 - wys;anie napisu do wyswietlacza operatora
+	public function printMsg(byval mode, byval strText)
+		dim strSeqHead,strParameters
+		strSeqHead = startSeq
+		strParameters = cstr(mode) + "$d" + strText
+		printMsg = strSeqHead + strParameters + sequenceStop
+
+		printer.writeRawAndSend printMsg
+		
+			
+	end function
+
+
+	public function getPTUs()
+		getPTUs = false
+		dim strSeq
+		strSeq = startSeq + "23#s" +  sequenceStop
+
+		dim strStatusSeq,c
+
+		printer.writeRawAndSend strSeq
+		dim iFailCounter  : iFailCounter = 1
+		do
+			c = printer.readChar
+			if asc(c) = 0 then
+				iFailCounter = iFailCounter + 1
+			end if
+			strStatusSeq = strStatusSeq + c
+			if iFailCounter > 5 then		'5*1s
+				exit function
+			end if
+		loop until c="\"
+		'postac odpowiedzi
+		'"..P2#X0;1;0;1;1;3;3;4;9/22.00/07.00/00.00/03.00/12.00/100.00/100.00/6/6698.01/1000./0./0./0./0./0./966429.68/ABA00000000C1.\"
+		'Set m_oSet = CreateObject("Scripting.Dictionary")
+		m_pArray = split(strStatusSeq,"/")
+		getPTUs = true
+	end function
+
+
+	public function getStawka(nValue)
+		dim iter,found
+		found = false
+		for iter = 1 to 7
+			if str2cur(m_pArray(iter)) = ccur(nValue) then
+				found = true
+				exit for
+			end if
+		next
+		getStawka = chr(64 + iter) ' offset dla znaku A
+		if not found then
+			getStawka = ""
+		end if
+	end function
+	
+	
+	'drukowanie raportu dobowego
+	'ESC  P  Ps  #r  <check>  ESC  \
+	public function dayRaport
+
+		dim strSeqHead,strParameters
+		strSeqHead = startSeq
+		strParameters = "#r"
+		dim rap
+		rap = strSeqHead + strParameters + checksum(strParameters) + sequenceStop
+		
+		printer.writeRawAndSend rap
+	end function
+		
+end class
+
+
+
+function print_day_raport
+
+
+#ifdef _TEST
+set g_so = doc_.createstreamobj()
+#endif
+
+	dim seq:set seq= new CPosnetSequence
+
+	dim printer:set printer = new CPrinter
+	if not printer.start() then
+		exit function
+	end if
+	set seq.printer = printer
+
+	seq.dayRaport
+
+end function
+
+
+
+
+
+
+function print_paragon(byval pSprzedaz)
+	print_paragon = false
+'aaaaaa
+
+#ifdef _TEST
+set g_so = doc_.createstreamobj()
+#endif
+
+
+	dim seq:set seq= new CPosnetSequence
+
+	dim printer:set printer = new CPrinter
+	if not printer.start() then
+#ifdef _TEST
+		g_so.save FILENAME_TEST
+#endif
+		exit function
+	end if
+	set seq.printer = printer
+
+	if not seq.getPTUs() then
+#ifdef _TEST
+		g_so.write "failed to read PTUs. Printer may be off-line" + vbNewLine
+		g_so.save FILENAME_TEST
+#endif
+		exit function
+	end if
+
+	seq.changeErrorModeSeq()
+	seq.beginParagon(0)
+	dim nError:nError = seq.seqIsWrong()
+
+	dim suma:suma = ccur(0)
+	dim suma_pos
+
+	dim elem,iter
+	iter = 1
+#ifdef _TEST
+	g_so.write "print_paragon: pozycje " + vbNewLine
+#endif
+	for each elem in pSprzedaz.listPozycje
+#ifdef _TEST
+		g_so.write "************************************" + vbNewLine
+#endif
+
+		'pobranie stawki VAT
+		dim strVAT:strVAT = seq.getStawka(vat2val(elem.eVAT)*100)
+
+	'DLA DRUKARKI POSNET stawka zwolniona jest jako 100
+		if elem.eVAT = STAWKA_VAT_ZWOLNIONY then
+			strVAT = seq.getStawka(100)
+		end if
+		
+
+		if strVAT="" then
+			trans_.message 0,7000,"nieznana stawka VAT"
+			seq.EndOfParagon true , 0 ,"111" , pSprzedaz.curSumaBrutto , pSprzedaz.curSumaBrutto
+#ifdef _TEST
+		g_so.save FILENAME_TEST
+#endif
+			exit function
+		end if
+	
+		seq.PositionOfParagon  _
+			iter, _ 
+			elem.curRabat, _
+#ifdef _TERRANOVA
+			elem.pProdukt.strIndeks, _
+#else
+			elem.text, _
+#endif
+			ccur(elem.curIloscOpak), _
+			strVAT, _
+			elem.curCenaBrutto,elem.curWartBrutto, _
+			elem.pProdukt.pJednostkaEwid.strSkrot, _
+			false , suma_pos
+		suma = suma + suma_pos
+		iter = iter + 1
+		nError = seq.seqIsWrong()
+		if nError <> 0 then
+#ifdef _TEST
+			g_so.write "błąd pozycji" + vbNewLine
+#endif					
+			'anulowanie paragonu
+			trans_.message 0,7000,"Blad sekwencji wyslanej do drukarki - kod" + cstr(nError)
+			seq.EndOfParagon true , 0 ,"111" , pSprzedaz.curSumaBrutto , pSprzedaz.curSumaBrutto
+#ifdef _TEST
+			g_so.save FILENAME_TEST
+#endif
+			exit function
+		end if
+	next
+
+	'endOfParagon(byval bCancel,byval nRabat,byval strKod , byval nWplata , byval nTotal)
+	seq.EndOfParagon false , 0 ,"111" , pSprzedaz.curSumaBrutto , pSprzedaz.curSumaBrutto
+
+'	seq.EndOfParagon false , 0 ,"111" , suma , suma
+
+	nError = seq.seqIsWrong()
+	if nError <> 0 then
+#ifdef _TEST
+			g_so.write "błąd paragonu" + vbNewLine
+#endif	
+		'anulowanie paragonu
+		trans_.message 0,7000,"Blad sekwencji wyslanej do drukarki - kod" + cstr(nError)
+		seq.EndOfParagon true , 0 ,"111" , pSprzedaz.curSumaBrutto , pSprzedaz.curSumaBrutto
+	end if
+
+#ifdef _TEST
+	g_so.save FILENAME_TEST
+#endif
+
+	print_paragon = (nError = 0)
+	if print_paragon then
+		'blokada przed ponownym wydrukiem
+		pSprzedaz.sprzed_strNrDokFisk = pSprzedaz.strNrDok
+		if not trans_.saveobjects() then
+			trans_.message 1002 , 0 , "Nie udało się zablokowanie dokumentu przed ponownym wydrukiem paragonu"
+		end if 
+	end if
+end function
+
+
+'konwersja liczby z przecinkiem na format akceptowany przez kase posnet
+function pn_cstr(nLiczba)
+	pn_cstr = replace(cstr(nLiczba),",",".")	
+end function
+
+
+
+function pn_cstr_quant(nLiczba,strJednostka)
+	'aaaaaa	
+	dim strAfterDot
+	if clng(nLiczba) - cdbl(nLiczba) = 0  then
+		strAfterDot = ".00"	
+	end if	
+#ifdef _TEST
+	g_so.write "pn_cstr_quant: input - " + cstr(nLiczba) + vbNewLine
+#endif
+	pn_cstr_quant = replace(cstr(nLiczba),",",".") + strAfterDot + " " + 	strJednostka
+#ifdef _TEST
+	g_so.write "pn_cstr_quant: output - " + pn_cstr_quant + vbNewLine
+#endif
+end function
+
+
+function convertToPolish(byval strNazwa,byval strJe)
+#ifdef _TEST
+'	g_so.write "convertToPolish: input - " + strNazwa + vbNewLine
+#endif
+
+	'strNazwa = replace (strNazwa , "*" , "x")
+	'strNazwa = replace (strNazwa , "/" , "_")
+	'strNazwa = replace (strNazwa , "\" , "_")
+	'strNazwa = replace (strNazwa , "." , "_")
+	'strNazwa = replace (strNazwa , "," , "_")
+
+	dim znak,iter
+	for iter = 1 to len(strNazwa)
+		znak = mid(strNazwa,iter,1)	
+
+		#ifdef _TEST
+'		g_so.write vbTab + "zamiana: " + znak + "("+ cstr(asc(znak))+") na "
+		#endif
+
+		if asc(znak) = WIN_CE_n then			
+			znak = "n"'chr(MAZOVIA_n)
+		else			
+		
+
+		if asc(znak) = WIN_CE_a then
+			znak = "a"'chr(MAZOVIA_a)
+		else
+
+
+		if asc(znak) = WIN_CE_c then
+			znak = "c"'chr(MAZOVIA_c)			
+		end if
+
+
+		if asc(znak) = WIN_CE_e then
+			znak = "e"'chr(MAZOVIA_e)
+		end if
+
+		if asc(znak) = WIN_CE_o then
+			znak = "o"'chr(MAZOVIA_o)			
+		end if
+
+
+		if asc(znak) = WIN_CE_l then
+			znak = "l"'chr(MAZOVIA_l)			
+		end if
+
+		if asc(znak) = WIN_CE_z then
+			znak = "z"'chr(MAZOVIA_z)
+		else
+			if asc(znak) = WIN_CE_x then
+				znak = "z"'chr(MAZOVIA_x)
+			else
+				if asc(znak) = WIN_CE_s then
+					znak = "s"'chr(MAZOVIA_s)	
+				else
+					if asc(znak) = WIN_CE_A then
+						znak = "A"'chr(MAZOVIA_A)
+					else
+						if asc(znak) = WIN_CE_C then
+							znak = "C"'chr(MAZOVIA_C)			
+						else
+							if asc(znak) = WIN_CE_E then
+								znak = "E"'chr(MAZOVIA_E)
+							else
+								if asc(znak) = WIN_CE_O then
+									znak = "O"'chr(MAZOVIA_O)
+								else
+									if asc(znak) = WIN_CE_L then
+										znak = "L"'chr(MAZOVIA_L)
+									else
+										if asc(znak) = WIN_CE_Z then
+											znak = "Z"'chr(MAZOVIA_Z)
+										else
+											if asc(znak) = WIN_CE_X then
+												znak = "Z"'chr(MAZOVIA_X)
+												'msgbox znak
+											else
+												if asc(znak) = WIN_CE_S then
+													znak = "S"'chr(MAZOVIA_S)
+												else
+													if asc(znak) = WIN_CE_N then
+														znak = "N"'chr(MAZOVIA_N)
+													end if
+
+												end if
+											end if
+										end if
+									end if
+								end if
+							end if
+						end if
+					end if
+				end if
+			end if
+		end if
+	end if
+end if
+
+		#ifdef _TEST
+'		g_so.write znak + "("+cstr(asc(znak))+")" + vbNewLine
+		#endif
+
+		convertToPolish = convertToPolish + znak
+
+		#ifdef _TEST
+'		g_so.write vbTab + "convertToPolish: skladany napis: " + convertToPolish + vbNewLine
+		#endif
+
+	next
+
+	
+	
+	if isNumeric(mid(strJe,len(strJe),1)) then
+		#ifdef _TEST
+			g_so.write "convertToPolish: cyfra w jednostce - " + convertToPolish + vbNewLine
+		#endif
+		'łata - jak kropka na koncu to sie wywala - do poprawki
+		if	mid(convertToPolish,len(convertToPolish),1) = "." or _
+			mid(convertToPolish,len(convertToPolish),1) = "*" or _
+			mid(convertToPolish,len(convertToPolish),1) = "+" or _
+			mid(convertToPolish,len(convertToPolish),1) = "-" or _
+			mid(convertToPolish,len(convertToPolish),1) = " " or _
+			mid(convertToPolish,len(convertToPolish),1) = "," then
+			#ifdef _TEST
+				g_so.write "convertToPolish: dziwny znak na końcu - " + convertToPolish + vbNewLine
+			#endif
+			convertToPolish = left(convertToPolish,len(convertToPolish)-1)
+		end if
+
+		'kolejna łatka - jak na koncu cyfra to tez sie wali :-)
+		if	isNumeric(mid(convertToPolish,len(convertToPolish),1)) or _
+			mid(convertToPolish,len(convertToPolish),1) = " " then
+			#ifdef _TEST
+				g_so.write "convertToPolish: cyfra na końcu - " + convertToPolish + vbNewLine
+			#endif
+			convertToPolish = left(convertToPolish,len(convertToPolish)-1)
+		end if
+
+		if	isNumeric(mid(convertToPolish,len(convertToPolish),1)) or _
+			mid(convertToPolish,len(convertToPolish),1) = " " then
+			#ifdef _TEST
+				g_so.write "convertToPolish: cyfra na końcu - " + convertToPolish + vbNewLine
+			#endif
+			convertToPolish = left(convertToPolish,len(convertToPolish)-1)
+		end if
+
+		if	isNumeric(mid(convertToPolish,len(convertToPolish),1)) or _
+			mid(convertToPolish,len(convertToPolish),1) = " " then
+			#ifdef _TEST
+				g_so.write "convertToPolish: cyfra na końcu - " + convertToPolish + vbNewLine
+			#endif
+			convertToPolish = left(convertToPolish,len(convertToPolish)-1)
+		end if
+
+		if	isNumeric(mid(convertToPolish,len(convertToPolish),1)) or _
+			mid(convertToPolish,len(convertToPolish),1) = " " then
+			#ifdef _TEST
+				g_so.write "convertToPolish: cyfra na końcu - " + convertToPolish + vbNewLine
+			#endif
+			convertToPolish = left(convertToPolish,len(convertToPolish)-1)
+		end if
+
+		if	isNumeric(mid(convertToPolish,len(convertToPolish),1)) or _
+			mid(convertToPolish,len(convertToPolish),1) = " " then
+			#ifdef _TEST
+				g_so.write "convertToPolish: cyfra na końcu - " + convertToPolish + vbNewLine
+			#endif
+			convertToPolish = left(convertToPolish,len(convertToPolish)-1)
+		end if
+
+		if	isNumeric(mid(convertToPolish,len(convertToPolish),1)) or _
+			mid(convertToPolish,len(convertToPolish),1) = " " then
+			#ifdef _TEST
+				g_so.write "convertToPolish: cyfra na końcu - " + convertToPolish + vbNewLine
+			#endif
+			convertToPolish = left(convertToPolish,len(convertToPolish)-1)
+		end if
+
+		if	isNumeric(mid(convertToPolish,len(convertToPolish),1)) or _
+			mid(convertToPolish,len(convertToPolish),1) = " " then
+			#ifdef _TEST
+				g_so.write "convertToPolish: cyfra na końcu - " + convertToPolish + vbNewLine
+			#endif
+			convertToPolish = left(convertToPolish,len(convertToPolish)-1)
+		end if
+
+	end if
+
+
+
+#ifdef _TEST
+	g_so.write "convertToPolish: output - " + convertToPolish + vbNewLine
+#endif
+end function
+
+
+
+
+]]>
+</script>
+</config>
+<body>
+
+</body>
+</page>

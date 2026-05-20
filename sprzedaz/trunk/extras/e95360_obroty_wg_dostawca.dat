@@ -1,0 +1,376 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+
+<!--
+RAPTEMPLATE_OBROTY_WG_DOSTAWCOW
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203_appconfig.h"
+#include "h1220.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1250.h"
+
+#define RAPORT_TITLE Obroty z dostawcą
+
+#define MONTH_WIDTH       1500
+
+-->
+
+<page style='36'>
+<config>
+<title>RAPORT_TITLE</title>
+<script>
+<![CDATA[
+
+<%
+function getCurrentRKSId()
+	if trans_.isvar(GVAR_ROKKSIEG) then
+		getCurrentRKSId = trans_.var(GVAR_ROKKSIEG)
+	else
+		getCurrentRKSId = 0
+	end if
+end function
+
+function getCurrentRKS()
+	set getCurrentRKS = nothing
+	dim id:id = getCurrentRKSId
+	if id > 0 then
+		set getCurrentRKS = trans_.getobj(TYPEID_N5ROKKSIEG,id)
+	end if
+end function
+%>
+
+<%
+function query(byref pParamArray)
+  dim nRok: nRok = year(getCurrentRKS().dDataRozp)
+
+  dim strSQL
+  strSQL = "create table #temp " + vbNewLine +_
+           "( " + vbNewLine +_
+           "strIndeks varchar(32) not null, " + vbNewLine +_
+           "strNazwa varchar(255) not null, " + vbNewLine +_
+           "idDost integer not null, " + vbNewLine +_
+           "strKlasyfikacja varchar(128), " + vbNewLine +_
+           "strWielkosc varchar(1), " + vbNewLine +_
+           "curSumaNetto decimal(12,2), " + vbNewLine +_
+           "curSumaBrutto decimal(12,2), " + vbNewLine +_
+           "curSumaWal decimal(12,2), " + vbNewLine +_
+           "idWal integer not null, " + vbNewLine +_
+           "strSkrot varchar(4) not null, " + vbNewLine +_
+           "curKurs decimal(14,4) not null, " + vbNewLine +_
+           "strNazwisko varchar(32) not null, " + vbNewLine +_
+           "strImie varchar(32) not null, " + vbNewLine +_
+           "iMiesiac integer " + vbNewLine +_
+           ")"
+  trans_.execsql strSQL
+  
+  strSQL = "insert into #temp " + vbNewLine +_ 
+           "select 'k_indeks'=max(k.strIndeks),'k_nazwa'=max(k.strNazwa),'k_idobj'=max(k.IdObj), " + vbNewLine +_ 
+           "'k_klasyfikacja'=max(k.strCecha1), " + vbNewLine +_ 
+           "'k_wielkosc'=max(k.strCecha3), " + vbNewLine +_ 
+           "'z_sum_netto'=sum(isnull((zak.curSumaNetto-isnull(org_zak.curSumaNetto,0)),0)), " + vbNewLine +_ 
+           "'z_sum_brutto'=sum(isnull((zak.curSumaBrutto-isnull(org_zak.curSumaBrutto,0)),0)), " + vbNewLine +_ 
+           "'z_sum_wal'=sum(isnull((zak.curSumaWal-isnull(org_zak.curSumaWal,0)),0)), " + vbNewLine +_ 
+           "'z_waluta'=max(zak.pWaluta),'w_skrot'=max(w.strSkrot),'c_kurs'=max(zak.curKurs), " + vbNewLine +_ 
+           "'os_obsug_nazw'=isnull(max(prac.strNazwisko),''),'os_obsug_imie'=isnull(max(prac.strImie),''), " + vbNewLine +_
+           "'z_mies'=month(zak.dDataWyst) " + vbNewLine +_
+           "from n5zakup as zak " + vbNewLine +_ 
+           "	left outer join n5zakup org_zak on zak.ppopzakup = org_zak.idobj " + vbNewLine +_ 
+           "	inner join n5klient as k on zak.pDostawca = k.IdObj " + vbNewLine +_ 
+           "	inner join n5grupaklient as gd on k.pGrupaKlient = gd.IdObj " + vbNewLine +_ 
+           "	left join n5pracownik as prac on k.pPracownik = prac.Idobj " + vbNewLine +_ 
+           "	inner join n5rejestrdok as r on zak.pRejestrDok = r.IdObj " + vbNewLine +_ 
+           "	inner join n5jednostka as w on zak.pWaluta = w.IdObj " + vbNewLine +_ 
+           "	left join n5dokmag dm on dm.wrefDokHandl = zak.idobj and dm.nTypDok in (N5REJESTRDOK__KWZ,N5REJESTRDOK__PZ) " + vbNewLine +_
+           "where (zak.dDataWyst between {d '" + CStr(nRok) + "-01-01'} and {d '" + CStr(nRok) + "-12-31'}) " + vbNewLine +_
+           " and %1 and %2 and %3 and %4 and %5 and %6 and %7 and %9 " + vbNewLine +_
+           "group by k.idobj,zak.pWaluta,month(zak.dDataWyst) " + vbNewLine +_  
+           "having %8 " + vbNewLine +_
+           "order by k_indeks,k_nazwa,month(zak.dDataWyst),z_sum_brutto desc"
+  strSQL = rapeng_.query_apply_actual_param(strSQL,pParamArray)
+  strSQL = Replace(strSQL,"prac.strNazwisko is not null","1=1")
+  trans_.execsql strSQL        
+
+  dim subQuery: subQuery = ""
+  dim iter
+  for iter = 1 to 12
+    subQuery = subQuery + getQueryMonth(iter)
+    if iter <> 12 then
+      subQuery = subQuery + "," + vbNewLine
+    end if
+  next
+        
+  query="select 'k_indeks'=max(t.strIndeks),'k_nazwa'=max(t.strNazwa),'k_idobj'=max(t.idDost), " + vbNewLine +_
+        "'k_klasyfikacja'=max(t.strKlasyfikacja), " + vbNewLine +_ 
+        "'k_wielkosc'=max(t.strWielkosc), " + vbNewLine +_ 
+        "'z_sum_netto'=sum(t.curSumaNetto), " + vbNewLine +_ 
+        "'z_sum_brutto'=sum(t.curSumaBrutto), " + vbNewLine +_ 
+        "'z_sum_wal'=sum(t.curSumaWal), " + vbNewLine +_ 
+        "'z_waluta'=max(t.idWal),'w_skrot'=max(t.strSkrot),'c_kurs'=max(t.curKurs), " + vbNewLine +_ 
+        "'os_obsug_nazw'=isnull(max(t.strNazwisko),''),'os_obsug_imie'=isnull(max(t.strImie),''), " + vbNewLine +_
+        subQuery + vbNewLine +_
+        "from #temp t " + vbNewLine +_
+        "group by t.idDost,t.idWal " + vbNewLine +_
+        "order by k_indeks,k_nazwa,z_sum_brutto desc"
+end function
+%>
+
+<%
+'tworzy podzapytanie dla pojedynczego miesiąca
+function getQueryMonth(nNumMonth): getQueryMonth = ""
+  dim strMonth: strMonth = Right(CStr(100 + nNumMonth),2)                  
+  getQueryMonth = "'" + strMonth + "_netto'=isnull((select sum(curSumaNetto) from " +_ 
+                  "#temp where idDost = t.idDost and idWal = t.idWal and iMiesiac = " + CStr(nNumMonth) + "),0)"                
+end function
+%>
+
+<%
+function default_param()
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+	pParamArray.add doc_.afc.rap.param.new_date_range("Data wystawienia").bindexpr("zak.dDataWyst")	
+	pParamArray.add doc_.afc.rap.param.new_text("Indeks dostawcy").bindexpr("k.strIndeks")
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwa dostawcy").bindexpr("k.strNazwa")
+	pParamArray.add doc_.afc.rap.param.new_text("Grupa dostawców").bindexpr("gd.strNazwa")
+	
+	dim pParamFactory: set pParamFactory= doc_.afc.rap.param
+	dim pParam: Set pParam= pParamFactory.new_choice("Rejestr").bindexpr("r.IdObj")
+	doc_.afc.rap.param.init_on_query pParam, trans_ ,_
+		"select strNazwa, idobj from n5rejestrdok where eTyp in (N5REJESTRDOK_FAKT_ZAK,N5REJESTRDOK_WNT,N5REJESTRDOK_KOREKTA_WNT," +_
+		"N5REJESTRDOK_KOR_FAKT_ZAK,N5REJESTRDOK_FAKT_IMP,N5REJESTRDOK_KOR_FAKT_IMP,N5REJESTRDOK_FAKT_ZAK_RR,N5REJESTRDOK_KOR_FAKT_ZAK_RR) " +_
+		"order by strNazwa "
+	pParamArray.add pParam
+	
+	dim pParamFactory2: set pParamFactory2= doc_.afc.rap.param
+	dim pParam2: Set pParam2= pParamFactory2.new_choice("Waluta").bindexpr("w.IdObj")
+	doc_.afc.rap.param.init_on_query pParam2, trans_ ,_
+		"select strSkrot,idobj from n5jednostka where eTyp = N5JEDNOSTKA_WALUTA order by strSkrot"
+	pParamArray.add pParam2
+  
+	pParamArray.add doc_.afc.rap.param.new_text("Klasyfikacja dostawcy").bindexpr("k.strCecha1")
+	pParamArray.add doc_.afc.rap.param.new_currency("Wielkość dostawcy").bindexpr("sum(isnull((zak.curSumaBrutto-isnull(org_zak.curSumaBrutto,0)),0))")
+  pParamArray.add doc_.afc.rap.param.new_text("Osoba obsługująca").bindexpr("prac.strNazwisko")
+
+	set default_param = pParamArray
+end function
+%>
+<%
+function body_row(byref pSection,byref pRec)
+if pRapExec.RecNr mod 2 = 0 then
+%>
+<tr bordercolor='white'>
+<%
+else
+%>
+<tr bordercolor='white' style='37'>
+<%
+end if
+%>
+<td align='right'>RXE_LP</td>  
+	<td>
+		RXE_TEXT_LINK_FORM_VCC(TYPEID_N5KLIENT,k_idobj,k_indeks)
+	</td>  
+	<td>	   
+		RXE_TEXT_LINK_FORM_VCC(TYPEID_N5KLIENT,k_idobj,k_nazwa)
+	</td>
+	<td>
+		RXE_TEXT(k_klasyfikacja)
+	</td>  
+	<td>
+		RXE_TEXT(k_wielkosc)
+	</td>
+	<td>
+		<text><![CDATA[<%so.write cstr(pRec("os_obsug_imie") + " " + pRec("os_obsug_nazw"))%>]]></text>
+	</td>	  
+	<td align='right'>
+		RXE_QUANTITY_CVV(z_sum_netto,"",2)
+	</td>
+	<td align='right'>
+		RXE_QUANTITY_CVV(z_sum_brutto,"",2)
+	</td>
+	<td align='right'>
+		RXE_QUANTITY_CVV(z_sum_wal,"",2)
+	</td>  
+	<td align='center'>
+		RXE_TEXT(w_skrot)
+	</td>  
+	<%
+	dim iter,strMonth
+	for iter = 1 to 12
+		strMonth = Right(CStr(100 + iter),2) + "_netto"
+		pSumaMonth.value(iter-1) = pSumaMonth.value(iter-1) + ccur(pRec(strMonth).value)
+	%>
+	<td align='right'>
+		<t><%so.write doc_.afc.display.quantity(pRec(strMonth).value,"",2)%></t>
+	</td>  
+	<%
+	next
+	%>  
+</tr><%
+end function
+%>
+<%
+function body_header(byref pSection,byref pRec)
+%>
+<table border='1'>
+<thead>
+<tr style='21'>
+	<td width='min'><t>LP</t></td>
+	<td>
+		<text><![CDATA[Indeks]]></text>
+	</td>
+	<td width='3000'>
+		<text><![CDATA[Nazwa dostawcy]]></text>
+	</td>  
+	<td>
+		<text><![CDATA[Klasyfikacja dostawcy]]></text>
+	</td>	
+  <td>
+		<text><![CDATA[Wielkość dostawcy]]></text>
+	</td>
+	<td>
+		<text><![CDATA[Osoba obsługująca]]></text>
+	</td>  
+	<td width='2000'>
+		<text><![CDATA[Wartość obr. netto w PLN]]></text>
+	</td>
+ 	<td width='2000'>
+		<text><![CDATA[Wartość obr. brutto w PLN]]></text>
+	</td> 
+ 	<td width='2000'>
+		<text><![CDATA[Wartość obr. w walucie]]></text>
+	</td>
+	<td>
+		<text><![CDATA[Waluta]]></text>
+	</td>
+	<td width='MONTH_WIDTH'>
+		<text><![CDATA[Styczeń]]></text>
+	</td>
+	<td width='MONTH_WIDTH'>
+		<text><![CDATA[Luty]]></text>
+	</td>  
+	<td width='MONTH_WIDTH'>
+		<text><![CDATA[Marzec]]></text>
+	</td>  
+	<td width='MONTH_WIDTH'>
+		<text><![CDATA[Kwiecień]]></text>
+	</td>  
+	<td width='MONTH_WIDTH'>
+		<text><![CDATA[Maj]]></text>
+	</td>  
+	<td width='MONTH_WIDTH'>
+		<text><![CDATA[Czerwiec]]></text>
+	</td>  
+	<td width='MONTH_WIDTH'>
+		<text><![CDATA[Lipiec]]></text>
+	</td>  
+	<td width='MONTH_WIDTH'>
+		<text><![CDATA[Sierpień]]></text>
+	</td>  
+	<td width='MONTH_WIDTH'>
+		<text><![CDATA[Wrzesień]]></text>
+	</td> 
+	<td width='MONTH_WIDTH'>
+		<text><![CDATA[Październik]]></text>
+	</td>   
+	<td width='MONTH_WIDTH'>
+		<text><![CDATA[Listopad]]></text>
+	</td>   
+	<td width='MONTH_WIDTH'>
+		<text><![CDATA[Grudzień]]></text>
+	</td>   
+</tr>
+</thead>
+<tbody>
+<%
+end function
+%>
+<%
+function body_footer(byref pSection)
+%>
+</tbody>
+<tfoot>
+<tr style='21'>
+  <td style='27' colspan='6' />
+	<td style='27' align='right'>
+		RXE_MONEY_VAR(pRapExec.body.counter(0).result)
+	</td>  
+	<td style='27' align='right'>
+		RXE_MONEY_VAR(pRapExec.body.counter(1).result)
+	</td> 
+	<td style='27' align='right'>
+		RXE_MONEY_VAR(pRapExec.body.counter(2).result)
+	</td>  
+	<td style='27' />
+	<%
+	dim iter
+	for iter = 0 to 11
+	%>
+	  <td style='27' align='right'>
+		  RXE_MONEY_VAR(pSumaMonth.value(iter))
+	  </td>   
+	<%
+	next
+	%>
+</tr>
+</tfoot>
+</table>
+<%
+end function
+%>
+<%dim nSectionPicCounter : nSectionPicCounter = 10000000%>
+function section_hideshow_hli(byref pHLI)
+doc_.afc.formsection.section_hideshow page_, pHLI.prop(100)
+end function
+]]>
+</script>
+</config>
+<header>
+</header>
+<body>
+<p>
+RAPORT_HEADER(3,0)
+</p>
+
+<p>
+<t size='2'/>
+</p>
+
+<p><text fontsize='7'><![CDATA[RAPORT_TITLE]]></text></p><br/><br/>
+<t fontsize='6' bold='true'>Kryteria selekcji:</t><br/>
+<%
+'tabela dla sumy miesiącami
+dim pSumaMonth : set pSumaMonth = doc_.afc.new_navoarray()
+dim iter
+for iter = 0 to 11
+  pSumaMonth.add ccur(0)
+next
+  
+dim pRapExec : set pRapExec = rapeng_.new_engine()
+with pRapExec
+	dim pParamArray : set pParamArray = default_param() 
+	rapeng_.merge_params pParamArray, rapeng_.get_raport_param()
+	pRapExec.title = "RAPORT_TITLE" 
+    
+	if rapeng_.show_raport_param_dialog(pParamArray,"RAPORT_TITLE") <> 0 then
+		'zapytania pomocnicze i do raportu
+		pRapExec.put_final_query query(pParamArray)
+		rapeng_.set_raport_param pParamArray 
+	end if     
+
+	.add_body_ex(getref("body_header"),getref("body_footer"),getref("body_row")).add_sumator("z_sum_netto").add_sumator("z_sum_brutto").add_sumator("z_sum_wal")
+  
+	rapeng_.write_actual_param so,rapeng_.get_raport_param()
+	if not .perform then
+		so.write "<p style='21'><t>Brak danych spełniających podane kryteria</t></p>"
+	end if
+  
+	trans_.execsql "drop table #temp"
+%>
+<%
+end with
+%>
+</body>
+<footer>
+</footer>
+</page>

@@ -1,0 +1,204 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1200.h"
+#include "h1240_appvar.h"
+-->
+<page>
+<config>
+<script>
+<![CDATA[
+
+'zwracaj false jeśli nie wolno eksportować obiektu np.pracownika
+function EB5_object_filter(byval typeid,byval idobj)
+	EB5_object_filter = true
+end function
+
+'filtruje pola - np. 
+function EB5_exp_field_translator(byref pSrcObj,byref pFieldDef,byref varValue)
+	'msgbox pFieldDef.name
+	EB5_exp_field_translator = true
+	'standardowo nie eksportujemy haseł
+	if pSrcObj.type = TYPEID_N5UZYTKOWNIK and pFieldDef.name = "strHaslo" then
+		varValue = ""
+		exit function
+	end if
+	'ze względu na referencje cykliczne, nie eksportujemy domyślnego schematu dekr.
+	if pSrcObj.type = TYPEID_N5REJESTRDOK and pFieldDef.name = "pDefSchematdekr" then
+		set varValue = nothing
+		exit function
+	end if
+	'ze względu na referencje cykliczne, nie eksportujemy powiązania do dok. źr.
+	if pSrcObj.type = TYPEID_N5DOWODKSIEG and pFieldDef.name = "wrefDokZrod" then
+		set varValue = nothing
+		exit function
+	end if
+	'ze względu na referencje cykliczne, nie eksportujemy powiązania do dok. źr.
+	if pSrcObj.type = TYPEID_N5PKPIR and pFieldDef.name = "pkpir_wrefDokZrodl" then
+		set varValue = nothing
+		exit function
+	end if
+	'ze względu na referencje cykliczne, nie eksportujemy powiązania do pKlientPracownik
+	if pSrcObj.type = TYPEID_N5_KLIENT_JEDN_ORG and pFieldDef.name = "pKlientPracownik" then
+		set varValue = nothing
+		exit function
+	end if
+	'nie eksportujemy dostawy
+	if pSrcObj.type = TYPEID_N5SPRZEDAZ and pFieldDef.name = "sprzed_pDostawa" then
+		set varValue = nothing
+		exit function
+	end if  
+  
+	if trans_.isvar(3201) then
+    select case pSrcObj.type
+      case TYPEID_N5SPRZEDAZ,TYPEID_N5PLATNOSC,TYPEID_N5ZAKUP, _
+        TYPEID_N5ZAMOWIENIE,TYPEID_N5DOKMAG,TYPEID_N5ZLECPROD,TYPEID_N5PLNALICZENIE, _
+        TYPEID_N5REALPROD,TYPEID_N5NOTAODS,TYPEID_N5OPSRTRW,TYPEID_N5ROZLCIT,TYPEID_N5PIT4, _
+        TYPEID_N5PIT5,TYPEID_N5PIT5L,TYPEID_N5PIT11
+        if pFieldDef.name = "pDowodKsieg" then
+          set varValue = nothing
+          exit function
+        end if
+    end select
+  end if
+  
+end function
+
+sub EB5_after_export(byref pHandler,byref pSrcObject,byref pExportObject)
+	select case pSrcObject.type
+	case TYPEID_N5SPRZEDAZ,TYPEID_N5PLATNOSC,TYPEID_N5ZAKUP, _
+		TYPEID_N5ZAMOWIENIE,TYPEID_N5DOKMAG,TYPEID_N5ZLECPROD,TYPEID_N5PLNALICZENIE, _
+		TYPEID_N5REALPROD,TYPEID_N5NOTAODS,TYPEID_N5OPSRTRW,TYPEID_N5ROZLCIT,TYPEID_N5PIT4, _
+		TYPEID_N5PIT5,TYPEID_N5PIT5L,TYPEID_N5PIT11
+		if not pSrcObject.pDowodKsieg is nothing then
+			'jesli jest referencja z powrotem
+			if pSrcObject.pDowodKsieg.wrefDokZrod is pSrcObject then
+				pExportObject("_pDowodKsieg_back_ref") = clng(0)
+			end if
+		end if
+  'odblokowanie eksportu transakcji z kwotami curWn, curMa (domyślnie wyłączone)  
+  case TYPEID_N5TRANSAKCJA
+    if trans_.isvar(3202) then
+      pExportObject("_assign_wn_ma_") = clng(1)
+    end if
+	case TYPEID_N5ZADANIE
+		if not pSrcObject.pDowKsieg is nothing then
+			'jesli jest referencja z powrotem
+			if pSrcObject.pDowKsieg.wrefDokZrod is pSrcObject then
+				pExportObject("_pDowodKsieg_back_ref") = clng(0)
+			end if
+		end if
+	case TYPEID_N5ROZLVAT
+		if not pSrcObject.vat7_pDowKsieg is nothing then
+			'jesli jest referencja z powrotem
+			if pSrcObject.vat7_pDowKsieg.wrefDokZrod is pSrcObject then
+				pExportObject("_pDowodKsieg_back_ref") = clng(0)
+			end if
+		end if
+    pExportObject("_extras_vat7_curImportTowarow") = pSrcObject.vat7_curImportTowarow
+    pExportObject("_extras_vat7_curImportTowarowPodatek") = pSrcObject.vat7_curImportTowarowPodatek
+    pExportObject("_extras_vat7_curNNNDoZwrotu25") = pSrcObject.vat7_curNNNDoZwrotu25
+	case TYPEID_CHOICELISTITEM
+		'filtruj tylko na rzeczywiście istniejące
+		dim idElement : idElement = trans_.findobjid(pSrcObject.parent.nTypeId,"IdObj=" + cstr(pSrcObject.IdElement))
+		if idElement > 0 then
+			pHandler.std_export_any_object pSrcObject.parent.nTypeId,trans_.getobj(pSrcObject.parent.nTypeId,idElement)
+		end if
+	end select
+	'PKPIR
+	select case pSrcObject.type
+	case TYPEID_N5SPRZEDAZ
+		if not pSrcObject.pDowodKsieg is nothing then
+			if not pSrcObject.sprzed_pPKPIR is nothing then
+				'jesli jest referencja z powrotem
+				if pSrcObject.sprzed_pPKPIR.pkpir_wrefDokZrodl is pSrcObject then
+					pExportObject("_pPKPIR_back_ref") = clng(0)
+				end if
+			end if
+		end if
+	case TYPEID_N5ZAKUP
+		if not pSrcObject.pDowodKsieg is nothing then
+			if not pSrcObject.zak_pPKPIR is nothing then
+				'jesli jest referencja z powrotem
+				if pSrcObject.zak_pPKPIR.pkpir_wrefDokZrodl is pSrcObject then
+					pExportObject("_pPKPIR_back_ref") = clng(0)
+				end if
+			end if
+		end if
+	case TYPEID_N5OPSRTRW
+		if not pSrcObject.pDowodKsieg is nothing then
+			if not pSrcObject.opsrtrw_pPKPIR is nothing then
+				'jesli jest referencja z powrotem
+				if pSrcObject.opsrtrw_pPKPIR.pkpir_wrefDokZrodl is pSrcObject then
+					pExportObject("_pPKPIR_back_ref") = clng(0)
+				end if
+			end if
+		end if
+	case TYPEID_N5PLNALICZENIE
+		if not pSrcObject.pDowodKsieg is nothing then
+			if not pSrcObject.plnal_pPKPIR is nothing then
+				'jesli jest referencja z powrotem
+				if pSrcObject.plnal_pPKPIR.pkpir_wrefDokZrodl is pSrcObject then
+					pExportObject("_pPKPIR_back_ref") = clng(0)
+				end if
+			end if
+		end if
+	end select
+end sub
+
+'----------------------------------------------------------------
+'clones MM- to exportable version
+'----------------------------------------------------------------
+function create_MMR_clone(byref pSrcObject)
+	trans_.var(APPVAR_REJESTR_DOKUMENTOW) = pSrcObject.pRejestrDok.idobj
+	trans_.var(APPVAR_REJESTR_TYP) = pSrcObject.nTypDok
+	dim pCloneObj : set pCloneObj = trans_.newobj(TYPEID_N5DOKMAG)
+	pCloneObj.n5dokmag_copy_from_for_zwrot_without_pos pSrcObject
+end function
+
+'----------------------------------------------------------------
+function EB5_export_object_translator(byref pExportHandler,byval idType,byref pSrcObject)
+
+	select case idType
+	case (TYPEID_N5DOKMAG + 100000)	'MM-
+		if pSrcObject.nTypDok = N5REJESTRDOK__MR then
+			'1.klonujemy MM-
+			'2. pozycje wypełniamy z n5gmop
+		end if
+	end select
+
+	EB5_export_object_translator = false
+
+end function
+'----------------------------------------------------------------
+function get_filter()
+	set get_filter = getref("EB5_object_filter")
+end function
+
+function get_translator()
+	set get_translator = getref("EB5_exp_field_translator")
+end function
+
+function get_after_export_handler()
+	set get_after_export_handler = getref("EB5_after_export")
+end function
+
+function get_export_object_translator()
+	set get_export_object_translator = getref("EB5_export_object_translator")
+end function
+
+'--------------- useful helpers -------------------
+sub init_for_EB5(byref pExportHandler)
+	pExportHandler.set_object_filter get_filter()
+	pExportHandler.set_field_translator get_translator()
+	pExportHandler.set_after_export_handler get_after_export_handler()
+	pExportHandler.set_export_object_translator get_export_object_translator()
+end sub
+
+]]>
+</script>
+
+</config>
+	<body>
+	</body>
+</page>

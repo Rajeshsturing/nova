@@ -1,0 +1,457 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+interfejs modułu
+	create_config_object(pRejestr)
+
+interfejs obiektu "config"
+	
+	void load_from_string(byref strConfig)
+	function save_to_string
+	[property] string operation_name(nOperNr)
+	show_config_page(nOperNr)
+	perform_operation(nOperNr,byref pObject)
+	void init_with_defaults(nTypRej)
+
+moduł operacji dla obiektu : n5zamowienie 
+
+ZAMÓWIENIE WLASNE
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1222.h"
+#include "h1224.h"
+#include "h1203.h"
+
+#define SECID_ALL	1
+
+#define FORM_SPAN	2
+#define RCELL_SPAN	1
+
+#define CTRLID_DPC_1		101
+#define CTRLID_DPC_2		102
+#define CTRLID_CREATE_TASK	103
+
+#define CTRLID_PIC_DPC_1	104
+#define CTRLID_PIC_DPC_2	105
+#define CTRLID_CREATE_FVZ	106
+#define CTRLID_CREATE_PZ	107
+
+
+#define CTRLID_DPC_1_PREVIEW	108
+#define CTRLID_DPC_2_PREVIEW	109
+
+#ifdef _BARON
+#define CTRLID_SHOW_COLLECTOR 110
+#endif
+
+#define CTRLID_CREATE_KREATOR_REAL_ZAM	120
+
+#ifdef ENABLE_DB13
+#define COUNT_OPERATIONS	13
+#define COUNT_OPERATIONS_INX	14
+#else
+#define COUNT_OPERATIONS	7	
+#define COUNT_OPERATIONS_INX	8
+#endif
+
+
+-->
+<page style='STYLE_PAGE' width='10000'>
+<config>
+<startpos>center</startpos>
+<script>
+<![CDATA[
+#include "50200"
+'qxx_publication
+#include "50217"
+'realize publication
+#include "50518"
+'arkusz roznic
+#include "50637"
+
+class cn5dokmag_oper_config
+	public m_strName
+	public m_cCreateTask	
+	public m_cCreateFVZ
+	public m_cCreatePZ	
+	public m_cRealize
+	
+	public m_idObjDPC_1
+	public m_idObjDPC_2
+
+	public m_eTypRej
+#ifdef _BARON
+	public m_cCollector
+#endif
+	
+	public sub class_initialize()
+		m_strName = ""
+		m_cCreateTask = "0"
+		m_cRealize = "0"
+		m_cCreateFVZ = "0"
+		m_cCreatePZ = "0"
+		m_idObjDPC_1 = 0	'no DP to perform
+		m_idObjDPC_2 = 0	'no DP to perform
+#ifdef _BARON
+		m_cCollector = "0"
+#endif    
+	end sub
+
+
+	public property get is_empty()
+		is_empty =	(m_cCreateTask = "0") and _
+				(m_cCreateFVZ = "0") and _
+				(m_cRealize = "0") and _
+				(m_cCreatePZ = "0") and _
+				(m_idObjDPC_1 = clng(0)) and _
+#ifdef _BARON
+				(m_idObjDPC_2 = clng(0)) and _  
+				(m_cCollector = "0")
+#else  
+				(m_idObjDPC_2 = clng(0))
+#endif          
+	end property
+
+	public sub load_from_string(byref strConfig)
+		dim aItems : aItems = split(strConfig, vbTab)
+		if ubound(aItems) > 5 then
+			m_strName		= aItems(0)
+			m_cCreateTask	= left(aItems(1),1)
+			m_idObjDPC_1	= clng(aItems(2))
+			m_idObjDPC_2	= clng(aItems(3))
+			m_cCreateFVZ	= left(aItems(4),1)
+			m_cCreatePZ		= left(aItems(5),1)
+			m_cRealize		= left(aItems(6),1)    
+		end if  
+#ifdef _BARON
+		if ubound(aItems) > 6 then
+			m_cCollector = left(aItems(7),1)
+		end if  
+#endif   
+	end sub
+	
+	public function save_to_string
+#ifdef _BARON
+		save_to_string = doc_.afc.convert.formatter("%1"+vbTab+"%2"+vbTab+"%3"+vbTab+"%4"+vbTab+"%5"+vbTab+"%6"+vbTab+"%7"+vbTab+"%8") _
+			(m_strName)(cstr(m_cCreateTask))(cstr(m_idObjDPC_1))(cstr(m_idObjDPC_2))(cstr(m_cCreateFVZ))(cstr(m_cCreatePZ))(cstr(m_cRealize))(cstr(m_cCollector)).done()
+#else
+		save_to_string = doc_.afc.convert.formatter("%1"+vbTab+"%2"+vbTab+"%3"+vbTab+"%4"+vbTab+"%5"+vbTab+"%6"+vbTab+"%7") _
+			(m_strName)(cstr(m_cCreateTask))(cstr(m_idObjDPC_1))(cstr(m_idObjDPC_2))(cstr(m_cCreateFVZ))(cstr(m_cCreatePZ))(cstr(m_cRealize)).done()
+#endif      
+	end function
+
+	public sub show_config_page
+		dim pPage : set pPage = doc_.getpagehli("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=THIS_FILE")
+
+		pPage.topelement.title = "Konfiguracja operacji """ + m_strName + """"
+
+		pPage.ctrl(CTRLID_CREATE_TASK).value = m_cCreateTask
+		pPage.ctrl(CTRLID_CREATE_FVZ).value = m_cCreateFVZ
+		pPage.ctrl(CTRLID_CREATE_PZ).value = m_cCreatePZ
+		pPage.ctrl(CTRLID_CREATE_KREATOR_REAL_ZAM).value = m_cRealize
+#ifdef _BARON    
+		pPage.ctrl(CTRLID_SHOW_COLLECTOR).value = m_cCollector
+#endif    
+		'todo: otwieranie i wybór
+
+		dim strPubType : strPubType = get_where_for_pub_by_rejtyp(m_eTypRej)		
+		
+		setup_choose_dpc_pic pPage,CTRLID_PIC_DPC_1,CTRLID_DPC_1_PREVIEW,CTRLID_DPC_1,m_idObjDPC_1,strPubType
+		setup_choose_dpc_pic pPage,CTRLID_PIC_DPC_2,CTRLID_DPC_2_PREVIEW,CTRLID_DPC_2,m_idObjDPC_2,strPubType
+		setup_choose_dpc_label pPage,CTRLID_DPC_1,abs(m_idObjDPC_1)
+		setup_choose_dpc_label pPage,CTRLID_DPC_2,abs(m_idObjDPC_2)
+		setup_choose_dpc_preview pPage , CTRLID_DPC_1_PREVIEW , m_idObjDPC_1 
+		setup_choose_dpc_preview pPage , CTRLID_DPC_2_PREVIEW , m_idObjDPC_2 
+
+		if pPage.domodalauto() = CMD_CHOICE then
+			m_cCreateTask = pPage.ctrl(CTRLID_CREATE_TASK).value
+			m_cCreateFVZ = pPage.ctrl(CTRLID_CREATE_FVZ).value
+			m_cCreatePZ = pPage.ctrl(CTRLID_CREATE_PZ).value
+			m_idObjDPC_1 = get_choosen_dpc(pPage,CTRLID_PIC_DPC_1,CTRLID_DPC_1_PREVIEW)
+			m_idObjDPC_2 = get_choosen_dpc(pPage,CTRLID_PIC_DPC_2,CTRLID_DPC_2_PREVIEW)
+			m_cRealize = pPage.ctrl(CTRLID_CREATE_KREATOR_REAL_ZAM).value
+#ifdef _BARON
+			m_cCollector = pPage.ctrl(CTRLID_SHOW_COLLECTOR).value
+#endif
+		end if
+	end sub
+	public sub perform_operation(byref pObject , byref pPage)
+		perform_operation_on_config	Me, pObject , pPage
+	end sub
+end class
+
+class cn5dokmag_dok_config
+private m_aOperations(COUNT_OPERATIONS_INX)
+	public m_eTypRej
+
+
+	public function is_empty(byval nNumOper)		
+		dim pOperConf:set pOperConf = m_aOperations(nNumOper)
+		is_empty =	pOperConf.is_empty
+	end function
+	
+	public sub class_initialize()
+		dim i
+		for i = 0 to COUNT_OPERATIONS
+			set m_aOperations(i) = new cn5dokmag_oper_config
+		next
+	end sub
+
+	public sub setTypeRej(eTypRej)
+		m_eTypRej = eTypRej
+		dim i
+		for i = 0 to COUNT_OPERATIONS
+			m_aOperations(i).m_eTypRej = m_eTypRej
+		next
+	end sub
+
+	public sub init_with_defaults(nTypRej)
+		dim i
+		for i = 0 to COUNT_OPERATIONS
+			set m_aOperations(i) = new cn5dokmag_oper_config
+		next
+
+		setTypeRej nTypRej
+
+		m_aOperations(2).m_strName = "Wydruk zamówienia obcego"
+		'todo: wyszukanie publikacji: m_aOperations(1).m_idObjDPC_1
+
+	end sub
+
+	public sub load_from_string(byref strConfig)
+		dim aItems : aItems = split(strConfig, REJDOK_CONG_SEPARATOR)
+		dim i 
+		dim last : last = ubound(aItems)
+		if last > COUNT_OPERATIONS then
+			last = COUNT_OPERATIONS
+		end if
+		for i = 0 to last
+			m_aOperations(i).load_from_string aItems(i)
+		next
+	end sub
+	
+	public function save_to_string
+		dim strTotal : strTotal = ""
+		dim i
+		for i = 0 to COUNT_OPERATIONS
+			strTotal = strTotal + m_aOperations(i).save_to_string() + REJDOK_CONG_SEPARATOR
+		next
+		save_to_string = strTotal
+	end function
+
+	public property get operation_name(byval nOperNr)
+		operation_name = m_aOperations(nOperNr).m_strName
+	end property
+	public property let operation_name(byval nOperNr,byref strName)
+		m_aOperations(nOperNr).m_strName = strName
+	end property
+
+	public sub show_config_page(byval nOperNr)
+		m_aOperations(nOperNr).show_config_page
+	end sub
+	public sub perform_operation(nOperNr,byref pObject,byref pPage)
+#ifdef _DEBUG
+		trans_.message 1002 , 0 , "DEBUG: " + cstr(operation_name(nOperNr))
+#endif
+		m_aOperations(nOperNr).perform_operation pObject , pPage
+	end sub
+end class
+
+function create_config_object(byref pRejestr)
+	dim pNewConfig : set pNewConfig = new cn5dokmag_dok_config
+	'ustawia tez typ rejestru w operacjach
+	pNewConfig.setTypeRej pRejestr.eTyp
+	set create_config_object = pNewConfig
+end function
+
+
+'--------------------------- config page ------------------
+function fok
+	page_.result = CMD_CHOICE
+	page_.goback
+end function
+
+
+function fcancel
+	page_.goback
+end function
+
+'--------------------------- perform operation ------------------
+private sub perform_operation_on_config(byref pConfig,byref pZamowienie , byref pPage)
+	if not make_task_on_zam(pConfig.m_cCreateTask,pZamowienie) then
+		exit sub
+	end if
+	
+	if not make_publication_on_zam(pConfig.m_idObjDPC_1,pZamowienie,pPage) then
+		exit sub
+	end if
+
+	if not realizuj_zamowienie(pConfig.m_cRealize,pZamowienie , pPage)  then
+		exit sub
+	end if
+
+	if not make_publication_on_zam(pConfig.m_idObjDPC_2,pZamowienie,pPage) then
+		exit sub
+	end if
+	
+	if not make_fvz_on_zam(pConfig.m_cCreateFVZ,pZamowienie,pPage) then
+		exit sub
+	end if	
+
+	if not make_pz_on_zam(pConfig.m_cCreatePZ,pZamowienie,pPage) then
+		exit sub
+	end if	
+
+#ifdef _BARON
+	if not FillFromCollector(pConfig.m_cCollector,pZamowienie,pPage) then
+		exit sub
+	end if
+#endif
+ 
+end sub
+
+
+private function make_fvz_on_zam(cCreateFVZ,byref pZamowienie,byref pPage) : make_fvz_on_zam = true
+	if cCreateFVZ = "0" then
+		exit function
+	end if
+
+	if not pPage.std_fsave_external_with_saveobjects() then
+		make_fvz_on_zam = false
+		exit function
+	end if
+
+	cCreateFVZ = clng(2)
+
+	make_fvz_on_zam = doc_.getmodule(60226).make_faktura_on_dokhandl(cCreateFVZ , pZamowienie , pPage , N5REJESTRDOK_FAKT_ZAK)
+end function
+
+
+
+private function make_pz_on_zam(cCreatePZ,byref pZamowienie,byref pPage) : make_pz_on_zam = true
+	if cCreatePZ = "0" then
+		exit function
+	end if
+	'ustawiam tryb - kompatybilność ze starą funkcją :)
+	cCreatePZ = clng(2)
+
+#ifdef APPCONFIG_INTG_POROW_DOK
+	dim pModule_pz : set pModule_pz = doc_.getmodule(60317)
+	make_pz_on_zam = pModule_pz.modul_sterujacy_PZ_ZAM(pPage,N5REJESTRDOK__PZ)
+#else
+	make_pz_on_zam = doc_.getmodule(60226).dh2dm_exchange(cCreatePZ,pPage,N5REJESTRDOK__PZ)
+#endif
+'	dim idPZ
+'	make_pz_on_zam = doc_.getmodule(60226).make_dokmag_on_dokhandl(cCreatePZ , pZamowienie , pPage , N5REJESTRDOK__PZ , idPZ)
+end function
+
+
+
+
+
+
+private function make_task_on_zam(cCreateTask,byref pZamowienie) : make_task_on_zam = true
+	if cCreateTask = "0" then
+		exit function
+	end if
+	UnderConstruction
+end function
+
+'messagebox
+#include "50122"
+
+private function make_publication_on_zam(idObjDPC,byref pZamowienie,byref pPage) : make_publication_on_zam = true
+	if idObjDPC = 0 then
+		exit function
+	end if
+
+	if not pPage.std_fsave_external_with_saveobjects() then
+		make_publication_on_zam = false
+		exit function
+	end if
+if is_email_publication(idObjDPC) then
+	'luki zamówienia 60190
+	
+	dim pM60153: set pM60153=doc_.getmodule(60153)
+	pm60153.choose_mail pZamowienie.idobj,pZamowienie.pKlient.idobj,pZamowienie.type
+			
+		if pM60153.get_g_sStrMail="" then
+			MessageBox  "Nie wysłano maila ... ","Informacja...", vbOKOnly, vbInformation 
+		else
+			dim adresyEmail:adresyEmail=pM60153.get_g_sStrMail
+#ifdef APPCONFIG_ZALACZNIKI_EMAIL
+			dim strZalaczniki : strZalaczniki = pM60153.getZalaczniki
+			make_publication_on_zam = (doc_.getmodule(60170).realize_email_publication_zal(abs(idObjDPC),pZamowienie,adresyEmail,pZamowienie.text,nothing,strZalaczniki) = 0)
+#else
+			make_publication_on_zam = (realize_email_publication(abs(idObjDPC),pZamowienie,adresyEmail,pZamowienie.text,nothing) = 0)
+#endif    
+		end if
+	else
+		make_publication_on_zam = (realize_publication(abs(idObjDPC),pZamowienie,idObjDPC>0,nothing) = 0)
+	end if
+end function
+
+private function realizuj_zamowienie(cRealize,byref pZamowienie , byref pPage) : realizuj_zamowienie = true
+	if cRealize="0" then
+		exit function		
+	end if
+
+	if not pPage.std_fsave_external_with_saveobjects then
+		realizuj_zamowienie = false
+		exit function
+	end if
+
+	dim page:set page = doc_.getpagehli("varCmd=CMD_OPEN_RECORD_PAGE varDestPage=PAGE_WIZZARD_REALIZACJA_ZAMOWIENIA vn105=KREATOR_REAL_ZAM_WLASNE appvar_mode=KREATOR_REAL_ZAM_MODE_SIMPLE appvar_zam_obj=" + cstr(pZamowienie.idobj))
+end function
+
+'---------------------------------------
+' wypełnia zamówienie danymi z kolektora
+'---------------------------------------
+function FillFromCollector(idObjDPC, byref pZamowienie, byref pPage)
+	FillFromCollector = doc_.getmodule(60194).FillFromCollector(idObjDPC, pZamowienie, pPage)
+end function
+
+'---------------------------------------------------------------------------------
+
+]]>
+</script>
+</config>
+<body>
+	
+
+QXF_BEGIN
+	QXS_BEGIN_FLAT(SECID_ALL,Konfiguracja,FORM_SPAN)
+		<tr>
+			QXX_CHOOSE_PUBLICATION(CTRLID_DPC_1,CTRLID_PIC_DPC_1,CTRLID_DPC_1_PREVIEW,1)
+		</tr>		
+
+		<tr>
+			QXX_CHOOSE_PUBLICATION(CTRLID_DPC_2,CTRLID_PIC_DPC_2,CTRLID_DPC_2_PREVIEW,1)
+		</tr>
+		
+		QXR_SEPARATOR(2)
+
+
+		QXR_LABELED_CHECK(CTRLID_CREATE_FVZ,Operacje,Utwórz fakturę zakupu)
+		QXR_LABELED_CHECK(CTRLID_CREATE_PZ,,Utwórz dokument PZ)
+		QXR_LABELED_CHECK(CTRLID_CREATE_KREATOR_REAL_ZAM,,Realizuj zamówienie)
+#ifdef _BARON
+		QXR_LABELED_CHECK(CTRLID_SHOW_COLLECTOR,,Kolektor danych)
+#endif    
+
+		#comment - na razie ukryty
+		QXR_LABELED_CHECK_HIDE(CTRLID_CREATE_TASK,,Zapamiętaj zdarzenie,true)
+
+		QXR_SEPARATOR(FORM_SPAN)
+
+	QXS_END_FLAT(FORM_SPAN)
+QXF_END
+
+XFDIALOGBUTTONS
+
+</body>
+</page>

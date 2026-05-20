@@ -1,0 +1,925 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+
+
+
+#define MODE_WITHOUT_PRICES			1
+#define MODE_WITH_PRICES			2
+
+interfejs modułu
+	create_config_object(pRejestr)
+
+interfejs obiektu "config"
+	
+	void load_from_string(byref strConfig)
+	function save_to_string
+	[property] string operation_name(nOperNr)
+	show_config_page(nOperNr)
+	perform_operation(nOperNr,byref pObject)
+	void init_with_defaults(nTypRej)
+
+moduł operacji dla obiektu : n5zamowienie
+
+ZAMÓWIENIE OBCE
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1222.h"
+#include "h1224.h"
+
+
+
+
+#if appvar_rejestr_typ=N5REJESTRDOK_ZAP_OFERTOWE_OBCE
+#ifdef _AMPLUS
+#define REJDOKCONF_NEWDOK1_TITLE		Utwórz dokument WZ
+#define REJDOKCONF_NEWDOK2_TITLE	  Realizuj zamówienie
+#else
+#define REJDOKCONF_NEWDOK1_TITLE		Utwórz "Ofertę własną (dla klienta)"
+#define REJDOKCONF_NEWDOK2_TITLE	Utwórz "Zapytanie ofertowe własne (do dostawcy)"
+#endif
+#define REJDOKCONF_NEWDOK1_TYPE		N5REJESTRDOK_OFERTY_WLASNE
+#define REJDOKCONF_NEWDOK1_MODE		MODE_WITH_PRICES
+#define REJDOKCONF_NEWDOK1_COPYCUST		true
+#define REJDOKCONF_NEWDOK2_COPYCUST		false
+#define REJDOKCONF_NEWDOK2_TYPE		N5REJESTRDOK_ZAP_OFERTOWE_WLASNE
+#define REJDOKCONF_NEWDOK2_MODE		MODE_WITH_PRICES
+#endif
+
+
+#if appvar_rejestr_typ=N5REJESTRDOK_OFERTY_WLASNE
+#define REJDOKCONF_NEWDOK1_TITLE		Utwórz "Zamówienie obce (od klienta)"
+#define REJDOKCONF_NEWDOK1_TYPE		N5REJESTRDOK__ZAM_OBCE
+#define REJDOKCONF_NEWDOK1_COPYCUST		true
+#define REJDOKCONF_NEWDOK1_MODE		MODE_WITH_PRICES
+#ifdef _ABAKUS
+#define CHECK_CENE_OSTATNIEJ_DOSTAWY
+#endif
+#endif
+
+
+#if appvar_rejestr_typ=N5REJESTRDOK_ZAP_OFERTOWE_WLASNE
+#define REJDOKCONF_NEWDOK1_TITLE		Utwórz "Ofertę obcą (od dostawcy)"
+#define REJDOKCONF_NEWDOK1_TYPE		N5REJESTRDOK_OFERTY_OBCE
+#define REJDOKCONF_NEWDOK1_MODE		MODE_WITH_PRICES
+#define REJDOKCONF_NEWDOK1_COPYCUST		true
+#endif
+
+
+#if appvar_rejestr_typ=N5REJESTRDOK_OFERTY_OBCE
+#define REJDOKCONF_NEWDOK1_TITLE		Utwórz "Zamówienie własne (do dostawcy)"
+#define REJDOKCONF_NEWDOK1_TYPE		N5REJESTRDOK__ZAM_WLASNE
+#define REJDOKCONF_NEWDOK1_COPYCUST		true
+#define REJDOKCONF_NEWDOK1_MODE		MODE_WITH_PRICES
+
+#define REJDOKCONF_NEWDOK2_TITLE		Utwórz "Ofertę własną (dla klienta)"
+#define REJDOKCONF_NEWDOK2_TYPE			N5REJESTRDOK_OFERTY_WLASNE
+#define REJDOKCONF_NEWDOK2_COPYCUST		false
+#define REJDOKCONF_NEWDOK2_MODE			MODE_WITHOUT_PRICES
+
+#endif
+
+
+#ifndef REJDOKCONF_NEWDOK1_TITLE		
+#define REJDOKCONF_NEWDOK1_TITLE		Nowy dokument
+#endif
+
+#ifndef REJDOKCONF_NEWDOK2_TITLE
+#define REJDOKCONF_NEWDOK2_TITLE	Nowy dokument
+#endif
+
+
+#ifndef  REJDOKCONF_NEWDOK1_TYPE		
+#define REJDOKCONF_NEWDOK1_TYPE		0
+#endif
+
+#ifndef  REJDOKCONF_NEWDOK1_MODE
+#define REJDOKCONF_NEWDOK1_MODE		0
+#endif
+
+#ifndef REJDOKCONF_NEWDOK1_COPYCUST
+#define REJDOKCONF_NEWDOK1_COPYCUST		false
+#endif
+
+#ifndef  REJDOKCONF_NEWDOK2_COPYCUST		
+#define REJDOKCONF_NEWDOK2_COPYCUST			false
+#endif
+
+#ifndef  REJDOKCONF_NEWDOK2_TYPE
+#define REJDOKCONF_NEWDOK2_TYPE			0
+#endif
+
+
+#ifndef  REJDOKCONF_NEWDOK2_MODE
+#define REJDOKCONF_NEWDOK2_MODE			0			
+#endif
+
+
+#define SECID_ALL	1
+
+#define FORM_SPAN	2
+#define RCELL_SPAN	1
+
+#define CTRLID_DPC_1		101
+#define CTRLID_DPC_2		102
+#define CTRLID_CREATE_TASK	103
+
+#define CTRLID_PIC_DPC_1	104
+#define CTRLID_PIC_DPC_2	105
+
+#define CTRLID_FROM_FF		110
+#define CTRLID_NEWDOK		111
+
+#define CTRLID_DPC_1_PREVIEW	112
+#define CTRLID_DPC_2_PREVIEW	113
+
+#define CTRLID_NEWDOK2		114
+#define CTRLID_NEWDOK3    115
+
+#ifdef _BARON
+#define CTRLID_SHOW_COLLECTOR 116
+#endif
+
+#ifdef ENABLE_DB13
+#define COUNT_OPERATIONS	13
+#define COUNT_OPERATIONS_INX	14
+#else
+#define COUNT_OPERATIONS	7
+#define COUNT_OPERATIONS_INX	8
+#endif
+
+-->
+<page style='STYLE_PAGE' width='10000'>
+<config>
+<startpos>center</startpos>
+<script>
+<![CDATA[
+#include "50200"
+'qxx_publication
+#include "50217"
+'realize publication
+#include "50518"
+
+'rejestry
+#include "50112"
+
+
+class cn5zam_oper_config
+	public m_strName
+	public m_cCreateTask	
+	public m_cFromEDI	
+	public m_cNewDok	
+	public m_cNewDok2
+	public m_idObjDPC_1
+	public m_idObjDPC_2	
+	public m_eTypRej
+	public m_cNewDok3
+#ifdef _BARON
+	public m_cCollector
+#endif    
+	
+	public property get is_empty()			
+		is_empty =	(m_cCreateTask = "0") and _
+				(m_cFromEDI = "0") and _
+				(m_cNewDok = "0") and _
+				(m_cNewDok2 = "0") and _
+				(m_idObjDPC_1 = clng(0)) and _
+				(m_idObjDPC_2 = clng(0)) and _
+#ifdef _BARON
+				(m_cNewDok3 = "0") and _  
+				(m_cCollector = "0")
+#else            
+				(m_cNewDok3 = "0")
+#endif          
+	end property
+
+
+	
+	public sub class_initialize()
+		m_strName = ""
+		m_cCreateTask = "0"
+		m_cFromEDI = "0"
+		m_cNewDok = "0"
+		m_cNewDok2 = "0"
+		m_idObjDPC_1 = 0	'no DP to perform
+		m_idObjDPC_2 = 0	'no DP to perform		
+		m_cNewDok3 = "0"
+#ifdef _BARON
+		m_cCollector = "0"
+#endif        
+	end sub
+
+
+	public sub load_from_string(byref strConfig)
+		dim aItems : aItems = split(strConfig, vbTab)		
+		m_strName		= aItems(0)		
+		if Ubound(aItems) > 0 then
+			m_cCreateTask	= left(aItems(1),1)
+		end if
+		if Ubound(aItems) > 1 then
+			m_idObjDPC_1	= clng(aItems(2))
+		end if
+		if Ubound(aItems) > 2 then
+			m_idObjDPC_2	= clng(aItems(3))
+		end if
+		if Ubound(aItems) > 3 then
+			m_cFromEDI		= aItems(4)
+		end if
+		if Ubound(aItems) > 4 then
+			m_cNewDok		= aItems(5)
+		end if
+		if Ubound(aItems) > 5 then
+			m_cNewDok2		= aItems(6)
+		end if
+		if Ubound(aItems) > 6 then
+			m_cNewDok3		= aItems(7)
+		end if
+#ifdef _BARON
+		if Ubound(aItems) > 7 then
+			m_cCollector	= left(aItems(8),1)
+		end if  
+#endif     
+	end sub
+	
+	public function save_to_string
+		save_to_string = doc_.afc.convert.formatter("%1"+vbTab+"%2"+vbTab+"%3"+vbTab+"%4"+vbTab+"%5"+vbTab+"%6"+vbTab+"%7"+vbTab+"%8") _
+			(m_strName)(cstr(m_cCreateTask))(cstr(m_idObjDPC_1))(cstr(m_idObjDPC_2))(cstr(m_cFromEdi))(cstr(m_cNewDok))(cstr(m_cNewDok2))(cStr(m_cNewDok3)).done()
+#ifdef _BARON
+		save_to_string = save_to_string + doc_.afc.convert.formatter(vbTab+"%1")(cstr(m_cCollector)).done()
+#endif
+	end function
+
+	public sub show_config_page
+		dim pPage : set pPage = doc_.getpagehli("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=THIS_FILE")
+
+		pPage.topelement.title = "Konfiguracja operacji """ + m_strName + """"
+
+		pPage.ctrl(CTRLID_FROM_FF).value = m_cFromEdi
+		pPage.ctrl(CTRLID_NEWDOK).value = m_cNewDok
+		pPage.ctrl(CTRLID_NEWDOK2).value = m_cNewDok2
+      #if appvar_rejestr_typ = N5REJESTRDOK_OFERTY_WLASNE || appvar_rejestr_typ = N5REJESTRDOK_OFERTY_OBCE
+            #ifdef APPCONFIG_CENY_PROMO_Z_OFERT
+          		  pPage.ctrl(CTRLID_NEWDOK3).value = m_cNewDok3
+            #endif
+      #endif
+#ifdef _BARON    
+		pPage.ctrl(CTRLID_SHOW_COLLECTOR).value = m_cCollector
+#endif       
+
+		'todo: otwieranie i wybór
+
+		dim strPubType : strPubType = ""
+		
+		setup_choose_dpc_pic pPage,CTRLID_PIC_DPC_1,CTRLID_DPC_1_PREVIEW,CTRLID_DPC_1,m_idObjDPC_1,strPubType
+		setup_choose_dpc_pic pPage,CTRLID_PIC_DPC_2,CTRLID_DPC_2_PREVIEW,CTRLID_DPC_2,m_idObjDPC_2,strPubType
+		setup_choose_dpc_label pPage,CTRLID_DPC_1,abs(m_idObjDPC_1)
+		setup_choose_dpc_label pPage,CTRLID_DPC_2,abs(m_idObjDPC_2)
+		setup_choose_dpc_preview pPage , CTRLID_DPC_1_PREVIEW , m_idObjDPC_1 
+		setup_choose_dpc_preview pPage , CTRLID_DPC_2_PREVIEW , m_idObjDPC_2 
+
+		if pPage.domodalauto() = CMD_CHOICE then
+			m_cCreateTask = pPage.ctrl(CTRLID_CREATE_TASK).value
+			m_idObjDPC_1 = get_choosen_dpc(pPage,CTRLID_PIC_DPC_1,CTRLID_DPC_1_PREVIEW)
+			m_idObjDPC_2 = get_choosen_dpc(pPage,CTRLID_PIC_DPC_2,CTRLID_DPC_2_PREVIEW)
+			m_cFromEdi = pPage.ctrl(CTRLID_FROM_FF).value
+			m_cNewDok = pPage.ctrl(CTRLID_NEWDOK).value
+			m_cNewDok2 = pPage.ctrl(CTRLID_NEWDOK2).value
+        #if appvar_rejestr_typ = N5REJESTRDOK_OFERTY_WLASNE || appvar_rejestr_typ = N5REJESTRDOK_OFERTY_OBCE
+          #ifdef APPCONFIG_CENY_PROMO_Z_OFERT
+     			  m_cNewDok3 = pPage.ctrl(CTRLID_NEWDOK3).value
+          #endif
+        #endif
+#ifdef _BARON
+			m_cCollector = pPage.ctrl(CTRLID_SHOW_COLLECTOR).value
+#endif        
+		end if
+	end sub
+	public sub perform_operation(byref pObject , byref pPage)
+		perform_operation_on_config	Me, pObject , pPage
+	end sub
+end class
+
+class cn5zam_dok_config
+private m_aOperations(COUNT_OPERATIONS_INX)
+	public m_eTypRej
+
+	public function is_empty(byval nNumOper)		
+		dim pOperConf:set pOperConf = m_aOperations(nNumOper)
+		is_empty =	pOperConf.is_empty
+	end function
+	
+	public sub class_initialize()
+		dim i
+		for i = 0 to COUNT_OPERATIONS
+			set m_aOperations(i) = new cn5zam_oper_config
+		next
+	end sub
+
+	public sub setTypeRej(eTypRej)
+		m_eTypRej = eTypRej
+		dim i
+		for i = 0 to COUNT_OPERATIONS
+			m_aOperations(i).m_eTypRej = m_eTypRej
+		next
+	end sub
+
+	public sub init_with_defaults(nTypRej)
+		dim i
+		for i = 0 to COUNT_OPERATIONS
+			set m_aOperations(i) = new cn5zam_oper_config
+		next
+
+		setTypeRej nTypRej
+
+		m_aOperations(1).m_strName = "Wydruk zamówienia obcego"
+		'todo: wyszukanie publikacji: m_aOperations(1).m_idObjDPC_1
+
+	end sub
+
+	public sub load_from_string(byref strConfig)
+		dim aItems : aItems = split(strConfig, REJDOK_CONG_SEPARATOR)
+		dim i 
+		dim last : last = ubound(aItems)
+		if last > COUNT_OPERATIONS then
+			last = COUNT_OPERATIONS
+		end if
+		for i = 0 to last
+			m_aOperations(i).load_from_string aItems(i)
+		next
+	end sub
+	
+	public function save_to_string
+		dim strTotal : strTotal = ""
+		dim i
+		for i = 0 to COUNT_OPERATIONS
+			strTotal = strTotal + m_aOperations(i).save_to_string() + REJDOK_CONG_SEPARATOR
+		next
+		save_to_string = strTotal
+	end function
+
+	public property get operation_name(byval nOperNr)
+		operation_name = m_aOperations(nOperNr).m_strName
+	end property
+	public property let operation_name(byval nOperNr,byref strName)
+		m_aOperations(nOperNr).m_strName = strName
+	end property
+
+	public sub show_config_page(byval nOperNr)
+		m_aOperations(nOperNr).show_config_page
+	end sub
+	public sub perform_operation(nOperNr,byref pObject,byref pPage)
+#ifdef _DEBUG
+		trans_.message 1002 , 0 , "DEBUG: " + cstr(operation_name(nOperNr))
+#endif
+		m_aOperations(nOperNr).perform_operation pObject , pPage
+	end sub
+end class
+
+function create_config_object(byref pRejestr)
+	dim pNewConfig : set pNewConfig = new cn5zam_dok_config
+	'ustawia tez typ rejestru w operacjach
+	pNewConfig.setTypeRej pRejestr.eTyp
+	set create_config_object = pNewConfig
+end function
+
+
+'--------------------------- config page ------------------
+function fok
+	page_.result = CMD_CHOICE
+	page_.goback
+end function
+
+
+function fcancel
+	page_.goback
+end function
+
+
+
+
+'--------------------------- perform operation ------------------
+private sub perform_operation_on_config(byref pConfig,byref pZamowienie , byref pPage)
+#ifdef CHECK_CENE_OSTATNIEJ_DOSTAWY
+	if not doc_.getmodule(60106).checkCenyBazowe(pZamowienie) then
+		exit sub
+	end if
+#endif
+
+	if not make_task_on_zam(pConfig.m_cCreateTask,pZamowienie) then
+		exit sub
+	end if
+
+	if not make_publication_on_zam(pConfig.m_idObjDPC_1,pZamowienie,pPage) then
+		exit sub
+	end if
+
+	if not make_publication_on_zam(pConfig.m_idObjDPC_2,pZamowienie,pPage) then
+		exit sub
+	end if
+
+	if not from_EDI(pConfig.m_cFromEDI,pZamowienie , pPage)  then
+		exit sub
+	end if
+
+
+
+#ifdef _AMPLUS
+  #if appvar_rejestr_typ = N5REJESTRDOK_ZAP_OFERTOWE_OBCE
+	  if not make_wz_on_list_przewozowy(pConfig.m_cNewDok, pZamowienie ,pPage) then
+		  exit sub
+	  end if
+    
+	  if not realizuj_zamowienie(pConfig.m_cNewDok2, pZamowienie ,pPage) then
+		  exit sub
+	  end if
+  #else
+	  if not new_dok(pConfig.m_cNewDok , pZamowienie , pPage , REJDOKCONF_NEWDOK1_TYPE , REJDOKCONF_NEWDOK1_MODE , REJDOKCONF_NEWDOK1_COPYCUST , false)  then
+		  exit sub
+	  end if
+    
+	  if not new_dok(pConfig.m_cNewDok2 , pZamowienie , pPage , REJDOKCONF_NEWDOK2_TYPE , REJDOKCONF_NEWDOK2_MODE , REJDOKCONF_NEWDOK2_COPYCUST , true)  then
+		  exit sub
+	  end if   
+  #endif
+#else
+	if not new_dok(pConfig.m_cNewDok , pZamowienie , pPage , REJDOKCONF_NEWDOK1_TYPE , REJDOKCONF_NEWDOK1_MODE , REJDOKCONF_NEWDOK1_COPYCUST , false)  then
+		exit sub
+	end if
+  
+	if not new_dok(pConfig.m_cNewDok2 , pZamowienie , pPage , REJDOKCONF_NEWDOK2_TYPE , REJDOKCONF_NEWDOK2_MODE , REJDOKCONF_NEWDOK2_COPYCUST , true)  then
+		exit sub
+	end if  
+#endif
+
+   if not new_dok_promocji(pConfig.m_cNewDok3 , pZamowienie , pPage)  then
+      exit sub
+   end if
+ 
+#ifdef _BARON
+	if not FillFromCollector(pConfig.m_cCollector,pZamowienie,pPage) then
+		exit sub
+	end if
+#endif 
+ 
+end sub
+
+function make_wz_on_list_przewozowy(eWZMode, pZamowienie, pPage) : make_wz_on_list_przewozowy = true
+	if eWZMode = "1" then
+		eWZMode = clng(2)
+	else
+		exit function
+	end if
+	if not pPage.std_fsave_external_with_saveobjects then
+		make_wz_on_list_przewozowy = false
+		exit function
+	end if	
+  
+	make_wz_on_list_przewozowy = doc_.getmodule(60226).dh2dm_exchange(eWZMode,pPage,N5REJESTRDOK__WZ)
+	trans_.var(APPVAR_REJESTR_TYP) = pZamowienie.pRejestrDok.eTyp
+	trans_.var(APPVAR_REJESTR_DOKUMENTOW) = pZamowienie.pRejestrDok.idobj
+end function
+
+
+function realizuj_zamowienie(eMode, byref pZamowienie, byref pPage) : realizuj_zamowienie = true
+	if eMode = "0" then
+		exit function	
+	end if
+  
+  'sprawdz cz są jakieś rezerwacje
+  dim bZakoncz : bZakoncz = false
+  dim strSQL : strSQL = "select 'id_rez'=idobj from n5dokmag where wrefDokHandl = " + CStr(pZamowienie.idobj) + " and nTypDok = N5REJESTRDOK_REZERWACJE "
+  dim oRS : set oRS = trans_.createadors(strSQL)
+     do while not oRS.EOF
+        bZakoncz = true
+        oRS.MoveNext
+     loop
+  if bZakoncz then
+    'komunikat o potwierdzenie zakończenia rezerwacji
+    if doc_.getmodule(60111).message_box("Kończenie rezerwacji", "Czy zakończyć rezerwacje dla danego zamówienie ?", vbQuestion, vbYesNo) = vbYes then
+      'automatyczne kończenie razerwacji
+       oRS.MoveFirst
+       do while not oRS.EOF
+		       dim idRez : idRez = CCur(oRS("id_rez"))
+		       dim oRez: set oRez = trans_.getobj(TYPEID_N5DOKMAG, idRez)
+           dim pUtil : set pUtil = doc_.getmodule(60226)
+           dim zakoncz_rez : zakoncz_rez = pUtil.create_korekta_ext(oRez,N5REJESTRDOK_ZAK_REZERWACJI,true)
+		       oRS.MoveNext
+	     loop
+	  end if
+  end if
+
+	if not pPage.std_fsave_external_with_saveobjects then
+		realizuj_zamowienie = false
+		exit function
+	end if
+
+
+	dim page:set page = doc_.getpagehli("varCmd=CMD_OPEN_RECORD_PAGE varDestPage=PAGE_WIZZARD_REALIZACJA_ZAMOWIENIA vn105=KREATOR_REAL_ZAM_OBCE appvar_mode=KREATOR_REAL_ZAM_MODE_SIMPLE appvar_zam_obj=" + cstr(pZamowienie.idobj))
+	
+end function
+
+private function make_task_on_zam(cCreateTask,byref pZamowienie) : make_task_on_zam = true
+	if cCreateTask = "0" then
+		exit function
+	end if
+	UnderConstruction
+end function
+
+private function make_publication_on_zam(idObjDPC,byref pZamowienie,byref pPage) : make_publication_on_zam = true
+	if idObjDPC = 0 then
+		exit function
+	end if
+
+	if not pPage.std_fsave_external_with_saveobjects() then
+		make_publication_on_zam = false
+		exit function
+	end if
+if is_email_publication(idObjDPC) then
+	'luki zamówienia 60190
+	
+	dim pM60153: set pM60153=doc_.getmodule(60153)
+	pm60153.choose_mail pZamowienie.idobj,pZamowienie.pKlient.idobj,pZamowienie.type
+			
+		if pM60153.get_g_sStrMail="" then
+			MessageBox  "Nie wysłano maila ... ","Informacja...", vbOKOnly, vbInformation 
+		else
+			dim adresyEmail:adresyEmail=pM60153.get_g_sStrMail
+#ifdef APPCONFIG_ZALACZNIKI_EMAIL
+			dim strZalaczniki : strZalaczniki = pM60153.getZalaczniki
+			make_publication_on_zam = (doc_.getmodule(60170).realize_email_publication_zal(abs(idObjDPC),pZamowienie,adresyEmail,pZamowienie.text,nothing,strZalaczniki) = 0)
+#else      
+			make_publication_on_zam = (realize_email_publication(abs(idObjDPC),pZamowienie,adresyEmail,pZamowienie.text,nothing) = 0)
+#endif    
+		end if
+	else
+		make_publication_on_zam = (realize_publication(abs(idObjDPC),pZamowienie,idObjDPC>0,nothing) = 0)
+	end if
+end function
+
+
+'messagebox
+#include "50122"
+
+
+function suply_doctype_and_copymode ( byval nSourceType , byref nType , byref nMode ):suply_doctype_and_copymode = false
+	dim strRestrict:strRestrict = "N5REJESTRDOK__ZAM_OBCE;N5REJESTRDOK__ZAM_WLASNE;N5REJESTRDOK_ZAP_OFERTOWE_OBCE;N5REJESTRDOK_OFERTY_WLASNE;N5REJESTRDOK_ZAP_OFERTOWE_WLASNE;N5REJESTRDOK_OFERTY_OBCE"
+	if nType = 0 then ' pytamy jesli nie dostarczylismy		
+		'znamy typ dokuemntu z jakiego zamowienie tworzymy zatem mozemy ogranicztyc wybor tylko do tych
+		' do ktorych ma to sens
+		select case nSourceType
+		end select 
+		nType = choose_typ_rejestru_restrict(strRestrict,true)
+		if nType < 1 then
+			exit function
+		end if
+	end if
+	if nMode = 0 then ' pytamy jesli nie dostarczylismy		
+		dim nAnswer:nAnswer =  MessageBoxCustom("Wybrano opcję tworzenia nowego dokumentu. Mozesz skopiowac zawartość oryginału z cenami lub bez. Jesli wybierzesz opcję ""Bez cen"" zostaną wstawione ceny z kartoteki produktu.", "Tworzenie zamówień/zapytań/ofert", vbYesNoCancel, vbQuestion, "Z cenami;Bez cen;Anuluj")
+		select case nAnswer
+			case vbCancel
+				exit function		
+			case vbNo
+				nMode = MODE_WITHOUT_PRICES
+			case else
+				nMode = MODE_WITH_PRICES			
+		end select
+	end if
+	suply_doctype_and_copymode = true
+end function
+
+
+'choose_rejestr_dok
+#include "50517"
+
+function add_promocja(byval numerdok, byval ddatapocz, byval ddatakon, byval idobjprodukt, byval idobjKlient, byval cena, byref pWaluta):add_promocja=false
+
+      dim pSubTrans
+      dim new_polrab,result
+      set pSubTrans = trans_.createsubtran()
+
+      set new_polrab = trans_.newobj(TYPEID_N5POLRAB)
+      new_polrab.dDataOd = ddatapocz
+      new_polrab.strNazwaPromocji = numerDok
+      new_polrab.dDataDo = Ddatakon
+      set new_polrab.wpProdGrupa = trans_.getobj(TYPEID_N5PRODUKT,idobjprodukt)
+      new_polrab.curCenaRab = ccur(cena)
+      new_polrab.wpKlientGrupa = trans_.getobj(TYPEID_N5KLIENT,idobjKlient)
+      set new_polrab.polrab_pWalutaCeny = pWaluta
+      
+      if (not trans_.SaveObjects) then
+      			 MessageBox "Nie udało sie zapisać nowego rabatu dla produktu "+cStr(new_polrab.wpProdGrupa.strIndeks), "Ceny i rabaty", vbOKOnly, vbInformation
+             add_promocja = false
+             exit function
+      end if
+      trans_.message 7000 , 0 ,"Rabat na produkt: "+(new_polrab.wpProdGrupa.strIndeks)+" został dodany"
+
+ add_promocja = true  
+
+end function
+
+
+function change_promocja (byval numer_promocji, byval dataod, byval dataAktywnosci, byval idKlient, byval cena, byref pWaluta):change_promocja=false
+
+      dim pSubTrans
+      dim change_obiekt
+      set pSubTrans = trans_.createsubtran()
+      set change_obiekt = trans_.getobj(TYPEID_N5POLRAB,clng(numer_promocji))
+      change_obiekt.ddataod = dataod
+      change_obiekt.ddatado = dataAktywnosci
+      change_obiekt.curCenaRab = ccur(cena)
+      change_obiekt.wpKlientGrupa = trans_.getobj(TYPEID_N5KLIENT,idKlient)
+      set change_obiekt.polrab_pWalutaCeny = pWaluta
+      if (not trans_.SaveObjects) then
+       			 MessageBox "Nie udało sie zmodyfikować istniejącego rabatu dla produktu "+cStr(change_obiekt.wpProdGrupa.strIndeks), "Ceny i rabaty", vbOKOnly, vbInformation
+             change_promocja = false
+             exit function
+      end if
+      trans_.message 7000 , 0 ,"Rabat na produkt: "+(change_obiekt.wpProdGrupa.strIndeks)+" został zmodyfikowany"
+change_promocja = true
+
+end function
+
+function new_dok_promocji ( byval cNewDok , byref pSourceDok , byref pPage) : new_dok_promocji = true
+
+if cNewDok = "0" then
+		exit function
+end if
+
+if not pPage.std_fsave_external_with_saveobjects then
+		new_dok_promocji  = false
+		exit function
+	end if
+		
+	if pSourceDok.isnew() or trans_.isdirty() then
+		trans_.message 1002 , 0 , "Dokument musi być najpierw zapisany"
+	end if
+
+  dim numerDok : numerDok = pSourceDok.strnrdok
+  dim dataAktywnosci : dataAktywnosci = pSourceDok.dDataAkt
+  dim dataOd : dataOd = pSourceDok.dDataWyst
+  dim idKlient : idKlient = pSourceDok.pKlient.idobj
+  dim pWaluta : set pWaluta = pSourceDok.pWaluta
+
+  dim idSource:idSource = pSourceDok.idobj
+
+  dim strSQL : strSQL = "select c_pprodukt as produkt,c_popak as opakowanie,c_curCenaNettoWal as cena from vlist_n5zamowienie_listPozycje where p_idobj = "+cStr(idSource)
+  dim oResult : set oResult = trans_.createadors(strSQL)
+  do while not oResult.EOF
+      dim strSQListniejacaPromocja : strSQListniejacaPromocja = "select idobj as numer  from N5POLRAB where strNazwaPromocji = '"+trans_.afc.convert.DoubleApostrophe(numerDok)+"' and wpProdGrupa = "+cStr(oResult.fields("produkt"))
+      dim oResultistniejacaPromocja : set oResultistniejacaPromocja = trans_.createadors(strSQListniejacaPromocja)
+      if oResultistniejacaPromocja.BOF then
+        if (not add_promocja (numerDok, dataod, dataAktywnosci, oResult.fields("produkt"), idKlient,oResult.fields("cena"),pWaluta)) then
+            exit do
+        end if
+      else
+        if (not change_promocja( oResultistniejacaPromocja("numer").value, dataod, dataAktywnosci,idKlient,  oResult.fields("cena"),pWaluta) ) then
+            exit do
+        end if
+      end if
+      oResult.movenext
+  loop
+
+  
+end function
+
+
+'bCopyKlientMode - czy kopiowac klienta z zrodlowego - true or false
+'nCopyMode - MODE_WITH_PRICES or MODE_WITHOUT_PRICES
+function new_dok ( byval cNewDok , byref pSourceDok , byref pPage , byval nDestType , byval nDestMode , byval bCopyKlientMode , byval bbyDostawca ) : new_dok = true
+  DEBUG_MESSAGE("new_dok")
+	if cNewDok = "0" then
+		exit function
+	end if
+
+	if not pPage.std_fsave_external_with_saveobjects then
+		new_dok = false
+		exit function
+	end if
+		
+	if pSourceDok.isnew() or trans_.isdirty() then
+		trans_.message 1002 , 0 , "Dokument musi być najpierw zpisany"
+	end if
+	
+	dim idSource:idSource = pSourceDok.idobj
+
+	dim nNewZamObjType:nNewZamObjType = nDestType
+	dim nCopyMode:nCopyMode = nDestMode	
+
+	if not suply_doctype_and_copymode( pSourceDok.pREjestrDok.eTyp , nNewZamObjType , nCopyMode ) then
+		new_dok = false
+		exit function	
+	end if
+
+	trans_.var(APPVAR_REJESTR_TYP)			= nNewZamObjType
+if bbyDostawca then
+		new_dok = new_dok_by_dostawca( idSource , nDestType )
+		exit function
+end if
+	
+
+	dim idNewDok
+
+	dim hli:set hli = doc_.getmodule(60129).prepare_form_open_command(TYPEID_N5ZAMOWIENIE , 0 , USAGE_EDIT)
+	dim form
+	if not hli is nothing then
+		set form = doc_.getpagehli(hli)
+	else
+		exit function
+	end if
+	
+	dim source:set source = trans_.getobj(TYPEID_N5ZAMOWIENIE,idSource) 
+	source.n5zamowienie_copy_to form.root , nCopyMode , bCopyKlientMode
+	set form.root.pZamowienie = source
+	form.domodalauto
+
+end function
+
+
+
+function new_dok_by_dostawca( byval idSource , byval nDestType ) : new_dok_by_dostawca = true
+
+	DEBUG_MESSAGE("new_dok_by_dostawca dla zam:" + cstr(idSource))
+	'najpier zapytanie grupujące podane zamównienie wedługo dostawców
+	dim query:query = _
+	"	select	" + vbNewLine + _
+	"	dostawca.idobj as 'dost',	" + vbNewLine + _
+	"	*	" + vbNewLine + _
+	"	from vlist_n5zamowienie_listpozycje as zam	" + vbNewLine + _
+	"	join n5produkt as prod on zam.c_pProdukt = prod.idobj	" + vbNewLine + _
+	"	left join n5klient as dostawca on prod.prod_pDostawca = dostawca.idobj	" + vbNewLine + _
+	"	where c_curIloscOpakPoz <> 0.0 and p_idobj = "+cstr(idSource)+"	" + vbNewLine + _
+	"	order by dostawca.strNazwa,coll_lp	" + vbNewLine
+	DEBUG_MESSAGE(query)
+
+	dim rs:set rs = trans_.createadors(query)
+	dim dostawca:dostawca = clng(-1)
+	dim dostawca_rs
+	dim pos,source,source_pos
+  dim form : set form = nothing
+
+	while not rs.eof
+		if isNull(rs("dost")) then
+			dostawca_rs = 0
+		else
+			dostawca_rs = clng(rs("dost"))		
+		end if
+		if dostawca_rs <> dostawca then
+			'pokazujemy romularz z zamowieniem, ale tylko gdy:
+			' - nie jest to nie wypelniony jeszcze obiekt
+			' - nie jest to pierwszy przebieg petli
+			if dostawca > -1 then
+				form.domodalauto
+			end if
+			'zmienil sie dostawca - tworzymy nowe zamówienie
+			'ustawiamy biezącego dostawce
+			dostawca = dostawca_rs			
+			if not on_new_dostawca_handler ( dostawca , idSource , rs , form ) then
+				exit function
+			end if
+		end if
+		'uzupelniamy pozycje
+		set source = trans_.getobj(TYPEID_N5ZAMOWIENIE,idSource)
+		set source_pos = source.listPozycje.get(clng(rs("coll_lp")))
+
+#ifndef _ABAS_INWESTYCJE
+		set pos = form.root.listPozycje.addnew()				
+		source_pos.n5pozzamowienie_copy_to pos , 1
+#endif    
+		rs.movenext
+	wend
+	'i jeszcze raz dla ostatnio wypelnionego
+  
+  if not form is nothing then
+	  form.domodalauto
+  end if
+ 
+end function
+
+
+
+function on_new_dostawca_handler ( byval dostawca , byval idSource , byval rs , byref form ):on_new_dostawca_handler = false
+	DEBUG_MESSAGE("on_new_dostawca_handler")
+	dim hli:set hli = doc_.getmodule(60129).prepare_form_open_command(TYPEID_N5ZAMOWIENIE , 0 , USAGE_EDIT)
+	if not hli is nothing then
+		set form = doc_.getpagehli(hli)
+	else
+		exit function
+	end if
+	'wypalniamy tym co mozna
+	with form.root
+		'dostawca
+		if dostawca > 0 then
+			.pKlient = trans_.getobj(TYPEID_N5KLIENT,dostawca)
+		end if
+		'dokument zrodlowy czyli zamowienie
+		dim source:set source = trans_.getobj(TYPEID_N5ZAMOWIENIE,idSource)
+
+		set .pZamowienie = source
+		'daty
+		.dDataWyst = trans_.var(GVAR_TODAY)
+		'.dDataWyst = source.dDataPlat  
+		.dDataReal = source.dDataReal
+		.dDataAkt = source.dDataAkt 
+		'dostawa,platnosc
+		set .zam_pSposobDostawy = source.zam_pSposobDostawy
+#ifndef _ABAS_INWESTYCJE    
+		set .pSposobPlatnosci = source.pSposobPlatnosci
+#endif    
+		'uwagi
+		.strUwagi = source.strUwagi
+#ifdef _ABAS_INWESTYCJE
+		.strExtra2 = source.strExtra2
+#endif    
+	end with
+
+	'form.domodalauto
+	on_new_dostawca_handler = true
+end function
+
+
+'select file
+#include "50123"
+
+
+function from_EDI(cFromEDI , pZamowienie , pPage):from_EDI = true
+
+	if cFromEDI = "0" then		
+		exit function
+	end if
+
+	dim strPath
+	strPath=SelectFile("c:\", "*.*", "")
+
+	if (len(strPath)=0) then
+		from_EDI = false
+		exit function		
+	end if
+
+
+	dim pInputStream:set pInputStream = doc_.createstreamobj()
+	pInputStream.attach strPath
+
+
+	from_EDI = doc_.getmodule(60277).zamowienie_from_EDI(pZamowienie , pPage , pInputStream)
+
+end function
+
+
+'---------------------------------------
+' wypełnia zamówienie danymi z kolektora
+'---------------------------------------
+function FillFromCollector(idObjDPC, byref pZamowienie, byref pPage)
+	FillFromCollector = doc_.getmodule(60194).FillFromCollector(idObjDPC, pZamowienie, pPage)
+end function
+
+
+'---------------------------------------------------------------------------------
+
+]]>
+</script>
+</config>
+<body>
+	
+
+QXF_BEGIN
+	QXS_BEGIN_FLAT(SECID_ALL,Konfiguracja,FORM_SPAN)
+		<tr>
+			QXX_CHOOSE_PUBLICATION(CTRLID_DPC_1,CTRLID_PIC_DPC_1,CTRLID_DPC_1_PREVIEW,1)
+		</tr>		
+
+		<tr>
+			QXX_CHOOSE_PUBLICATION(CTRLID_DPC_2,CTRLID_PIC_DPC_2,CTRLID_DPC_2_PREVIEW,1)
+		</tr>
+
+  QXR_SEPARATOR(2)
+  QXR_LABELED_CHECK(CTRLID_FROM_FF,,Import w postaci elektronicznej)
+  QXR_LABELED_CHECK(CTRLID_NEWDOK,,REJDOKCONF_NEWDOK1_TITLE)
+  QXR_LABELED_CHECK(CTRLID_NEWDOK2,,REJDOKCONF_NEWDOK2_TITLE)
+    #if appvar_rejestr_typ = N5REJESTRDOK_OFERTY_WLASNE || appvar_rejestr_typ = N5REJESTRDOK_OFERTY_OBCE
+        #ifdef APPCONFIG_CENY_PROMO_Z_OFERT
+            QXR_LABELED_CHECK(CTRLID_NEWDOK3,,Promocja na produkty)
+        #endif
+    #endif
+
+  #comment - na razie ukryty
+  QXR_LABELED_CHECK_HIDE(CTRLID_CREATE_TASK,,Zapamiętaj zdarzenie,true)
+
+#ifdef _BARON
+    QXR_LABELED_CHECK(CTRLID_SHOW_COLLECTOR,,Kolektor danych)
+#endif 
+
+  QXR_SEPARATOR(FORM_SPAN)
+
+
+  QXS_END_FLAT(FORM_SPAN)
+  QXF_END
+
+  XFDIALOGBUTTONS
+
+</body>
+</page>

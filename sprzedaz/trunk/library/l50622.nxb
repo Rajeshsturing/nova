@@ -1,0 +1,547 @@
+'-----------------------------------------------------------------------
+' (c) 2003 NAVO Ltd.
+' Spikowski Piotr
+'
+' Funkcje wspó³ne dla kreatora regu³ i dla poszczególnych kroków
+' tego kreatora.
+' Poniewaz s¹ dwa podobne kroki - jeden wyœwietlaj¹cy wybór paramatrów
+' wymaganych a 2'gi opcjonalnych - zrobiono ten library by nie bylo
+' 2'ch funkcji robi¹cych to samo.
+'-----------------------------------------------------------------------
+
+'fire_choice_list
+#include "50200"
+
+
+'-----------------------------------------------------------------------
+' Wydobywa z opisu ³¹cznika informacje o nim
+'-----------------------------------------------------------------------
+function Rules_GetConnector(byval strConnectorDescription): set Rules_GetConnector = nothing
+	dim pConnector
+	set pConnector = doc_.afc.new_navoarray()
+
+	pConnector.Separate strConnectorDescription, ";"
+
+	set Rules_GetConnector = pConnector
+end function
+
+'-----------------------------------------------------------------------
+' Zmieniamy separator odzielaj¹cy poszczególne elmenty dla danej tablicy
+' parametrów
+'-----------------------------------------------------------------------
+function Rules_ChangeSeparatorArr(byref pHli, byref pParamsArray)
+	dim nCtrlID
+	nCtrlID = CLng(pHli.prop(FUNCTION_CTRL_ID))
+
+	dim nListPos
+	nListPos = CLng(pHli.prop(FUNCTION_LIST_POS))
+
+	dim nArrPos
+	nArrPos = CLng(pHli.prop(FUNCTION_ARRAY_POS))
+
+	dim pChoiceModule
+	set pChoiceModule = doc_.getmodule(60265)
+
+	dim nSeparatorID
+	nSeparatorID = pHli.prop(FUNCTION_CURRENT_CNN)
+
+	dim bRootElem
+	bRootElem = false
+
+	if (pHli.exists(FUNCTION_ROOT_ELEM)) then
+		if (pHli.prop(FUNCTION_ROOT_ELEM)=1) then
+			bRootElem = true
+		end if
+	end if
+	
+
+	dim strNewSeparator
+	strNewSeparator = pChoiceModule.Rules_GetSeparator(pHli.prop(nSeparatorID))
+
+	if (strNewSeparator="") then
+		exit function
+	end if
+
+	dim pParams
+	set pParams = pParamsArray.value(nArrPos)
+
+	dim pRule
+	if (not bRootElem) then
+		set pRule = pParams.pListParams.value(nListPos)
+	else
+		set pRule = pParams
+	end if
+
+	select case nSeparatorID
+		case FUNCTION_CONNECTOR
+			pRule.strSeparator = strNewSeparator
+		
+		case FUNCTION_CONNECTOR2
+			pRule.strSeparator2 = strNewSeparator
+	end select
+	page_.ctrl(nCtrlID).text = strNewSeparator
+end function
+
+'-----------------------------------------------------------------------
+' Tworzy kontynuacje selekcji danego typu dla danego separatora (jego id)
+' czyli robi to co pojawia sie pomiedzy elementami w przypadku kontynuacji
+' (ciagu elementow). Moze to byc +, - lub cos innego
+' Robi rowniez nastepny skrót z mozliwoœci¹ wskazania nowego elementu
+' i alokuje na nastepny parametr miejsce w tablicy parametrow
+'-----------------------------------------------------------------------
+function Rules_ContinueSelection_SepID(byref pHli, byref pPage, byref nFunctionPos, byval nSepID, byref pRuleParam, byref bChoiceAdded, byref nLastID)
+
+	'Jezeli nie ma wskazanego ³¹cznika w naszym skrócie to
+	'nie nie robimy
+	if (not pHli.exists( nSepID )) then
+		exit function
+	end if
+
+	'Wydobywamy znaki, które mog¹ byæ ³¹cznikiem
+	'S¹ one oddzielone œrednikami
+	dim strConnector
+	strConnector = pHli.prop( nSepID )
+
+	if (strConnector<>"") then
+		'Mamy doczynienia z wyborem wielu (grupy) elementów
+		'wiec musimy zrobic odpowiedni¹ mo¿liwoœæ kontynuacji
+		'wyboru danego elementu - istnieje zdefiniowany ³¹cznik
+
+		'Czy dodawaæ sam separator - bez nowego elem. do dodania
+		'znajdujacego sie za separatorem
+		dim bAddOnlySeparator
+		bAddOnlySeparator = true
+
+		'Tylko przy elemencie ostatnim dodajemy oprócz ³¹cznika
+		'czyli np. naszego +, - skrót z mo¿liwoœci wyboru samego
+		'nowego elementu
+		if (not bChoiceAdded) then
+			bAddOnlySeparator = false
+			bChoiceAdded = true
+		end if
+
+
+		'Robimy z ³¹czników tablice elementów
+		dim pConnectorParts
+		set pConnectorParts = Rules_GetConnector(pHli.prop(nSepID))
+
+		if (pConnectorParts.upperIndex()>=0) then
+
+			'Je¿eli istnieje min jeden element separatora
+			'dodajemy nasz separator - coœ co oddziela
+			'nasze kolejne wybory
+
+			dim nCtrlID
+			nCtrlID = CLng(pHli.prop(FUNCTION_CTRL_ID))
+
+			'Czy separator zostal juz okreslony
+			dim bAlreadyExists
+			bAlreadyExists = true
+
+			dim strCurrentSeparator
+			'W zaleznosci od rodzaju konektora z innego miejsca pobieramy
+			'aktualnie wybrany lacznik			
+			select case nSepID
+				case FUNCTION_CONNECTOR
+					strCurrentSeparator = CStr(pRuleParam.strSeparator)
+
+				case FUNCTION_CONNECTOR2
+					strCurrentSeparator = CStr(pRuleParam.strSeparator2)
+			end select
+
+			'Je¿eli nie wybrano jeszcze naszego ³¹cznika to
+			'domyœlnie ustawiamy pierwszy z listy zdefiniowanych
+			if (strCurrentSeparator="") then
+				strCurrentSeparator = pConnectorParts.value(0)
+				bAlreadyExists = false
+
+				'Zanzacz jaki separator jest aktywnie wybrany
+				'w zaleznosci od typu separator inny memeber klasy
+				select case nSepID
+					case FUNCTION_CONNECTOR
+						pRuleParam.strSeparator = pConnectorParts.value(0)
+
+					case FUNCTION_CONNECTOR2
+						pRuleParam.strSeparator2 = pConnectorParts.value(0)
+				end select
+
+			end if
+
+			'Dodajemy spacje z lewej jezeli ktos okreslil
+			if (left(strCurrentSeparator, 1)=" ") then
+				dim pSpaceStatic
+				set pSpaceStatic = pPage.ctrl(1).insertnew(CTRL_TYPE_STATIC, nCtrlID, -1)
+				pSpaceStatic.text = " "
+				nCtrlID = pSpaceStatic.ident
+			end if
+
+			'I informacje czy dodawac z prawej lacznika
+			dim bMakeSpaceAfterSep: bMakeSpaceAfterSep = false
+			if (right(strCurrentSeparator, 1)=" ") then
+				bMakeSpaceAfterSep = true
+			end if
+
+			'Obcinamy spacje bo spacje to inaczej static z lewej
+			'jak i jeden z prawej
+			strCurrentSeparator = trim(strCurrentSeparator)
+
+			'Wstawiamy na strone nasz lacznik
+			dim pConnectorSeparator
+			set pConnectorSeparator = pPage.ctrl(1).insertnew(CTRL_TYPE_STATIC, nCtrlID, -1)
+
+			dim nSeparatorID
+			nSeparatorID = pConnectorSeparator.ident
+
+			pConnectorSeparator.text = strCurrentSeparator
+
+			'Wstawiamy spacje po naszym laczniku
+			if (bMakeSpaceAfterSep) then
+				set pSpaceStatic = pPage.ctrl(1).insertnew(CTRL_TYPE_STATIC, nSeparatorID, -1)
+				pSpaceStatic.text = " "
+				nSeparatorID = pSpaceStatic.ident
+			end if
+
+			nLastID = nSeparatorID
+
+			'Skrót do ³¹cznika - ustawiany tylko jezeli zadeklarowano
+			'wiecej niz jeden
+			dim pSeparatorHli
+			set pSeparatorHli = nothing
+
+			if (pConnectorParts.upperIndex()>=1) then
+	
+				'Istnieja min dwa elementy separatora dlatego
+				'bedziemy umozliwiac jeszcze wybor separatora
+				set pSeparatorHli = doc_.createhli()
+				pSeparatorHli.prop(GVAR_FUNCTIONHLI) = "Rules_ChangeSeparator"
+				pSeparatorHli.prop(FUNCTION_CTRL_ID) = pConnectorSeparator.ident
+				pSeparatorHli.prop(FUNCTION_ARRAY_POS) = pHli.prop(FUNCTION_ARRAY_POS)
+				pSeparatorHli.prop(nSepID) = pHli.prop(nSepID)
+				pSeparatorHli.prop(FUNCTION_CURRENT_CNN) = nSepID
+				pSeparatorHli.prop(FUNCTION_LIST_POS) = nFunctionPos
+				pSeparatorHli.prop(FUNCTION_ROOT_ELEM) = pHli.prop(FUNCTION_ROOT_ELEM)
+
+				'Podstaw zrobiony skrot
+				set pConnectorSeparator.hli = pSeparatorHli
+
+				'Ustaw kolor i styl separatora
+				SetStaticStyleEx pConnectorSeparator, false, false, false, true
+				pConnectorSeparator.forecolor = RGB(0, 0, 255)
+			end if
+
+			if (not bAddOnlySeparator) then
+
+				'Dodajemy nowy skrót z mo¿liwoœcia wyboryu nastêpnego elementu
+				dim pNewChoiceStatic
+				set pNewChoiceStatic = pPage.ctrl(1).insertnew(CTRL_TYPE_STATIC, nSeparatorID, -1)
+
+				SetStaticStyleEx pNewChoiceStatic, false, false, false, true
+				pNewChoiceStatic.forecolor = PARAM_COLOR_OPT
+
+				if (pRuleParam.bEmpty) then
+					pNewChoiceStatic.text = trim(pRuleParam.strChoiceText)
+				else
+					pNewChoiceStatic.text = trim(pRuleParam.strDisplay)
+				end if
+
+				nLastID = pNewChoiceStatic.ident
+
+				'Robimy skrót do ponownego wyboru nowego elementu
+				dim pNewChoiceHli
+				set pNewChoiceHli = doc_.createhli()
+
+				'Kopiujemy wszystkie w³aœciwoœci naszego skrótu
+				dim i
+				for i = FUNCTION_PARAM_MIN to FUNCTION_PARAM_MAX
+					if (pHli.exists(i)) then
+						pNewChoiceHli.prop(i) = pHli.prop(i)
+					end if
+				next
+
+				'Kopiujemy prop systemowe
+				pNewChoiceHli.prop(GVAR_FUNCTIONHLI) = pHli.prop(GVAR_FUNCTIONHLI)
+				pNewChoiceHli.prop(GVAR_FUNCTIONHLI) = pHli.prop(GVAR_FUNCTIONHLI)
+
+				pNewChoiceHli.prop(FUNCTION_LIST_POS) = nFunctionPos
+
+				'Zmieniamy informacje o id kontrolki
+				pNewChoiceHli.prop(FUNCTION_CTRL_ID) = CLng(pNewChoiceStatic.ident)
+							
+				'Ustawiamy nasz zmodyfikowany skrót
+				set pNewChoiceStatic.hli = pNewChoiceHli
+
+			end if 'not bAddOnlySeparator
+
+		end if 'pConnectorParts.upperIndex()>=0
+
+	end if 'strConnector<>""
+
+end function
+
+'-----------------------------------------------------------------------
+' Tworzy kontynuacje selekcji danego typu
+'-----------------------------------------------------------------------
+function Rules_ContinueSelection(byref pHli, byref pParamsArray, byref pPage, byval nFunctionPos, byref nLastID)
+
+	if (pHli.exists(FUNCTION_NO_CONTINUE)) then
+		exit function
+	end if
+
+	'Pozycja w tablicy parametrow
+	dim nArrPosition
+	
+	'Dobieramy siê do obiektu reprezentuj¹cego jeden param i maj¹cego
+	'liste nastêpnych parametrów wraz z ³¹cznikami
+	dim pRule
+	set pRule = pParamsArray.value(CLng(pHli.prop(FUNCTION_ARRAY_POS)))
+
+	dim pRuleParam
+	if (nFunctionPos>-1) then
+		'Jest juz dodane odpowiednie miejsce reprezentuj¹ce 
+		'parametr z listy - chodzi nam tylko o modyfikacje
+		set pRuleParam = pRule.pListParams.value(nFunctionPos)
+		nArrPosition = nFunctionPos
+	else
+		'Nie mamy dodanego parametru na liste wiec to robimy
+		set pRuleParam = doc_.afc.new_CRulesParam()
+		pRuleParam.strChoiceText = pRule.strChoiceText
+		pRuleParam.bOptional = pRule.bOptional
+		'Dodaj nasz parametr (kontynuacje) do listy
+		pRule.pListParams.Add pRuleParam
+		nArrPosition = pRule.pListParams.UpperIndex()
+
+		'Sprawdzamy czy parametr jest opcjonalny
+		if (pHli.exists(FUNCTION_OPTIONAL)) then
+			if (pHli.prop(FUNCTION_OPTIONAL)="1") then
+				pRule.bOptional = true
+			end if
+		end if
+	end if
+
+	dim bChoiceAdded
+	bChoiceAdded = false
+
+	'Dodawaj poszczegolne separatory
+	Rules_ContinueSelection_SepID pHli, pPage, nArrPosition, FUNCTION_CONNECTOR2, pRuleParam, bChoiceAdded, nLastID
+	Rules_ContinueSelection_SepID pHli, pPage, nArrPosition, FUNCTION_CONNECTOR, pRuleParam, bChoiceAdded, nLastID
+end function
+
+'************************************************************************
+'* Funkcje bêd¹ce reakcj¹ na naciœniêcie skrótu. Umo¿liwiaj¹ wybór
+'* czegoœ i wstawiaj¹ to co jest wybrane do tablicy parametrów
+'************************************************************************
+
+'-----------------------------------------------------------------------
+' Funkcja ze zmiennej strValue2Save bedacej stringiem reprezentujacym
+' parametr do zapisania w bazie i typu zmiennej zrodlowej varSourceVar
+' robi jeden string zawieraj¹cy:
+' typ_zmiennej_SourceVar + wartosc_SourceVar_zmieniona_na_string
+'-----------------------------------------------------------------------
+function value2save(byval varSourceVar, byval strValue2Save)
+	dim strVarType
+	strVarType = CStr(VarType(varSourceVar))
+
+	if (len(strVarType)<3) then
+		strVarType = space( 3 - len(strVarType) ) + strVarType
+		strVarType = replace(strVarType, " ", "0")
+	end if
+
+	value2save = strVarType + strValue2Save
+end function
+
+'-----------------------------------------------------------------------
+' Wybór obiektu i odpowiednie ustawienie wartoœci do tablicy parametów
+'-----------------------------------------------------------------------
+function Rules_ChoiceObjectArray(byref pHli, byref pParamsArray)
+
+	dim nTypeId
+	nTypeId = CLng(pHli.prop(FUNCTION_TYPEID))
+
+	dim strFldName
+	strFldName = CStr(pHli.prop(FUNCTION_FLDNAME))
+
+	dim nPosArr
+	nPosArr = CLng(pHli.prop(FUNCTION_ARRAY_POS))
+
+	dim pUtilPage
+	set pUtilPage=doc_.getmodule(60130)	
+
+	dim strWhere: strWhere = ""
+	if (pHli.exists(FUNCTION_WHERE)) then
+		strWhere = pHli.prop(FUNCTION_WHERE)
+	end if
+
+	dim nChoice
+	nChoice = fire_choice_list( nTypeId, pUtilPage.TypeId2ChoiceObj(nTypeId), strFldName, strWhere, "", "")
+
+	if nChoice > 0 then
+
+		dim pObj
+		set pObj = trans_.getobj(nTypeId, nChoice)
+
+		if (not pObj is nothing) then
+			dim varFieldValue
+			varFieldValue = pObj.field(strFldName)
+
+			dim strDisplay
+			strDisplay = value2display(varFieldValue)
+
+			dim pRulesParam
+
+			if (not pHli.exists(FUNCTION_LIST_POS)) then
+				set pRulesParam = pParamsArray.value(nPosArr)
+			else
+				set pRulesParam = pParamsArray.value(nPosArr).pListParams.value(CLng(pHli.prop(FUNCTION_LIST_POS)))
+			end if
+
+			dim bOnlyChanges
+			bOnlyChanges = (not pRulesParam.bEmpty)
+
+			pRulesParam.strDisplay = CStr(strDisplay)
+			pRulesParam.strSave = value2save(pObj, CStr(nTypeId) + ";" + var2string(nChoice) + ";" + strFldName)
+			pRulesParam.bEmpty = false
+
+			page_.ctrl(pHli.prop(FUNCTION_CTRL_ID)).forecolor = PARAM_COLOR_OPT
+			page_.ctrl(pHli.prop(FUNCTION_CTRL_ID)).text = pRulesParam.strDisplay
+
+			if (not bOnlyChanges) then
+				'Dodajemy kontynuacje wyboru naszego elementu, je¿eli
+				'wybór jest typu continue
+				dim nEmptyID
+				Rules_ContinueSelection pHli, pParamsArray, page_, -1, nEmptyID
+			end if 'bOnlyChanges
+
+		end if
+	end if
+
+end function
+
+'-----------------------------------------------------------------------
+' Wybór liczby currency
+'-----------------------------------------------------------------------
+function Rules_ChoiceCurrencyArray(byref pHli, byref pParamsArray)
+	dim pUtilPage
+	set pUtilPage=doc_.getmodule(60265)	
+
+	if (not pUtilPage.Rules_GetCurrency()) then
+		exit function
+	end if
+
+	dim curChoice
+	curChoice = pUtilPage.getChoice()
+
+	dim nPosArr
+	nPosArr = CLng(pHli.prop(FUNCTION_ARRAY_POS))
+
+	dim pRulesParam
+	if (not pHli.exists(FUNCTION_LIST_POS)) then
+		set pRulesParam = pParamsArray.value(nPosArr)
+	else
+		set pRulesParam = pParamsArray.value(nPosArr).pListParams.value(CLng(pHli.prop(FUNCTION_LIST_POS)))
+	end if
+
+	dim bOnlyChanges
+	bOnlyChanges = (not pRulesParam.bEmpty)
+
+	pRulesParam.strDisplay = value2display(curChoice)
+	pRulesParam.strSave = value2save(curChoice, var2string(curChoice))
+	pRulesParam.bEmpty = false
+
+	page_.ctrl(pHli.prop(FUNCTION_CTRL_ID)).forecolor = PARAM_COLOR_OPT
+	page_.ctrl(pHli.prop(FUNCTION_CTRL_ID)).text = pRulesParam.strDisplay
+
+	if (not bOnlyChanges) then
+		'Dodajemy kontynuacje wyboru naszego elementu, je¿eli
+		'wybór jest typu continue
+		dim nEmptyID
+		Rules_ContinueSelection pHli, pParamsArray, page_, -1, nEmptyID
+	end if 'bOnlyChanges
+
+end function
+
+'-----------------------------------------------------------------------
+' Wybór liczby currency
+'-----------------------------------------------------------------------
+function Rules_ChoiceDateArray(byref pHli, byref pParamsArray)
+	dim pUtilPage
+	set pUtilPage=doc_.getmodule(60265)	
+
+	if (not pUtilPage.Rules_GetDate()) then
+		exit function
+	end if
+
+	dim dChoice
+	dChoice = pUtilPage.getChoice()
+
+	dim nPosArr
+	nPosArr = CLng(pHli.prop(FUNCTION_ARRAY_POS))
+
+	dim pRulesParam
+	if (not pHli.exists(FUNCTION_LIST_POS)) then
+		set pRulesParam = pParamsArray.value(nPosArr)
+	else
+		set pRulesParam = pParamsArray.value(nPosArr).pListParams.value(CLng(pHli.prop(FUNCTION_LIST_POS)))
+	end if
+
+	dim bOnlyChanges
+	bOnlyChanges = (not pRulesParam.bEmpty)
+
+	pRulesParam.strDisplay = value2display(dChoice)
+	pRulesParam.strSave = value2save(dChoice, var2string(dChoice))
+	pRulesParam.bEmpty = false
+
+	page_.ctrl(pHli.prop(FUNCTION_CTRL_ID)).forecolor = PARAM_COLOR_OPT
+	page_.ctrl(pHli.prop(FUNCTION_CTRL_ID)).text = pRulesParam.strDisplay
+
+	if (not bOnlyChanges) then
+		'Dodajemy kontynuacje wyboru naszego elementu, je¿eli
+		'wybór jest typu continue
+		dim nEmptyID
+		Rules_ContinueSelection pHli, pParamsArray, page_, -1, nEmptyID
+	end if 'bOnlyChanges
+
+end function
+
+'-----------------------------------------------------------------------
+' Wybór stringa
+'-----------------------------------------------------------------------
+function Rules_ChoiceStringArray(byref pHli, byref pParamsArray)
+	dim pUtilPage
+	set pUtilPage=doc_.getmodule(60265)	
+
+	if (not pUtilPage.Rules_GetString()) then
+		exit function
+	end if
+
+	dim strChoice
+	strChoice = pUtilPage.getChoice()
+
+	dim nPosArr
+	nPosArr = CLng(pHli.prop(FUNCTION_ARRAY_POS))
+
+	dim pRulesParam
+	if (not pHli.exists(FUNCTION_LIST_POS)) then
+		set pRulesParam = pParamsArray.value(nPosArr)
+	else
+		set pRulesParam = pParamsArray.value(nPosArr).pListParams.value(CLng(pHli.prop(FUNCTION_LIST_POS)))
+	end if
+
+	dim bOnlyChanges
+	bOnlyChanges = (not pRulesParam.bEmpty)
+
+	pRulesParam.strDisplay = value2display(strChoice)
+	pRulesParam.strSave = value2save(strChoice, var2string(strChoice))
+	pRulesParam.bEmpty = false
+
+	page_.ctrl(pHli.prop(FUNCTION_CTRL_ID)).forecolor = PARAM_COLOR_OPT
+	page_.ctrl(pHli.prop(FUNCTION_CTRL_ID)).text = pRulesParam.strDisplay
+
+	if (not bOnlyChanges) then
+		'Dodajemy kontynuacje wyboru naszego elementu, je¿eli
+		'wybór jest typu continue
+		dim bEmptyID
+		Rules_ContinueSelection pHli, pParamsArray, page_, -1, bEmptyID
+	end if 'bOnlyChanges
+
+end function
+

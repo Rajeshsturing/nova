@@ -1,0 +1,704 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1240.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+-->
+<page style='STYLE_PAGE' width='10000'>
+<config>
+<startpos>center</startpos>
+<title>Instalacja klienta</title>
+<script>
+<![CDATA[
+
+#define FILEID_SZABLONIMPORTU	95000
+#define FILENAME_SZABLONIMPORTU	"Szablon importu danych.xls"
+
+#define FILEID_SPLASH			95006
+#define FILENAME_SPLASH			"splash.jpg"
+
+#define FILEID_OFFICECONFIG		95001
+#define FILENAME_OFFICECONFIG	"ne2002officeconfig.xml"
+
+
+#define FILEID_NAVOFK			95007
+#define FILENAME_NAVOFK			"navofk.dll"
+
+#define FILEID_NAVOPL			95008
+#define FILENAME_NAVOPL			"navopl.dll"
+
+#define FILEID_GMSVR			95010
+
+#define FILEID_NAVOFISK			95011
+#define FILENAME_NAVOFISK		"navofisk.dll"
+
+
+#define FILEID_EB5PROD			95012
+#define FILENAME_EB5PROD		"eb5prod.dll"
+
+#define FILEID_EB5UTIL			95013
+
+#define FILEID_EB5HAND			95014
+#define FILENAME_EB5HAND		"eb5hand.dll"
+
+#define FILEID_EB5FK			95015
+#define FILENAME_EB5FK			"eb5fk.dll"
+
+#include "50203"
+'CFilesDrives
+#include "50211"
+'MessageBox
+#include "50122"
+'view_message
+#include "50516"
+
+dim strUnInKey
+dim strAppName
+
+'----------------------------------------------------------------------
+' Podejmuje probe stworzenia podanej sciezki
+'----------------------------------------------------------------------
+private function create_path(byval strRoot) : create_path = false
+	dim pFD, bOK
+	set pFD = CFileDrive(bOK)
+
+	if (not bOK) then
+		view_message 6025, 0
+		exit function
+	end if
+
+	if (not pFD.IsFolder( strRoot )) then
+		
+		if (not pFD.CreatePath( strRoot )) then
+			exit function
+		end if
+
+	end if
+	create_path = true
+end function
+
+'----------------------------------------------------------------------
+' Podmiana odpowiednich stringów w pliku konfiguracyjnym 
+' Office Connectora
+'----------------------------------------------------------------------
+private function onPrepareOfficeConfig(byval strInput)
+	dim strDefaultDB
+
+  if False then
+    strDefaultDB = "navo2002"
+  else
+    strDefaultDB = "navo2012"
+  end if
+  
+	if (trans_.isvar(GVAR_DBNAME)) then
+		strDefaultDB=trans_.var(GVAR_DBNAME)
+	end if
+
+	dim strDefaultServer: strDefaultServer=trans_.var(GVAR_MACHINE)
+	if (trans_.isvar(GVAR_DBSERVER)) then
+		strDefaultServer=trans_.var( GVAR_DBSERVER )
+	end if
+
+	strInput = replace(strInput, "@server@", strDefaultServer)
+	strInput = replace(strInput, "@dbname@", strDefaultDB)
+	strInput = replace(strInput, "@appname@", trans_.var(GVAR_APPLICATION))
+	
+	onPrepareOfficeConfig = strInput
+end function
+
+'----------------------------------------------------------------------
+' Kopiuj plik z aplikacji o numerze nIdFile do podanej lokalizacji
+'----------------------------------------------------------------------
+private function copy2dir(byval nIdFile, byval strRoot, byval strDestFileName, byref instses): copy2dir = false
+	dim so
+	set so = doc_.createstreamobj
+
+	on error resume next
+
+	so.attach doc_.getappfile(nIdFile)
+	so.save strRoot + "\" + strDestFileName
+
+	if (err.number<>0) then
+		view_message2 6301, 0, strRoot + "\" + strDestFileName, err.description
+		instses.addlogmsg "Unable to copy file " + CStr( nIdFile ) + " to " + strDestFileName
+		exit function
+	end if
+
+	on error goto 0
+	copy2dir = true
+end function
+
+'----------------------------------------------------------------------
+' Rejestracja podanej biblioteki dynamicznej
+'----------------------------------------------------------------------
+private function registerdll(byval strDllPath, byref instses): registerdll = false
+
+	instses.addlogmsg "Trying to register file " + CStr( strDllPath )
+
+	on error resume next
+
+	dim nRegRes
+	nRegRes = doc_.system.registerdll( strDllPath )
+
+#ifdef _DEBUG
+	if err.number<>0 then
+		MessageBox "DEBUG: Instalacja klienta aplikacji:nie mozna zarejestrowac kontrolki  " + strDllPath + " - zła wersja silnika pewnie. Jesli testujesz instalke to zmien silnik i ........ usuń debug :-)", "Instalacja z błedami", vbOKOnly, vbInformation
+		registerdll = true
+	end if
+#endif
+
+
+	if (err.number<>0) then
+		instses.addlogmsg "Unable to register file " + CStr( strDllPath ) + ": " + error.description
+		exit function
+	end if
+
+	on error goto 0
+
+	if (nRegRes <> 0) then
+		instses.addlogmsg "Unable to register file " + CStr( strDllPath )
+		exit function
+	end if
+
+	instses.addlogmsg "Register file " + CStr( strDllPath ) + ": success"
+
+	registerdll = true
+end function
+
+'----------------------------------------------------------------------
+' Rozpocznij instalacje klienta
+'----------------------------------------------------------------------
+private function install_client(byref instses):install_client = false
+  dim FILENAME_GMSVR
+  dim FILENAME_EB5UTIL
+ 
+  if False then
+    FILENAME_GMSVR = "navogmsvr.dll"
+    FILENAME_EB5UTIL = "eb5util.dll"
+	else
+    FILENAME_GMSVR = "navo2012.server.gm.dll"
+    FILENAME_EB5UTIL = "navo2012.net.eb5util.dll"
+  end if
+    
+  
+#ifdef _DEBUG
+		MessageBox "DEBUG: Instalacja aplikacji: zdefiniowane DEBUG - WYWALIĆ!!!!!!!!!!!!!!!!!!!!! ", "Instalacja z błedami", vbOKOnly, vbInformation		
+#endif
+
+	dim sysobj
+	set sysobj = doc_.system
+
+	'Pobieramy root instalacji np. c:\navo2001\exe\release\
+	dim strInstRoot
+	strInstRoot = sysobj.registry(hKey_LocalMachine,"SOFTWARE\NAVO\NAVO2002\Setup", "InstallationRoot")
+	
+	if (strInstRoot = "") then
+		instses.addlogmsg "Installation root is empty!"
+		exit function
+	end if
+
+	'Pobieramy katalog do folderu systemowego
+	dim strSystemPath
+	strSystemPath = strInstRoot + "System"
+
+	'Pobieramy katalog do extras
+	dim strExtrasRoot
+	strExtrasRoot = strInstRoot + "Applications\" + strAppName + "\Extras"
+
+	instses.addlogmsg "Preparing extras dir:" + strExtrasRoot
+	
+	'Tworzymy katalog extras gdy brak
+	if (not create_path(strExtrasRoot)) then
+		instses.addlogmsg "extras dir failure"
+		exit function
+	end if
+
+	instses.addlogmsg "Extras dir is prepared."
+	
+	'Kopiowanie szablony pliku EXCEL'a do EXTRAS
+	if (not copy2dir(FILEID_SZABLONIMPORTU, strExtrasRoot, FILENAME_SZABLONIMPORTU, instses)) then
+		if MessageBox("Nie udało się skopiować pliku " + FILENAME_SZABLONIMPORTU + ". Czy mimo tego kontynuować?", "Kopiowanie pliku", vbYesNo, vbQuestion) <> vbYes then
+			exit function
+		end if
+	end if
+
+	dim strSzablonXLS
+	strSzablonXLS = strExtrasRoot + "\" + FILENAME_SZABLONIMPORTU
+
+	'Przygotowanie pliku configuracyjnego dla Office Connector'a
+	dim so
+	set so = doc_.createstreamobj
+
+	dim pTemporarySo
+	set pTemporarySo = doc_.createstreamobj
+
+	pTemporarySo.attach doc_.getappfile(FILEID_OFFICECONFIG)
+
+	so.write onPrepareOfficeConfig( pTemporarySo.getstring() )
+	
+	dim strOfficeConfigXML
+	strOfficeConfigXML = strExtrasRoot + "\" + FILENAME_OFFICECONFIG
+	
+	'Zapis pliku konfuguracyjnego
+	on error resume next
+	so.save strOfficeConfigXML
+	
+	if (err.number<>0) then
+		instses.addlogmsg "Unable to save " + strOfficeConfigXML
+		instses.addlogmsg err.description
+		view_message2 6301, 0, strOfficeConfigXML, err.description
+	end if
+
+	on error goto 0
+	instses.addlogmsg "Extra files copied to client computer"
+
+	'Kopiowanie splasha aplikacji do Extras 
+	if (not copy2dir(FILEID_SPLASH, strExtrasRoot, FILENAME_SPLASH, instses)) then
+		if MessageBox("Nie udało się skopiować pliku " + FILENAME_SPLASH + ". Czy mimo tego kontynuować?", "Kopiowanie pliku", vbYesNo, vbQuestion) <> vbYes then
+			exit function
+		end if
+	end if
+
+	if (not copy2dir(FILEID_GMSVR, strSystemPath, FILENAME_GMSVR, instses)) then
+		if MessageBox("Nie udało się skopiować pliku " + FILENAME_GMSVR + ". Czy mimo tego kontynuować?", "Kopiowanie pliku", vbYesNo, vbQuestion) <> vbYes then
+			exit function
+		end if
+	end if
+
+	if (not copy2dir(FILEID_NAVOPL, strExtrasRoot, FILENAME_NAVOPL, instses)) then
+		if MessageBox("Nie udało się skopiować pliku " + FILENAME_NAVOPL + ". Czy mimo tego kontynuować?", "Kopiowanie pliku", vbYesNo, vbQuestion) <> vbYes then
+			exit function
+		end if
+	end if
+
+
+	if (not copy2dir(FILEID_NAVOFISK, strExtrasRoot, FILENAME_NAVOFISK, instses)) then
+		if MessageBox("Nie udało się skopiować pliku " + FILENAME_NAVOFISK + ". Czy mimo tego kontynuować?", "Kopiowanie pliku", vbYesNo, vbQuestion) <> vbYes then
+			exit function
+		end if
+	end if
+
+	if (not copy2dir(FILEID_NAVOFK, strExtrasRoot, FILENAME_NAVOFK, instses)) then
+		if MessageBox("Nie udało się skopiować pliku " + FILENAME_NAVOFK + ". Czy mimo tego kontynuować?", "Kopiowanie pliku", vbYesNo, vbQuestion) <> vbYes then
+			exit function
+		end if
+	end if
+
+	if (not copy2dir(FILEID_EB5UTIL, strSystemPath, FILENAME_EB5UTIL, instses)) then
+		if MessageBox("Nie udało się skopiować pliku " + FILENAME_EB5UTIL + ". Czy mimo tego kontynuować?", "Kopiowanie pliku", vbYesNo, vbQuestion) <> vbYes then
+			exit function
+		end if
+	end if
+
+	if False then
+		if (not copy2dir(FILEID_EB5HAND, strSystemPath, FILENAME_EB5HAND, instses)) then
+			if MessageBox("Nie udało się skopiować pliku " + FILENAME_EB5HAND + ". Czy mimo tego kontynuować?", "Kopiowanie pliku", vbYesNo, vbQuestion) <> vbYes then
+				exit function
+			end if
+		end if
+	end if
+
+  if False then
+    if (not copy2dir(FILEID_EB5PROD, strSystemPath, FILENAME_EB5PROD, instses)) then
+      if MessageBox("Nie udało się skopiować pliku " + FILENAME_EB5PROD + ". Czy mimo tego kontynuować?", "Kopiowanie pliku", vbYesNo, vbQuestion) <> vbYes then
+        exit function
+      end if
+    end if
+  end if
+
+	if False then
+		if (not copy2dir(FILEID_EB5FK, strSystemPath, FILENAME_EB5FK, instses)) then
+			if MessageBox("Nie udało się skopiować pliku " + FILENAME_EB5FK + ". Czy mimo tego kontynuować?", "Kopiowanie pliku", vbYesNo, vbQuestion) <> vbYes then
+				exit function
+			end if
+		end if
+	end if
+
+	'Rejestrowanie bibiotek dynamicznych
+'	if (not registerdll(strSystemPath + "\" + FILENAME_NAVOGM, instses)) then
+''		exit function
+'	end if
+
+	if (not registerdll(strSystemPath + "\" + FILENAME_GMSVR, instses)) then
+		exit function
+	end if
+
+	if (not registerdll(strExtrasRoot + "\" + FILENAME_NAVOPL, instses)) then
+		exit function
+	end if
+
+	if (not registerdll(strExtrasRoot + "\" + FILENAME_NAVOFISK, instses)) then
+		exit function
+	end if
+
+	if (not registerdll(strExtrasRoot + "\" + FILENAME_NAVOFK, instses)) then
+		exit function
+	end if
+  
+  dim strprocesspath
+  
+  if False then
+    strprocesspath = strSystemPath + "\nxmantool.exe"
+  else
+    strprocesspath = strSystemPath + "\navo2012.net.manager.exe"
+  end if
+	
+  dim strprocesdir:strprocesdir =  strSystemPath
+	  dim strArgs
+	'rejestrowanie FILENAME_EB5PROD	
+  
+  if False then
+    strArgs = "-regasm " + FILENAME_EB5PROD
+	  instses.addlogmsg "Trying to register file " + CStr( FILENAME_EB5PROD )	
+	  dim exitcode : exitcode = sysobj.execute(strProcessPath, strprocesdir, strArgs, false , true)
+	  if exitcode <> 0 then
+  #ifdef _DEBUG
+		  MessageBox "DEBUG: Instalacja klienta aplikacji:nie mozna zarejestrowac kontrolki  " + strArgs + " - zła wersja silnika pewnie. Jesli testujesz instalke to zmien silnik i ........ usuń debug :-). Instalacja teraz się uda - ale bez ""debug"" nie", "Instalacja z błedami", vbOKOnly, vbInformation		
+  #endif
+  #ifndef _DEBUG
+		  instses.addlogmsg "Unable to register file " + CStr( FILENAME_EB5PROD )
+		  exit function
+  #endif		
+	  end if
+	  instses.addlogmsg "Register file " + CStr( FILENAME_EB5PROD ) + ": success"
+  end if
+
+	'---------------------------
+	strArgs = "-regasm " + FILENAME_EB5UTIL
+	instses.addlogmsg "Trying to register file " + CStr( FILENAME_EB5UTIL )	
+	exitcode = sysobj.execute(strProcessPath, strprocesdir, strArgs, false , true)
+	if exitcode <> 0 then
+#ifdef _DEBUG
+		MessageBox "DEBUG: Instalacja klienta aplikacji:nie mozna zarejestrowac kontrolki  " + strArgs + " - zła wersja silnika pewnie. Jesli testujesz instalke to zmien silnik i ........ usuń debug :-). Instalacja teraz się uda - ale bez ""debug"" nie", "Instalacja z błedami", vbOKOnly, vbInformation		
+#endif
+#ifndef _DEBUG
+		instses.addlogmsg "Unable to register file " + CStr( FILENAME_EB5UTIL )
+		exit function
+#endif		
+	end if
+	instses.addlogmsg "Register file " + CStr( FILENAME_EB5UTIL ) + ": success"
+
+'---------------------------
+	if False then
+		strArgs = "-regasm " + FILENAME_EB5HAND
+		instses.addlogmsg "Trying to register file " + CStr( FILENAME_EB5HAND )	
+		exitcode = sysobj.execute(strProcessPath, strprocesdir, strArgs, false , true)
+		if exitcode <> 0 then
+	#ifdef _DEBUG
+			MessageBox "DEBUG: Instalacja klienta aplikacji:nie mozna zarejestrowac kontrolki  " + strArgs + " - zła wersja silnika pewnie. Jesli testujesz instalke to zmien silnik i ........ usuń debug :-). Instalacja teraz się uda - ale bez ""debug"" nie", "Instalacja z błedami", vbOKOnly, vbInformation		
+	#endif
+	#ifndef _DEBUG
+			instses.addlogmsg "Unable to register file " + CStr( FILENAME_EB5HAND )
+			exit function
+	#endif		
+		end if
+		instses.addlogmsg "Register file " + CStr( FILENAME_EB5HAND ) + ": success"
+	end if
+'---------------------------
+	if False then
+		strArgs = "-regasm " + FILENAME_EB5FK
+		instses.addlogmsg "Trying to register file " + CStr( FILENAME_EB5FK )	
+		exitcode = sysobj.execute(strProcessPath, strprocesdir, strArgs, false , true)
+		if exitcode <> 0 then
+	#ifdef _DEBUG
+			MessageBox "DEBUG: Instalacja klienta aplikacji:nie mozna zarejestrowac kontrolki  " + strArgs + " - zła wersja silnika pewnie. Jesli testujesz instalke to zmien silnik i ........ usuń debug :-). Instalacja teraz się uda - ale bez ""debug"" nie", "Instalacja z błedami", vbOKOnly, vbInformation		
+	#endif
+	#ifndef _DEBUG
+			instses.addlogmsg "Unable to register file " + CStr( FILENAME_EB5FK )
+			exit function
+	#endif		
+		end if
+		instses.addlogmsg "Register file " + CStr( FILENAME_EB5FK ) + ": success"
+	end if
+
+#ifdef _DEBUG
+'	MessageBox "DEBUG: varDbName=" + cstr(#*varDbName), "Instalacja", vbOKOnly, vbInformation
+#endif
+
+#ifdef _DEBUG
+'	MessageBox "DEBUG: varDbName=" + cstr(#*varDbName), "Instalacja", vbOKOnly, vbInformation
+#endif
+
+	'Zapis informacji o nazwie serwera i domyślnej bazy danych
+	dim strDefaultDB
+  dim strClientEXE
+  dim strFamilyName
+
+  if False then
+    strDefaultDB = "navo2002"
+    strClientEXE = "navo2002.exe"
+    strFamilyName = "NAVO Enterprise 2002"
+  else
+    strDefaultDB = "navo2012"
+    strClientEXE = "navo2012.exe"
+    strFamilyName = "NAVO Enterprise 2015"
+  end if
+
+	if (trans_.isvar(GVAR_DBNAME)) then
+		strDefaultDB=trans_.var(GVAR_DBNAME)
+	end if
+
+#ifdef _SECURITY
+
+	dim iInstanceId : iInstanceId = 1
+	if strDefaultDB = "navo2012bis" then
+		iInstanceId = 2
+	end if
+
+	'Skrót startowy w START
+	instses.addshortcut strFamilyName, strSystemPath + "\"+strClientEXE,_
+	" -s ""varCmd=CMD_OPEN_STATIC_PAGE varDestPage=70000 varApplication='#*varApplication'" +_
+	" varDbName='" + strDefaultDB + "' varSpawnNewDoc=" + cstr(iInstanceId) +_
+	" varDBServer='#*varDBServer'""",_
+	strAppName + "(" + cstr(iInstanceId) + ")","",0,strSystemPath + "\"
+	'Skrót na pulpicie
+	instses.addshortcut "@desktop@", strSystemPath + "\"+strClientEXE,_
+	" -s ""varCmd=CMD_OPEN_STATIC_PAGE varDestPage=70000 varApplication='#*varApplication'" +_
+	" varDbName='" + strDefaultDB + "' varSpawnNewDoc=" + cstr(iInstanceId) +_
+	" varDBServer='#*varDBServer'""",_
+	strAppName + "(" + cstr(iInstanceId) + ")","",0,strSystemPath + "\"
+#else
+	'Skrót startowy w START
+	instses.addshortcut strFamilyName, strSystemPath + "\"+strClientEXE,_
+	" -s ""varCmd=CMD_OPEN_STATIC_PAGE varDestPage=70000 varApplication='#*varApplication' varDBServer='#*varDBServer'""",_
+	strAppName,"",0,strSystemPath + "\"
+	'Skrót na pulpicie
+	instses.addshortcut "@desktop@", strSystemPath + "\"+strClientEXE,_
+	" -s ""varCmd=CMD_OPEN_STATIC_PAGE varDestPage=70000 varApplication='#*varApplication' varDBServer='#*varDBServer'""",_
+	strAppName,"",0,strSystemPath + "\"
+#endif
+
+#ifdef _TERRANOVA
+	instses.addshortcut strFamilyName, strSystemPath + "\"+strClientEXE,_
+	" -s ""varCmd=CMD_OPEN_STATIC_PAGE varDestPage=70000 varApplication='#*varApplication' vn8510='1' varDBServer='#*varDBServer'""",_
+	strAppName + " - tryb niefiskalny","",0,strSystemPath + "\"
+#endif
+
+	'SKROT DO RESTORE
+	instses.addshortcut strFamilyName, strSystemPath + "\"+strClientEXE,_
+	" -s ""varCmd=CMD_OPEN_STATIC_PAGE varDestPage=70008 varApplication='#*varApplication' varDBServer='#*varDBServer'""",_
+	"Odzyskiwanie bazy danych","",0,strSystemPath + "\"
+
+	
+	'Skrót do szablonu importu
+	instses.addshortcut strFamilyName,strSzablonXLS,_
+	"","Szablon importu danych","",0,strSzablonXLS
+
+	'Powiązanie odpowiednich typów plików z Navo Enterprise
+	sysobj.registry(hKey_ClassesRoot,".nxp","") = strFamilyName
+	sysobj.registry(hKey_ClassesRoot,"NAVO Enterprise 2015","") = "Strona " + strFamilyName
+	sysobj.registry(hKey_ClassesRoot,"NAVO Enterprise 2015\shell\Otwórz z #*varApplication\command","") = _
+	strSystemPath + "\"+strClientEXE+" -s ""vn1001=1030 varApplication='#*varApplication' vs1002='%1'"""
+
+	'Uninstall information
+	sysobj.registry(hKey_LocalMachine,strUnInKey,"DisplayName") = strAppName
+	sysobj.registry(hKey_LocalMachine,strUnInKey,"UninstallString") = strSystemPath + "\" + strClientEXE +_
+		" -s ""varCmd=CMD_OPEN_STATIC_PAGE varDestPage=72001 varApplication='#*varApplication' varDBServer='#*varDBServer'"""
+
+	dim strDefaultServer: strDefaultServer=trans_.var(GVAR_MACHINE)
+
+	if (trans_.isvar(GVAR_DBSERVER)) then
+		strDefaultServer=trans_.var( GVAR_DBSERVER )
+	end if
+
+	sysobj.registry(hKey_LocalMachine,"SOFTWARE\NAVO\NAVO2002\Applications\" + strAppName, "DefaultServer") = strDefaultServer
+	sysobj.registry(hKey_LocalMachine,"SOFTWARE\NAVO\NAVO2002\Applications\" + strAppName, "DefaultDB") = strDefaultDB
+	    
+	'Zapisz aktualną wersję klienta
+	sysobj.registry(hKey_LocalMachine,"SOFTWARE\NAVO\NAVO2002\Applications\" + strAppName,"ClientVersion") = cstr(CURRENT_CLIENT_VERSION)
+
+	'// MAPI Controls 6.0 license key
+	sysobj.registry(hKey_ClassesRoot,"Licenses","899B3E80-6AC6-11cf-8ADB-00AA00C00905") = "wjsjjjlqmjpjrjjjvpqqkqmqukypoqjquoun"
+	'// Chart Control 6.0 (OLEDB) license key
+	sysobj.registry(hKey_ClassesRoot,"Licenses","12B142A4-BD51-11d1-8C08-0000F8754DA1") = "aadhgafabafajhchnbchehfambfbbachmfmb"
+	'// ADO Data Control 6.0 (OLEDB) license key
+	sysobj.registry(hKey_ClassesRoot,"Licenses","C4145310-469C-11d1-B182-00A0C922E820") = "konhqhioohihphkouimonhqhvnwiqhhhnjti"
+	'// Internet Transfer Control 6.0 license key
+	sysobj.registry(hKey_ClassesRoot,"Licenses","78E1BDD1-9941-11cf-9756-00AA00C00908") = "yjrjvqkjlqqjnqkjvprqsjnjvkuknjpjtoun"
+	'// Chart Control 6.0 license key
+	sysobj.registry(hKey_ClassesRoot,"Licenses","7C35CA30-D112-11cf-8E72-00A0C90F26F8") = "whmhmhohmhiorhkouimhihihwiwinhlosmsl"
+	'// Comm Control 6.0 license key
+	sysobj.registry(hKey_ClassesRoot,"Licenses","4250E830-6AC2-11cf-8ADB-00AA00C00905") = "kjljvjjjoquqmjjjvpqqkqmqykypoqjquoun"
+	'// RemoteData Control 6.0 license key
+	sysobj.registry(hKey_ClassesRoot,"Licenses","43478d75-78e0-11cf-8e78-00a0d100038e") = "imshohohphlmnhimuinmphmmuiminhlmsmsl"
+	'// Winsock Control 6.0 license key
+	sysobj.registry(hKey_ClassesRoot,"Licenses","2c49f800-c2dd-11cf-9ad6-0080c7e7b78d") = "mlrljgrlhltlngjlthrligklpkrhllglqlrk"
+
+
+#ifdef _TERRANOVA
+	dim pM60295 : set pM60295 = doc_.getmodule(60295)
+	if (not create_path(pM60295.get_transfer_root() + "new_delivery\")) then
+			instses.addlogmsg "failed to create " + pM60295.get_transfer_root() + "new_delivery\"
+		exit function
+	end if
+	if (not create_path(pM60295.get_transfer_root() + "old_delivery\")) then
+			instses.addlogmsg "failed to create " + pM60295.get_transfer_root() + "old_delivery\"
+		exit function
+	end if
+	if (not create_path(pM60295.get_transfer_root() + "bad_delivery\")) then
+			instses.addlogmsg "failed to create " + pM60295.get_transfer_root() + "bad_delivery\"
+		exit function
+	end if
+	if (not create_path(pM60295.get_transfer_root() + "new_pricelist\")) then
+			instses.addlogmsg "failed to create " + pM60295.get_transfer_root() + "new_pricelist\"
+		exit function
+	end if
+	if (not create_path(pM60295.get_transfer_root() + "old_pricelist\")) then
+			instses.addlogmsg "failed to create " + pM60295.get_transfer_root() + "old_pricelist\"
+		exit function
+	end if
+	if (not create_path(pM60295.get_transfer_root() + "bad_pricelist\")) then
+			instses.addlogmsg "failed to create " + pM60295.get_transfer_root() + "bad_pricelist\"
+		exit function
+	end if
+	if (not create_path(pM60295.get_transfer_root() + "new_info_zarzad\")) then
+			instses.addlogmsg "failed to create " + pM60295.get_transfer_root() + "new_info_zarzad\"
+		exit function
+	end if
+	if (not create_path(pM60295.get_transfer_root() + "old_info_zarzad\")) then
+			instses.addlogmsg "failed to create " + pM60295.get_transfer_root() + "old_info_zarzad\"
+		exit function
+	end if
+	if (not create_path(pM60295.get_transfer_root() + "new_sale_italy\")) then
+			instses.addlogmsg "failed to create " + pM60295.get_transfer_root() + "new_sale_italy\"
+		exit function
+	end if
+	if (not create_path(pM60295.get_transfer_root() + "old_sale_italy\")) then
+			instses.addlogmsg "failed to create " + pM60295.get_transfer_root() + "old_sale_italy\"
+		exit function
+	end if
+	if (not create_path(pM60295.get_transfer_root() + "new_sale_warszawa\")) then
+			instses.addlogmsg "failed to create " + pM60295.get_transfer_root() + "new_sale_warszawa\"
+		exit function
+	end if
+	if (not create_path(pM60295.get_transfer_root() + "old_sale_warszawa\")) then
+			instses.addlogmsg "failed to create " + pM60295.get_transfer_root() + "old_sale_warszawa\"
+		exit function
+	end if
+	if (not create_path(pM60295.get_transfer_root() + "new_fininfo_warszawa\")) then
+			instses.addlogmsg "failed to create " + pM60295.get_transfer_root() + "new_fininfo_warszawa\"
+		exit function
+	end if
+	if (not create_path(pM60295.get_transfer_root() + "old_fininfo_warszawa\")) then
+			instses.addlogmsg "failed to create " + pM60295.get_transfer_root() + "old_fininfo_warszawa\"
+		exit function
+	end if
+	if (not create_path(pM60295.get_transfer_root() + "daily_backup\")) then
+			instses.addlogmsg "failed to create " + pM60295.get_transfer_root() + "daily_backup\"
+		exit function
+	end if
+#endif
+
+	install_client = true
+end function
+
+'----------------------------------------------------------------------
+' Instaluj klienta i wyświetlaj performing
+'----------------------------------------------------------------------
+function do_install_client(): do_install_client = false
+
+	dim pPrerforming
+	set pPrerforming = doc_.performing("Instalacja klienta aplikacji """ + strAppName + """ . . .")
+
+	dim instses
+	set instses = createobject("navoinstall.session")
+
+	instses.setlogname strAppName + " Client Setup.txt"
+		
+	if (not install_client(instses)) then
+		set pPrerforming = nothing
+		exit function
+	end if
+
+	set pPrerforming = nothing
+	do_install_client = true
+end function
+
+'----------------------------------------------------------------------
+' Reakcja na naciśnięcie "Zainstaluj"
+'----------------------------------------------------------------------
+function on_install_client()
+		
+	if (do_install_client()) then
+		MessageBox "Instalacja klienta aplikacji " + strAppName + " zakończyła się pomyślnie.", "Instalacja zakończona", vbOKOnly, vbInformation
+	else
+		MessageBox "Nie udało się zainstalować klienta " + strAppName + " na tym komputerze", "Instalacja przerwana", vbOKOnly, vbInformation
+	end if
+	
+	'Wyjście z instalatora
+	doc_.postcommand "varCmd=CMD_GOBACK"
+end function
+
+function fback()
+	fback = std_fback()
+	doc_.postcommand "varCmd=CMD_QUIT"
+end function
+
+function fopen()
+
+	strAppName = trans_.var(GVAR_APPLICATION)
+	strUnInKey = "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\" + strAppName
+
+	page_.topelement.title = "Instalacja klienta " + strAppName
+
+	dim sysobj
+	set sysobj = doc_.system
+
+	'Czy jest już zainstalowany (test na registry)
+	if (sysobj.registry(hKey_LocalMachine,"SOFTWARE\NAVO\NAVO2002\Applications\" + strAppName,"ClientVersion") = cstr(CURRENT_CLIENT_VERSION)) then
+		'Klient jest już zainstalowany
+		page_.ctrl(10).text = "Klient aplikacji " + strAppName + " jest już zainstalowany na tym komputerze."
+		page_.ctrl(1).hide = true
+		page_.ctrl(2).hide = false
+	else
+		'Klient nie jest zainstalowany. Można instalować!
+		page_.ctrl(10).text = "Naciśnij przycisk 'Zainstaluj' aby rozpocząć instalację KLIENTA aplikacji " + strAppName + " na tym komputerze"	
+		page_.ctrl(1).hide = false
+		page_.ctrl(2).text = "Anuluj"
+	end if
+
+	fopen = true
+end function
+]]>
+</script>
+
+</config>
+	<body>
+		<table>
+			<tbody>
+				<tr>
+					<td>
+						<picture image='PICTURE_WIZZARD_INSTALL_CLIENT' 
+							width='WIDTH_FOR_WIZZARD' height='HEIGHT_FOR_WIZZARD'/>
+					</td>
+					<td>
+
+		<table><tbody>
+		
+		<tr>
+			<td style='STYLE_TABLE_INFO'>
+			<text name='t10'></text>
+			</td>
+		</tr>
+
+		<tr><td><t/><br/></td></tr>
+		<tr><td><t/><br/></td></tr>
+		<tr><td><t/><br/></td></tr>
+
+
+		</tbody></table>
+				</td>
+			</tr>
+			<tr style='STYLE_ROW_BTN' width='max'>
+				<td />
+				<td align='right'>
+					<button style='STYLE_BUTTON' name='t1' href='varFunction="on_install_client"'>Zainstaluj</button><t/>
+					<button style='STYLE_BUTTON' name='t2' href='varCmd=CMD_GOBACK'>OK</button>
+				</td>
+			</tr>
+		</tbody>
+		</table>
+	</body>
+</page>

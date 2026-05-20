@@ -1,0 +1,772 @@
+#include "h1000.h"
+#include "h1001.h"
+
+<?xml version="1.0" encoding="windows-1250" ?>
+<page>
+<config>
+<script>
+<!--
+	Eksport strony w postaci tekstowej
+-->
+<![CDATA[
+
+dim bFormatText		'true jeżeli tekst ma być formatowany spacjami
+					'false gdy ma być formatowany tabami
+
+function fopen()
+	bFormatText=true
+	fopen=true
+end function
+
+function DontFormatWithSpaces()
+	bFormatText=false
+end function
+
+'---------------------------------------------------------------------
+'informacja o eksporcie do pliku tekstowego
+'---------------------------------------------------------------------
+class CTextInfo
+	public nChars
+	public bWriteToStream
+	public strComposedText
+	public nTable	'zaglebienie w tabelce
+
+	private sub class_initialize()
+		nChars=clng( 0 )
+		bWriteToStream=true
+		strComposedText=""
+		nTable=0
+	end sub
+
+end class
+
+dim pTextInfo
+
+'---------------------------------------------------------------------
+'Rozpocznij eksport naglowka strony jako HTML
+'---------------------------------------------------------------------
+function text_header(byref pPage, byref pStream)
+	pStream.write UCase( pPage.topelement.title ) + vbNewLine + vbNewLine
+end function
+
+'---------------------------------------------------------------------
+'Ekportuj poszczegolne elementy strony
+'---------------------------------------------------------------------
+function text_elems(byref pPage, byref pStream)
+	text_single_elem pPage, pStream, pPage.topelement
+end function
+
+'---------------------------------------------------------------------
+'Eksport kontrolki z property text
+'---------------------------------------------------------------------
+function text_text(byref pStream, byref pCtrl)
+	dim strValue
+	if (pCtrl.type = CTRL_TYPE_INTEDIT) then
+		strValue = CStr(pCtrl.value)
+	else
+		strValue = pCtrl.text
+	end if
+
+	text_write pStream, strValue + " "
+	text_update_chars len( strValue )
+end function
+
+'---------------------------------------------------------------------
+'Waluta
+'---------------------------------------------------------------------
+function text_currency(byref pStream, byref pCtrl)
+	text_write pStream, doc_.afc.display.money(pCtrl.value, "") + " "
+	text_update_chars len( cstr(pCtrl.value) )
+end function
+
+'---------------------------------------------------------------------
+'Eksportuj date
+'---------------------------------------------------------------------
+function text_date(byref pStream, byref pCtrl)
+	text_write pStream, CStr(pCtrl.value) + " "
+	text_update_chars len( CStr(pCtrl.value) )
+end function
+
+'---------------------------------------------------------------------
+'Zejscie linie nizej
+'---------------------------------------------------------------------
+function text_br(byref pStream, byref pCtrl)
+	text_write pStream, vbNewLine
+end function
+
+'---------------------------------------------------------------------
+'Eksport multiline
+'---------------------------------------------------------------------
+function text_multiline(byref pStream, byref pCtrl)
+
+	dim strMultiText:strMultiText=pCtrl.value
+	dim strNewMulti:strNewMulti=""
+
+	do
+		dim strLine, bWasNewLine: bWasNewLine=false
+		
+		if (len(strMultiText)>=40) then
+			
+			dim nCutPlus: nCutPlus=0
+			if (Asc(mid(strMultiText, 40, 40))=13) then
+				nCutPlus=1
+			end if
+
+			strLine=mid(strMultiText, 1, 40+nCutPlus)
+			strMultiText=mid(strMultiText, 41+nCutPlus, len(strMultiText)-40+nCutPlus)
+		else
+			strLine=strMultiText
+			strMultiText=""
+		end if
+		strNewMulti=strNewMulti+strLine+vbNewLine
+		
+	loop until len(strMultiText)=0
+
+	text_write pStream, strNewMulti
+	text_update_chars len( strMultiText )
+end function
+
+'---------------------------------------------------------------------
+' Eksport richedit'a
+'---------------------------------------------------------------------
+function text_richedit(byref pStream, byref pCtrl)
+	dim so
+	set so = doc_.createstreamobj
+	so.attach pCtrl.value
+
+	dim strMultiText:strMultiText=so.getstring
+	dim strNewMulti:strNewMulti=""
+
+	do
+		dim strLine
+
+		if (len(strMultiText)>=40) then
+			strLine=mid(strMultiText, 1, 40)
+			strMultiText=mid(strMultiText, 41, len(strMultiText)-41)
+		else
+			strLine=strMultiText
+			strMultiText=""
+		end if
+		strNewMulti=strNewMulti+strLine+vbNewLine
+
+	loop until len(strMultiText)=0
+
+	text_write pStream, strNewMulti
+	text_update_chars len( strMultiText )
+end function
+
+'---------------------------------------------------------------------
+'Eksport przycisku
+'---------------------------------------------------------------------
+function text_button(byref pStream, byref pCtrl)
+	'AKTUALNIE PRZYCISKOW NIE POKAZUJEMY
+	exit function
+
+	dim strButton
+	strButton="[" + pCtrl.text + "] "
+	
+	text_write pStream, strButton
+	text_update_chars len( strButton )
+end function
+
+'---------------------------------------------------------------------
+'Radio button
+'---------------------------------------------------------------------
+function text_radio(byref pStream, byref pCtrl)
+	dim strRadio:strRadio=""
+
+	dim pElement, i
+	i=1
+	for each pElement in pCtrl
+		
+		if (i=pCtrl.value) then
+			select case pElement.type
+			case CTRL_TYPE_STATIC, CTRL_TYPE_STATICEX
+				strRadio=strRadio + pElement.text
+			end select
+		end if
+
+		i=i+1
+	next
+	if (strRadio<>"") then
+		strRadio=strRadio + vbNewLine
+	end if
+
+	'AKTUALNIE POKAZUJEMY TYLKO WYBOR A NIE SYMULUJEMY
+	'CALEGO RADIO BUTTON'A
+'	dim pElement, i
+'	i=1
+'	for each pElement in pCtrl
+		
+'		if (i=pCtrl.value) then
+'			strRadio=strRadio+"*"
+'		else
+'			strRadio=strRadio+"o"
+'		end if
+
+'		select case pElement.type
+'		case CTRL_TYPE_STATIC, CTRL_TYPE_STATICEX
+'			strRadio=strRadio + " " + pElement.text
+'		end select
+
+'		strRadio=strRadio + vbNewLine
+'		i=i+1
+'	next
+	
+	text_write pStream, strRadio
+	text_update_chars len( strRadio )
+end function
+
+'---------------------------------------------------------------------
+'Checkbox
+'---------------------------------------------------------------------
+function text_checkbox(byref pStream, byref pCtrl)
+	dim strRadio:strRadio=""
+
+	'tylko teksty zaznaczonych oddzielone srednikami
+	dim pElement, i
+	i=1
+	for each pElement in pCtrl
+		
+		if (mid(pCtrl.value, i, 1)="1") then
+			select case pElement.type
+			case CTRL_TYPE_STATIC, CTRL_TYPE_STATICEX
+				if (strRadio<>"") then
+					strRadio=strRadio+";"
+				end if
+				strRadio=strRadio + pElement.text
+			end select
+		end if
+
+		i=i+1
+	next
+
+	if (strRadio<>"") then
+		strRadio=strRadio + vbNewLine
+	end if
+
+	'SYMULACJA CHECKBOX'OW NA STRONIE - OBECNIE POKAZUJEMY
+	'TYLKO SAME NAPISY - patrz w/w kod
+'	dim pElement, i
+'	i=1
+'	for each pElement in pCtrl
+		
+'		if (mid(pCtrl.value, i, 1)="1") then
+'			strRadio=strRadio+"[X]"
+'		else
+'			strRadio=strRadio+"[_]"
+'		end if
+
+'		select case pElement.type
+'		case CTRL_TYPE_STATIC, CTRL_TYPE_STATICEX
+'			strRadio=strRadio + " " + pElement.text
+'		end select
+
+'		strRadio=strRadio + vbNewLine
+'		i=i+1
+'	next
+	
+	text_write pStream, strRadio
+	text_update_chars len( strRadio )
+end function
+
+'---------------------------------------------------------------------
+'Zapisz wartosc tekstowa do strumienia
+'---------------------------------------------------------------------
+function text_write(byref pStream, byval strText)
+	if (pTextInfo.bWriteToStream) then
+		pStream.write strText
+	else
+		pTextInfo.strComposedText=pTextInfo.strComposedText+strText
+	end if
+end function
+
+
+'---------------------------------------------------------------------
+'Klasa rprezentuje komorke w table - reprezentacja tablemki w tekscie
+'---------------------------------------------------------------------
+class CTextCell
+	private strText		'tekst komorki wraz z wejsciami do nowej lini
+	public nHeight		'szerokosc i wysokosc w znakach
+	public nWidth
+	public bShow		'czy komorka ma byc pokazana
+
+	private sub class_initialize()
+		nHeight=0
+		nWidth=0
+		strText=""
+		bShow=true
+	end sub
+
+	'dokonaj eksportuk komorki do tekstu
+	public function export(pCell, pStream)
+
+		nHeight=1
+		nWidth=0
+
+		dim pElement
+
+		pTextInfo.strComposedText=""
+
+		'pobierz tekst komorki na dla pojedynczego elementu
+		'znajdujacego sie w komorce tabeli
+		for each pElement in pCell
+			text_single_elem pStream, pStream, pElement
+		next
+
+		'przelicz max wysokosc i szerokosc komorki
+		dim nX:nX=0
+
+		dim i
+		for i=1 to len(pTextInfo.strComposedText)
+			
+			nX=nX+1
+			
+			dim cChar:cChar=mid(pTextInfo.strComposedText, i, 1)
+
+			if (cChar=Chr(13)) then
+				nHeight=nHeight+1
+				if (nX>nWidth) then
+					nWidth=nX
+				end if
+				nX=0
+			end if
+
+		next
+
+		if (nX>nWidth) then
+			nWidth=nX
+		end if
+
+		strText=pTextInfo.strComposedText
+		format_cell nWidth, nHeight
+	end function
+
+	'---------------------------------------------------------------------
+	'Dodaj spacje do szerokosci komorki gdy jest mniejsza
+	'od maksymalnej szerokosci - ustaw zadana szerokosc i wysokosc
+	'podana w parametrach (w znakach)
+	'---------------------------------------------------------------------
+	public function format_cell(byval nNewWidth, byval nNewHeight):format_cell=""
+		dim strLine
+		strLine=""
+
+		dim nLines
+		nLines=1
+
+		dim i
+		for i=1 to len(strText)
+			
+			dim cChar:cChar=mid(strText, i, 1)
+
+			if (cChar=Chr(13)) then
+
+				if (len(strLine)<nNewWidth) then
+					'gdy mamy formatowac spacjami
+					if (bFormatText) then
+						strLine=strLine + space(nNewWidth-len(strLine)-1)
+					end if
+				end if
+
+				format_cell=format_cell + strLine + vbNewLine
+				strLine=""
+
+				nLines=nLines+1
+			else
+				if (cChar<>Chr(10)) then
+					strLine=strLine+cChar
+				end if
+			end if
+
+		next
+
+		if (len(strLine)<nNewWidth) then
+			'gdy mamy formatowac spacjami
+			if (bFormatText) then
+				strLine=strLine + space(nNewWidth-len(strLine)-1)
+			end if
+		end if
+
+		format_cell=format_cell+strLine
+
+		'dodaj odpowiednia liczbe wierszy
+		if (nLines<nNewHeight) then
+			dim n
+			for n=nLines to nNewHeight
+				
+				if (n=nLines) then
+					format_cell=format_cell+vbNewLine
+				end if
+
+				if (nNewWidth-1>0) then
+					'gdy mamy formatowac spacjami
+					if (bFormatText) then
+						format_cell=format_cell+space(nNewWidth-1)
+					end if
+				end if
+
+				if (n<>nNewHeight) then
+					format_cell=format_cell+vbNewLine
+				end if
+			next
+		end if
+
+		strText=format_cell
+		nHeight=nNewHeight
+	end function
+
+	'pobierz jedna linie z komorki i nastepnie usun ja
+	'z tekstu komorki
+	public function GetSingleLine():GetSingleLine=""
+		dim nPoz
+		nPoz=InStr(1, strText, Chr(13))
+
+		if (nPoz>0) then
+			GetSingleLine=Mid(strText, 1, nPoz-1)
+			strText=Mid(strText, nPoz+2, len(strText)-nPoz)
+		else
+			GetSingleLine=strText
+			strText=""
+		end if
+
+		'jezeli nie mamy formatowac spacjami to mamy to robic
+		'przy uzyciu tabulatorow
+		if (not bFormatText) then
+			GetSingleLine=GetSingleLine+vbTab
+		end if
+	end function
+
+end class
+
+'Klasa reprezentuje wiersz table
+class CTextRow
+	public pCells
+	private nHeight
+	public nMaxCells
+
+	private sub class_initialize()
+		nMaxCells=0
+		set pCells=trans_.afc.new_navoarray()
+	end sub
+
+	'wyeksportuj do tekstu jeden wiersz
+	public function export(byref pRow, byref pStream)
+		if (pRow.hide) then
+			exit function
+		end if
+	
+		'eksport wiersza to inaczej eksport
+		'wszystkich komorek tego wiersza
+		dim pCell, nSkip:nSkip=0
+		for each pCell in pRow
+			dim pTextCell
+			set pTextCell=new CTextCell
+
+			if (nSkip=0) then
+				pTextCell.export pCell, pStream
+			end if
+			pCells.Add pTextCell
+			nMaxCells=nMaxCells+1
+
+			if (pCell.colspan>1 and nSkip=0) then
+				nSkip=pCell.colspan-1
+			end if
+
+		next
+
+		'formatuj wiersz
+		format
+	end function
+
+	'---------------------------------------------------------------------
+	'Formatuj wysokosc komorek - calego wiersza
+	'---------------------------------------------------------------------
+	private function format()
+
+		dim nNewHeight, pCell
+		nNewHeight=0
+
+		'oblicz wysokosc calego wiersza
+		dim i
+		for i=0 to pCells.Count()-1
+			set pCell=pCells.Value(i)
+
+			if (pCell.nHeight>nNewHeight) then
+				nNewHeight=pCell.nHeight
+			end if
+		next
+
+		'zastosuj nowa wysokosc
+		for i=0 to pCells.Count()-1
+			set pCell=pCells.Value(i)
+			pCell.format_cell pCell.nWidth, nNewHeight
+		next
+
+		nHeight=nNewHeight
+	end function
+
+	'pobiera tekst jednego wiersza
+	public function getText():getText=""
+		dim n
+		for n=1 to nHeight
+
+			dim i
+			for i=0 to pCells.Count()-1
+				getText=getText+pCells.Value(i).GetSingleLine()
+			next
+
+			getText=getText+vbNewLine
+		next
+
+	end function
+
+end class
+
+'Klasa reprezentuje tabelke
+class CTextTable
+	private pRows
+
+	private sub class_initialize()
+		set pRows=trans_.afc.new_navoarray()
+	end sub
+
+	'Wyeksportuj tabelke
+	public function export(byref pCtrl, byref pStream)
+		export_section pCtrl.header, pStream
+		export_section pCtrl.body, pStream
+		export_section pCtrl.footer, pStream
+
+		format
+	end function
+
+	private function export_section(byref pCtrl, byref pStream)
+		dim pRow
+		for each pRow in pCtrl
+			dim pTextRow
+			set pTextRow=new CTextRow
+
+			pTextRow.export pRow, pStream
+			pRows.Add pTextRow
+
+		next
+	end function
+
+	'---------------------------------------------------------------------
+	'ustaw odpowiednia szerokosc i wysokosc komorek
+	'---------------------------------------------------------------------
+	private function format()
+
+		'pobieramy maksymalna liczbe komorek tabelki
+		dim nCells
+		nCells=0
+
+		dim pRow
+		
+		dim i
+		for i=0 to pRows.Count()-1
+			set pRow=pRows.Value(i)
+			
+			if (pRow.nMaxCells>nCells) then
+				nCells=pRow.nMaxCells
+			end if
+
+		next
+
+		dim n
+		for n=0 to nCells
+			
+			dim nMaxCellWidth
+			nMaxCellWidth=0
+
+			'wylicz maksymalna szerokosc dla jednej kolumny
+			for i=0 to pRows.Count()-1
+				set pRow=pRows.Value(i)
+
+				if (n<=pRow.pCells.Count()-1) then
+					if (pRow.pCells.Value(n).nWidth>nMaxCellWidth) then
+						nMaxCellWidth=pRow.pCells.Value(n).nWidth
+					end if
+				end if
+			next
+
+			nMaxCellWidth=nMaxCellWidth+1
+
+			'ustaw nowa maksymalna szerokosc
+			for i=0 to pRows.Count()-1
+				set pRow=pRows.Value(i)
+
+				if (n<=pRow.pCells.Count()-1) then
+					pRow.pCells.Value(n).format_cell nMaxCellWidth, pRow.pCells.Value(n).nHeight
+				end if
+			next
+
+		next
+
+	end function
+
+	public function getText():getText=""
+		'ustaw nowa maksymalna szerokosc
+		dim i
+		for i=0 to pRows.Count()-1
+			getText=getText+pRows.Value(i).getText()
+		next
+	end function
+
+end class
+
+function text_table(byref pStream, byref pCtrl)
+	if (pCtrl.hide) then
+		exit function
+	end if
+
+	pTextInfo.nTable=pTextInfo.nTable + 1
+
+	text_reset_chars
+
+	pTextInfo.bWriteToStream=false
+
+	dim pTextTable
+	set pTextTable=new CTextTable
+
+	pTextTable.export pCtrl, pStream
+
+	if (pTextInfo.nTable=1) then
+		pTextInfo.bWriteToStream=true
+	
+		pStream.write vbNewLine
+		pStream.write pTextTable.getText()
+
+	else
+		'tabelka w tabelce
+		pTextInfo.strComposedText=pTextTable.getText()
+	end if
+
+	pTextInfo.nTable=pTextInfo.nTable - 1
+end function
+
+'---------------------------------------------------------------------
+'Zwieksz liczbe znakow kolumny
+'---------------------------------------------------------------------
+function text_update_chars(byval nChars)
+	if (nChars>pTextInfo.nChars) then
+		pTextInfo.nChars=nChars
+	end if
+end function
+
+'---------------------------------------------------------------------
+'Resetuj liczbe znakow
+'---------------------------------------------------------------------
+function text_reset_chars()
+	pTextInfo.nChars=clng( 0 )
+end function
+
+'---------------------------------------------------------------------
+'Eksportuj pojedynczy element strony
+'---------------------------------------------------------------------
+function text_single_elem(byref pPage, byref pStream, byref pCtrl)
+	
+	'ukrytych nie eksportujemy
+	if (pCtrl.hide) then
+		exit function
+	end if
+
+	'zmienna pomocnicza
+	dim pElement
+
+	'w zaleznosci od typu kontrolki roznie dodajemy tekst na strone
+	select case pCtrl.type
+		case CTRL_TYPE_STATIC
+			text_text pStream, pCtrl
+
+		case CTRL_TYPE_STATICEX
+			text_text pStream, pCtrl
+
+		case CTRL_TYPE_BUTTON
+			text_button pStream, pCtrl
+
+		case CTRL_TYPE_EDIT, CTRL_TYPE_INTEDIT
+			text_text pStream, pCtrl
+
+		case CTRL_TYPE_DATE
+			text_date pStream, pCtrl
+
+		case CTRL_TYPE_CURRENCY
+			text_currency pStream, pCtrl
+
+		case CTRL_TYPE_RADIO
+			text_radio pStream, pCtrl
+
+		case CTRL_TYPE_CHECKBOX
+			text_checkbox pStream, pCtrl
+
+		case CTRL_TYPE_PARAGRAPH,CTRL_TYPE_TABITEM
+			for each pElement in pCtrl
+				text_single_elem pPage, pStream, pElement
+			next
+		case CTRL_TYPE_TABMANAGER
+			if pCtrl.activeitem <> -1 then
+				text_single_elem pPage, pStream, pCtrl.element(pCtrl.activeitem)
+			end if
+		case CTRL_TYPE_PAGEMAN, CTRL_TYPE_TOPLEVELPAGE
+			for each pElement in pCtrl
+				text_single_elem pPage, pStream, pElement
+			next
+		
+		case CTRL_TYPE_BREAKLINE
+			text_br pStream, pCtrl
+		
+		case CTRL_TYPE_TABLE
+			text_table pStream, pCtrl
+
+		case CTRL_TYPE_GRID
+			text_table pStream, pCtrl
+
+		case CTRL_TYPE_PICTURE
+			'not supported
+
+		case CTRL_TYPE_OLECONTROL
+			'not supported
+
+		case CTRL_TYPE_WEB
+			'not supported
+
+		case CTRL_TYPE_RICHEDIT
+			text_richedit pStream, pCtrl
+
+		case CTRL_TYPE_TREE
+			'not supported
+		
+		case CTRL_TYPE_BREAKPAGE
+			'not supported
+		
+		case CTRL_TYPE_MULTILINE
+			text_multiline pStream, pCtrl
+			
+
+	end select
+
+end function
+
+function std_copy(byref pPage, byref pStream)
+	dim pSO : set pSO = doc_.createstreamobj
+	pSO.attach pStream
+	set pTextInfo=new CTextInfo
+	
+	text_header pPage, pSO
+	
+	text_elems pPage, pSO
+
+	set pTextInfo=nothing
+	std_copy = true
+end function
+
+function std_paste(byref pPage, byref pStream)
+  std_paste = true
+end function
+]]>
+</script>
+</config>
+	<body>
+		<t>Eksport strony w postaci tekstowej</t>
+	</body>
+</page>

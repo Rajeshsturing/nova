@@ -1,0 +1,830 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!-- 
+
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1222.h"
+#include "h1228.h"
+#include "h1231.h"
+#include "h1234.h"
+#include "h1240.h"
+
+
+#define PRINTED_FLAG			"/WYDRUKOWANO"
+#define FILE_FLAG				PLIK:
+#define DM_FLAG					DOKMAG:
+
+
+#define LABELS_COUNT_PAGES		200
+
+#comment przełączniki
+#comment EEF_HIDE_PRINT
+#comment EEF_HIDE_FILE
+#comment EEF_HIDE_COLLECTOR
+#comment EEF_DOKMAG_FILTER
+#comment EEF_HIDE_GENERUJ
+#comment EEF_HIDE_DM
+
+
+#if appvar_ewidencja_etykiet_typ = N5DOKETYK_TYP_WYDANIE
+	#define DOETF_TITLE		Tworzenie etykiet
+	#define EEF_HIDE_COLLECTOR
+	#define EEF_HIDE_FILE
+	#define EEF_DOKMAG_FILTER		"N5REJESTRDOK__PZ;N5REJESTRDOK__PW;N5REJESTRDOK__PP;N5REJESTRDOK__MP;N5REJESTRDOK__IP"
+	#define EEF_SHOW_IMPORT_ZLECPROD
+#endif
+
+#if appvar_ewidencja_etykiet_typ = N5DOKETYK_TYP_KONTROLA
+	#define DOETF_TITLE		Kontrola etykiet
+	#define EEF_DOKMAG_FILTER	""
+	#define EEF_HIDE_GENERUJ
+#endif
+
+#if appvar_ewidencja_etykiet_typ = N5DOKETYK_TYP_ZDANIE
+	#define DOETF_TITLE		Zdanie etykiet
+	#define EEF_DOKMAG_FILTER	"N5REJESTRDOK__WZ;N5REJESTRDOK__RW"
+	#define EEF_HIDE_PRINT
+	#define EEF_HIDE_GENERUJ
+#endif
+
+
+#if appvar_ewidencja_etykiet_typ = N5DOKETYK_TYP_KASACJA
+	#define DOETF_TITLE		Kasacja etykiet
+	#define EEF_DOKMAG_FILTER	"N5REJESTRDOK__RW"
+	#define EEF_HIDE_PRINT
+	#define EEF_HIDE_FILE
+	#define EEF_HIDE_GENERUJ
+#endif
+
+
+
+
+#define CTRLID_NRDOK		1
+#define CTRLID_UZYTKREJ		2
+#define CTRLID_JO			3
+#define CTRLID_UWAGI		4
+#define CTRLID_PODSUMOWANIE	5
+#define SECID_EXTRA			6
+#define CTRLID_DM_EDIT		7
+#define CTRLID_DM			8
+
+
+
+
+#define CTRLID_GRID_PRODUKT_INDEKS		100
+#define CTRLID_NR_ETYK					101
+#define CTRLID_OPAK						102
+#define CTRLID_PROD						103
+
+#ifdef _HJORT
+#define CTRLID_NR_ZAMOW       104
+#endif
+
+
+#define CTRLID_EX1				200
+#define CTRLID_EX2				201
+#define CTRLID_EX3				202
+#define CTRLID_EX4				203
+#define CTRLID_EX5				204
+#define CTRLID_EX6				205
+
+
+#define SECID_UWAGI						1000
+#define SECID_PODSUMOWANIE				1001
+
+
+#define FORM_SPAN			2
+
+
+#define DOETF_SHOW_OPAKOWANIE				appvar_dokhandlform_show_opak
+#define DOETF_KOLEJNOSC_NAZWA_INDEKS		appvar_dokhandlform_kolejnosc_nazwa_indeks
+
+
+#ifndef DOETF_NAZWA_PROD_LEN
+#define DOETF_NAZWA_PROD_LEN	20
+#endif
+
+#ifndef DOETF_INDEX_PROD_LEN
+#define DOETF_INDEX_PROD_LEN	15
+#endif
+
+
+-->
+<page style='STYLE_PAGE' width='min'>
+<config>
+	<title>
+
+DOETF_TITLE
+
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+<typeid>TYPEID_N5DOKETYK</typeid>
+<script><![CDATA[
+
+
+'section_*
+#include "50222"
+
+
+'getuserprofileBOOL
+#include "50203"
+
+'std_choose_opak_list_hli
+#include "50606"
+
+'inputbox
+#include "50122"
+
+
+'sort_list_by_objfld
+#include "50200"
+
+
+'std_choice_list_hli
+#include "50200"
+
+
+'asp_appfile_object_hli
+#include "50518"
+
+'customizer
+#include "50621"
+
+
+QVE_REF_OPEN_FORM(CTRLID_UZYTKREJ,doet_pUzytRej)
+QVE_REF_OPEN_FORM(CTRLID_JO,doet_pJednOrg)
+
+
+
+
+function fopen()
+	if not std_fopen() then
+		fopen = false
+		exit function
+	end if
+	VBG_INIT_CUSTOMIZER()  
+	section_fopen THIS_FILE
+	fopen = true
+end function
+
+
+function fclose
+	section_fclose THIS_FILE
+end function
+
+
+function c##CTRLID_NRDOK##_ongetdata(byref oCtrl): c##CTRLID_NRDOK##_ongetdata=true
+	if (not page_.root is nothing) then
+		EnableDisableAutoNum
+	end if
+end function
+
+function c##CTRLID_NRDOK##_ondataentered(ctrl, value):c##CTRLID_NRDOK##_ondataentered=true
+	page_.root.doet_strNrDok = CStr(value)
+end function
+
+
+
+dim g_IdObject: g_IdObject = -1
+dim bEditMode:bEditMode = false
+
+
+function EnableDisableAutoNum()
+
+	'Jezeli zmienil sie rekord to wylaczymy edycje uzyskana
+	'przez nacisniecie przycisku "Edit"
+	if (g_IdObject=-1) then
+		'pierwszy rekord
+		g_IdObject = page_.root.IdObj
+	else
+		if (g_IdObject<>page_.root.IdObj) then
+			'zmiala rekordu - wylaczenie edycji recznej
+			bEditMode = false
+			g_IdObject = page_.root.IdObj
+		end if
+	end if
+
+	'Teraz sprawdzamy czy numeracja jest automatyczna i ustawiamy
+	'w zaleznosci od tego odpowiedni ststus kontrolek
+	if (getglobprofileBOOL( GLOBPROF_EWID_ETYKIET_AUTONUM ) and (not bEditMode)) then
+		if (not page_.root.isnew) then
+			page_.ctrl(CTRLID_NRDOK).value = page_.root.doet_strNrDok
+		else
+			page_.ctrl(CTRLID_NRDOK).value = AUTONO_NAME
+		end if
+		page_.ctrl(CTRLID_NRDOK).disable = true
+	else
+		page_.ctrl(CTRLID_NRDOK).value = page_.root.doet_strNrDok
+		page_.ctrl(CTRLID_NRDOK).disable = false
+	end if
+end function
+
+function c##CTRLID_NRDOK##_ongetdata(byref oCtrl): c##CTRLID_NRDOK##_ongetdata=true
+	if (not page_.root is nothing) then
+		EnableDisableAutoNum
+	end if
+end function
+
+VBG_OPAK_GETDATA_FIELD(CTRLID_OPAK,doet_listPozycje,pdet_pOpak)
+
+
+
+#include "50101"
+
+function print_labels()
+
+
+	if InStrRev(page_.root.doet_strNrDok , PRINTED_FLAG) > 0 then
+		if harui(120011) then
+			if MessageBoxCustom ("Etykiety z tego dokumentu zostały już wydrukowane. Mozesz zrobić to jeszcze raz - posiadasz odpowiednie uprawnienia.", "Kreator wizytówki", vbYesNo, vbQuestion ,"Wydrukuj ponownie;Anuluj") <> vbYes then
+				exit function
+			end if
+		else
+			exit function
+		end if
+	end if
+
+	dim iter,nAnswer
+
+	if page_.root.isnew() then
+		trans_.message 1002 , 0 , "Dokument musi byc najpierw zapisany"
+		exit function
+	end if
+	
+	dim idDPC : idDPC = trans_.findobjid(TYPEID_N5DPC, "ePubType=" + CStr(N5DPC_PUBTYPE_ETYKIETY_PRODUKCYJNE))
+	if idDPC < 1 then
+		idDPC = fire_choice_list( TYPEID_N5DPC , "Publikacja typu 'Etykieta produkcyjna'" ,"strNazwa","ePubType=" + CStr(N5DPC_PUBTYPE_ETYKIETY_PRODUKCYJNE) ,"",""	)	
+		if idDPC = 0 then
+			exit function
+		end if
+	end if
+
+	for iter = 1 to page_.root.doet_listPozycje.count() step  LABELS_COUNT_PAGES
+		trans_.var(500) = clng(iter)
+		trans_.var(501) = clng(trans_.var(500) +  LABELS_COUNT_PAGES - 1)
+		if trans_.var(501) > page_.root.doet_listPozycje.count() then
+			trans_.var(501) = page_.root.doet_listPozycje.count()
+		end if
+
+		nAnswer =  MessageBoxCustom("Etykiety " + cstr(trans_.var(500))+ " do " + cstr(trans_.var(501)), "Ewidencja etykiet", vbYesNo, vbQuestion, "Drukuj;Pomiń")
+		if nAnswer = 6 then
+			realize_publication idDPC,page_.root,true,nothing		
+		end if
+
+	next
+
+	if InStrRev(page_.root.doet_strNrDok , PRINTED_FLAG) = 0 then
+		page_.root.doet_strNrDok = page_.root.doet_strNrDok + PRINTED_FLAG
+		if not trans_.saveobjects() then
+			trans_.message 1002 , 0 , "Nie udało się zablokowac mozliwosci ponownego wydruku etykiet z danego dokumentu"
+		else
+			page_.enableedit = false
+		end if
+	end if
+
+	trans_.var(500) = clng(0)
+	trans_.var(501) = clng(0)
+
+end function
+
+
+
+function foptions()
+	trans_.var(500) = clng(0)
+	trans_.var(501) = clng(0)
+	doc_.getmodule(60175).ewid_etyk_preferences()	
+	EnableDisableAutoNum
+end function
+
+
+
+function generuj(hli)
+
+	dim row:row = hli.prop(1)
+
+	'dane z modułu wybory parametrów generowania
+	dim pProdukt , pOpak , nIle , first_num
+
+'	if page_.root.isnew() then
+		if page_.root.doet_listPozycje.exists(row) then
+			'zbierz parametry
+			g_pGlobProf.Wartosc = CStr( CLng( Clng(g_pGlobProf.Wartosc) + 1 ) )
+			dim pGetParamsUtil:set pGetParamsUtil = doc_.getmodule(60244)
+			if pGetParamsUtil.choose_params(page_.root.doet_listPozycje.get(row).pdet_pWyrob , page_.root.doet_listPozycje.get(row).pdet_pOpak , 1 , clng(g_pGlobProf.Wartosc) ) then
+				if not pGetParamsUtil.collect_data (pProdukt , pOpak , nIle , first_num) then
+					exit function
+				end if
+
+				generuj = generate_labels_internal(page_.root , pProdukt , pOpak , nIle , row , first_num)
+			end if						
+		else
+			trans_.message 1002 , 0 , "Wstaw na liscie pozycji jedną ze wskazanym produktem i opakowaniem - dla nich zostaną stworzone etykiety"
+		end if
+'	end if
+end function
+
+function generuj_all()
+	'dane z modułu wybory parametrów generowania
+	dim pProdukt, pOpak, nIle, first_num
+
+	'ilość pozycji
+	dim nPosNr : nPosNr = page_.root.doet_listPozycje.count()
+	if nPosNr = 0 then
+		trans_.message 1002 , 0 , "Brak pozycji."
+		exit function
+	end if
+  
+	dim pPos, iter : iter = 1
+	for each pPos in page_.root.doet_listPozycje
+		if page_.root.doet_listPozycje.exists(iter) then
+			set pPos = page_.root.doet_listPozycje.get(iter)
+			if pPos.pdet_curExtra4 > CCur(0) then
+				g_pGlobProf.Wartosc = CStr(CLng(Clng(g_pGlobProf.Wartosc) + 1))
+				dim pGetParamsUtil : set pGetParamsUtil = doc_.getmodule(60244)
+				if pGetParamsUtil.choose_params_def(pPos.pdet_pWyrob, pPos.pdet_pOpak ,pPos.pdet_curExtra4 ,clng(g_pGlobProf.Wartosc)) then
+					if not pGetParamsUtil.collect_data (pProdukt, pOpak, nIle, first_num) then
+						exit function
+					end if
+					generuj_all = generate_labels_internal(page_.root, pProdukt ,pOpak ,nIle ,iter ,first_num)
+					pPos.pdet_curExtra4 = CCur(0)
+				end if
+			end if
+			iter = iter + 1
+		end if
+	next
+end function
+
+dim g_pGlobProf:set g_pGlobProf = getglobprofileObj(GLOBPROF_EWID_ETYKIET_LICZNIK)	
+
+function generate_labels_internal( byref pObj , pProdukt , pOpak , byval ile , byval start_row , byval first_num)	
+
+	if start_row < 1 then
+		start_row = 1
+	end if
+
+	if not (pObj is nothing or pProdukt is nothing or pOpak is nothing) then
+		dim iter,new_elem,perf
+		set perf = doc_.performing("Trwa generowanie etykiet ...... ")
+		'pierwszy to update
+		if start_row <= pObj.doet_listPozycje.count and start_row > 0 then
+			set new_elem = pObj.doet_listPozycje.get(start_row)		
+			g_pGlobProf.Wartosc = cstr(first_num)
+			fill_new_elem_by_parent new_elem , pObj , pProdukt , pOpak , CLng(g_pGlobProf.Wartosc)
+			g_pGlobProf.Wartosc = CStr( CLng( Clng(g_pGlobProf.Wartosc) + 1 ) )
+		end if
+		for iter = start_row+1 to start_row+ile-1
+			'a kolejne to wstawianie nowych			
+			set new_elem = pObj.doet_listPozycje.insertnew(iter)			
+			fill_new_elem_by_parent new_elem , pObj , pProdukt , pOpak , CLng(g_pGlobProf.Wartosc)
+			g_pGlobProf.Wartosc = CStr( CLng( Clng(g_pGlobProf.Wartosc) + 1 ) )
+		next		
+		g_pGlobProf.Wartosc = CStr( CLng( Clng(g_pGlobProf.Wartosc) - 1 ) )
+		set perf = nothing
+	else
+		trans_.message 1002 , 0 , "Generowanie etykiet - nie podano wyrobu (zestaw produkt + opakowanie)"
+	end if
+end function
+
+
+private function fill_new_elem_by_parent ( new_elem , parent , produkt , opak , iter)
+	set new_elem.pdet_pWyrob = produkt
+	set new_elem.pdet_pOpak = opak
+	'generuj indeks
+	new_elem.pdet_strNrDok = produkt.strIndeks + "Y" + cstr(iter)
+end function
+
+
+#ifndef EEF_HIDE_GENERUJ
+'funkcja tworząca menu wyskakujące przy kontrolce ilosc na gridzie
+function c##CTRLID_NR_ETYK##_oncmdlist(pCtrl,nRow,pCmdList)
+
+	pCmdList.Addseparator
+
+	'pobieramy pozycję
+	dim pChild
+	dim pHli
+	if page_.root.doet_listPozycje.exists(nRow) then
+		set pChild=page_.root.doet_listPozycje.get(nRow)
+	else
+		'jezli jej nie ma to spadamy
+		trans_.message 1002 , 0 , "Brak pozycji"
+		set pHli = doc_.createhlistr("varFunctionHLI='generuj' vn1="+cstr(-1))
+		pCmdList.addcommand "Brak pozycji" , pHli
+		exit function
+	end if
+
+
+	if pChild.pdet_pWyrob is nothing or pChild.pdet_pOpak is nothing then
+		trans_.message 1002 , 0 , "Brak wyrobu w wybranej pozycji"
+		set pHli = doc_.createhlistr("varFunctionHLI='generuj' vn1="+cstr(-1))
+		pCmdList.addcommand "Brak wyrobu" , pHli
+		exit function
+	end if
+
+	set pHli = doc_.createhlistr("varFunctionHLI='generuj' vn1="+cstr(nRow))
+	pCmdList.addcommand "Generuj" , pHli
+	
+end function
+#endif
+
+
+function generuj_plik
+
+	if page_.root.isnew() then
+		trans_.message 1002 , 0 , "Dokument musi byc najpierw zapisany"
+		exit function
+	end if
+
+	dim strFileName:strFileName = ""
+	doc_.getmodule(60245).generuj_plik_knudsen page_.root , strFileName
+	if strFileName <> "" then		
+		page_.root.doet_strSciezka = strFileName
+	end if
+
+end function
+
+
+
+function utworz_dok_mag()
+
+
+	if page_.root.isnew() then
+		trans_.message 1002 , 0 , "Dokument musi byc najpierw zapisany"
+		exit function
+	end if
+
+	if trans_.isdirty() then
+		trans_.message 1002 , 0 , "Dokument musi byc najpierw zapisany"
+		exit function
+	end if
+
+	if page_.root.doet_listPozycje.count() =0  then
+		trans_.message 1002 , 0 , "Dokument musi posiadać pozycje"
+		exit function
+	end if
+
+	'spróbujmy sprawdzic czy dokmag juz istnieje
+	dim strNrDokExists
+	dim bExists:bExists = false
+	if InStrRev(page_.root.doet_strUwagi , "DM_FLAG") > 0 then
+		dim pos:pos = InStrRev(page_.root.doet_strUwagi , "DM_FLAG")
+		strNrDokExists = mid (page_.root.doet_strUwagi , pos + len("DM_FLAG") , len(page_.root.doet_strUwagi)- (pos - 1 + len("DM_FLAG")) )
+		dim id:id = trans_.findobjid(TYPEID_N5DOKMAG , "strNrDok='" + strNrDokExists + "'" )
+		if id > 0 then
+			bExists = true
+		else
+			bExists = not (page_.root.doet_pDokMag is nothing)			
+			if bExists then
+				id = page_.root.doet_pDokMag.idobj
+			end if
+		end if
+	else
+		bExists = not (page_.root.doet_pDokMag is nothing)			
+		if bExists then
+			id = page_.root.doet_pDokMag.idobj
+		end if
+	end if
+
+	if bExists then
+		if MessageBoxCustom ("Do biezącego dokumentu ewidencji etykiet najprawdopodobniej stworzono już dokument magazynowy o numerze " + strNrDokExists + ". Chcesz go wyswietlic czy utworzyc nowy?" , "Ewidencja etykiet", vbYesNo, vbQuestion ,"Wyswietl;Utwórz") = vbYes then
+			doc_.getmodule(60129).form_domodal TYPEID_N5DOKMAG , id , USAGE_EDIT	
+			exit function
+		end if				
+	end if
+
+
+	dim strNrDM:strNrDM = ""
+	doc_.getmodule(60245).utworz_dok_mag_internal page_.root , EEF_DOKMAG_FILTER , strNrDM
+
+	if strNrDM <> "" then
+		set page_.root.doet_pDokMag = trans_.getobj(TYPEID_N5DOKMAG,clng(strNrDM))
+	end if
+
+end function
+
+
+function from_collector
+	doc_.getmodule(60245).ewidetyk_from_collector page_.root
+end function
+
+
+
+function podsumuj
+	doc_.getmodule(60245).plug_etykiety_podsumowanie page_.ctrl(CTRLID_PODSUMOWANIE) , page_.root
+end function
+
+
+function delete
+	dim strNumer
+	if InputTextBox ("Numer etykiety","Podaj numer etykieta, jaką chcesz usunąć z dokumentu", 0 , strNumer) <> 0 then
+		dim pos,iter
+		for iter = page_.root.doet_listPozycje.count() to 1 step -1
+			if page_.root.doet_listPozycje.exists(iter) then
+				set pos = page_.root.doet_listPozycje.get(iter)
+				if pos.pdet_strNrDok = strNumer then
+					if MessageBoxCustom ("Na pozycji "+cstr(iter) + " znaleziono etykietę o numerze " + cstr(strNumer) + " - czy napewno chcesz ją z dokumentu usunąć?", "Ewidencja etykiet", vbYesNo, vbQuestion ,"Usuń;Pozostaw") = vbYes then
+						page_.root.doet_listPozycje.delete(iter)
+						trans_.message 1002 , 0 , "Usunieto pozycje " + cstr(iter)
+					end if
+				end if
+			end if
+		next
+	end if	
+
+end function
+
+
+
+
+'******************************************
+' Wyswietlanie w podpowiedzi indeksu indeksu + nazwy produktu
+
+
+
+VBG_PRODUKT_INDEKS_CUSTOM_PODPO(CTRLID_GRID_PRODUKT_INDEKS,doet_listPozycje,pdet_pWyrob,CRSR_N5PRODUKT_DEFAULT_INDEX,,false)
+VBG_PRODUKT_INDEKS_INIT_CUSTOMIZER(TYPEID_N5DOKETYK,TYPEID_N5POZDOKETYK,doet_listPozycje,pdet_pWyrob,)
+
+
+
+QVE_USER_FIELD_NAME(CTRLID_EX1,1,GLOBPROF_EXTRAFIELDNAME1)
+QVE_USER_FIELD_NAME(CTRLID_EX2,2,GLOBPROF_EXTRAFIELDNAME2)
+QVE_USER_FIELD_NAME(CTRLID_EX3,3,GLOBPROF_EXTRAFIELDNAME3)
+QVE_USER_FIELD_NAME(CTRLID_EX4,4,GLOBPROF_EXTRAFIELDNAME4)
+QVE_USER_FIELD_NAME(CTRLID_EX5,5,GLOBPROF_EXTRAFIELDNAME5)
+QVE_USER_FIELD_NAME(CTRLID_EX6,6,GLOBPROF_EXTRAFIELDNAME6)
+
+
+
+
+QVE_REF_OPEN_FORM(CTRLID_DM,doet_pDokMag)
+
+
+function c##CTRLID_DM_EDIT##_onsuggquery(byref pEditCtrl,byval strEnteredVal,byref strWhere,byref strOrder,byref strJoin)
+		if strWhere <> "" then																						
+			strWhere = strWhere + " and "																			
+		end if																										
+		strWhere = strWhere + doc_.afc.convert.formatter("(pRejestrDok in (select idobj from n5rejestrdok where eTyp in (%1))) ") _				
+		.add(replace(cstr(EEF_DOKMAG_FILTER),";",",")).done()																	
+end function
+
+
+function from_zlecprod()
+	dim idZlecProd:	idZlecProd = fire_choice_list(TYPEID_N5ZLECPROD,"Wybierz zlecenie produkcyjne" ,"strNrDok","","","")
+	if idZlecProd <= 0 then
+		exit function
+	end if
+	dim oZlecProd : set oZlecProd = trans_.getobj(TYPEID_N5ZLECPROD,idZlecProd)
+	
+	dim oPozZlecProd
+	for each oPozZlecProd in oZlecProd.listPozycje
+		if not oPozZlecProd.pRecepta is nothing then
+			dim oPozWyrob
+			for each oPozWyrob in oPozZlecProd.pRecepta.listWyrob
+				generate_labels_internal page_.root,oPozWyrob.pProdukt,oPozWyrob.pOpak, _
+					oPozWyrob.curIloscOpak, page_.root.doet_listPozycje.count , clng(g_pGlobProf.Wartosc)
+			next
+		end if
+	next
+end function
+
+#ifdef _HJORT
+
+function c##CTRLID_NR_ZAMOW##_ongetdata(byref pCtrl) : c##CTRLID_NR_ZAMOW##_ongetdata = true
+  pCtrl.value = page_.root.doet_strExtra1
+  pCtrl.disable = true
+end function
+
+function c##CTRLID_NR_ZAMOW##_ondataentered(pCtrl, newValue) : c##CTRLID_NR_ZAMOW##_ondataentered = true 
+end function
+
+function from_zamowienie()
+  dim strWhere : strWhere = "pRejestrDok in (select idobj from n5rejestrdok where eTyp = N5REJESTRDOK__ZAM_OBCE)"
+	dim idZam:	idZam = fire_choice_list(TYPEID_N5ZAMOWIENIE,"Wybierz zamówienie" ,"strNrDok",strWhere,"","")
+	if idZam <= 0 then
+		exit function
+	end if
+  
+	dim pZam : set pZam = trans_.getobj(TYPEID_N5ZAMOWIENIE,idZam)
+  
+  'numer zamówienia w strExtra1
+  page_.root.doet_strExtra1 = pZam.strNrDok  
+	
+  dim pPoz, pNewPoz
+  for each pPoz in pZam.listPozycje
+    set pNewPoz = page_.root.doet_listPozycje.addnew()
+    set pNewPoz.pdet_pWyrob = pPoz.pProdukt
+    set pNewPoz.pdet_pOpak = pPoz.pOpak
+    pNewPoz.pdet_curExtra4 = pPoz.curIloscOpak
+  next
+end function
+
+#endif
+
+]]></script>
+</config>
+<header>
+</header>
+<body>
+
+QXF_BEGIN
+
+
+	<tr>
+		QXC_LABEL_REQ(Numer dokumentu&nbsp;&nbsp;,1)
+		QXC_EDIT_CUSTOM(CTRLID_NRDOK,20,1)
+	</tr>
+
+	<tr>
+		QXC_LABEL_REQ(Data wystawienia,1)
+		QXC_DATE_FIELD(-1,doet_dDataWyst,1)							
+	</tr>
+
+	<tr>						
+		QXC_LABEL_OPEN(CTRLID_UZYTKREJ,Wprowadził:&nbsp;,1)
+		QXC_TEXT_REF(-1,20,doet_pUzytRej,strNazwa,1)
+	</tr>
+
+	<tr>						
+		QXC_LABEL_OPEN(CTRLID_JO,Jednostka org.,1)
+		QXC_EDIT_REF(-1,20,PICTURE_CHOICE_N5JEDN_ORG,doet_pJednOrg,strNazwa,CRSR_DEFAULT,1)
+	</tr>
+
+
+	
+	<tr>
+		XFOPTHUMANNAMECELL(Typ operacji) 
+		<td>
+			<radio colspan='2'>
+				<transfer mode='edit_field'>
+					<field>doet_eTypOper</field>
+				</transfer>
+				
+				<t>wydanie</t>
+				<t>punkt kontrolny</t>
+				<t>zdanie</t>
+				<t>kasacja</t>
+			</radio>
+		</td>
+	</tr>
+
+
+	<tr>
+		<td colspan='FORM_SPAN'>
+			<grid style='STYLE_TABLE'>
+				<transfer mode='grid_list'>
+					<field>doet_listPozycje</field>
+				</transfer>
+
+				<thead style='STYLE_TABLE_HEADER'>
+					<tr>
+						<td width='min'><t>LP</t></td>
+#if DOETF_KOLEJNOSC_NAZWA_INDEKS = 1
+						<td><t href='varFunctionHLI="sort_list_by_objfld" vs1="pdet_pWyrob" vs2="strNazwa" vs3="doet_listPozycje"'>Nazwa wyrobu</t></td>
+						<td><t href='varFunctionHLI="sort_list_by_objfld" vs1="pdet_pWyrob" vs2="strIndeks" vs3="doet_listPozycje"'>Indeks wyrobu</t></td>
+#endif
+
+#if DOETF_KOLEJNOSC_NAZWA_INDEKS = 2
+						<td><t href='varFunctionHLI="sort_list_by_objfld" vs1="pdet_pWyrob" vs2="strIndeks" vs3="doet_listPozycje"'>Indeks wyrobu</t></td>
+						<td><t href='varFunctionHLI="sort_list_by_objfld" vs1="pdet_pWyrob" vs2="strNazwa" vs3="doet_listPozycje"'>Nazwa wyrobu</t></td>
+						
+#endif
+
+
+#if DOETF_SHOW_OPAKOWANIE = 1
+						<td width='min'><t>Opakowanie</t></td>
+#endif
+#ifdef _HJORT
+	#ifndef EEF_HIDE_GENERUJ
+						<td width='2100'><t>Ilość etykiet</t></td>
+	#endif
+#endif
+						<td width='min'><t>Numer etykiety</t></td>
+#ifdef _HJORT
+						<td width='min' align='center'><t>Dodatkowe informacje</t></td>
+#endif
+					</tr>
+				</thead>
+
+				<tbody  style='STYLE_TABLE_BODY'>
+					<tr>
+						SXC_LP
+#if DOETF_KOLEJNOSC_NAZWA_INDEKS = 1
+						SXX_EDIT_REF_PRODUKT(CTRLID_PROD,DOETF_NAZWA_PROD_LEN,doet_listPozycje,pdet_pWyrob,CRSR_DEFAULT)
+						SXX_EDIT_REF_PRODUKT_INX_CUSTOM_PODPO(CTRLID_GRID_PRODUKT_INDEKS,DOETF_INDEX_PROD_LEN,doet_listPozycje,pdet_pWyrob,CRSR_N5PRODUKT_DEFAULT_INDEX)
+#endif
+
+
+#if DOETF_KOLEJNOSC_NAZWA_INDEKS = 2
+						SXX_EDIT_REF_PRODUKT_INX_CUSTOM_PODPO(CTRLID_GRID_PRODUKT_INDEKS,DOETF_NAZWA_PROD_LEN,doet_listPozycje,pdet_pWyrob,CRSR_N5PRODUKT_DEFAULT_INDEX)
+						SXX_EDIT_REF_PRODUKT(CTRLID_PROD,DOETF_INDEX_PROD_LEN,doet_listPozycje,pdet_pWyrob,CRSR_DEFAULT)						
+#endif
+
+
+#if DOETF_SHOW_OPAKOWANIE	= 1
+							XG_REF_CELL_OPAK(CTRLID_OPAK,doet_listPozycje)	
+#endif
+#ifdef _HJORT
+	#ifndef EEF_HIDE_GENERUJ
+						SXC_CURRENCY_FIELD(-1,10,pdet_curExtra4,0)
+	#endif
+#endif
+						XG_EDIT_CELL(CTRLID_NR_ETYK,pdet_strNrDok,20)
+#ifdef _HJORT
+						SXC_EDIT_FIELD(-1,40,pdet_strExtra2)
+#endif
+					</tr>
+				</tbody>
+
+			</grid>
+		</td>
+	</tr>
+
+	<tr style='STYLE_ROW_BTN'>
+		<td width='min' colspan='1' keepline='true'>			
+			QXE_BUTTON(-1,10,Usuń etykietę,varFunction=delete)
+		</td>	
+	</tr>		
+
+
+	QXS_BEGIN_OPT(SECID_PODSUMOWANIE,Podsumowanie,FORM_SPAN)
+	<tr>
+		<td colspan='FORM_SPAN' name='CTRLID_PODSUMOWANIE'>
+		</td>
+	</tr>
+	<tr style='STYLE_ROW_BTN'>
+		<td width='min' colspan='FORM_SPAN' keepline='true'>
+			QXE_BUTTON(-1,10,Odśwież,varFunction=podsumuj)			
+		</td>	
+	</tr>
+	QXS_END_OPT(FORM_SPAN)
+
+
+	QXR_SEPARATOR(FORM_SPAN)
+
+#ifdef _HJORT
+	<tr>
+		<td width='min' colspan='1'>
+			QXE_LABEL(Numer zamówienia)
+ 		</td>
+ 		<td>  
+			<edit name='CTRLID_NR_ZAMOW' size='30' style='STYLE_CTRL' align='left'>
+				<transfer mode='custom' />
+			</edit>	      
+		</td>
+	</tr>  
+#endif
+
+	<tr>
+		QXC_LABEL_OPEN(CTRLID_DM,Dokument magazynowy,1)
+		QXC_EDIT_REF_CQ(CTRLID_DM_EDIT,30,PICTURE_CHOICE_N5SPRZEDAZ,doet_pDokMag,strNrDok,1)
+	</tr>     
+
+	QXR_EDIT_FIELD(Ściezka,-1,40,doet_strSciezka,1)
+
+
+
+	QXS_MULTILINE(SECID_UWAGI,CTRLID_UWAGI,doet_strUwagi,Uwagi,FORM_SPAN)
+
+
+	<tr style='STYLE_ROW_BTN'>
+		<td width='min' colspan='FORM_SPAN' keepline='true'>			
+#ifndef EEF_HIDE_PRINT
+			QXE_BUTTON(-1,10,Drukuj,varFunction=print_labels)
+#endif
+
+#ifndef EEF_HIDE_FILE
+			QXE_BUTTON(-1,10,Plik,varFunction=generuj_plik)
+#endif
+
+			QXE_BUTTON(-1,10,Dokument magazynowy,varFunction=utworz_dok_mag)
+
+#ifndef EEF_HIDE_COLLECTOR
+			QXE_BUTTON(-1,10,Wczytaj z kolektora,varFunction=from_collector)
+#endif
+#ifdef _HJORT
+	#ifndef EEF_HIDE_GENERUJ
+			QXE_BUTTON(-1,10,Generuj,varFunction=generuj_all)
+	#endif
+#endif
+#ifdef EEF_SHOW_IMPORT_ZLECPROD
+			QXE_BUTTON(-1,10,Wczytaj ze zlecenia produkcyjnego,varFunction=from_zlecprod)
+#endif
+#ifdef _HJORT
+			QXE_BUTTON(-1,10,Wczytaj z zamówienia,varFunction=from_zamowienie)      
+#endif
+		</td>	
+	</tr>		
+
+
+
+QXF_END
+
+</body>
+<footer>
+</footer>
+</page>

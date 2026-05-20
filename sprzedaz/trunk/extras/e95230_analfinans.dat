@@ -1,0 +1,285 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+RAPTEMPLATE_ANAL_FINANS_TABLE
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1250.h"
+
+-->
+<page style='36'>
+<%
+dim idAnalFinans 
+dim pArrStartDates
+dim pArrEndDates
+dim pArrTitles
+dim pModuleComputing : set pModuleComputing = doc_.getmodule(60198)
+dim pArrAFRows : set pArrAFRows = doc_.afc.new_navoarray()
+dim pArrArrValues : set pArrArrValues = doc_.afc.new_navoarray()
+dim iter, iter2
+
+dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+dim pParamFactory: set pParamFactory = doc_.afc.rap.param
+dim pParamRaport: Set pParamRaport = pParamFactory.new_choice("Nazwa")
+pParamRaport.multiple = false
+pParamFactory.init_on_query pParamRaport, trans_,"select strNazwa,idobj from n5analfinans order by strNazwa"
+pParamArray.add pParamRaport
+dim pParamOkres : set pParamOkres = pParamFactory.new_choice("Okres")
+with pParamOkres
+	.multiple = false
+
+    .names.add "Stan aktualny / BO"
+    .values.add 1
+    .selected.add True
+
+    .names.add "Stan aktualny / Poprzedni rok"
+    .values.add 2
+    .selected.add False
+
+    .names.add "Kwartałami"
+    .values.add 3
+    .selected.add False
+
+    .names.add "Miesiącami narastająco"
+    .values.add 4
+    .selected.add False
+
+    .names.add "Miesiącami"
+    .values.add 5
+    .selected.add False
+
+ end with
+pParamArray.add pParamOkres
+dim pParamMoment : set pParamMoment=doc_.afc.rap.param.new_date("Data końcowa")
+pParamArray.add pParamMoment
+dim pParamKwalifikator : set pParamKwalifikator = pParamFactory.new_choice("Kwalifikator")
+pParamKwalifikator.multiple = false
+pParamFactory.init_on_query pParamKwalifikator, trans_, _
+"select strNazwa,idobj from n5kwalifikator union select '<dowolny>',-1 union select '<brak>', 0 order by 1"
+pParamArray.add pParamKwalifikator
+
+if doc_.getmodule(60108).show_raport_param_dialog(pParamArray, "Zestawienia finansowe") <> 0 then
+
+idAnalFinans = pParamRaport.values.Value(pParamRaport.first_selected)
+
+dim bPerm: bPerm = true
+
+#ifdef _ALMA_TREND
+  dim pHARPage: set pHARPage=doc_.getmodule(60106)
+  if not pHARPage.HORimpl(STDR_READ,TYPEID_N5ANALFINANS,idAnalFinans) then
+    trans_.message 7000, 0, "Nie posiadasz uprawnień do wybranej analizy finansowej."
+    bPerm = false
+  end if
+#endif    
+
+if bPerm then
+
+set pArrStartDates = doc_.afc.new_navoarray()
+set pArrEndDates = doc_.afc.new_navoarray()
+set pArrTitles = doc_.afc.new_navoarray()
+
+dim dToday
+if pParamMoment.mode = 1 then
+	dToday = trans_.var(GVAR_TODAY)
+else
+	dToday = pParamMoment.first_value
+end if
+
+select case pParamOkres.first_selected
+case 0
+	pArrStartDates.add util_.RokKsiegowy_Poczatek()
+	pArrEndDates.add util_.RokKsiegowy_Poczatek()
+	pArrTitles.add "Stan początkowy"
+	
+	pArrStartDates.add util_.RokKsiegowy_Poczatek()
+	pArrEndDates.add dToday
+	pArrTitles.add "Stan aktualny"
+case 1
+	pArrStartDates.add util_.Poprzedni_RokKsiegowy_Poczatek()
+	pArrEndDates.add util_.Poprzedni_RokKsiegowy_Koniec()
+	pArrTitles.add "Poprzedni rok"
+	
+	pArrStartDates.add util_.RokKsiegowy_Poczatek()
+	pArrEndDates.add dToday
+	pArrTitles.add "Stan aktualny"
+case 2
+	pArrStartDates.add util_.RokKsiegowy_Poczatek()
+	pArrEndDates.add util_.RokKsiegowy_Poczatek()
+	pArrTitles.add "Stan początkowy"
+	pArrStartDates.add util_.RokKsiegowy_Poczatek()
+	pArrEndDates.add DateSerial(Year(dToday), 3,31)
+	pArrTitles.add "1-szy"
+	pArrStartDates.add DateSerial(Year(dToday), 1,1)
+	pArrEndDates.add DateSerial(Year(dToday), 6,30)
+	pArrTitles.add "2-gi"
+	pArrStartDates.add DateSerial(Year(dToday), 1,1)
+	pArrEndDates.add DateSerial(Year(dToday), 9,30)
+	pArrTitles.add "3-ci"
+	pArrStartDates.add DateSerial(Year(dToday), 1,1)
+	pArrEndDates.add DateSerial(Year(dToday), 12,31)
+	pArrTitles.add "4-ty"
+case 3 'miesiacami narastajaco
+	pArrStartDates.add util_.RokKsiegowy_Poczatek()
+	pArrEndDates.add util_.RokKsiegowy_Poczatek()
+	pArrTitles.add "Stan początkowy"
+	for iter = 1 to 12
+		'to_do: początek - z bieżącego roku księgowego
+		dim dtDateStart : dtDateStart = DateSerial(Year(dToday), 1,1)
+		pArrStartDates.add dtDateStart
+		dim dtDateEnd : dtDateEnd = DateSerial(Year(dToday), iter+1,1)-1
+		pArrEndDates.add dtDateEnd
+		pArrTitles.add MonthName(month(dtDateEnd)) 
+	next
+case 4 'miesiacami
+	pArrStartDates.add util_.RokKsiegowy_Poczatek()
+	pArrEndDates.add util_.RokKsiegowy_Poczatek()
+	pArrTitles.add "Stan początkowy"
+	for iter = 1 to 12
+		'to_do: początek - z bieżącego roku księgowego
+		dtDateStart = DateSerial(Year(dToday), iter,1)
+		pArrStartDates.add dtDateStart
+		dtDateEnd = DateSerial(Year(dToday), iter+1,1)-1
+		pArrEndDates.add dtDateEnd
+		pArrTitles.add MonthName(month(dtDateEnd)) 
+	next
+end select
+'---- end na razie ----
+
+
+dim pAnalFinans : set pAnalFinans = trans_.getobj(TYPEID_N5ANALFINANS,idAnalFinans)
+if not pAnalFinans.fXML.isempty() then
+	dim strNazwa
+	pModuleComputing.load_data strNazwa,pArrAFRows, pAnalFinans.fXML
+	
+	'--- zrób tyle ArrAFRows ile różnych kolumn
+	do while pArrArrValues.Count < pArrStartDates.Count
+		dim pArr : set pArr = doc_.afc.new_navoarray()
+		do while pArr.Count < pArrAFRows.Count
+			pArr.Add ccur(0.0)
+		loop
+		pArrArrValues.Add pArr
+	loop
+
+	'------- wykonaj obliczenia --------------
+	dim pPerf : set pPerf = doc_.performing("Trwa obliczanie ...")
+	for iter = 0 to pArrStartDates.Count - 1
+		pModuleComputing.oblicz_afd_ex pArrAFRows, pArrStartDates.Value(iter), pArrEndDates.Value(iter), _
+			pParamKwalifikator.values.Value(pParamKwalifikator.first_selected), _
+				(pParamOkres.first_selected = 4)
+		'kopiuj wyniki
+		for iter2 = 0 to pArrAFRows.Count - 1
+			pArrArrValues.Value(iter).Value(iter2) = pArrAFRows.Value(iter2).value
+		next
+		pPerf.text = "Obliczam: " + MonthName(month(pArrEndDates.Value(iter)))
+	next 
+end if
+     
+
+%>
+<config>
+<title><![CDATA[<%so.write pAnalFinans.strNazwa%>]]></title>
+<script>
+<![CDATA[
+function fprint
+<%if pArrStartDates.Count > 5 then %>
+	fprint = doc_.getmodule(60182).fprint_landscape_common(page_.get_this)
+<%else%>
+	fprint = std_fprint()
+<%end if%>
+end function
+
+function fprintpreview
+<%if pArrStartDates.Count > 5 then %>
+	fprintpreview = doc_.getmodule(60182).fprintpreview_landscape_common(page_.get_this)
+<%else%>
+	fprintpreview = std_fprintpreview()
+<%end if%>
+end function
+]]>
+</script>
+</config>
+<body>
+
+<p>
+RAPORT_HEADER(3,1)
+</p>
+
+<p>
+<t size='2'/>
+</p>
+<br/>
+<table>
+<tbody>
+<tr>
+<td align='center'>
+	<text fontsize='7'><![CDATA[<%so.write pAnalFinans.strNazwa + " na dzień " + doc_.afc.display.fulldate(dToday) %>]]></text>
+</td>
+</tr>
+<tr>
+<td>
+	<text fontsize='4'><![CDATA[<%so.write pParamOkres.get_desc() %>]]></text>
+</td>
+</tr>
+</tbody>
+</table>
+<table border='1'>
+	<thead>
+		<tr style='STYLE_TABLE_HEADER'>
+			<td width='max'>
+				<t>Pozycja</t>
+			</td>
+			<td width='min'>
+				<text>Jed no stka</text>
+			</td>
+		<%
+		for iter = 0 to pArrTitles.Count - 1
+		%>
+			<td width='min' align='right'>
+				<text><![CDATA[<%so.write pArrTitles.Value(iter)%>]]></text>
+			</td>
+		<%
+		next
+		%>
+		</tr>
+	</thead>
+	<tbody>
+		<%
+		for iter = 0 to pArrAFRows.Count -1
+		%>
+		<tr>
+			<td><text><![CDATA[<% so.write pArrAFRows.Value(iter).nazwa %>]]></text></td>
+			<td><text><![CDATA[<% so.write pArrAFRows.Value(iter).jednostka %>]]></text></td>
+			<%
+				for iter2 = 0 to pArrTitles.Count - 1
+			%>
+				<td align='right'>
+					RXE_QUANTITY_VVV(pArrArrValues.Value(iter2).Value(iter),"",2)
+				</td>
+			<%
+				next
+			%>
+		</tr>
+		<%
+		next
+		%>
+	</tbody>
+</table>
+</body>
+<footer>
+</footer>
+<%
+else
+%>
+<body>
+<p>RAPORT_HEADER(3,1)</p>
+<p><t size='2'/></p><br/>
+<%
+so.write "<p style='21'><t>Brak uprawnień.</t></p>"
+%>
+</body>
+<%
+end if
+end if
+%>
+</page>

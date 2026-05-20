@@ -1,0 +1,498 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!-- 
+
+'Parametr raportu typu zakres dat z dodatkowym filtrem Poprzedni miesiąc
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200.h"
+#include "h1231.h"
+#include "h1220.h"
+#include "h1240.h"
+
+'#comment DATA
+#define MODE_ASK   0
+#define MODE_ANY_DATE   1
+#define MODE_CURRENT_YEAR   2
+#define MODE_CURRENT_MONTH   3
+#define MODE_TODAY   4
+#define MODE_PREVIOUS_MONTH 5
+#define MODE_BEFORE   6
+#define MODE_AFTER   7
+#define MODE_RANGE   8
+#define MODE_NONE   9
+
+'offsety id dla kolejnych kontrolek filtru
+#define TABLEID_OFFSET   1
+#define PARAM_LABEL_OFFSET   2
+#define RADIO_OFFSET   3
+#define OFFSET_BEFORE   4
+#define OFFSET_AFTER   5
+#define OFFSET_FROM   6
+#define OFFSET_TO   7
+#define OFFSET_DESC   8
+
+#define MAX_LEN   20
+#define MODE_NONE_DESC "wykluczenie wszystkich możliwych wartości"
+
+-->
+<page>
+<config>
+<script>
+<![CDATA[
+
+class RapParamCustom
+
+
+Private m_strXMLPart
+Private m_strVBPart
+Private m_strFopenPart
+Private m_strParamName
+Private m_strBindExpr
+Private m_nMode
+Private m_vFirst
+Private m_vLast
+Private m_bAllowNone
+
+Private Sub class_initialize()
+    m_vFirst = trans_.afc.globals.nulldate()
+    m_vLast = trans_.afc.globals.nulldate()
+    m_nMode = MODE_ASK
+    m_strXMLPart = ""
+    m_strVBPart = ""
+    m_strFopenPart = ""
+    m_strBindExpr = ""
+    m_bAllowNone = False
+End Sub
+
+Public Property Let ParamName(ByVal vData)
+    m_strParamName = vData
+End Property
+
+
+Public Property Get ParamName()
+    If Len(m_strParamName) > MAX_LEN Then
+        ParamName = smart_trim(m_strParamName, MAX_LEN) + " ..."
+        'Mid(m_strParamName, 1, 20) + "..."
+    Else
+        ParamName = m_strParamName
+    End If
+End Property
+
+Public Property Let mode(ByVal nMode)
+    m_nMode = nMode
+    If nMode = MODE_NONE Then
+        Me.allow_none
+    End If
+End Property
+
+Public Function allow_none()
+    m_bAllowNone = True
+End Function
+
+Public Property Get mode()
+    mode = m_nMode
+End Property
+
+Public Function Bind(ByVal strTableName, ByVal strFieldName)
+    m_strBindExpr = strTableName + "." + strFieldName
+    Set Bind = Me
+End Function
+
+Public Function BindExpr(ByVal strBindExpr)
+    m_strBindExpr = strBindExpr
+    Set BindExpr = Me
+End Function
+Public Function get_bindexpr()
+    get_bindexpr = m_strBindExpr
+End Function
+
+Public Function get_xml_part(ByVal nParamNr, ByRef pRPDB)
+
+    If m_nMode <> MODE_ASK Then
+        m_strXMLPart = ""
+        get_xml_part = m_strXMLPart
+        Exit Function
+    End If
+    
+    'kolejne id kontrolek
+    Dim firstId: firstId = nParamNr * 10
+    
+    If pRPDB.tabs Then
+        m_strXMLPart = vbCrLf + vbCrLf + _
+            "   <tabitem name='" + CStr(firstId) + "' title='" + ParamName + "' style='" + CStr(STYLE_TABLE_BODY) + "'>" + vbCrLf
+    Else
+        m_strXMLPart = vbCrLf + _
+            "<p name='" + CStr(firstId) + "'>" + vbCrLf + _
+            "   <table name='" + CStr(firstId + TABLEID_OFFSET) + "'>" + vbCrLf + _
+            "       <tbody>" + vbCrLf + _
+            "           <tr style='" + CStr(STYLE_TABLE_HEADER) + "'>" + vbCrLf + _
+            "               <td width='max'>" + vbCrLf + _
+            "                   <t name='" + CStr(firstId + PARAM_LABEL_OFFSET) + "'>" + m_strParamName + "</t>" + vbCrLf + _
+            "               </td>" + vbCrLf + _
+            "           </tr>" + vbCrLf + _
+            "           <tr style='" + CStr(STYLE_TABLE_BODY) + "'>" + vbCrLf + _
+            "               <td width='max'>" + vbCrLf
+    End If
+        
+    m_strXMLPart = m_strXMLPart + vbCrLf + _
+        "                   <radio border='0' name='r" + CStr(firstId + RADIO_OFFSET) + "' colspan='1'>" + vbCrLf + _
+        "                       <transfer mode='custom'/>" + vbCrLf + _
+        "                       <table><tbody><tr><td><t size='14'>Dowolna         </t></td></tr></tbody></table>" + vbCrLf + _
+        "                       <table><tbody><tr><td><t size='14'>Bieżący rok     </t></td></tr></tbody></table>" + vbCrLf + _
+        "                       <table><tbody><tr><td><t size='14'>Bieżący miesiąc </t></td></tr></tbody></table>" + vbCrLf + _
+        "                       <table><tbody><tr><td><t size='14'>Dzisiaj         </t></td></tr></tbody></table>" + vbCrLf + _
+        "                       <table><tbody><tr><td><t size='14'>Poprzedni miesiąc         </t></td></tr></tbody></table>" + vbCrLf + _        
+        "                       <table><tbody><tr><td><t size='14'>Do dnia           </t><date name='e" + CStr(firstId + OFFSET_BEFORE) + "' disable='true'><transfer mode='custom'/></date></td></tr></tbody></table>" + vbCrLf + _
+        "                       <table><tbody><tr><td><t size='14'>Od dnia             </t><date name='e" + CStr(firstId + OFFSET_AFTER) + "' disable='true'><transfer mode='custom'/></date></td></tr></tbody></table>" + vbCrLf + _
+        "                       <table><tbody><tr><td keepline='true'><t size='14'>Od - do </t><date name='e" + CStr(firstId + OFFSET_FROM) + "' disable='true'><transfer mode='custom'/></date><t size='1'/><t>do</t><t size='1'/><date name='e" + CStr(firstId + OFFSET_TO) + "' disable='true'><transfer mode='custom'/></date></td></tr></tbody></table>" + vbCrLf
+        
+    'jezeli pozwalamy na none
+    If m_bAllowNone Then
+        m_strXMLPart = m_strXMLPart + vbCrLf + _
+        "                       <table><tbody><tr><td><t size='14'>Nic             </t></td></tr></tbody></table>" + vbCrLf
+    End If
+        
+        
+    m_strXMLPart = m_strXMLPart + vbCrLf + _
+        "                   </radio><br/>" + vbCrLf
+            m_strXMLPart = m_strXMLPart + _
+        "                   " + vbCrLf + _
+        "                   <t></t><br/>" + vbCrLf + _
+        "                   <text bold='true' name='t" + CStr(firstId + OFFSET_DESC) + "'></text><br/>" + vbCrLf + _
+        "                   " + vbCrLf
+        
+    If pRPDB.tabs Then
+        m_strXMLPart = m_strXMLPart + vbCrLf + _
+        "   </tabitem>" + vbCrLf
+    Else
+        m_strXMLPart = m_strXMLPart + vbCrLf + _
+        "               </td>" + vbCrLf + _
+        "           </tr>" + vbCrLf + _
+        "           <tr><td><t></t></td></tr>" + vbCrLf + _
+        "       </tbody>" + vbCrLf + _
+        "   </table>" + vbCrLf + _
+        "</p>" + vbCrLf
+    End If
+    
+        
+    get_xml_part = m_strXMLPart
+End Function
+
+Public Function get_vb_part(ByVal nParamNr, ByRef pRPDB)
+
+    If m_nMode <> MODE_ASK Then
+        m_strVBPart = ""
+        get_vb_part = m_strVBPart
+        Exit Function
+    End If
+    
+    Dim firstId: firstId = nParamNr * 10
+    
+    'ondataentered dla radiobutona
+    m_strVBPart = vbCrLf + _
+    "   function c" + CStr(firstId + RADIO_OFFSET) + "_ondataentered(oCtrl, newValue)" + vbCrLf + _
+    "       bError = false" + vbCrLf + _
+    "       c" + CStr(firstId + RADIO_OFFSET) + "_ondataentered=true" + vbCrLf + _
+    "       desc" + CStr(firstId) + "(page_.ctrl(" + CStr(firstId + RADIO_OFFSET) + ").value)" + vbCrLf + _
+    "       dim bEnableFrom:bEnableFrom=false   " + vbCrLf + _
+    "       dim bEnableTo:bEnableTo=false       " + vbCrLf + _
+    "       dim bEnableBEFORE:bEnableBEFORE=false " + vbCrLf + _
+    "       dim bEnableAFTER:bEnableAFTER=false " + vbCrLf + _
+    "       if clng(newValue)=" + CStr(MODE_RANGE) + " then" + vbCrLf + _
+    "           bEnableFrom=true" + vbCrLf + _
+    "           bEnableTo=true" + vbCrLf + _
+    "       elseif clng(newValue)=" + CStr(MODE_BEFORE) + " then" + vbCrLf + _
+    "           bEnableBEFORE=true" + vbCrLf + _
+    "       elseif clng(newValue)=" + CStr(MODE_AFTER) + " then" + vbCrLf + _
+    "           bEnableAFTER=true" + vbCrLf + _
+    "       else" + vbCrLf + _
+    "       end if" + vbCrLf + _
+    "       page_.ctrl(" + CStr(firstId + OFFSET_BEFORE) + ").disable=not bEnableBEFORE" + vbCrLf + _
+    "       page_.ctrl(" + CStr(firstId + OFFSET_AFTER) + ").disable=not bEnableAFTER" + vbCrLf + _
+    "       page_.ctrl(" + CStr(firstId + OFFSET_FROM) + ").disable=not bEnableFrom" + vbCrLf + _
+    "       page_.ctrl(" + CStr(firstId + OFFSET_TO) + ").disable=not bEnableTo" + vbCrLf + _
+    "   end function" + vbCrLf + vbCrLf
+    
+    'ongetdata dla radiobutona
+    m_strVBPart = m_strVBPart + vbCrLf + _
+    "   function c" + CStr(firstId + RADIO_OFFSET) + "_ongetdata(byref oCtrl)" + vbCrLf + _
+    "       desc" + CStr(firstId) + "(oCtrl.value)" + vbCrLf + _
+    "       c" + CStr(firstId + RADIO_OFFSET) + "_ongetdata=true" + vbCrLf + _
+    "   end function" + vbCrLf
+    
+    
+    ' tekst w kontrolce opisu
+    m_strVBPart = m_strVBPart + vbCrLf + _
+    "   function desc" + CStr(firstId) + "(newValue)" + vbCrLf + _
+    "       if bError then exit function" + vbCrLf + _
+    "       dim strDesc,strFrom:strFrom= trans_.afc.display.fulldate(page_.ctrl(" + CStr(firstId + OFFSET_FROM) + ").value)" + vbCrLf + _
+    "       dim strTo:strTo= trans_.afc.display.fulldate(page_.ctrl(" + CStr(firstId + OFFSET_TO) + ").value)" + vbCrLf + _
+    "       dim strBEFORE:strBEFORE= trans_.afc.display.fulldate(page_.ctrl(" + CStr(firstId + OFFSET_BEFORE) + ").value)" + vbCrLf + _
+    "       dim strAFTER:strAFTER= trans_.afc.display.fulldate(page_.ctrl(" + CStr(firstId + OFFSET_AFTER) + ").value)" + vbCrLf
+    
+    m_strVBPart = m_strVBPart + vbCrLf + _
+    "       if clng(newValue)=" + CStr(MODE_ANY_DATE) + " then" + vbCrLf + _
+    "           strDesc=""Pole '" + ParamName + "' dowolnej wartości""" + vbCrLf + _
+    "       elseif clng(newValue)=" + CStr(MODE_CURRENT_YEAR) + " then" + vbCrLf + _
+    "           strDesc=""Pole '" + ParamName + "' należy do bieżącego roku""" + vbCrLf + _
+    "       elseif clng(newValue)=" + CStr(MODE_CURRENT_MONTH) + " then" + vbCrLf + _
+    "           strDesc=""Pole '" + ParamName + "' nalezy do bieżącego miesiąca""" + vbCrLf + _
+    "       elseif clng(newValue)=" + CStr(MODE_TODAY) + " then" + vbCrLf + _
+    "           strDesc=""Pole '" + ParamName + "' nalezy do dnia dzisiajszego""" + vbCrLf + _
+    "       elseif clng(newValue)=" + CStr(MODE_PREVIOUS_MONTH) + " then" + vbCrLf + _
+    "           strDesc=""Pole '" + ParamName + "' nalezy do poprzedniego miesiąca""" + vbCrLf + _  
+    "       elseif clng(newValue)=" + CStr(MODE_BEFORE) + " then" + vbCrLf + _
+    "           strDesc=""Pole '" + ParamName + "' do dnia  "" + strBEFORE " + vbCrLf + _
+    "       elseif clng(newValue)=" + CStr(MODE_AFTER) + " then" + vbCrLf + _
+    "           strDesc=""Pole '" + ParamName + "' od dnia  "" + strAFTER " + vbCrLf + _
+    "       elseif clng(newValue)=" + CStr(MODE_RANGE) + " then" + vbCrLf + _
+    "           strDesc=""Pole '" + ParamName + "' o wartości z zakresu "" + strFrom + "" i "" + strTo" + vbCrLf + _
+    "       elseif clng(newValue)=" + CStr(MODE_NONE) + " then" + vbCrLf + _
+    "           strDesc= ""Pole '" + ParamName + "' - " + MODE_NONE_DESC + """" + vbCrLf + _
+    "       end if" + vbCrLf
+    
+    m_strVBPart = m_strVBPart + vbCrLf + _
+    "       page_.ctrl(" + CStr(firstId + OFFSET_DESC) + ").text=strDesc" + vbCrLf + _
+    "       page_.ctrl(" + CStr(firstId + OFFSET_DESC) + ").forecolor=rgb(0,0,0)" + vbCrLf + _
+    "   end function" + vbCrLf
+    
+    
+    ' transfer dla kontrolek z datami - from
+    m_strVBPart = m_strVBPart + vbCrLf + _
+    "   function c" + CStr(firstId + OFFSET_FROM) + "_ondataentered(oCtrl, newValue)" + vbCrLf + _
+    "       bError = false" + vbCrLf + _
+    "   end function" + vbCrLf + _
+    "   function c" + CStr(firstId + OFFSET_FROM) + "_ongetdata(byref oCtrl)" + vbCrLf + _
+    "       desc" + CStr(firstId) + "(page_.ctrl(" + CStr(firstId + RADIO_OFFSET) + ").value)" + vbCrLf + _
+    "       c" + CStr(firstId + OFFSET_FROM) + "_ongetdata=true" + vbCrLf + _
+    "   end function" + vbCrLf
+    
+    
+    ' transfer dla kontrolek z datami - to
+    m_strVBPart = m_strVBPart + vbCrLf + _
+    "   function c" + CStr(firstId + OFFSET_TO) + "_ondataentered(oCtrl, newValue)" + vbCrLf + _
+    "       bError = false" + vbCrLf + _
+    "   end function" + vbCrLf + _
+    "   function c" + CStr(firstId + OFFSET_TO) + "_ongetdata(byref oCtrl)" + vbCrLf + _
+    "       desc" + CStr(firstId) + "(page_.ctrl(" + CStr(firstId + RADIO_OFFSET) + ").value)" + vbCrLf + _
+    "       c" + CStr(firstId + OFFSET_TO) + "_ongetdata=true" + vbCrLf + _
+    "   end function" + vbCrLf
+    
+    
+    ' transfer dla kontrolek z datami - AFTER
+    m_strVBPart = m_strVBPart + vbCrLf + _
+    "   function c" + CStr(firstId + OFFSET_AFTER) + "_ondataentered(oCtrl, newValue)" + vbCrLf + _
+    "       bError = false" + vbCrLf + _
+    "   end function" + vbCrLf + _
+    "   function c" + CStr(firstId + OFFSET_AFTER) + "_ongetdata(byref oCtrl)" + vbCrLf + _
+    "       desc" + CStr(firstId) + "(page_.ctrl(" + CStr(firstId + RADIO_OFFSET) + ").value)" + vbCrLf + _
+    "       c" + CStr(firstId + OFFSET_AFTER) + "_ongetdata=true" + vbCrLf + _
+    "   end function" + vbCrLf
+    
+    
+    ' transfer dla kontrolek z datami - BEFORE
+    m_strVBPart = m_strVBPart + vbCrLf + _
+    "   function c" + CStr(firstId + OFFSET_BEFORE) + "_ondataentered(oCtrl, newValue)" + vbCrLf + _
+    "       bError = false" + vbCrLf + _
+    "   end function" + vbCrLf + _
+    "   function c" + CStr(firstId + OFFSET_BEFORE) + "_ongetdata(byref oCtrl)" + vbCrLf + _
+    "       desc" + CStr(firstId) + "(page_.ctrl(" + CStr(firstId + RADIO_OFFSET) + ").value)" + vbCrLf + _
+    "       c" + CStr(firstId + OFFSET_BEFORE) + "_ongetdata=true" + vbCrLf + _
+    "   end function" + vbCrLf
+    
+    
+    m_strVBPart = m_strVBPart + vbCrLf + _
+    "   function init" + CStr(firstId) + vbCrLf + _
+    "       page_.ctrl(" + CStr(firstId + RADIO_OFFSET) + ").value=clng(" + CStr(MODE_ANY_DATE) + ")" + vbCrLf + _
+    "       page_.ctrl(" + CStr(firstId + OFFSET_FROM) + ").value=DateSerial(" + CStr(Year(m_vFirst)) + "," + CStr(Month(m_vFirst)) + "," + CStr(Day(m_vFirst)) + ")" + vbCrLf + _
+    "       page_.ctrl(" + CStr(firstId + OFFSET_TO) + ").value=DateSerial(" + CStr(Year(m_vLast)) + "," + CStr(Month(m_vLast)) + "," + CStr(Day(m_vLast)) + ")" + vbCrLf + _
+    "       page_.ctrl(" + CStr(firstId + OFFSET_BEFORE) + ").value=DateSerial(" + CStr(Year(m_vFirst)) + "," + CStr(Month(m_vFirst)) + "," + CStr(Day(m_vFirst)) + ")" + vbCrLf + _
+    "       page_.ctrl(" + CStr(firstId + OFFSET_AFTER) + ").value=DateSerial(" + CStr(Year(m_vFirst)) + "," + CStr(Month(m_vFirst)) + "," + CStr(Day(m_vFirst)) + ")" + vbCrLf + _
+    "   end function" + vbCrLf
+    
+    
+    ' funckja sprawdzająca prawidłowość wprowadzonych danych...
+    m_strVBPart = m_strVBPart + vbCrLf + _
+    "   function check" + CStr(nParamNr) + vbCrLf + _
+        "   dim msg" + vbCrLf + _
+        "   check" + CStr(nParamNr) + "=true" + vbCrLf + _
+        "end function" + vbCrLf
+        
+        
+    ' funckja sprawdzająca prawidłowość wprowadzonych danych...
+    m_strVBPart = m_strVBPart + vbCrLf + _
+        "function check" + CStr(nParamNr) + vbCrLf + _
+        "   dim msg" + vbCrLf + _
+        "   check" + CStr(nParamNr) + "=true" + vbCrLf + _
+        "   dim mode:mode=page_.ctrl(" + CStr(firstId + RADIO_OFFSET) + ").value" + vbCrLf + _
+        "   if (mode=" + CStr(MODE_RANGE) + " and (page_.ctrl(" + CStr(firstId + OFFSET_FROM) + ").value > page_.ctrl(" + CStr(firstId + OFFSET_TO) + ").value ) ) then" + vbCrLf + _
+        "      check" + CStr(nParamNr) + "=false" + vbCrLf + _
+        "      msg = ""Podano zły zakres dat (od "" + trans_.afc.display.fulldate(page_.ctrl(" + CStr(firstId + OFFSET_FROM) + ").value) + "" do "" + trans_.afc.display.fulldate(page_.ctrl(" + CStr(firstId + OFFSET_TO) + ").value) + "")""" + vbCrLf + _
+        "      page_.ctrl(" + CStr(firstId + OFFSET_DESC) + ").text = msg" + vbCrLf + _
+        "      page_.ctrl(" + CStr(firstId + OFFSET_DESC) + ").forecolor = RGB(255,0,0)" + vbCrLf + _
+        "      page_.ctrl(9).activeitem = " + CStr(nParamNr) + vbCrLf + _
+        "      bError = true" + vbCrLf + _
+        "   end if" + vbCrLf + _
+        "end function" + vbCrLf
+            
+    get_vb_part = m_strVBPart
+
+End Function
+
+Public Function get_desc()
+
+    Select Case m_nMode
+        Case MODE_ANY_DATE:
+            get_desc = ""
+        Case MODE_CURRENT_YEAR
+            get_desc = "Pole '" + ParamName + "' zawiera się w bieżącym roku (" + _
+                CStr(Year(m_vFirst)) + ")"
+        Case MODE_CURRENT_MONTH
+            get_desc = "Pole '" + ParamName + "' zawiera się w bieżącym miesiącu (" + _
+                CStr(MonthName(Month(m_vFirst))) + " " + CStr(Year(m_vFirst)) + ")"
+        Case MODE_TODAY
+            get_desc = "Pole '" + ParamName + "' zawiera się w dniu dzisiejszym (" + _
+                trans_.afc.display.fulldate(m_vFirst) + ")"
+        Case MODE_PREVIOUS_MONTH
+            get_desc = "Pole '" + ParamName + "' zawiera się w poprzednim miesiącu (" + _
+                trans_.afc.display.fulldate(m_vFirst) + ")"
+        Case MODE_BEFORE
+            get_desc = "Pole '" + ParamName + "' przed " + trans_.afc.display.fulldate(m_vFirst)
+        Case MODE_AFTER
+            get_desc = "Pole '" + ParamName + "' po " + trans_.afc.display.fulldate(m_vFirst)
+        Case MODE_RANGE
+            get_desc = "Pole '" + ParamName + "' pomiędzy " + trans_.afc.display.fulldate(m_vFirst) + " i " + trans_.afc.display.fulldate(m_vLast)
+        Case MODE_NONE
+            get_desc = "Pole '" + ParamName + "' - " + MODE_NONE_DESC
+    End Select
+    
+End Function
+
+' instrukcje inicjujące stany kontrolek - do fopen
+Public Function get_vb_init_ctrls_part(ByVal nParamNr, ByRef pRPDB)
+
+    If m_nMode <> MODE_ASK Then
+        m_strFopenPart = ""
+        get_vb_init_ctrls_part = m_strFopenPart
+        Exit Function
+    End If
+    
+    Dim firstId: firstId = nParamNr * 10
+    
+    m_strFopenPart = "init" + CStr(firstId) + "()" + vbCrLf
+    
+    get_vb_init_ctrls_part = m_strFopenPart
+
+End Function
+
+
+
+Public Function get_where_part(ByRef pTransaction)
+    'resolve mode to date range
+    
+    Select Case mode()
+        Case MODE_CURRENT_YEAR
+            m_vFirst = DateSerial(Year(pTransaction.Var(GVAR_TODAY)), 1, 1)
+            m_vLast = DateSerial(Year(pTransaction.Var(GVAR_TODAY)), 12, 31)
+        Case MODE_CURRENT_MONTH
+            m_vFirst = DateSerial(Year(pTransaction.Var(GVAR_TODAY)), Month(pTransaction.Var(GVAR_TODAY)), 1)
+            m_vLast = DateSerial(Year(pTransaction.Var(GVAR_TODAY)), Month(pTransaction.Var(GVAR_TODAY)) + 1, 0)
+        Case MODE_TODAY
+            m_vFirst = DateSerial(Year(pTransaction.Var(GVAR_TODAY)), Month(pTransaction.Var(GVAR_TODAY)), Day(pTransaction.Var(GVAR_TODAY)))
+            m_vLast = DateSerial(Year(pTransaction.Var(GVAR_TODAY)), Month(pTransaction.Var(GVAR_TODAY)), Day(pTransaction.Var(GVAR_TODAY)))
+        Case MODE_PREVIOUS_MONTH
+            m_vLast = DateSerial(Year(pTransaction.Var(GVAR_TODAY)), Month(pTransaction.Var(GVAR_TODAY)), 0)
+            m_vFirst = DateSerial(Year(m_vLast), Month(m_vLast), 1)
+        End Select
+        
+    'generate SQL
+    Select Case mode()
+    Case MODE_ANY_DATE
+        get_where_part = "(" + m_strBindExpr + " is not null)"
+    Case MODE_CURRENT_MONTH, MODE_CURRENT_YEAR, MODE_RANGE, MODE_PREVIOUS_MONTH
+        get_where_part = "(" + m_strBindExpr + " between " + trans_.afc.convert.date2SQL(m_vFirst) + " and " + trans_.afc.convert.date2SQL(m_vLast) + ")"
+    Case MODE_TODAY
+        get_where_part = "(" + m_strBindExpr + " = " + trans_.afc.convert.date2SQL(m_vFirst) + ")"
+    Case MODE_BEFORE
+        get_where_part = "(" + m_strBindExpr + " <= " + trans_.afc.convert.date2SQL(m_vFirst) + ")"
+    Case MODE_AFTER
+        get_where_part = "(" + m_strBindExpr + " >= " + trans_.afc.convert.date2SQL(m_vFirst) + ")"
+    Case MODE_NONE
+        get_where_part = "(1=0)"
+    End Select
+End Function
+
+Public Function is_complete()
+    is_complete = (m_nMode <> MODE_ASK)
+End Function
+
+Public Function is_valid(ByRef strMessage)
+    is_valid = False
+    If mode = MODE_RANGE And m_vFirst > m_vLast Then
+        strMessage = strMessage + "W filtrze " + ParamName + " wybrano nieprawidłowy zakres (od " + CStr(m_vFirst) + " do " + CStr(m_vLast) + ")." + vbCrLf
+        Exit Function
+    End If
+    is_valid = True
+End Function
+
+Public Property Let first_value(ByVal dtDateFirst)
+    m_vFirst = dtDateFirst
+End Property
+Public Property Get first_value()
+    first_value = m_vFirst
+End Property
+
+
+Public Property Let last_value(ByVal strLast)
+    m_vLast = strLast
+End Property
+
+Public Property Get last_value()
+    last_value = m_vLast
+End Property
+
+Public Function Update(ByVal nParamNr, ByVal page)
+    Dim firstId: firstId = nParamNr * 10
+    mode = page.ctrl(firstId + RADIO_OFFSET).Value
+    Select Case mode()
+        Case MODE_BEFORE
+            first_value = page.ctrl(firstId + OFFSET_BEFORE).Value
+        Case MODE_AFTER
+            first_value = page.ctrl(firstId + OFFSET_AFTER).Value
+        Case MODE_RANGE
+            first_value = page.ctrl(firstId + OFFSET_FROM).Value
+            last_value = page.ctrl(firstId + OFFSET_TO).Value
+    End Select
+End Function
+
+
+Public Function get_desc_from_page(ByVal nParamNr, ByVal page)
+    Dim firstId: firstId = nParamNr * 10
+    get_desc_from_page = CStr(page.ctrl(firstId + OFFSET_DESC).text)
+End Function
+
+
+Public Function paramtype()
+    paramtype = RAPT_DATE
+End Function
+
+end class
+
+
+
+
+function new_custom(byval strParamName)
+	Set new_custom = New RapParamCustom
+    new_custom.ParamName = strParamName
+end function
+
+
+
+]]>
+</script>
+</config>
+	<body>
+		<t></t>
+	</body>
+</page>

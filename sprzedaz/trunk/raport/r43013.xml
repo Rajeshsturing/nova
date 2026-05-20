@@ -1,0 +1,249 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1240_appvar.h"
+
+#define CTRLID_RESULT_TABLE		100
+
+#ifdef _TORAL
+#define CTRLID_CHECKBOX   101
+#endif
+
+
+#define PRIV_PROP_IDSRTRW	1
+
+-->
+<page style='STYLE_PAGE'>
+<config>
+	<title>
+	Kreator amortyzacji
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+<script>
+<![CDATA[
+'msgbox
+#include "50122"
+'CProgressPage
+#include "50632"
+'choose_rejestr_dok
+#include "50517"
+'HARUI_FREE
+#include "50101"
+
+dim g_nYear
+dim g_nMonth
+
+function create_amortyzacje()
+	dim oArrIds : set oArrIds = scan_selection()
+	if oArrIds.count = 0 then
+		MessageBox "Nie wybrano żadnego środka trwałego", "Kreator amortyzacji", vbOKOnly, vbInformation
+		exit function
+	end if
+
+	'Pobierz rejestr dokumentów
+	dim idRejestr
+	idRejestr = choose_rejestr_dok(CStr( N5REJESTRDOK_SRODKI_TRWALE ), false, "Wybierz rejestr dokumentów")
+	if idRejestr <= 0 then
+		exit function
+	end if
+
+	trans_.var(APPVAR_OPSRTW_TYP) = clng(N5OPSRTRW_AMORTYZACJA)
+
+
+	trans_.var(APPVAR_REJESTR_DOKUMENTOW) = idRejestr
+
+	dim pPP : set pPP = new CProgressPage
+	pPP.init "Tworzenie amortyzacji"
+	dim iter
+	for iter = 0 to oArrIds.UpperIndex()
+		dim pOpSrTrw : set pOpSrTrw = trans_.newobj(TYPEID_N5OPSRTRW)
+		with pOpSrTrw
+			set .pSRTRW = trans_.getobj(TYPEID_N5SRTRW,oArrIds.Value(iter))
+			.dDataAmort = DateSerial(g_nYear,g_nMonth,1)
+			.curAmortPod = .n5opsrtrw_wylicz_amort_pod()
+			.curAmortBil = .n5opsrtrw_wylicz_amort_bil()
+			if .curAmortPod = ccur(0.0) and .curAmortBil = ccur(0.0) then
+				.ignore = true
+			end if
+		end with
+
+		pPP.update "Utworzono amortyzację dla " + pOpSrTrw.pSRTRW.text
+
+		if pPP.is_broken() then
+			exit function
+		end if
+	next
+	set pPP = nothing
+	if trans_.saveobjects() then
+		frefresh
+	else
+		trans_.discard
+	end if
+end function
+
+function frefresh()
+	fill_results g_nYear,g_nMonth
+end function
+
+function fopen() : fopen = true
+#ifdef _ABAKUS
+	if HARUI_FREE(UAR_OGRANICZONY_DOSTEP_DANE_KLIENTA) then
+    fopen = false
+		exit function   
+	end if
+#endif 
+	g_nYear = year(trans_.var(GVAR_TODAY))
+	g_nMonth = month(trans_.var(GVAR_TODAY))
+	frefresh
+end function
+
+function fill_results(byval nYear,byval nMonth)
+	dim pCursor : set pCursor = trans_.createadors( trans_.afc.convert.formatter( _
+		"select 'c_sr_nazwa'=strNazwa,'c_sr_idobj'=idobj,curWartoscPod,curUmorzPod,curWartoscBil,curUmorzBil from n5srtrw where idobj not in (select psrtrw from n5opsrtrw where " +_
+		"year(dDataAmort)=%1 and month(dDataAmort)=%2) and eStatus = N5SRTRW_STATUS_UZYTKOWANY and (curWartoscPod<>curUmorzPod or curWartoscBil<>curUmorzBil) " +_
+    "and (idobj not in (select psrtrw from n5opsrtrw where eRodzaj in (N5OPSRTRW_ZAKUP,N5OPSRTRW_PRZYJECIE_OT) and (year(dDataOper)*12 + month(dDataOper))>= (%1 * 12 + %2)) " +_
+    " or n5srtrw.eMetAmPod=N5SRTRW_METAM_JEDNORAZOWA)").add(nYear).add(nMonth).done())
+	
+#ifdef _TORAL
+	page_.ctrl(CTRLID_CHECKBOX).value = "1"
+#endif  
+	dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(page_.ctrl(CTRLID_RESULT_TABLE))
+	pTB.section_body.removeall	
+
+	if pCursor.EOF then
+		pTB.newrow
+		pTB.row.bordercolor = rgb(255,255,255)
+		if nRecNr mod 2 = 0 then
+			pTB.row.styleitem = STYLE_ROW_EVEN
+		end if
+		pTB.newcell.cell.colspan = 6
+		pTB.addtext "Brak środków dla których można utworzyć amortyzację za " + cstr(nYear) + "/" + cstr(nMonth)
+		exit function
+	end if
+
+	dim nRecNr : nRecNr = 0
+
+	do while not pCursor.EOF
+		pTB.newrow
+		pTB.row.bordercolor = rgb(255,255,255)
+		if nRecNr mod 2 = 0 then
+			pTB.row.styleitem = STYLE_ROW_EVEN
+		end if
+		pTB.newcell.addtext(cstr(nRecNr+1)).cell.align=ALIGN_RIGHT
+
+		pTB.newcell.addctrl CTRL_TYPE_CHECKBOX,-1
+		dim pCheckBox : set pCheckBox = pTB.element
+		pCheckBox.border = 0
+		dim pStatic : set pStatic = pTB.element.addnew(CTRL_TYPE_STATIC,-1)
+		pStatic.text = cstr(pCursor("c_sr_nazwa"))
+		dim idSrTrw : idSrTrw = clng(pCursor("c_sr_idobj"))
+		set pStatic.hli = doc_.createhlistr("OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5SRTRW," + cstr(idSrTrw)+",USAGE_VIEW)")
+		pCheckBox.value = "1"
+		set pCheckBox.userprop = doc_.createhli()
+		pCheckBox.userprop.prop(PRIV_PROP_IDSRTRW)	= clng(pCursor("c_sr_idobj"))
+
+		pTB.newcell.addtext(doc_.afc.display.quantity(pCursor("curWartoscPod"),"",2)).cell.align=ALIGN_RIGHT
+		pTB.newcell.addtext(doc_.afc.display.quantity(pCursor("curWartoscBil"),"",2)).cell.align=ALIGN_RIGHT
+		pTB.newcell.addtext(doc_.afc.display.quantity(pCursor("curUmorzPod"),"",2)).cell.align=ALIGN_RIGHT
+		pTB.newcell.addtext(doc_.afc.display.quantity(pCursor("curUmorzBil"),"",2)).cell.align=ALIGN_RIGHT
+
+		pCursor.MoveNext
+		nRecNr = nRecNr + 1
+	loop
+end function
+
+function scan_selection
+	dim oArrIds : set oArrIds = trans_.afc.new_navoarray()
+
+	dim pBody : set pBody = page_.ctrl(CTRLID_RESULT_TABLE).body
+	dim pRow
+	for each pRow in pBody
+		with pRow.cell(2).element(1)
+			if .value = "1" then
+				oArrIds.Add .userprop.prop(PRIV_PROP_IDSRTRW)
+			end if
+		end with
+	next
+	set scan_selection = oArrIds
+end function
+
+#ifdef _TORAL
+function c##CTRLID_CHECKBOX##_ongetdata(pCtrl)
+end function
+
+function c##CTRLID_CHECKBOX##_ondataentered(byref oCtrl, byval newValue) : c##CTRLID_CHECKBOX##_ondataentered = true
+	if newValue = "1" then
+		CheckAll true
+	else
+		CheckAll false
+	end if
+end function
+
+function CheckAll(byval bValue)
+	dim pBody : set pBody = page_.ctrl(CTRLID_RESULT_TABLE).body
+	dim pRow
+	for each pRow in pBody
+    if bValue then
+		  pRow.cell(2).element(1).value = "1"
+    else
+		  pRow.cell(2).element(1).value = "0"      
+		end if
+	next
+end function
+#endif
+
+]]>
+</script>
+</config>
+	<body>
+		<table>
+			<tbody>
+				<tr>
+					<td>
+						<picture image='80139' tip='Wypełnij raport' width='1000' height='1000' href='varFunction="frefresh"' />
+						<picture image='PICTURE_CHOICE_N5OPSRTRW' tip='Utwórz amortyzacje' width='1000' height='1000' href='varFunction="create_amortyzacje"' />
+					</td>
+				</tr>
+				<tr>
+					<td>
+						<table border='1' name='CTRLID_RESULT_TABLE'>
+							<thead>
+								<tr style='STYLE_TABLE_HEADER'>                 
+									<td width='min' rowspan='2'><t>LP</t></td>
+									<td width='min' rowspan='2'>
+#ifdef _TORAL                  
+										<checkbox name='CTRLID_CHECKBOX' value='true' border='0'>
+											<t/>
+											<transfer mode='custom'/>
+										</checkbox>  
+#endif                     
+										<text>Nazwa środka trwałego</text>
+									</td>
+									<td width='min' colspan='2'><t>Wartość</t></td>
+									<td width='min' colspan='2'><t>Umorzenie</t></td>
+								</tr>
+								<tr style='STYLE_TABLE_HEADER'>
+									<td width='min'><t>podatkowa</t></td>
+									<td width='min'><text>bilansowa</text></td>
+									<td width='min'><t>podatkowe</t></td>
+									<td width='min'><text>bilansowe</text></td>
+								</tr>
+							</thead>
+							<tbody backcolor='white'>
+							</tbody>
+						</table>
+					</td>
+				</tr>
+			</tbody>
+		</table>		
+	</body>
+</page>

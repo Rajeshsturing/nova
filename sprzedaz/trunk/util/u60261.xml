@@ -1,0 +1,853 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1231.h"
+
+#define ID_TABLE_RESULTS				1007
+#define RAPORT_TITLE					1008
+
+moduł pomocniczy do bilansowania dokumentów handlowo magazynowych
+-->
+
+<page>
+<config>
+<script>
+<![CDATA[
+#include "50509"
+
+'kantor
+#include "50523"  
+
+'-------------------------------------------------------------
+'element bilansu
+'-------------------------------------------------------------
+
+#define DHMBI_VALUES_COUNT		10
+
+#define SPRZ_COLNR_SPRZ				0
+#define SPRZ_COLNR_WZ				1
+#define SPRZ_COLNR_ZZ				2
+#define SPRZ_COLNR_MAG				3
+#define SPRZ_COLNR_SPRZ_MAG			4
+#define SPRZ_COLNR_MAGS_PRZ			5
+#define SPRZ_COLNR_DOSTEPNOSC		6
+#define SPRZ_COLNR_ZAM				7
+#define SPRZ_COLNR_CUSTOM			8
+#define SPRZ_COLNR_MAXSTAN			9
+#define SPRZ_COLNR_STAN_MAG_PROD	10
+
+class CDHMBalanceItem
+	public m_idProd
+	public m_idOpak
+	public m_nPrecision
+	public m_strUnit
+	public m_strProdNazwa
+	public m_strProdInx
+	public m_strOpakNazwa
+
+	public m_curValue(DHMBI_VALUES_COUNT)
+
+
+	private sub class_initialize()
+		m_idProd = clng(0)
+		m_idOpak = clng(0)
+		m_nPrecision = clng(0)
+		m_strUnit = ""
+		m_strProdNazwa = ""
+		m_strProdInx = ""
+		m_strOpakNazwa = ""
+
+		dim iter
+		for iter = 0 to DHMBI_VALUES_COUNT - 1
+			m_curValue(iter) = ccur(0.0)
+		next
+	end sub
+
+
+	public function is_quantity_valid()
+		is_quantity_valid = m_curValue(SPRZ_COLNR_DOSTEPNOSC) >= m_curValue(SPRZ_COLNR_SPRZ_MAG)
+	end function
+
+	'tutaj mozna wykazac sie i przyspieszac funkcje :)
+	public function get_stan_mag ( byval idMag , byval collnr)
+		m_curValue(collnr) = get_stan_mag_for_prod_opak_mag(idMag,m_idProd,m_idOpak)
+	end function
+
+end class
+
+'-------------------------------------------------------------
+'-------------------------------------------------------------
+class CDHMBalance
+	public m_oItems
+
+	private sub class_initialize()
+		set m_oItems = trans_.afc.new_navoarray()
+	end sub
+	private sub class_terminate() 'OK
+		set m_oItems = nothing
+	end sub
+
+	'funckcja dodaje do slownika stan mag jesli go nie ma
+	public function update_add_check_entry(byref pos , byval idMag , idMag2,  bCheck , byref curIlosc2)
+		DEBUG_MESSAGE("update_add_entry")	
+		DEBUG_MESSAGE("update_add_entry: idMag2=" + cstr(idMag2))
+		dim inx:inx = -1
+		if	not pos.pProdukt is nothing and _
+			not pos.pOpak is nothing then
+
+			inx = find_on_prod ( pos.pProdukt.idobj , pos.pOpak.idobj )
+		else
+			exit function
+		end if
+
+		if pos.pProdukt.eRodzaj <> N5PRODUKT_TOWAR then
+			pos.isbad_pProdukt = false
+			pos.isbad_pOpak = false	
+			exit function
+		end if 
+
+		dim pDHMBalanceItem
+		if inx > -1 then
+			set pDHMBalanceItem = m_oItems.Value(inx)
+		else
+			m_oItems.Add(new CDHMBalanceItem)
+			set pDHMBalanceItem = m_oItems.Value(m_oItems.UpperIndex)
+			'nowy to pobierzey stan magazynowy
+			with pDHMBalanceItem
+				.m_idProd = pos.pProdukt.idobj
+				.m_idOpak = pos.pOpak.idobj
+				.m_nPrecision = pos.pProdukt.pJednostkaEwid.nDokladnosc - 1
+				.m_strUnit = pos.pProdukt.pJednostkaEwid.strSkrot
+				.m_strProdNazwa = pos.pProdukt.strNazwa
+				.m_strProdInx = pos.pProdukt.strIndeks
+				.m_strOpakNazwa = pos.pOpak.strNazwa				
+				.get_stan_mag idMag , SPRZ_COLNR_DOSTEPNOSC
+				if idMag2 > 0 then
+					.get_stan_mag idMag2 , SPRZ_COLNR_CUSTOM
+					curIlosc2 = ccur(pDHMBalanceItem.m_curValue(SPRZ_COLNR_CUSTOM))
+					DEBUG_MESSAGE("curIlosc2=" + cstr(curIlosc2))
+				end if
+			end with
+		end if
+		pDHMBalanceItem.m_curValue(SPRZ_COLNR_SPRZ_MAG) = pos.curIloscOpak
+
+		if bCheck then
+			update_add_check_entry = ccur(pDHMBalanceItem.m_curValue(SPRZ_COLNR_DOSTEPNOSC))
+			if not pDHMBalanceItem.is_quantity_valid() then
+				pos.isbad_pProdukt = true
+				pos.isbad_pOpak = true
+			else
+				pos.isbad_pProdukt = false
+				pos.isbad_pOpak = false				
+			end if			
+		end if
+
+		if idMag2 > 0 then
+			curIlosc2 = ccur(pDHMBalanceItem.m_curValue(SPRZ_COLNR_CUSTOM))
+			DEBUG_MESSAGE("curIlosc2=" + cstr(curIlosc2))
+		end if
+		
+	end function
+
+	'zwraca index w tablicy m_oItems pozycji zgodnej z podanym produktem/opakowaniem
+	'-1 gdy nie ma
+	public function find_on_prod(byval idProd,byval idOpak)
+		dim iter
+		dim pos
+		for iter = 0 to m_oItems.UpperIndex
+			set pos = m_oItems.value(iter)
+			if pos.m_idProd = idProd and pos.m_idOpak = idOpak then
+				find_on_prod = iter
+				exit function
+			end if
+		next
+		find_on_prod = clng(-1)
+	end function
+	
+	'dodaje nową pozycję
+	public function addnew_pos()
+		m_oItems.Add(new CDHMBalanceItem) 
+		set addnew_pos = m_oItems.Value(m_oItems.UpperIndex)
+	end function
+
+	'zwraca właściwą pozycję dla produktu, może dodać nową
+	public function get_pos(byval nInx)
+		set get_pos = m_oItems.Value(nInx)
+	end function
+
+	public function get_count()
+		get_count = m_oItems.Count()
+	end function
+end class
+
+'-------------------------------------------------------------
+' dodaj obiekt sprzedaż do kolumny nColumn kontenera
+'-------------------------------------------------------------
+
+function apply_n5sprzedaz_ilosc(byref pDHMBalance,byref pN5Sprzedaz,byval nColumn,byval curFactor,byval bAdditive,byval bTowaryOnly)
+	dim pPozSprzedaz
+	for each pPozSprzedaz in pN5Sprzedaz.listPozycje
+		if not pPozSprzedaz.pProdukt is nothing and not pPozSprzedaz.pOpak is nothing then
+			if not bTowaryOnly or (pPozSprzedaz.pProdukt.eRodzaj=N5PRODUKT_TOWAR) then
+
+				dim nInx : nInx = pDHMBalance.find_on_prod(pPozSprzedaz.pProdukt.idobj,pPozSprzedaz.pOpak.idobj)
+				dim pDHMBalanceItem
+				if nInx >= 0 then
+					set pDHMBalanceItem = pDHMBalance.get_pos(nInx)
+				else
+					set pDHMBalanceItem = pDHMBalance.addnew_pos()
+					with pDHMBalanceItem
+						.m_idProd = pPozSprzedaz.pProdukt.idobj
+						.m_idOpak = pPozSprzedaz.pOpak.idobj
+						.m_nPrecision = pPozSprzedaz.pProdukt.pJednostkaEwid.nDokladnosc - 1
+						.m_strUnit = pPozSprzedaz.pProdukt.pJednostkaEwid.strSkrot
+						.m_strProdNazwa = pPozSprzedaz.pProdukt.strNazwa
+						.m_strProdInx = pPozSprzedaz.pProdukt.strIndeks
+						.m_strOpakNazwa = pPozSprzedaz.pOpak.strNazwa
+					end with
+				end if
+				
+				dim curValue : curValue = ccur(0.0)
+				if bAdditive then
+					curValue = pDHMBalanceItem.m_curValue(nColumn)
+				end if
+
+				pDHMBalanceItem.m_curValue(nColumn) = curValue + ccur(curFactor * pPozSprzedaz.curIloscOpak)
+			end if
+		end if
+	next
+end function
+
+'-------------------------------------------------------------
+' dodaj obiekt dokmag do kolumny nColumn kontenera
+'-------------------------------------------------------------
+function apply_n5dokmag_ilosc(byref pDHMBalance,byref pN5DokMag,byval nColumn,byval curFactor)
+	dim pPozDokMag
+	for each pPozDokMag in pN5DokMag.listPozycje
+		if not pPozDokMag.pProdukt is nothing and not pPozDokMag.pOpak is nothing then
+			dim nInx : nInx = pDHMBalance.find_on_prod(pPozDokMag.pProdukt.idobj,pPozDokMag.pOpak.idobj)
+			dim pDHMBalanceItem
+			if nInx >= 0 then
+				set pDHMBalanceItem = pDHMBalance.get_pos(nInx)
+			else
+				set pDHMBalanceItem = pDHMBalance.addnew_pos()
+				with pDHMBalanceItem
+					.m_idProd = pPozDokMag.pProdukt.idobj
+					.m_idOpak = pPozDokMag.pOpak.idobj
+					.m_nPrecision = pPozDokMag.pProdukt.pJednostkaEwid.nDokladnosc - 1
+					.m_strUnit = pPozDokMag.pProdukt.pJednostkaEwid.strSkrot
+					.m_strProdNazwa = pPozDokMag.pProdukt.strNazwa
+					.m_strProdInx = pPozDokMag.pProdukt.strIndeks
+					.m_strOpakNazwa = pPozDokMag.pOpak.strNazwa
+				end with
+			end if
+
+			pDHMBalanceItem.m_curValue(nColumn) = pDHMBalanceItem.m_curValue(nColumn) + _
+				ccur(curFactor * pPozDokMag.curIloscOpak)
+		end if
+	next
+end function
+
+function new_dhm_balance()
+	set new_dhm_balance = new CDHMBalance
+end function
+
+'=============================================================================
+'funkcja tworzy kartę bilansowa dla dokumentu sprzedaży (faktura lub korekta)
+'
+' kolumny:
+' [0] - ilość zafakturowana, już po korektach (ostatnia KFVS) = [SPRZEDAZ]
+' [1] - wydania (WZ)
+' [2] - zwroty (ZZ)
+' [3] - ilość wydana (WZ - ZZ) = [MAGAZYN]
+' [4] - pozostało do wydania (SPRZEDAZ - MAGAZYN)
+' [5] - pozostało do sprzedania (MAGAZYN - SPRZEDAZ)
+'=============================================================================
+
+
+function fill_dhm_balance_from_n5sprzedaz_internal(byref pDHMBalance,byref pN5Sprzedaz)
+	if not pN5Sprzedaz.pPopSprzed is nothing then
+		fill_dhm_balance_from_n5sprzedaz_internal pDHMBalance,pN5Sprzedaz.pPopSprzed
+	end if
+	'wypełnij SPRZ_COLNR_SPRZ oraz SPRZ_COLNR_WZ,SPRZ_COLNR_ZZ
+	apply_n5sprzedaz_ilosc pDHMBalance,pN5Sprzedaz,SPRZ_COLNR_SPRZ,ccur(1.0),false,true
+
+	dim pDokMagCrsr : set pDokMagCrsr = trans_.createrawcursor(TYPEID_N5DOKMAG, _
+		"wrefDokHandl_wrt=TYPEID_N5SPRZEDAZ and wrefDokHandl=" + cstr(pN5Sprzedaz.idobj), "" , "")
+	dim pN5DokMag
+	for each pN5DokMag in pDokMagCrsr
+		if pN5DokMag.nTypDok = N5REJESTRDOK__WZ then
+			apply_n5dokmag_ilosc pDHMBalance,pN5DokMag,SPRZ_COLNR_WZ,ccur(1.0)
+		else
+			apply_n5dokmag_ilosc pDHMBalance,pN5DokMag,SPRZ_COLNR_ZZ,ccur(-1.0)
+		end if
+	next
+end function
+
+function fill_dhm_balance_from_n5sprzedaz(byref pDHMBalance,byref pN5Sprzedaz)
+	fill_dhm_balance_from_n5sprzedaz_internal pDHMBalance,pN5Sprzedaz
+	'---- wylicz wartosci kolumn
+	dim iter
+	dim pDHMBalanceItem
+	for iter = 0 to pDHMBalance.get_count() - 1
+		set pDHMBalanceItem = pDHMBalance.get_pos(iter)
+		with pDHMBalanceItem
+			.m_curValue(SPRZ_COLNR_MAG) = .m_curValue(SPRZ_COLNR_WZ) + .m_curValue(SPRZ_COLNR_ZZ)
+			if .m_curValue(SPRZ_COLNR_SPRZ) > .m_curValue(SPRZ_COLNR_MAG) then
+				.m_curValue(SPRZ_COLNR_SPRZ_MAG) = .m_curValue(SPRZ_COLNR_SPRZ) - .m_curValue(SPRZ_COLNR_MAG)
+			else
+				.m_curValue(SPRZ_COLNR_MAGS_PRZ) = .m_curValue(SPRZ_COLNR_MAG) - .m_curValue(SPRZ_COLNR_SPRZ)
+			end if
+		end with
+	next
+end function
+
+
+
+function update_real_prod_by_dhmbalance(byref pDHMBalance , byref rp)
+
+	dim pos_sur , inx , pDHMBalanceItem
+	for each pos_sur in rp.listPozycje
+		inx = pDHMBalance.find_on_prod (pos_sur.pProdukt.idobj , pos_sur.pOpak.idobj)		
+		if inx >= 0 then
+			set pDHMBalanceItem = pDHMBalance.get_pos(inx)
+			if pDHMBalanceItem.m_curValue(SPRZ_COLNR_DOSTEPNOSC) < pos_sur.curIloscOpak then
+				pos_sur.curIloscOpak = pDHMBalanceItem.m_curValue(SPRZ_COLNR_DOSTEPNOSC)
+				pDHMBalanceItem.m_curValue(SPRZ_COLNR_DOSTEPNOSC) = ccur(0)				
+			end if
+		end if
+	next
+
+	'compact 
+	dim iter
+	for iter = rp.listPozycje.count to 0 step -1
+		if rp.listPozycje.exists(iter) then
+			if rp.listPozycje.get(iter).curIloscOpak = 0 then
+				rp.listPozycje.delete(iter)	
+			end if
+		end if
+	next
+
+end function
+
+
+dim g_bAsk:g_bAsk = true
+
+function update_rozchod_na_prod_by_dhmbalance(byref pDHMBalance , byref rp):update_rozchod_na_prod_by_dhmbalance = false
+	dim pos,pDHMBalanceItem,iter
+	
+	iter = 0
+	for each pos in rp.listPozycje
+		set pDHMBalanceItem = pDHMBalance.get_pos(iter)
+		if pDHMBalanceItem.m_curValue(SPRZ_COLNR_DOSTEPNOSC) < pos.curIloscOpak then			
+			if g_bAsk then
+				g_bAsk = false
+				if MessageBox ("Ilosć surowca jest mniejsa niż dostępna na wybranym magazynie surowców. Mozesz przerwać rezlizacje zlecenia lub kontunuowac realizując je z surowców w ilosciach dostępnych Kontynuować?", "Realizacja zlecenia produkcyjnego - rozchód na produkcję", vbYesNo, vbQuestion) = vbNo then
+					exit function
+				end if			
+			end if
+			pos.curIloscOpak = pDHMBalanceItem.m_curValue(SPRZ_COLNR_DOSTEPNOSC)
+		end if
+		iter = iter + 1
+	next
+
+
+	for iter = rp.listPozycje.count to 0 step -1
+		if rp.listPozycje.exists(iter) then
+			if rp.listPozycje.get(iter).curIloscOpak = 0 then
+				rp.listPozycje.delete(iter)	
+			end if
+		end if
+	next
+
+	update_rozchod_na_prod_by_dhmbalance = true
+
+
+end function
+
+'messagebox
+#include "50122"
+
+
+
+function fill_dhm_balance_by_recepta(byref pDHMBalance , byref recepta , byval idmag):fill_dhm_balance_by_recepta = false
+	
+	dim pos,pDHMBalanceItem,inx
+	for each pos in recepta.listSurowce
+		inx = pDHMBalance.find_on_prod (pos.pProdukt.idobj , pos.pOpak.idobj)
+		if inx > -1 then
+			set pDHMBalanceItem = pDHMBalance.get_pos(inx)			
+		else
+			set pDHMBalanceItem = pDHMBalance.addnew_pos()
+		end if
+		with pDHMBalanceItem
+			.m_idProd = pos.pProdukt.idobj
+			.m_idOpak = pos.pOpak.idobj
+			.m_nPrecision = pos.pProdukt.pJednostkaEwid.nDokladnosc - 1
+			.m_strUnit = pos.pProdukt.pJednostkaEwid.strSkrot
+			.m_strProdNazwa = pos.pProdukt.strNazwa
+			.m_strProdInx = pos.pProdukt.strIndeks
+			.m_strOpakNazwa = pos.pOpak.strNazwa
+			.m_curValue(SPRZ_COLNR_MAG) = pos.curIloscOpak
+		end with
+	next
+
+	get_stany_magazynowe pDHMBalance , idmag
+
+	fill_dhm_balance_by_recepta = true
+
+end function
+
+
+
+
+function fill_dhm_balance_by_rozchod_na_prod(byref pDHMBalance , byref rp , byval idmag):fill_dhm_balance_by_rozchod_na_prod = false
+	
+	dim pos,pDHMBalanceItem,inx
+	for each pos in rp.listPozycje
+		inx = pDHMBalance.find_on_prod (pos.pProdukt.idobj , pos.pOpak.idobj)
+		if inx > -1 then
+			set pDHMBalanceItem = pDHMBalance.get_pos(inx)			
+		else
+			set pDHMBalanceItem = pDHMBalance.addnew_pos()
+		end if
+		with pDHMBalanceItem
+			.m_idProd = pos.pProdukt.idobj
+			.m_idOpak = pos.pOpak.idobj
+			.m_nPrecision = pos.pProdukt.pJednostkaEwid.nDokladnosc - 1
+			.m_strUnit = pos.pProdukt.pJednostkaEwid.strSkrot
+			.m_strProdNazwa = pos.pProdukt.strNazwa
+			.m_strProdInx = pos.pProdukt.strIndeks
+			.m_strOpakNazwa = pos.pOpak.strNazwa
+			.m_curValue(SPRZ_COLNR_MAG) = pos.curIloscOpak
+		end with
+	next
+
+	get_stany_magazynowe pDHMBalance , idmag
+
+	fill_dhm_balance_by_rozchod_na_prod = true
+
+end function
+
+
+
+
+function get_stany_magazynowe(byref pDHMBalance, byval idobjMag)
+	get_stany_magazynowe_ex pDHMBalance, idobjMag , SPRZ_COLNR_DOSTEPNOSC
+end function
+
+
+function get_stany_magazynowe_ex(byref pDHMBalance, byval idobjMag , byval collnr)
+	dim iter,crsr,pDHMBalanceItem
+	for iter = 0 to pDHMBalance.get_count() - 1
+		set pDHMBalanceItem = pDHMBalance.get_pos(iter)
+		with pDHMBalanceItem
+			set crsr = trans_.createadors( doc_.getmodule(60300).bqry_stan_mag_for_prod_opak( .m_idProd , .m_idOpak , idobjMag ))
+			if crsr.eof then
+				.m_curValue(collnr) = ccur(0)
+			else
+				.m_curValue(collnr) = ccur(crsr.fields("c_ilosc_opak").value)
+			end if
+		end with
+	next
+end function
+
+
+function invalid_quantity (byref pDHMBalance, byval idobjMag): invalid_quantity = false
+	get_stany_magazynowe pDHMBalance , idobjMag
+	dim iter,crsr,pDHMBalanceItem
+	for iter = 0 to pDHMBalance.get_count() - 1	
+		set pDHMBalanceItem = pDHMBalance.get_pos(iter)
+		if pDHMBalanceItem.is_quantity_valid() then
+			invalid_quantity = true
+			exit function
+		end if
+	next
+end function
+
+
+function dhmBalance_isOK( byval pDHMBalance , byref pDokument):dhmBalance_isOK = true
+
+	dim pos,iter,posDHM,inx
+	inx = -1
+	for each pos in pDokument.listPozycje
+		if not pos.pProdukt is nothing and not pos.pOpak is nothing then
+			inx = pDHMBalance.find_on_prod (pos.pProdukt.idobj , pos.pOpak.idobj)
+		end if
+		if inx >=0 then
+			set posDHM = pDHMBalance.get_pos(inx)
+			if not posDHM.is_quantity_valid() then
+				trans_.message 1002 , 0 , "Pozycja " + pos.text + ": brak na magazynach. Dostępnych " + trans_.afc.display.quantity(posDHM.m_curValue(6) , pos.pOpak.pJednOpak.strSkrot , pos.pOpak.pJednOpak.nDokladnosc - 1 )
+				pos.isbad_pProdukt = true
+				pos.isbad_pOpak = true
+				pos.isbad_curIloscOpak = true
+				dhmBalance_isOK = false
+			end if		
+		end if
+	next
+
+end function
+
+
+'ta funkcja nie popelnia błędu poprzedniej - nie da sie jej oszukac wpisujac dwie pozycje ktore 
+'sumuja sie do ilosci przekracaajacej stan magazynowy ale osobno go nie przekraczaja
+'funkcja nie zmienia obiektu pDHMBalance
+'dzieki czemu po zapisie nadal bedzie mial takie ilosci jak na pozycjach
+function dhmBalance_isOK_new( byval pDHMBalance , byref pDokument):dhmBalance_isOK_new = true
+
+	'stworzymy slownik z iloscia poszczegolnych pozycji (para produkt/opakowanie)
+	dim elem
+	dim pDict:set pDict = CreateObject("Scripting.Dictionary")
+	dim curOld
+	dim inx:inx = -1
+	dim posDHM
+  
+#ifdef _ALMA_TREND
+	dim curIloscOrg
+	dim pDictOrg: set pDictOrg = CreateObject("Scripting.Dictionary")
+	'tworzy słownik z ilością poszczególnych pozycji z oryginału
+	if pDokument.n5sprzedaz_isKorekta() then
+		if not pDokument.pPopSprzed is nothing then
+			dim pDokumentOrg: set pDokumentOrg = trans_.getobj(TYPEID_N5SPRZEDAZ,pDokument.pPopSprzed.IdObj)
+			for each elem in pDokumentOrg.listPozycje
+				if not elem.pProdukt is nothing and not elem.pOpak is nothing then
+					if not pDictOrg.exists(cstr(elem.pOpak.idobj)) then
+						pDictOrg.Add cstr(elem.pOpak.idobj), elem.curIloscOpak	
+					else
+						curOld = pDictOrg.Item(cstr(elem.pOpak.idobj))
+						pDictOrg.Remove (cstr(elem.pOpak.idobj))
+						pDictOrg.Add cstr(elem.pOpak.idobj), elem.curIloscOpak + curOld			
+					end if
+				end if
+			next      
+		end if
+	end if
+#endif
+
+	for each elem in pDokument.listPozycje
+		if not elem.pProdukt is nothing and not elem.pOpak is nothing then
+			if not pDict.exists(cstr(elem.pOpak.idobj)) then
+				pDict.Add cstr(elem.pOpak.idobj), elem.curIloscOpak	
+			else
+				curOld = pDict.Item(cstr(elem.pOpak.idobj))
+				pDict.Remove (cstr(elem.pOpak.idobj))
+				pDict.Add cstr(elem.pOpak.idobj), elem.curIloscOpak + curOld			
+			end if
+		end if
+	next
+
+
+	for each elem in pDokument.listPozycje
+		if not elem.pProdukt is nothing and not elem.pOpak is nothing then
+
+			if elem.pProdukt.eRodzaj <> N5PRODUKT_TOWAR then
+
+				elem.isbad_pProdukt = false
+				elem.isbad_pOpak = false	
+
+			else
+			
+				inx = pDHMBalance.find_on_prod (elem.pProdukt.idobj , elem.pOpak.idobj)
+				if inx > -1 then
+					'ilosc dla danej pozycji
+					curOld = pDict.Item(cstr(elem.pOpak.idobj))
+#ifdef _ALMA_TREND
+					curIloscOrg = ccur(-1)
+					if pDictOrg.Exists(cstr(elem.pOpak.idobj)) then
+						curIloscOrg = pDictOrg.Item(cstr(elem.pOpak.idobj))
+					end if
+					if curOld <> curIloscOrg then
+#endif
+					set posDHM = pDHMBalance.get_pos(inx)
+					if posDHM.m_curValue(SPRZ_COLNR_DOSTEPNOSC) < curOld then					
+						trans_.message 1002 , 0 , "Pozycja " + elem.text + ": brak na magazynach. Dostępnych " + trans_.afc.display.quantity(posDHM.m_curValue(6) , elem.pOpak.pJednOpak.strSkrot , elem.pOpak.pJednOpak.nDokladnosc - 1 )
+						dhmBalance_isOK_new = false
+						elem.isbad_pProdukt = true
+						elem.isbad_pOpak = true
+					end if
+#ifdef _ALMA_TREND
+					end if
+#endif
+				else
+					trans_.message 1002 , 0 , "Nie potrafie sprawdzic dostepnosci artulułu z pozycji " + cstr(elem.text)
+					dhmBalance_isOK_new = false
+					elem.isbad_pProdukt = true
+					elem.isbad_pOpak = true
+				end if	
+
+			end if 			
+								
+		end if
+	next
+
+end function
+
+
+sub dhm_raport_create_header ( byref tb , bProdName , bProdInx , bOpakName , bIlosc , bDostepnosc , bBraki)
+	tb.newrow.row.styleitem = STYLE_TABLE_HEADER_RAPORT
+
+	if bProdName then
+		tb.newcell.addtext "Produkt"
+	end if
+
+	if bProdInx then
+		tb.newcell.addtext "Indeks"
+	end if
+
+	if bOpakName then
+		tb.newcell.addtext "Opakowanie"
+	end if
+
+	if bIlosc then
+		tb.newcell.addtext "Ilość"
+	end if
+
+
+	if bDostepnosc then
+		tb.newcell.addtext "Dostępność"
+	end if
+
+
+	if bBraki then
+		tb.newcell.addtext "Brakuje"
+	end if
+
+
+
+end sub
+
+
+
+sub dhm_raport_create_result_row ( byref tb , strProdName , strProdInx , strOpakName , curIlosc , curIloscDostepna , curRoznica , nPrecision , strUnit)
+	tb.newrow.row.styleitem = STYLE_TABLE_BODY_RAPORT
+
+	if strProdName<>"" then
+		tb.newcell.addtext strProdName
+	end if
+
+	if strProdInx<>"" then
+		tb.newcell.addtext strProdInx
+	end if
+
+	if strOpakName<>"" then
+		tb.newcell.addtext strOpakName
+	end if
+
+	if not isempty(curIlosc) then
+		tb.newcell.cell.align = ALIGN_RIGHT
+		tb.addtext trans_.afc.display.quantity(curIlosc , strUnit , nPrecision)
+	end if
+
+	if not isempty(curIloscDostepna) then
+		tb.newcell.cell.align = ALIGN_RIGHT
+		tb.addtext trans_.afc.display.quantity(curIloscDostepna , strUnit , nPrecision)
+	end if
+
+	if not isempty(curRoznica) then		
+		if curRoznica > 0 then
+			tb.newcell.cell.align = ALIGN_RIGHT
+			tb.addtext trans_.afc.display.quantity(curRoznica , strUnit , nPrecision)
+			tb.element.forecolor = rgb(255,0,0)
+		else
+			tb.newcell.cell.align = ALIGN_RIGHT
+			tb.addtext "--"			
+		end if
+	end if
+
+end sub
+
+function create_raport (pDHMBalance , strMag)
+
+	dim page:set page = doc_.getpagehli("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=43032")	
+	page.ctrl(RAPORT_TITLE).text = "Kreator realizacji produkcji - bilans stanów magazynowych - magazyn " + strMag
+	dim tb:set tb = doc_.afc.new_tb(page).attach(page.ctrl(ID_TABLE_RESULTS))
+
+	dim perf:set perf = doc_.performing("Trwa przygotowywanie wyników .....")
+
+
+	dhm_raport_create_header tb , true , true , true , true , true , true 
+
+
+
+	dim iter,crsr,pDHMBalanceItem,strText , curIlosc , curIloscDostepna, curRoznica
+	for iter = 0 to pDHMBalance.get_count() - 1	
+		set pDHMBalanceItem = pDHMBalance.get_pos(iter)
+
+		with pDHMBalanceItem
+			dhm_raport_create_result_row tb , .m_strProdNazwa , .m_strProdInx , .m_strOpakNazwa , .m_curValue(SPRZ_COLNR_MAG) , .m_curValue(SPRZ_COLNR_DOSTEPNOSC), .m_curValue(SPRZ_COLNR_MAG) - .m_curValue(SPRZ_COLNR_DOSTEPNOSC) , .m_nPrecision , .m_strUnit
+		end with
+
+	next
+
+
+	set perf = nothing
+
+	page.domodalauto
+
+end function
+
+
+
+
+function edit_dhm_balance(byref dhm_balance)
+	dim pRaport:set pRaport = doc_.getmodule(43033)
+
+	dim cfg:set cfg = pRaport.create_dmh_editor_config()
+	edit_dhm_balance = pRaport.edit_dhm_balance ( dhm_balance , cfg )
+
+end function
+
+
+
+
+function dhm_balance_2_zamowienie (byval dhm_balance , byref zamowienie , byval nQuantityColumn)
+	dim iter,dhm_item,zam_item
+	for iter = 0 to dhm_balance.get_count() - 1		
+		set dhm_item = dhm_balance.get_pos(iter)
+		if dhm_item.m_curValue(SPRZ_COLNR_CUSTOM) > 0 then
+			set zam_item = zamowienie.listPozycje.addnew()
+			set zam_item.pProdukt = trans_.getobj(TYPEID_N5PRODUKT , clng(dhm_item.m_idProd))
+			zam_item.curIloscOpak = dhm_item.m_curValue(SPRZ_COLNR_CUSTOM)
+		end if
+	next
+end function
+
+
+'----------------------------------------------------------------------------------------------------------------------------
+'Kolorowanie wiersza na niebiesko na dokumentach: sprzedaż, zamówienie, oferta przy użyciu obiektu n5straznik_cen (DB12_B)
+'Gdy cena netto z dokumentu (parametr curCena) jest niższa niż cena z kartoteki produktu wg zestawu cen "strażnika"
+'powiększona o x% to koloruj wiersz na niebiesko => cena sprzedaży poniżej ceny minimalnej
+'----------------------------------------------------------------------------------------------------------------------------
+function IsPriceToLow(byref pKwalifikatorEx, byref pProdukt, byref pOpak, byref pKlient, byval eNettoBrutto, byval curCena, byref pWalutaDok): IsPriceToLow = false
+  dim bNettoRes: bNettoRes = (eNettoBrutto = N5SPRZEDAZ_NETTO)
+  dim strKlient: strKlient = "0"
+  dim strKlientGrupa: strKlientGrupa = "0"
+  dim strProdukt: strProdukt = "0"
+  dim strProduktGrupa: strProduktGrupa = "0"
+  dim strSQL
+  strSQL = "select top 1 sc.scs_curModyfikator,sc.scs_eZestawCenowy,sc.scs_wpProdGrupa,sc.scs_wpProdGrupa_wrt " + vbNewLine +_ 
+           "from n5straznik_cen sc " + vbNewLine +_ 
+           "where sc.scs_eAktywny = 1 and sc.scs_pKwalifikatorEx = %1 and " + vbNewLine +_ 
+           "sc.scs_wpProdGrupa = 0 and sc.scs_wpKlientGrupa = 0 " + vbNewLine +_
+           "union " + vbNewLine +_
+           "select top 1 sc.scs_curModyfikator,sc.scs_eZestawCenowy,sc.scs_wpProdGrupa,sc.scs_wpProdGrupa_wrt " + vbNewLine +_ 
+           "from n5straznik_cen sc " + vbNewLine +_ 
+           "where sc.scs_eAktywny = 1 and sc.scs_pKwalifikatorEx = %1 and " + vbNewLine +_ 
+           "sc.scs_wpKlientGrupa = 0 and " + vbNewLine +_
+           "((sc.scs_wpProdGrupa = %4 and sc.scs_wpProdGrupa_wrt = TYPEID_N5PRODUKT) or " +_ 
+           "(sc.scs_wpProdGrupa = %5 and sc.scs_wpProdGrupa_wrt = TYPEID_N5GRUPAPRODUKTOW)) " + vbNewLine +_
+           "union " + vbNewLine +_
+           "select top 1 sc.scs_curModyfikator,sc.scs_eZestawCenowy,sc.scs_wpProdGrupa,sc.scs_wpProdGrupa_wrt " + vbNewLine +_ 
+           "from n5straznik_cen sc " + vbNewLine +_ 
+           "where sc.scs_eAktywny = 1 and sc.scs_pKwalifikatorEx = %1 and " + vbNewLine +_ 
+           "((sc.scs_wpKlientGrupa = %2 and sc.scs_wpKlientGrupa_wrt = TYPEID_N5KLIENT) or " +_
+           "(sc.scs_wpKlientGrupa = %3 and sc.scs_wpKlientGrupa_wrt = TYPEID_N5GRUPAKLIENT)) and " + vbNewLine +_
+           "sc.scs_wpProdGrupa = 0 " + vbNewLine +_
+           "union " + vbNewLine +_ 
+           "select top 1 sc.scs_curModyfikator,sc.scs_eZestawCenowy,sc.scs_wpProdGrupa,sc.scs_wpProdGrupa_wrt " + vbNewLine +_ 
+           "from n5straznik_cen sc " + vbNewLine +_
+           "where sc.scs_eAktywny = 1 and sc.scs_pKwalifikatorEx = %1 and " + vbNewLine +_ 
+           "((sc.scs_wpProdGrupa = %4 and sc.scs_wpProdGrupa_wrt = TYPEID_N5PRODUKT) or " +_ 
+           "(sc.scs_wpProdGrupa = %5 and sc.scs_wpProdGrupa_wrt = TYPEID_N5GRUPAPRODUKTOW)) and " + vbNewLine +_ 
+           "((sc.scs_wpKlientGrupa = %2 and sc.scs_wpKlientGrupa_wrt = TYPEID_N5KLIENT) or " +_
+           "(sc.scs_wpKlientGrupa = %3 and sc.scs_wpKlientGrupa_wrt = TYPEID_N5GRUPAKLIENT)) " + vbNewLine +_
+           "order by sc.scs_curModyfikator"
+         
+  'filtr na kwalifikator         
+  if pKwalifikatorEx is nothing then
+    strSQL = Replace(strSQL,"%1","0")
+  else
+    strSQL = Replace(strSQL,"%1",CStr(pKwalifikatorEx.IdObj))
+  end if
+  
+  'filtr na klienta/grupę klientów
+  if not pKlient is nothing then
+    strKlient = Cstr(pKlient.IdObj)
+    if not pKlient.pGrupaKlient is nothing then
+      strKlientGrupa = CStr(pKlient.pGrupaKlient.IdObj)            
+    end if
+  end if  
+  
+  'filtr na produkt/grupę produktów
+  if not pProdukt is nothing then
+    strProdukt = Cstr(pProdukt.IdObj)
+    if not pProdukt.pGrupaProd is nothing then
+      strProduktGrupa = CStr(pProdukt.pGrupaProd.IdObj)      
+    end if
+  end if
+  
+  strSQL = Replace(strSQL,"%2",strKlient)
+  strSQL = Replace(strSQL,"%3",strKlientGrupa)
+  strSQL = Replace(strSQL,"%4",strProdukt)
+  strSQL = Replace(strSQL,"%5",strProduktGrupa)
+  
+  dim oRS: set oRS = trans_.createadors(strSQL)
+  if not oRS.EOF then
+    dim curModyfikator: curModyfikator = ccur(oRS(0).value)
+    dim iNrCeny: iNrCeny = ccur(oRS(1).value)
+    dim curCenaOut: curCenaOut = ccur(0.0)
+    dim curCenaOpakOut: curCenaOpakOut = ccur(0.0)
+    dim curCenaOpak : curCenaOpak = pOpak.n5opakowanie_produktu_get_cena_n(iNrCeny,bNettoRes)
+    dim pWalCeny : set pWalCeny = pOpak.n5opakowanie_produktu_get_waluta_ceny_n(iNrCeny)
+    
+#ifdef _IOW
+    if iNrCeny = ccur(6) then
+      dim wpProdGrupa: wpProdGrupa = clng(oRS(2).value)
+      dim wpProdGrupa_wrt: wpProdGrupa_wrt = clng(oRS(3).value)
+      if wpProdGrupa > clng(0) and wpProdGrupa_wrt = TYPEID_N5PRODUKT THEN
+        'pobierz najwyższą cenę dostawy
+        curCenaOpak = GetCenaFromDost(wpProdGrupa)
+      end if
+    end if
+#endif
+  
+    'gdy waluta dokumentu i opakowania się różnią, przelicz na walutę firmy
+    if not pWalCeny is pWalutaDok then
+      dim pFirmaWaluta: set pFirmaWaluta = getCurrentFirma().pWaluta
+      if not pFirmaWaluta is pWalutaDok then
+		    if kantor(curCena, pWalutaDok, pFirmaWaluta, _
+			    trans_.var(GVAR_TODAY), N5KURSWALUT_SPRZEDAZY, curCenaOut) then
+            curCena = curCenaOut
+		    end if   
+      end if
+    
+      if not pFirmaWaluta is pWalCeny then
+		    if kantor(curCenaOpak, pWalCeny, pFirmaWaluta, _
+			    trans_.var(GVAR_TODAY), N5KURSWALUT_SPRZEDAZY, curCenaOpakOut) then
+            curCenaOpak = curCenaOpakOut
+		    end if     
+      end if
+    end if
+  
+    if curCena < trans_.afc.convert.round2(curCenaOpak * ((100 + curModyfikator)/100)) then
+      IsPriceToLow = true      
+    end if
+  end if
+end function
+
+'-----------------------------------------------
+'zwraca maksymalną cenę z niesprzedanych dostaw
+'-----------------------------------------------
+function GetCenaFromDost(byval idProd): GetCenaFromDost = ccur(0.0)
+  dim strSQL
+  strSQL = "select top 1 'cena'=max(gmo_curCena) from n5gmop where gmo_pProd = " + CStr(idProd) + vbNewLine +_
+           "group by gmo_idDost,gmo_pProd,gmo_pOpak" + vbNewLine +_ 
+           "having sum(gmo_curIlosc) > 0" + vbNewLine +_
+           "order by cena desc"
+  dim oRS: set oRS = trans_.createadors(strSQL)
+  if not oRS.EOF then
+    GetCenaFromDost = ccur(oRS(0).value)
+  end if
+end function
+
+
+]]>
+</script>
+</config>
+	<body>
+	</body>
+</page>
+

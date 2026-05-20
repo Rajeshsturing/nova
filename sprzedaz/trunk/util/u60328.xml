@@ -1,0 +1,553 @@
+<?xml version="1.0" encoding="windows-1250"?>
+
+<!--
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1004.h"
+#include "h1200.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1201.h"
+#include "h1232.h"
+#include "h1223.h"
+#include "h1234.h"
+
+#define PAGE_WIZZARD_EXPORT_IMPORT_FILE_STEP			20616
+#define PAGE_WIZZARD_EXPORT_IMPORT_FIELD_STEP			20615
+
+-->
+
+<page>
+	<config>
+		<title>Wizzard</title>
+		<script>
+      
+<!--
+	  Kreator importu zamówień - Kompozyty
+-->
+
+			<![CDATA[
+'nx_trace
+#include "50519"
+
+'MessageBox
+#include "50122"
+'getCurrent*
+#include "50203"
+'system_add_root
+#include "50204"
+'Excel*
+#include "50205"
+'CWizzard
+#include "50209"
+'CFilesDrives
+#include "50211"
+'CImportManager
+#include "50614"
+'CADOExportManager
+#include "50613"
+
+'nazwa pliku => arkusz
+dim g_strFileName : g_strFileName = ""
+
+#define NV_NONE		2
+
+function fopen(): fopen = false
+  trans_.var(APPVAR_IMPORT_KIND) = IMPXLS
+  'uruchom wizzard
+	start_wizzard
+end function
+
+'-------------------------
+' Kontener wizarda importu
+'-------------------------
+dim g_pM60319 : set g_pM60319 = doc_.getmodule(60319)
+
+class CImportWizzardContainer
+	public m_strPath
+	public m_strImportType
+	public m_nNavoVersion
+	public m_nNavoShow
+	public m_bDefault
+	public m_strLogin
+	public m_strPass
+	public m_strServer
+	public m_pItems
+	public m_bResult
+
+	private m_oNAVOFirmaImportOptions
+	public m_oarrExpFilter
+	public m_nChoosenFilter
+	public m_nExportWay
+
+	private sub class_initialize()		
+		set m_pItems = trans_.afc.new_navoarray()
+		m_strPath = ""
+		m_nExportWay = clng(1)
+		m_strImportType = ""
+		m_nNavoVersion = ""
+		m_strLogin = "sa"
+		m_strPass = ""
+		m_strServer = "."
+		m_nNavoShow = NV_NONE
+		m_bDefault = true
+		set m_oarrExpFilter = nothing
+		m_nChoosenFilter = -1
+		set m_oNAVOFirmaImportOptions = g_pM60319.new_Option()
+	end sub
+
+	public function NewItemToImport()
+		dim pNewItem
+		set pNewItem = new CItemToImport
+
+		m_pItems.Add pNewItem
+		set NewItemToImport = pNewItem
+	end function
+end class
+
+
+'--------------------------------------------------------
+'Klasa opisująca jeden element importowany / eksportowany
+'m_nTypeID		- identyfikator typu
+'m_strName		- nazwa wyswietlana w podsumowniu
+'m_strParam1	- parametr 1
+'m_strParam2	- parametr 2
+'bDisplay		- czy wyswietlac w podsumowaniu
+'--------------------------------------------------------
+class CItemToImport
+	public m_nTypeID
+	public m_strName
+	public m_strParam1
+	public m_strParam2
+	public bDisplay
+end class
+
+'-------------------------------------------------------------------------------------------
+' Rozpocznij wizzard
+'-------------------------------------------------------------------------------------------
+dim g_pModule60272 : set g_pModule60272 = nothing
+
+function start_wizzard()
+  dim pWizzard : set pWizzard = CWizzard( false )
+  dim pContainer : set pContainer = new CImportWizzardContainer
+  pContainer.m_strImportType = trans_.var(APPVAR_IMPORT_KIND)
+    
+  pWizzard.add_step PAGE_WIZZARD_EXPORT_IMPORT_FILE_STEP
+  pWizzard.add_step PAGE_WIZZARD_EXPORT_IMPORT_FIELD_STEP
+  pWizzard.add_container pContainer
+  pWizzard.run
+end function
+
+
+'-----------------------
+'OBSLUGA KROKOW WIZZARDA
+'-----------------------
+
+'--------------------------------
+'Inicjacja strony kroku wizzarda
+'--------------------------------
+function onPageInit(pWizzardPage)
+end function
+
+'-----------------------------
+'wejscie w jakis krok wizzarda
+'-----------------------------
+function onPageEnter(pWizzardPage)
+end function
+
+'--------------------------
+'wyjście ze strony wizzarda
+'--------------------------
+function onPageExit(pWizzardPage)
+  onPageExit=PAGE_DEFAULT
+
+  with pWizzardPage.m_pContainer
+    if pWizzardPage.m_nPage = PAGE_WIZZARD_EXPORT_IMPORT_FILE_STEP then
+
+      'sprawdzamy poprawność wskazanego pliku
+      if (.m_strImportType = IMPXLS) then
+        if (.m_strPath <> "") then
+          dim strDestPath : strDestPath = .m_strPath
+
+          dim pFD, bOK
+          set pFD = CFileDrive(bOK)
+          if (not bOK) then
+            view_message 6161, 0
+            onPageExit = PAGE_DONOTEXIT
+            exit function
+          end if
+
+          dim strFileName : strFileName = pFD.GetFileName(strDestPath)
+          g_strFileName = pFD.RemoveExtension(strFileName)
+          'sprawdzamy czy jest nazwa pliku
+          if (strFileName = "") then
+          MessageBox "Nie podano nazwy pliku.", "Kreator importu zamówień", vbOKOnly, vbInformation
+            onPageExit = PAGE_DONOTEXIT
+            exit function	
+          end if
+
+          'w przypadku importów plik musi istnieć
+          if (not pFD.isFile(.m_strPath)) then
+            MessageBox "Plik """ + CStr(.m_strPath) + """ nie istnieje.", "Kreator importu zamówień", vbOKOnly, vbInformation
+            onPageExit = PAGE_DONOTEXIT
+            exit function
+          end if
+          
+        else 'path is empty
+          MessageBox "Nie podano nazwy pliku.", "Kreator importu zamówień", vbOKOnly, vbInformation
+          exit function	
+        end if
+      end if
+    end if
+  end with
+end function
+
+'---------------------------
+'zakończenie całego wizzarda
+'---------------------------
+function onWizzardComplete(byref pWizzardPage) : onWizzardComplete = false
+  NX_TRACE_START_STREAM("Import zamówień",nothing)
+
+  with pWizzardPage.m_pContainer
+    if .m_strImportType = IMPXLS then
+      onWizzardComplete = Import_FromExcel(.m_strPath, pWizzardPage.m_pContainer)
+    end if
+
+    'aktywuj naszą stronę
+    pWizzardPage.m_pPage.activate 
+
+    'komunikat czy się udało
+    if .m_strPath <> "" then
+      if (onWizzardComplete) then
+        trans_.var(GVAR_MODALRES)=CLng(1)
+      else	
+        MessageBox "Operacja importu danych się NIE powiodła.", "Kreator importu zamówień", vbOKOnly, vbInformation
+        exit function
+      end if
+    end if
+  end with
+
+	NX_TRACE_SHOW_LOG(1)
+
+  'utwórz zamówienia
+  dim iNr : iNr = 0
+  dim pPerf : set pPerf = doc_.performing("Trwa generowanie zamówień...")
+    createZamowienia iNr
+  set pPerf = nothing
+  MessageBox "Operacja zakończona. Ilość utworzonych zamówień: " + CStr(iNr), "Kreator importu zamówień", vbOKOnly, vbInformation
+end function
+
+'------------------------------------
+'wczytanie rekordów z pliku do tabeli
+'------------------------------------
+dim pZamArray : set pZamArray = trans_.afc.new_navoarray()
+dim pRecordArray : set pRecordArray = trans_.afc.new_navoarray()
+
+'-----------------------------------------
+'klasa reprezentująca obiekt z pliku Excel
+'-----------------------------------------
+class CSingleRecord
+  public m_dDataWyst      'data wystawienia zamówienia
+  public m_idKlient       'idobj klienta
+  public m_strNrZamObc    'numer zamówienia obcego
+  public m_idProd         'idobj produktu
+  public m_dDataReal      'termin realizacji
+  public m_curIlosc       'ilość
+  public m_strStatus      'status dla pozycji
+  
+  private sub class_initialize()
+    m_dDataWyst = trans_.afc.globals.nulldate()
+    m_idKlient = clng(0)
+    m_strNrZamObc = ""
+    m_idProd = clng(0)
+    m_dDataReal = trans_.afc.globals.nulldate()
+    m_curIlosc = ccur(0)
+    m_strStatus = ""
+  end sub
+  
+  '-------------------------------------------
+  'ustawia idobj produktu na podstawie indeksu
+  '-------------------------------------------
+  public sub setIdProdukt(byval strIndeks)
+    dim idProd : idProd = trans_.findobjid(TYPEID_N5PRODUKT,"strIndeks = '" + CStr(strIndeks) + "'")
+    if idProd > clng(0) then
+      m_idProd = clng(idProd)
+    end if
+  end sub
+  
+  '-------------------------------------------------------------------------
+  'ustawia idobj klienta na podstawie pola z kartoteki 'Nasz kod wg klienta'
+  '-------------------------------------------------------------------------
+  public sub setIdKlient(byval strIndeksNaszaFirma)
+    dim idKlient : idKlient = trans_.findobjid(TYPEID_N5KLIENT,"kli_strIndeksNaszaFirma = '" + CStr(strIndeksNaszaFirma) + "'")
+    if idKlient > clng(0) then
+      m_idKlient = clng(idKlient)
+    end if
+  end sub     
+end class
+
+'------------------------------------------
+'funkcja importu danych z pliku XLS (Excel)
+'------------------------------------------
+function Import_FromExcel(byval strFileName, byref pImportContainer)
+  NX_TRACE_START_STREAM("Import z pliku XLS",nothing)
+
+  dim pContainer : set pContainer = new CExcelExpContainer
+  dim pExportManager : set pExportManager = new CADOExportManager
+  pContainer.setExport pExportManager
+
+  'ustaw kontener exportu
+  pExportManager.setContainer pContainer
+
+  'podlacz się do pliku excelowego
+  if strFileName <> "" then
+    if (not pContainer.logon(strFileName, pExportManager)) then
+      view_message1 6309, 0, strFileName
+    end if   
+  end if
+
+  'Importuj poszczególne obiekty
+  import_XLSZamowienia pExportManager
+
+  Import_FromExcel = pContainer.end_import()
+
+  pExportManager.performing_destroy
+
+  set pExportManager = nothing
+  set pContainer = nothing
+  NX_TRACE_SHOW_LOG(1)
+
+end function
+
+'------------------------------
+'import pozycji z plike Excel'a
+'------------------------------
+function import_XLSZamowienia(byref pExpMan) : import_XLSZamowienia = false
+  dim nMode
+  dim pRecordset : set pRecordset = nothing
+  'ustaw zakres dat
+  dim dDataOd : dDataOd = trans_.afc.globals.nulldate()
+  dim dDataDo : dDataDo = trans_.afc.globals.nulldate()
+  if not setDateRange(nMode, dDataOd, dDataDo) then
+    trans_.message 7000, 0, "Należy wybrać zakres dat."
+    exit function
+  end if  
+  
+  dim pPerf : set pPerf = doc_.performing("Trwa import pozycji z pliku...")
+  
+  on error resume next
+
+  'gdy wybierzemy plik excel => załaduj dane
+  if not pExpMan is nothing then
+    set pRecordset = pExpMan.getConnection().execute("select * from [" + g_strFileName + "$]")
+    on error resume next
+    if pRecordset is nothing then
+      set pRecordset = pExpMan.getConnection().execute("select * from [Arkusz1$]")
+    end if
+    if not pRecordset is nothing then
+      pExpMan.performing_show "Import zamówień"
+      if (err.number = 0) then
+        while (not pRecordset.EOF)
+          pExpMan.performing_restore
+          if not Zamowienia_XLS_process_obj(pRecordset,pExpMan,nMode,dDataOd,dDataDo) then
+            pExpMan.cancelExport
+            exit function
+          end if
+          pRecordset.movenext	
+        wend
+      end if
+    else
+      trans_.message 7000, 0, "Błąd połączenia z arkuszem pliku Excel."
+      exit function
+    end if
+  end if
+
+  set pPerf = nothing
+  import_XLSZamowienia = true
+end function
+
+'---------------------------
+'import pojedynczego rekordu
+'---------------------------
+function Zamowienia_XLS_process_obj(byref rs, byref pExpMan,byval nMode, byval dDataOd, byval dDataDo) : Zamowienia_XLS_process_obj = false
+  dim oSR : set oSR = new CSingleRecord
+  
+  'pobierz dane
+  if (not getValue(pExpMan,rs,"Data kalkulacji",true) = "") and (not getValue(pExpMan,rs,"Nr części kupującego",true) = "") and _
+     (not getValue(pExpMan,rs,"Nr zamówienia", true) = "") and (not getValue(pExpMan, rs, "Docelowy punkt rozładunku", true) = "") and _ 
+     (not getValue(pExpMan, rs, "Data ostatniej dostawy/Planowana data dostawy", true) = "") and _
+     (not getValue(pExpMan, rs, "Ilość w ostatniej dostawie/Ilość według harmonogramu dostaw", true) = "") and _
+     (not getValue(pExpMan, rs, "Numery ostatnich dokumentów dostaw/Status harmonogramu dostaw", true) = "") then
+    
+        oSR.m_dDataWyst = CDate(getValue(pExpMan, rs, "Data kalkulacji", true))
+        oSR.setIdKlient CStr(getValue(pExpMan, rs, "Docelowy punkt rozładunku", true))
+        oSR.m_strNrZamObc = CStr(getValue(pExpMan,rs,"Nr zamówienia", true))
+        oSR.setIdProdukt CStr(getValue(pExpMan,rs,"Nr części kupującego",true))
+        oSR.m_dDataReal = CDate(getValue(pExpMan, rs, "Data ostatniej dostawy/Planowana data dostawy", true))
+        oSR.m_curIlosc = CCur(getValue(pExpMan, rs, "Ilość w ostatniej dostawie/Ilość według harmonogramu dostaw", true))
+        oSR.m_strStatus = CStr(getValue(pExpMan, rs, "Numery ostatnich dokumentów dostaw/Status harmonogramu dostaw", true))
+    
+        'zapamiętaj dane
+        select case nMode
+          case PARAM_DATE_MODE_ANY_DATE
+            pRecordArray.add oSR
+          case PARAM_DATE_MODE_CURRENT_YEAR,PARAM_DATE_MODE_CURRENT_MONTH,PARAM_DATE_MODE_TODAY,PARAM_DATE_MODE_RANGE
+            if oSR.m_dDataReal >= dDataOd and oSR.m_dDataReal <= dDataDo then
+              pRecordArray.add oSR
+            end if
+          case PARAM_DATE_MODE_BEFORE
+            if oSR.m_dDataReal <= dDataOd then
+              pRecordArray.add oSR
+            end if
+          case PARAM_DATE_MODE_AFTER
+            if oSR.m_dDataReal >= dDataOd then
+              pRecordArray.add oSR
+            end if          
+        end select
+	end if
+	
+	Zamowienia_XLS_process_obj = true
+end function
+
+'---------------------------------
+'zakres dat dla terminu realizacji
+'---------------------------------
+function setDateRange(byref nMode, byref dDataOd, byref dDataDo) : setDateRange = false
+  dim pModRapEngine : set pModRapEngine = doc_.getmodule(60108)
+  dim strDateRange : strDateRange = "%1"
+  dim pParamArray : set pParamArray = doc_.afc.new_navoarray()  
+  pParamArray.add doc_.afc.rap.param.new_date_range("Termin realizacji").bindexpr("")  
+  if pModRapEngine.show_raport_param_dialog(pParamArray,"Import zamówień") = 0 then
+    exit function
+  end if   
+  strDateRange = pModRapEngine.query_apply_actual_param(strDateRange,pParamArray)
+  nMode = pParamArray.value(0).mode
+  dDataOd = pParamArray.value(0).first_value
+  dDataDo = pParamArray.value(0).last_value
+  setDateRange = true
+end function
+
+'-----------------
+'tworzy zamówienie
+'-----------------
+function createZamowienia(byref iNr) : createZamowienia = false
+  'pRecordArray
+  dim iter
+  for iter = 0 to pRecordArray.upperIndex 
+    if not nrInTable(pRecordArray.value(iter).m_strNrZamObc) then
+      pZamArray.add pRecordArray.value(iter)
+    end if  
+  next
+
+  'update starych zamówień
+  dim strSQL, oRS, pPoz
+  for iter = 0 to pZamArray.upperIndex
+    strSQL = "select idobj from n5zamowienie where strNrDok like '" + CStr(pZamArray.value(iter).m_strNrZamObc) + "' or " +_
+             "zam_strNrDokObcy like '" + CStr(pZamArray.value(iter).m_strNrZamObc) + "'"
+    set oRS = trans_.createadors(strSQL)
+    if oRS.recordCount > clng(0) then
+      dim oZam : set oZam = trans_.getobj(TYPEID_N5ZAMOWIENIE,clng(oRS(0).value))
+      dim strNextNr : strNextNr = genNextNr(oZam)
+      oZam.strNrDok = oZam.strNrDok + "/" + strNextNr
+      oZam.zam_strNrDokObcy = oZam.zam_strNrDokObcy + "/" + strNextNr
+      for each pPoz in oZam.listPozycje
+        pPoz.pzam_curIloscOpakZreal = pPoz.curIloscOpak
+      next
+      if (not trans_.saveobjects()) then
+        exit function
+      end if      
+    end if
+  next
+
+  for iter = 0 to pZamArray.upperIndex
+    trans_.var(APPVAR_REJESTR_TYP) = clng(N5REJESTRDOK__ZAM_OBCE)
+    dim pOpenForm : set pOpenForm = doc_.getmodule(60129).prepare_form_open_command(TYPEID_N5ZAMOWIENIE,0,0)
+    if pOpenForm is nothing then
+      exit function
+    end if
+    dim pForm : set pForm = doc_.getpagehli(pOpenForm)
+    if pForm is nothing then
+      exit function
+    end if
+    
+    'dokument
+    pForm.root.dDataWyst = pZamArray.value(iter).m_dDataWyst
+    if pZamArray.value(iter).m_idKlient > clng(0) then
+      set pForm.root.pKlient = trans_.getobj(TYPEID_N5KLIENT,clng(pZamArray.value(iter).m_idKlient))
+    end if
+    pForm.root.strNrDok = pZamArray.value(iter).m_strNrZamObc
+    pForm.root.zam_strNrDokObcy = pZamArray.value(iter).m_strNrZamObc
+    
+    'pozycje
+    dim i,oSR
+    for i = 0 to pRecordArray.upperIndex
+      set oSR = pRecordArray.value(i)
+      if oSR.m_strNrZamObc = pZamArray.value(iter).m_strNrZamObc and oSR.m_idProd > clng(0) and oSR.m_curIlosc > ccur(0) then
+        set pPoz = pForm.root.listPozycje.addnew()
+        set pPoz.pProdukt = trans_.getobj(TYPEID_N5PRODUKT,clng(oSR.m_idProd))
+        set pPoz.pOpak = pPoz.pProdukt.listOpakowania.get(1)    
+        pPoz.curIloscOpak = ccur(oSR.m_curIlosc)
+        pPoz.pzam_dDataReal = oSR.m_dDataReal
+        'status
+        dim idKwEx : idKwEx = trans_.findobjid(TYPEID_N5KWALIFIKATOR,"strNazwa like '" + CStr(oSR.m_strStatus) + "'")
+        if idKwEx > clng(0) then
+          set pPoz.pKwalifikatorEx = trans_.getobj(TYPEID_N5KWALIFIKATOR,idKwEx)
+        end if
+      end if  
+    next
+    if (not trans_.saveobjects()) then
+      exit function
+    end if
+    iNr = iNr + 1
+    'pForm.domodalauto()
+  next  
+  
+  createZamowienia = true
+end function
+
+'-------------------------------------------------
+'zwraca true gdy nr dokumentu obcego jest w tabeli
+'-------------------------------------------------
+function nrInTable(byval strNrZam) : nrInTable = false
+  dim iter
+  for iter = 0 to pZamArray.upperIndex
+    if pZamArray.value(iter).m_strNrZamObc = strNrZam then
+      nrInTable = true
+      exit function
+    end if
+  next
+end function    
+
+'--------------------------------------------
+'dodaje kolejny nr dla tego samego zamowienia
+'--------------------------------------------
+function genNextNr(byref oZam) : genNextNr = "001"
+  dim strSQL
+  strSQL = "select idobj from n5zamowienie where strNrDok like '" + CStr(oZam.strNrDok) + "/%' or " +_
+           "zam_strNrDokObcy like '" + CStr(oZam.zam_strNrDokObcy) + "/%' order by idobj desc"
+  dim oRS : set oRS = trans_.createadors(strSQL)
+  if oRS.recordCount > clng(0) then
+    dim strNr, iNr
+    dim oZamow : set oZamow = trans_.getobj(TYPEID_N5ZAMOWIENIE,clng(oRS(0).value))
+    if InStr(oZamow.zam_strNrDokObcy,oZam.zam_strNrDokObcy) > clng(0) then
+      strNr = Right(oZamow.zam_strNrDokObcy,3)
+      iNr = CInt(strNr)
+      iNr = iNr + 1
+    elseif InStr(oZamow.strNrDok,oZam.strNrDok) > clng(0) then
+      strNr = Right(oZamow.strNrDok,3)
+      iNr = CInt(strNr)
+      iNr = iNr + 1      
+    end if
+    genNextNr = Right(CStr(1000 + iNr),3)
+  end if
+end function
+
+]]>
+
+		</script>
+	</config>
+	<body>
+	</body>
+</page>

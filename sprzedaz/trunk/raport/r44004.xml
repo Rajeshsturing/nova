@@ -1,0 +1,297 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1240.h"
+#include "h1250_raport_macros.h"
+#include "50519"
+
+#define CREATOR_TITLE	Tworzenie WZ do dokumentów sprzedaży
+
+#define CTRLID_RESULT_TABLE		  101
+#define CTRLID_REDIRECT_CHKBOX	102
+#define CTRLID_DOK_TYPE         103
+
+#define PRIV_PROP_ROW_TYPE		222
+#define ROW_TYPE_DETAIL			1
+#define ROW_TYPE_SUMMARY		2
+
+
+-->
+<page style='STYLE_PAGE'>
+	<config>
+		<title>
+	CREATOR_TITLE
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+		<script>
+<![CDATA[
+
+#include "50518"
+#include "50211" 
+#include "50200"
+#include "50122"
+#include "50101"
+
+dim strSQL
+
+'------------------------------------------------
+'-- standardowa funkcja wolana przy otwarciu strony
+function fopen : fopen = false
+
+#ifdef _ABAKUS
+  if HARUI_FREE(UAR_OGRANICZONY_DOSTEP_DANE_KLIENTA) then
+    trans_.message 7000, 0, "Nie posiadasz uprawnień do kreatora brakujących WZ."
+    exit function
+  end if
+#endif
+
+	frefresh
+  'domyślnie raportowanie szczegółów
+  page_.ctrl(CTRLID_DOK_TYPE).value = clng(1)
+	fopen = true
+end function
+'------------------------------------------------
+
+'-- standardowa funkcja wolana na przycisk 'odswiez'
+function frefresh
+	dim pModRapEngine : set pModRapEngine = doc_.getmodule(60108)
+
+	dim pParamArray : set pParamArray = get_default_param()
+	if pModRapEngine.show_raport_param_dialog(pParamArray,"CREATOR_TITLE") = 0 then
+		exit function
+	end if
+	dim pPerforming : set pPerforming = doc_.performing("Trwa przygotowanie danych...")
+	
+	fill_results pModRapEngine,pParamArray
+end function
+'------------------------------------------------
+
+'-- tworzenie tablicy parametrow dla raportu
+function get_default_param()
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+  'filtr daty wystawienia dokumentu sprzedazy
+  pParamArray.add doc_.afc.rap.param.new_date_range("Data wystawienia").bindexpr("t_sprz.dDataWyst")
+  'filtr rejestru dokumentów sprzedaży
+	dim pParam: Set pParam= doc_.afc.rap.param.new_choice("Rejestr").bindexpr("t_sprz.pRejestrDok")
+	doc_.afc.rap.param.init_on_query pParam, trans_ ,_
+		"select strNazwa , idobj from n5rejestrdok where eTyp in (N5REJESTRDOK_FAKT_SP,N5REJESTRDOK_FAKT_EXP,N5REJESTRDOK_RACH, " +_
+		"N5REJESTRDOK_KOR_RACH,N5REJESTRDOK_PARAGON,N5REJESTRDOK_WDT,N5REJESTRDOK_WNT,N5REJESTRDOK_FAKTURA_ZALICZKOWA,N5REJESTRDOK_DOSTAWA,N5REJESTRDOK_IMPORT_USLUG) order by strNazwa "	
+	pParamArray.add pParam
+  
+  'filtr nazwy/indeksu klienta
+  pParamArray.add doc_.afc.rap.param.new_text("Indeks klienta").bindexpr("t_klient.strIndeks") 
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwa klienta").bindexpr("t_klient.strNazwa") 
+
+	set get_default_param = pParamArray
+end function
+'------------------------------------------------
+
+'-- wypelnianie wynikami
+function fill_results(byref pModRapEngine,byref pParamArray)
+  'zapytanie sql pobierające dok sprzedaży nie mające powiązanej WZ
+	strSQL = "select 's_idobj'=t_sprz.IdObj, 's_strnrdok'=t_sprz.strNrDok, 's_ddatawyst'=t_sprz.dDataWyst, " +_ 
+           "'s_cursumabrutto'=t_sprz.curSumaBrutto, 'k_strnazwa'=t_klient.strNazwa " +_
+           "from n5sprzedaz as t_sprz " +_
+           "inner join n5klient as t_klient on t_sprz.pKlient = t_klient.idobj " +_
+           "inner join n5rejestrdok as t_rejdok on t_sprz.pRejestrDok = t_rejdok.idobj " +_
+           "where %1 and %2 and %3 and %4 and " +_ 
+           "t_sprz.IdObj not in (select wrefDokHandl from n5dokmag where nTypDok = N5REJESTRDOK__WZ) " +_
+           "and t_sprz.IdObj not in (select pFaktura from n5sprzedaz) and t_sprz.strExtra2 = '' " +_
+           "order by s_ddatawyst, t_klient.strNazwa "
+     
+  strSQL = pModRapEngine.query_apply_actual_param(strSQL,pParamArray)
+  dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(page_.ctrl(CTRLID_RESULT_TABLE))
+	pTB.section_body.removeall
+  
+  'numery kolejnych rekordów
+  dim iLicz:iLicz = 0
+  dim oRS : set oRS = trans_.createadors(strSQL)
+  do while not oRS.EOF
+		oRS.MoveNext
+    iLicz = iLicz + 1
+	loop
+  
+  if iLicz > 0 then
+    set oRS = trans_.createadors(strSQL)
+    'nagłówek strony
+    naglowek pTB
+    
+    'numery kolejnych rekordów
+    dim iRecNr : iRecNr = 1
+    'dim oRS : set oRS = trans_.createadors(strSQL)
+    do while not oRS.EOF
+		  build_dokument oRS,pTB,iRecNr
+		  oRS.MoveNext
+      iRecNr = iRecNr + 1
+	  loop
+  else
+    pTB.newrow
+	  pTB.row.styleitem = STYLE_TABLE_HEADER
+	  pTB.row.fontsize=4
+	  pTB.newcell.addtext "Brak danych spełniających podane kryteria"
+  end if
+           
+end function
+'------------------------------------------------
+
+'-- naglówek tabeli
+function naglowek(byval pTB)
+	pTB.newrow
+	pTB.row.styleitem = STYLE_TABLE_HEADER
+	pTB.row.fontsize=5
+	pTB.newcell.addtext "Lp"
+  pTB.newcell.addtext "Data wystawienia"
+  pTB.newcell.addtext "Numer dokumentu"
+  pTB.newcell.addtext("Klient").cell.width = 8000
+  pTB.newcell.addtext "Kwota brutto"
+end function
+'------------------------------------------------
+
+'-- wypisanie jednego dokumentu
+function build_dokument(byref oRS,byref pTB,byval iRecNr)
+    
+  'idobj wyswietlanego dokumentu sprzedazy  
+  dim iIdObj : iIdObj = clng(oRS("s_idobj"))  
+ 
+  pTB.newrow
+  pTB.row
+  pTB.newcell.addtext(cstr(iRecNr)).cell.align=ALIGN_RIGHT
+	pTB.newcell.addtext(doc_.afc.display.fulldate(oRS("s_ddatawyst")))
+  dim strHLI : strHLI = doc_.afc.convert.Formatter("OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5SPRZEDAZ," + cstr(iIdObj) + ",USAGE_VIEW)").done()
+  pTB.newcell.addtexthli cstr(oRS("s_strnrdok")),doc_.createhlistr(strHLI)
+  pTB.newcell.addtext(cstr(oRS("k_strnazwa")))
+  pTB.newcell.addtext(doc_.afc.display.money(oRS("s_cursumabrutto"),"")).cell.align=ALIGN_RIGHT
+
+  if iRecNr mod 2 = 0 then
+		pTB.row.styleitem = STYLE_ROW_EVEN
+	end if
+  
+end function
+'------------------------------------------------
+
+'-- funkcja tworząca wz z dokumentów hanldowych  
+function utworzWZ:utworzWZ = false
+  dim oRS : set oRS = trans_.createadors(strSQL)
+  dim iIdObj, pPerf, idDokMag, iLiczWZ, iLiczPozycje, idRejestr, idMagazyn
+  iLiczWZ = 0
+  iLiczPozycje = 0
+  idRejestr = 0
+  idMagazyn = 0
+  dim oNXSubTrace
+  
+  NX_TRACE_START_STREAM("Zachowanie danych",nothing)
+  
+  if page_.ctrl(CTRLID_DOK_TYPE).value = 2 then
+    'przeliczanie stanów magazynowych
+    if not doc_.getmodule(60253).gm_ensure_accuracy_ui(true) then
+       trans_.message 7000, 0, "Niepoprawny stan magazynu"
+    end if
+    
+    'zapamiętaj poziom kontroli ilości
+    dim pozKontr : pozKontr = trans_.var(GVAR_GM_ACCURACY_LEVEL)
+    
+    'przestaw poziom kontroli
+    trans_.var(GVAR_GM_ACCURACY_LEVEL) = GM_ACCURACY_QUANTITY
+  end if  
+
+  do while not oRS.EOF
+    'idobj kolejnego dokumentu magazynowego - gdy 0 utworzy nowy idobj
+     idDokMag = 0
+     set pPerf = doc_.performing("Trwa generowanie WZ dla dokumentu: " + CStr(oRS("s_strnrdok")))
+    'idobj dokumentu handlowego
+     iIdObj = clng(oRS("s_idobj"))
+     if iIdObj > 0 then
+        iLiczPozycje = iLiczPozycje + 1
+     end if
+    'pobież obiekt dokumentu handlowego
+     dim oDokHandl:set oDokHandl = trans_.getobj(TYPEID_N5SPRZEDAZ,iIdObj)
+     'ustaw magazyn wydania taki jak domyślny dla dokumentu handlowego
+     if not oDokHandl.pRejestrDok is nothing then
+       dim oRejestr : set oRejestr = trans_.getobj(TYPEID_N5REJESTRDOK,oDokHandl.pRejestrDok.idobj)
+       if not oRejestr.wrefParam2 is nothing then
+         idMagazyn = oRejestr.wrefParam2.idobj
+       end if
+     end if
+     set oNXSubTrace = nx_.trace.start("Tworzenie WZ do dokumenntu sprzedaży: " + oDokHandl.strNrDok,nothing)
+    'utworz dokument WZ dla kolejnych dokumentow magazynowych
+     if (doc_.getmodule(60226).utworz_dokmag_z_dokhandl_automat(oDokHandl, N5REJESTRDOK__WZ, idDokMag, idRejestr, idMagazyn)) then
+       utworzWZ = true
+       iLiczWZ = iLiczWZ + 1
+     end if
+     oNXSubTrace.stop
+		 oRS.MoveNext
+	loop
+  set pPerf = nothing
+  NX_TRACE_SHOW_LOG(0)
+  if iLiczPozycje > 0 then
+    MessageBox  "Operacja zakończona" + vbNewLine + "Liczba dokumentów sprzedaży dla których wygenerowano WZ:  " +_ 
+                CStr(iLiczWZ),"Generowanie WZ", vbOKOnly, vbInformation
+  else
+    MessageBox  "Nie wybrano żadnych dokumentów","Generowanie WZ", vbOKOnly, vbInformation 
+  end if
+  
+  if page_.ctrl(CTRLID_DOK_TYPE).value = 2 then  
+    'ustaw poziom kontroli z przed generowania WZ
+    trans_.var(GVAR_GM_ACCURACY_LEVEL) = pozKontr
+    
+    if not doc_.getmodule(60253).gm_ensure_accuracy_ui(true) then
+       trans_.message 7000, 0, "Niepoprawny stan magazynu"
+    end if
+  end if  
+  
+end function
+'------------------------------------------------
+
+function c##CTRLID_DOK_TYPE##_ongetdata(byref oCtrl)
+	c##CTRLID_DOK_TYPE##_ongetdata = true
+end function
+
+function c##CTRLID_DOK_TYPE##_ondataentered(byref oCtrl, byval newValue)
+	c##CTRLID_DOK_TYPE##_ondataentered = true
+  oCtrl.value = newValue
+end function
+
+
+]]>
+</script>
+	</config>
+	<body>
+    <table>
+      <tbody>
+        <tr>
+          <td>
+            <picture image='80139' tip='Wypełnij raport' width='1000' height='1000' href='varFunction="frefresh"' />
+          </td>
+          <td>
+            <t fontsize='6' bold='true'>Dokumenty handlowe nie mające WZ</t>
+          </td>
+				</tr>
+				<tr>
+					<td colspan='2'>
+						<table border='1' name='CTRLID_RESULT_TABLE'>
+							<tbody backcolor='white' border='1' bordercolor='white' />
+						</table>
+					</td>
+				</tr>
+        <tr>    
+          <td colspan='2' align='right'>
+            <radio style='STYLE_TABLE_BODY' name='CTRLID_DOK_TYPE' colspan='2'>
+              <transfer mode='custom' />
+              <t>raportuj szczegóły</t>
+              <t>brak raportowania</t>
+            </radio>
+            <button href='varFunction="utworzWZ"' style='STYLE_BUTTON'>Utwórz WZ</button>
+          </td>
+        </tr>  
+			</tbody>
+		</table>
+	</body>
+</page>

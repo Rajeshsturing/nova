@@ -1,0 +1,203 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!-- 
+
+#comment OBSOLETE - transfer calls to 43009 and delete
+#define NX_BROWSER
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1203.h"
+#include "h1232.h"
+-->
+<page width='min' style='STYLE_PAGE'>
+<config>
+
+	<title>
+	Wybór referencji
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+
+<startpos>center</startpos>
+
+<script>
+<![CDATA[
+
+#define CTRL_TABMANAGER		100
+#define CTRL_CHOICELIST		101
+
+'har
+#include "50101"
+
+#include "50220"
+CHOICELIST_START( CTRL_CHOICELIST )
+
+' Typeid wybranego obiektu
+dim g_nTypeID: g_nTypeID = CLng(0)
+
+'----------------------------------------------------------------------------
+' Rozpoczyna wybór dzikiej referencji
+'
+' pSomeObj            - definicja obiektu zawierającego dziką referencje
+'						LUB sam obiekt ją zawierający
+'						LUB typeid tego obiektu
+' strWildRefFieldName - nazwa pola z tego obiektu z dziką referencją
+' strFields           - pola dla dzikich referencji dla wyswietlania i orderby
+'					    oddzielone ";"
+' strWheres			  - where'y dla dzikich ref oddzielone ";"
+'----------------------------------------------------------------------------
+function wildref_choose(byref pSomeObj, byval strWildRefFieldName, byval strFields, byval strWheres)
+
+	dim pObjDef
+
+	if (isNumeric(pSomeObj)) then
+		set pObjDef = doc_.stdobjdef.getobjdef( CLng(pSomeObj) )
+	else
+
+		dim bObjDef
+		bObjDef = true
+
+		'Sprawdzaj czy mamy obiekt czy jego definicje
+		on error resume next
+		dim nCheckObj: nCheckObj = pSomeObj.type
+		if (err.number = 0) then
+			bObjDef = false
+		end if
+		on error goto 0
+
+		if (bObjDef) then
+			set pObjDef = pSomeObj
+		else
+			set pObjDef = pSomeObj.getobjdef
+		end if
+
+	end if
+
+	dim nFieldIndex
+	nFieldIndex = pObjDef.getfieldindex( strWildRefFieldName )
+
+	dim pFieldDef
+	set pFieldDef = pObjDef.field( nFieldIndex )
+
+	dim pFieldsArray
+	set pFieldsArray = trans_.afc.new_navoarray()
+	
+	pFieldsArray.Separate strFields, ";"
+
+	dim pWhereArray
+	set pWhereArray = trans_.afc.new_navoarray()
+
+	pWhereArray.Separate strWheres, ";"
+	
+	dim pM43009 : set pM43009 = doc_.getmodule(43009)
+	dim pTranslate
+	set pTranslate = doc_.getmodule(60130)
+
+	dim i: i = 0
+	while ( pFieldDef.wildreftypeid(i)>0 )
+
+		dim strWhere: strWhere = ""
+		if (i<=pWhereArray.UpperIndex()) then
+			strWhere = pWhereArray.Value(i)
+		end if
+    
+#ifdef ENABLE_DB11
+		if trans_.isvar(GVAR_ID_TRANS) then
+			if trans_.var(GVAR_ID_TRANS) > clng(0) then
+				if pFieldDef.wildreftypeid(i) = TYPEID_N5POZRATA then
+					strWhere = "(prat_pTransakcja = " + CStr(trans_.var(GVAR_ID_TRANS)) + ")"
+				else
+					strWhere = "(pTransakcja = " + CStr(trans_.var(GVAR_ID_TRANS)) + ")"
+				end if
+			end if
+		end if
+#endif
+
+		dim strField: strField = ""
+		if (i<=pFieldsArray.UpperIndex()) then
+			strField = pFieldsArray.Value(i)
+		end if
+#ifdef NX_BROWSER
+		dim bAddField: bAddField = true
+#ifdef _PRINTY_LAND
+		if nCheckObj = TYPEID_N5PLATNOSC and pFieldDef.wildreftypeid(i) = TYPEID_N5PRACOWNIK then
+			'sprawdź uprawnienie
+			if har(UAR_BLOKADA_PRACOWNIKA_PLATNOSC) then
+				bAddField = false
+			end if
+		end if
+#endif
+
+		dim strTitle : strTitle = pTranslate.TypeId2ChoiceObj( pFieldDef.wildreftypeid(i) )
+		if bAddField then
+			pM43009.prepare_automatic pFieldDef.wildreftypeid(i),strTitle,strWhere,strField
+			pM43009.set_options true,false
+		end if
+#else
+		'Dodaj zakladke dla odpowiedniego typeid
+		wildref_add pFieldDef.wildreftypeid(i), strField, strWhere
+#endif
+		i = i + 1
+	wend
+#ifdef NX_BROWSER
+	pM43009.switch_current_context 0
+	wildref_choose = pM43009.run_browser()
+	g_nTypeID =  pM43009.result_typeid()
+#else
+	wildref_choose = CLng(page_.domodalauto())
+#endif	
+end function
+
+'----------------------------------------------------------------------------
+' Dodaj i zainicjuj zakladke dla obiektu jednego typu
+'
+' nTypeID  - typeid obiektu jakiemu dodac zakladke z wyborem
+' strField - pole dla orderby i dla wyświetlania
+' strWhere - where dla danego obiektu
+'----------------------------------------------------------------------------
+private function wildref_add(byval nTypeID, byval strField, byval strWhere)
+	dim pObjDef
+	set pObjDef =  doc_.stdobjdef.getobjdef( nTypeID )
+
+	dim strObjectName
+	strObjectName = pObjDef.humanname
+
+	dim pTabManager
+	set pTabManager = page_.ctrl( CTRL_TABMANAGER )
+
+	dim pNewSection
+	set pNewSection = pTabManager.addnew(CTRL_TYPE_TABITEM, -1)
+
+	pNewSection.title = strObjectName
+
+	CREATECHOICELIST pNewSection.ident, nTypeId, strField, strWhere, strField, "", nothing
+end function
+
+'----------------------------------------------------------------------------
+' EVENT: Wołany na dokonanie wyboru
+'----------------------------------------------------------------------------
+private function ChoiceList_OnChoice(byref pContainer, byval nIdObj, byval nTypeID)
+	g_nTypeID = nTypeID
+	page_.result = nIdObj
+	page_.goback
+end function
+
+'----------------------------------------------------------------------------
+' Zwraca wybrany typeid
+'----------------------------------------------------------------------------
+function getTypeID()
+	getTypeID = g_nTypeID
+end function
+
+]]>
+
+</script>
+</config>
+	<body>
+
+		<tab name='t##CTRL_TABMANAGER'>
+		</tab>
+
+	</body>
+</page>

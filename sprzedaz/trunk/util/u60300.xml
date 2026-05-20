@@ -1,0 +1,386 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+REV2:KB:20030528
+
+MODULE_BUILDIN_QUERY_PROVIDER	(BQRY_)
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1231.h"
+-->
+<page>
+<config>
+<script>
+<![CDATA[
+#include "50509"
+
+'getCurrentRKSId
+#include "50120"
+
+'lista rejestrów i suma płatności zrealizowanych w danym rejestrze
+'
+function bqry_stan_kasybanku_rejestrami(strRejIdObjs)
+	dim strSQL
+	strSQL = _
+	"select 'c_idrej'=n5rejestrdok.idobj, 'c_nazwarej'=max(n5rejestrdok.strNazwa),'c_stanewid'=isnull(sum(curKwotaEwid),0.0), " +_
+	"'c_stan'=isnull(sum(curKwotaStan),0.0),'c_typrej'=max(n5rejestrdok.eTyp),'c_waluta'=max(n5jednostka.strSkrot) " +_
+	"from n5platnosc right outer join n5rejestrdok on n5platnosc.pRejestrDok = n5rejestrdok.idobj " +_
+	"join n5jednostka on n5rejestrdok.wrefParam1 = n5jednostka.idobj " +_
+#ifdef _ALMA_TREND
+	"where n5rejestrdok.pRokKsieg = " + CStr(getCurrentRKSId()) + " and n5platnosc.eStatus=N5PLATNOSC_ZREALIZOWANA and n5rejestrdok.eTyp in (N5REJESTRDOK_BANKOWY,N5REJESTRDOK_KASOWY) "
+#else
+	"where n5platnosc.eStatus=N5PLATNOSC_ZREALIZOWANA and n5rejestrdok.eTyp in (N5REJESTRDOK_BANKOWY,N5REJESTRDOK_KASOWY) "
+#endif  
+
+	if strRejIdObjs <> "" then
+		strSQL  = strSQL + "and n5rejestrdok.idobj in (" + strRejIdObjs + ") "
+	end if
+	strSQL  = strSQL + " group by n5rejestrdok.idobj order by 2"
+
+	bqry_stan_kasybanku_rejestrami = strSQL
+end function
+
+'aktywne dostawy (dostawy nierozchodowane) ze wskazanego magazynu
+function bqry_gm_aktywne_dostawy_mag(byval idMag,byval idProdukt,byval idOpak,byval nNumOpMag,byval strOrder)
+
+	if strOrder = "" then
+		strOrder = " gms_nNumOp, gms_nLP "
+	end if
+
+	dim znak:znak = ">="
+	if nNumOpMag > 0 then
+		znak = "<"
+	end if
+
+	bqry_gm_aktywne_dostawy_mag = doc_.afc.convert.formatter( _
+		"select gms_nNumOp, gms_nLP, gms_curCena, gms_curIlosc , gms_dDataWazn from n5gmstan where gms_pMag=%1 and gms_pProd=%2 and gms_pOpak=%3 and gms_nNumOp %5 %4 order by %6 ") _
+			(idMag)(idProdukt)(idOpak)(nNumOpMag)(znak)(strOrder).Done()
+end function
+
+'aktywne dostawy (dostawy nierozchodowane) z wszystkich magazynów
+function bqry_gm_aktywne_dostawy(byval idProdukt,byval idOpak,byval nNumOpMag)
+	bqry_gm_aktywne_dostawy = doc_.afc.convert.formatter( _
+	"select gms_pMag,gms_nNumOp, gms_nLP, gms_curCena, gms_curIlosc, gms_dDataWazn from n5gmstan where gms_pProd=%1 and gms_pOpak=%2 and gms_nNumOp >= %3 order by gms_nNumOp, gms_nLP ") _
+			(idProdukt)(idOpak)(nNumOpMag).Done()
+end function
+
+
+'where dla wybor dokumentu do korekty
+function bqry_where_for_pop_for_korekta(byval nTypRej)
+	dim strWhere:strWhere = "(n5sprzedaz.pFaktura=0) and (n5sprzedaz.idobj not in (select pPopSprzed from n5sprzedaz))"
+	'w zaleznosci od typu korekty wybieramy co korygujemy
+	select case nTypRej
+		case N5REJESTRDOK_KOR_FAKT_SP
+			strWhere = strWhere + " and (n5sprzedaz.pRejestrDok in (select idobj from n5rejestrdok where eTyp in (N5REJESTRDOK_KOR_FAKT_SP,N5REJESTRDOK_FAKT_SP)))"
+#ifdef ENABLE_DB11
+      trans_.var(GVAR_CURRENT_REJESTR_TYP) = "N5REJESTRDOK_KOR_FAKT_SP,N5REJESTRDOK_FAKT_SP"
+#endif
+    case N5REJESTRDOK_KOR_RACH
+			strWhere = strWhere + " and (n5sprzedaz.pRejestrDok in (select idobj from n5rejestrdok where eTyp in (N5REJESTRDOK_KOR_RACH,N5REJESTRDOK_RACH)))"					
+#ifdef ENABLE_DB11
+      trans_.var(GVAR_CURRENT_REJESTR_TYP) = "N5REJESTRDOK_KOR_RACH,N5REJESTRDOK_RACH"
+#endif		
+    case N5REJESTRDOK_KOR_PARAGON
+			strWhere = strWhere + " and (n5sprzedaz.pRejestrDok in (select idobj from n5rejestrdok where eTyp in (N5REJESTRDOK_KOR_PARAGON,N5REJESTRDOK_PARAGON)))"					
+#ifdef ENABLE_DB11
+      trans_.var(GVAR_CURRENT_REJESTR_TYP) = "N5REJESTRDOK_KOR_PARAGON,N5REJESTRDOK_PARAGON"
+#endif			
+    case N5REJESTRDOK_KOR_FAKT_EXP
+			strWhere = strWhere + " and (n5sprzedaz.pRejestrDok in (select idobj from n5rejestrdok where eTyp in (N5REJESTRDOK_FAKT_EXP,N5REJESTRDOK_KOR_FAKT_EXP)))"					
+#ifdef ENABLE_DB11
+      trans_.var(GVAR_CURRENT_REJESTR_TYP) = "N5REJESTRDOK_FAKT_EXP,N5REJESTRDOK_KOR_FAKT_EXP"
+#endif			
+    case N5REJESTRDOK_KOREKTA_WDT
+			strWhere = strWhere + " and (n5sprzedaz.pRejestrDok in (select idobj from n5rejestrdok where eTyp in (N5REJESTRDOK_WDT,N5REJESTRDOK_KOREKTA_WDT)))"
+#ifdef ENABLE_DB11
+      trans_.var(GVAR_CURRENT_REJESTR_TYP) = "N5REJESTRDOK_WDT,N5REJESTRDOK_KOREKTA_WDT"
+#endif			
+    case N5REJESTRDOK_FAKTURA_ZALICZKOWA_KOR
+			strWhere = strWhere + " and (n5sprzedaz.pRejestrDok in (select idobj from n5rejestrdok where eTyp in (N5REJESTRDOK_FAKTURA_ZALICZKOWA,N5REJESTRDOK_FAKTURA_ZALICZKOWA_KOR)))"
+#ifdef ENABLE_DB11
+      trans_.var(GVAR_CURRENT_REJESTR_TYP) = "N5REJESTRDOK_FAKTURA_ZALICZKOWA,N5REJESTRDOK_FAKTURA_ZALICZKOWA_KOR"
+#endif		
+		case N5REJESTRDOK_KOR_DOSTAWA
+			strWhere = strWhere + " and (n5sprzedaz.pRejestrDok in (select idobj from n5rejestrdok where eTyp in (N5REJESTRDOK_KOR_DOSTAWA,N5REJESTRDOK_DOSTAWA)))"
+#ifdef ENABLE_DB11
+      trans_.var(GVAR_CURRENT_REJESTR_TYP) = "N5REJESTRDOK_KOR_DOSTAWA,N5REJESTRDOK_DOSTAWA"
+#endif
+  end select
+	bqry_where_for_pop_for_korekta = strWhere
+end function
+
+
+
+
+function bqry_where_for_pop_for_korekta_zakup(byval nTypRej)
+	dim strWhere:strWhere = "(n5zakup.idobj not in (select pPopZakup from n5zakup))"
+	'w zaleznosci od typu korekty wybieramy co korygujemy
+	select case nTypRej		
+		case N5REJESTRDOK_KOREKTA_WNT
+			strWhere = strWhere + " and (n5zakup.pRejestrDok in (select idobj from n5rejestrdok where eTyp in (N5REJESTRDOK_WNT,N5REJESTRDOK_KOREKTA_WNT)))"					
+#ifdef ENABLE_DB11
+      trans_.var(GVAR_CURRENT_REJESTR_TYP) = "N5REJESTRDOK_WNT,N5REJESTRDOK_KOREKTA_WNT"
+#endif			
+    case N5REJESTRDOK_KOR_FAKT_ZAK_RR
+			strWhere = strWhere + " and (n5zakup.pRejestrDok in (select idobj from n5rejestrdok where eTyp in (N5REJESTRDOK_FAKT_ZAK_RR,N5REJESTRDOK_KOR_FAKT_ZAK_RR)))"					
+#ifdef ENABLE_DB11
+      trans_.var(GVAR_CURRENT_REJESTR_TYP) = "N5REJESTRDOK_FAKT_ZAK_RR,N5REJESTRDOK_KOR_FAKT_ZAK_RR"
+#endif				
+    case N5REJESTRDOK_KOR_FAKT_IMP
+			strWhere = strWhere + " and (n5zakup.pRejestrDok in (select idobj from n5rejestrdok where eTyp in (N5REJESTRDOK_FAKT_IMP,N5REJESTRDOK_KOR_FAKT_IMP)))"					
+#ifdef ENABLE_DB11
+      trans_.var(GVAR_CURRENT_REJESTR_TYP) = "N5REJESTRDOK_FAKT_IMP,N5REJESTRDOK_KOR_FAKT_IMP"
+#endif		
+    case N5REJESTRDOK_KOR_FAKT_ZAK
+			strWhere = strWhere + " and (n5zakup.pRejestrDok in (select idobj from n5rejestrdok where eTyp in (N5REJESTRDOK_FAKT_ZAK,N5REJESTRDOK_KOR_FAKT_ZAK)))"					
+#ifdef ENABLE_DB11
+      trans_.var(GVAR_CURRENT_REJESTR_TYP) = "N5REJESTRDOK_FAKT_ZAK,N5REJESTRDOK_KOR_FAKT_ZAK"
+#endif	
+    case N5REJESTRDOK_KOR_IMPORT_USLUG
+			strWhere = strWhere + " and (n5zakup.pRejestrDok in (select idobj from n5rejestrdok where eTyp in (N5REJESTRDOK_IMPORT_USLUG,N5REJESTRDOK_KOR_IMPORT_USLUG)))"					
+#ifdef ENABLE_DB11
+      trans_.var(GVAR_CURRENT_REJESTR_TYP) = "N5REJESTRDOK_IMPORT_USLUG,N5REJESTRDOK_KOR_IMPORT_USLUG"
+#endif	
+  end select
+	bqry_where_for_pop_for_korekta_zakup = strWhere
+end function
+
+
+'zapytanie dla kursora ADO zwracające stany magazynowe dla produktu, opakowania i opcjonalenie magazynu (ewentualnie kilku magazynow - idobj przedzielone przecinkami)
+'jesli id_mag podamy -1 to wtedy dostaniemy kilka wierszy odpowiadajacych
+'wszystkim magazynom w ktorych dany produkt jest
+function bqry_stan_mag_for_prod_opak(byval id_prod , byval id_opak , byval id_mag)
+
+	dim strMag
+
+	if instr(id_mag,",") = 0 then
+		id_mag = clng(id_mag)
+		if id_mag < 0 then
+			strMag = " is not null "
+		else
+			strMag = " = " + cstr(id_mag)
+		end if
+	else
+		strMag = " in ("+ id_mag +") "
+	end if
+	
+
+	bqry_stan_mag_for_prod_opak = doc_.afc.convert.formatter( _
+		" select " + vbNewLine + _ 
+		" 'c_mag'=t_1.strNazwa, " + vbNewLine + _
+		" 'id_mag'=t_1.idobj, " + vbNewLine + _
+		" 'c_ilosc_opak'=sum(t_0.gms_curIlosc), " + vbNewLine + _
+		" 'c_jedn_opak'=max(t_4.strSkrot), " + vbNewLine + _
+		" 'c_prec_opak'=max(t_4.nDokladnosc) " + vbNewLine + _
+		" from n5gmstan as t_0  " + vbNewLine + _
+		" inner join n5magazyn as t_1 on t_0.gms_pMag = t_1.IdObj  " + vbNewLine + _
+		" inner join n5produkt as t_2 on t_0.gms_pProd = t_2.IdObj  " + vbNewLine + _
+		" inner join n5opakowanie_produktu as t_3 on t_0.gms_pOpak = t_3.IdObj  " + vbNewLine + _
+		" inner join n5jednostka as t_4 on t_3.pJednOpak = t_4.IdObj  " + vbNewLine + _
+		" inner join n5jednostka as t_5 on t_2.pJednostkaEwid = t_5.IdObj  " + vbNewLine + _
+		" where t_1.eTyp <> N5TYPMAG_ZWROTY and t_1.mag_eAktywny = 1 and " + vbNewLine + _
+		" (t_1.idobj %3) and  " + vbNewLine + _
+		" (t_2.idobj = %1) and  " + vbNewLine + _
+		" (t_3.idobj = %2)  " + vbNewLine + _
+		" group by t_1.strNazwa,t_1.idobj " + vbNewLine + _
+		" having (sum(t_0.gms_curIlosc) is not null) " + vbNewLine + _
+		" order by c_mag " + vbNewLine ) _
+		(id_Prod)(id_Opak)(strMag).done()
+
+
+end function
+
+function bqry_stanmag_by_numop(byval pProdukt , byval pOpak , byval pMag , byval nNumOp)
+	bqry_stanmag_by_numop = doc_.afc.convert.formatter( _
+	" select sum(gms_curIlosc) as iloscPo  from n5gmstan " + vbNewLine + _
+	" where gms_pProd = %1 and gms_pOpak = %2 and gms_pMag = %3 " + vbNewLine + _
+	" and gms_nNumOp <= %4" + vbNewLine + _
+	" group by gms_pProd , gms_pOpak " + vbNewLine + _
+	" " + vbNewLine + _
+	" " ) _
+	.add(cstr(pProdukt.idobj)) _
+	.add(cstr(pOpak.idobj)) _
+	.add(cstr(pMag.idobj)) _
+	.add(cstr(nNumOp)) _
+	.done()
+end function
+
+
+function bquery_stanmag_adors()
+	bquery_stanmag_adors = "select gms_pProd , gms_pOpak , gms_pMag , sum(gms_curIlosc) as gms_Ilosc from n5gmstan group by gms_pProd,gms_pOpak,gms_pMag"
+end function
+
+function bquery_stanmag_adorrs_orderer(byval idMag,byval bByName)
+	dim strSQL : strSQL = "select gms_pProd,gms_pOpak, sum(gms_curIlosc) as gms_Ilosc " +_
+	"from n5gmstan join n5produkt on gms_pProd = n5produkt.idobj where gms_pMag=" + cstr(idMag) + " and n5produkt.eRodzaj = N5PRODUKT_TOWAR  " +_
+	" group by gms_pProd,gms_pOpak order by "
+	if bByName then
+		strSQL = strSQL + " max(n5produkt.strNazwa)"
+	else
+		strSQL = strSQL + " max(n5produkt.strIndeks)"
+	end if
+	bquery_stanmag_adorrs_orderer = strSQL
+end function
+
+#comment '---------------------------------------------
+'wartość magazynu idmag przed operacją nnumop
+#comment '---------------------------------------------
+function bqry_wartmag_by_numop(byval idMag,byval nNumOp)
+	bqry_wartmag_by_numop = "select 'c_wartosc'=isnull(sum(n5gmop.gmo_curWartosc),0) from n5gmop where " +_
+	"n5gmop.gmo_pMag="+cstr(idMag) + " and n5gmop.gmo_nNumOp < " + cstr(nNumOp)
+end function
+
+
+' nDestFiltr:	1 - wszystkie aktywne
+'				2 - lista wyboru (TYPEID_CHOICELIST)
+'				3 - raport (TYPEID_SEARCHTYPE)
+' nIdobjFiltr:	idobj wybranego sposobu
+function bquery_where_for_produkt_filtr(byval nDestFiltr , byval nIdobjFiltr):bquery_where_for_produkt_filtr = ""
+
+	dim elem
+	select case nDestFiltr
+		case 1
+			bquery_where_for_produkt_filtr = " p_eAktywny=1"
+		case 2 ' lista
+			dim pLista:set pLista = trans_.getobj(TYPEID_CHOICELIST,nIdobjFiltr)
+			bquery_where_for_produkt_filtr = " p_idobj in (0"
+			for each elem in pLista.listElement
+				bquery_where_for_produkt_filtr = bquery_where_for_produkt_filtr + "," + cstr(elem.idElement)
+			next
+			bquery_where_for_produkt_filtr = bquery_where_for_produkt_filtr + ")"
+		case 3
+			'uruchom raport i pobierz z niego czesci 
+			'zapytania
+
+			dim pRaport:set pRaport = trans_.getobj(TYPEID_SEARCHTYPE,nIdobjFiltr)
+								
+			dim pPM: set pPM = doc_.getmodule(60114)
+			dim strButtons: strButtons = "Zastosuj raport"
+			dim strColumns, strDescription, strIds
+
+			dim strJoin, strWhere, strOrderBy, strGroupBy
+
+			if (pPM.get_search_filter_result(pRaport, _
+						strButtons, strColumns, _
+						strJoin, _
+						strWhere, _
+						strOrderBy, _
+						strGroupBy, _
+						strDescription, strIds)<>1) then
+				exit function
+			else
+				bquery_where_for_produkt_filtr = " p_idobj in (select IdObj from n5produkt where " + strWhere + ")"
+			end if
+#ifdef _IOW      
+		case 4
+			bquery_where_for_produkt_filtr = " (select isnull(sum(gms_curIlosc),0) from n5gmstan where gms_pProd = p_idobj and gms_pOpak = c_idobj and ( isnull(gms_pMag,-1) = [ID_MAGAZYN] or isnull(gms_pMag,-1) < 0)) > 0 "   
+#endif      
+											
+	end select
+
+end function
+
+
+'---------------------------------------
+'wybór pracowników
+'nDestFiltr:	
+'1 - wszyscy aktywni (posiadający umowę)
+'2 - lista wyboru (TYPEID_CHOICELIST)
+'3 - raport (TYPEID_SEARCHTYPE)
+'---------------------------------------
+function bquery_where_for_pracownik_filtr(byval nDestFiltr, byval nIdobjFiltr) : bquery_where_for_pracownik_filtr = ""
+  dim elem
+	select case nDestFiltr
+		case 1
+			bquery_where_for_pracownik_filtr = " (1=1)"
+		case 2
+			dim pLista : set pLista = trans_.getobj(TYPEID_CHOICELIST,nIdobjFiltr)
+			bquery_where_for_pracownik_filtr = " p.idobj in (0"
+			for each elem in pLista.listElement
+				bquery_where_for_pracownik_filtr = bquery_where_for_pracownik_filtr + "," + cstr(elem.idElement)
+			next
+			bquery_where_for_pracownik_filtr = bquery_where_for_pracownik_filtr + ")"
+		case 3
+			dim pRaport : set pRaport = trans_.getobj(TYPEID_SEARCHTYPE,nIdobjFiltr)
+			dim pPM: set pPM = doc_.getmodule(60114)
+			dim strButtons: strButtons = "Zastosuj raport"
+			dim strColumns, strDescription, strIds
+
+			dim strJoin, strWhere, strOrderBy, strGroupBy
+
+			if (pPM.get_search_filter_result(pRaport, _
+						strButtons, strColumns, _
+						strJoin, _
+						strWhere, _
+						strOrderBy, _
+						strGroupBy, _
+						strDescription, strIds)<>1) then
+				exit function
+			else
+				dim cursor : set cursor = trans_.createrawcursor(TYPEID_N5PRACOWNIK,strWhere,strOrderBy,doc_.getmodule(60115).trim_first_join(strJoin))
+				bquery_where_for_pracownik_filtr = " p.idobj in (0"
+				for each elem in cursor
+					bquery_where_for_pracownik_filtr = bquery_where_for_pracownik_filtr + "," + cstr(elem.idobj)
+				next
+					bquery_where_for_pracownik_filtr = bquery_where_for_pracownik_filtr + ")"
+				end if
+	end select
+end function
+
+
+function bquery_promotion_ado(byval pProdukt , byval pGrupaProd , byval pKlient , byval dData)
+
+	dim pGrupaKlient: set pGrupaKlient = pKlient.pGrupaKlient
+	dim strKlientWhere:strKlientWhere = " ( " + _
+		"(wpKlientGrupa_wrt=TYPEID_N5KLIENT and wpKlientGrupa=" + CStr(pKlient.IdObj) + ") or " + _
+		"(wpKlientGrupa_wrt=TYPEID_N5GRUPAKLIENT and wpKlientGrupa=" + CStr(pGrupaKlient.IdObj) + ") or " + _
+		"(wpKlientGrupa_wrt=0 and wpKlientGrupa=0)" + _
+		" ) "
+
+	dim strDateWhere:strDateWhere = " ( " + _
+		" ( " + _
+			trans_.afc.convert.date2SQL(CDate(dData)) + " BETWEEN dDataOd and dDataDo) or (" + _
+			trans_.afc.convert.date2SQL(CDate(dData)) + " >= dDataOd and dDataDo = " + trans_.afc.convert.date2SQL( trans_.afc.globals.nulldate() ) + ")" + _
+		" ) "
+	dim strProdWhere:strProdWhere =  "(wpProdGrupa_wrt=TYPEID_N5PRODUKT and wpProdGrupa=" + CStr(pProdukt.IdObj) + ") "
+	dim strGrupaWhere:strGrupaWhere =  "(wpProdGrupa_wrt=0 and wpProdGrupa=0)"
+
+	
+
+	dim query:query = _
+	" select "+select_fld(0) +" from n5polrab where " + strKlientWhere + " and " + strDateWhere + " and " + strProdWhere + vbNewLine + _
+	" union " + vbNewline + _
+	" select  "+select_fld(0) +"  from n5polrab where " + strKlientWhere + " and " + strDateWhere + " and " + strGrupaWhere + vbNewLine
+	dim iter:iter = 0
+	do while not pGrupaProd is nothing
+		iter = iter + 1
+		DEBUG_MESSAGE(pGrupaProd.text)
+		query = query + " union " + vbNewLine + _
+			" select  "+select_fld(iter) +"  from n5polrab where " + strKlientWhere + " and " + strDateWhere + " and " + "(wpProdGrupa_wrt=TYPEID_N5GRUPAPRODUKTOW and wpProdGrupa=" + CStr(pGrupaProd.IdObj) + ")" + vbNewLine 
+		set pGrupaProd = pGrupaProd.pGrupaNadrzedna
+	loop
+
+	query = query + " order by 1 desc , dDataOd desc, dDataDo desc "
+	
+	DEBUG_MESSAGE(query)
+
+	bquery_promotion_ado = query
+end function
+
+
+private function select_fld (byval n)
+	select_fld = " nPriorytet*100 - "+ cstr(n) +" , * "
+end function
+
+
+#comment '--------------------------------------------------------
+#comment ' aktualny stan magazynu 
+#comment ' get_stan_mag_for_prod_opak_mag - pobierany z include 50509
+#comment '--------------------------------------------------------
+]]>
+</script>
+</config>
+	<body>
+	</body>
+</page>

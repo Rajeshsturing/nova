@@ -1,0 +1,285 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+Wypełnienie zużyciem idealnym
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1201.h"
+#include "h1220.h"
+#include "h1224.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1222.h"
+#include "h1228.h"
+#include "h1200.h"
+#include "h1232.h"
+
+#define CTRLID_WYROB_ILOSC		101
+#define CTRLID_RECEPTA_NAZWA	102
+#define CTRLID_RADIO_MODE		103
+#define CTRLID_WYR_SUR_LABEL	104
+#define CTRLID_WYR_SUR_NAZWA	105
+#define CTRLID_ROW_WYR_SUR		106
+#define CTRLID_ROW_RULE			107
+
+
+#define FORM_SPAN				2
+#define RCELL_SPAN				1
+
+-->
+<page style='STYLE_PAGE'>
+<config>
+	<title>
+	Realizacja wg receptury
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+<startpos>center</startpos>
+<script><![CDATA[
+
+#include "50200"
+'view_message
+#include "50516"
+
+'--------------------------------------------------------------------------
+' getZuzycieParams(WOLANE Z ZEWNATRZ)
+'
+' Funkcja otwiera dialog do pobrania parametrów dla funkcji 
+' Create_ZuzycieIdealne
+'
+' pZUIDPA - parametry
+'--------------------------------------------------------------------------
+dim g_pZUIDPA : set g_pZUIDPA = nothing
+function getZuzycieParams(byref pZUIDPA)
+	set g_pZUIDPA = pZUIDPA
+	getZuzycieParams = page_.domodalauto()
+end function
+
+'--------------------------------------------------------------------------
+' Wybór ilość
+'--------------------------------------------------------------------------
+
+QVE_CURRENCY_CUSTOM_QUANTITY(CTRLID_WYROB_ILOSC, g_pZUIDPA.m_curIlosc, g_pZUIDPA.opakowanie , pJednOpak, 1)
+
+
+'--------------------------------------------------------------------------
+' Wybór recepty
+'--------------------------------------------------------------------------
+function choose_recepta(byref pHli)
+
+	dim strWhere: strWhere = ""
+
+	dim idRecepta
+	idRecepta = fire_choice_list_disable_add(TYPEID_N5RECEPTA, "Wybierz recepturę", "", strWhere, "", "")
+
+	if (idRecepta > 0) then
+		dim pNewRecepta : set pNewRecepta = trans_.getobj(TYPEID_N5RECEPTA, idRecepta)
+		if not pNewRecepta is g_pZUIDPA.m_pRecepta then
+			set g_pZUIDPA.m_pRecepta = pNewRecepta
+			set g_pZUIDPA.m_pWyrobLubSurowiec = nothing
+		end if
+
+		c##CTRLID_WYROB_ILOSC##_ongetdata page_.ctrl(CTRLID_WYROB_ILOSC)
+	end if
+end function
+
+function choose_wyrsur(byref pHli)
+
+	dim strWhere: strWhere = ""
+	dim strPrompt: strPrompt = ""
+
+	select case g_pZUIDPA.m_eMode
+	case 2
+		strWhere = "n5produkt.idobj in (select c_pprodukt from vlist_n5recepta_listWyrob where p_idobj=" + cstr(g_pZUIDPA.m_pRecepta.idobj) + ")"
+		strPrompt = "Wybierz wyrób"
+	case 3
+		strWhere = "n5produkt.idobj in (select c_pprodukt from vlist_n5recepta_listSurowce where p_idobj=" + cstr(g_pZUIDPA.m_pRecepta.idobj) + ")"
+		strPrompt = "Wybierz surowiec"
+	end select
+
+	dim idChoice 
+	idChoice = fire_choice_list_disable_add(TYPEID_N5PRODUKT, strPrompt, "", strWhere, "", "")
+
+	if (idChoice > 0) then
+		set g_pZUIDPA.m_pWyrobLubSurowiec = trans_.getobj(TYPEID_N5PRODUKT, idChoice)
+	end if
+end function
+
+function c##CTRLID_RECEPTA_NAZWA##_ongetdata(pCtrl)
+	if (g_pZUIDPA.m_pRecepta is nothing) then
+		pCtrl.value = "<wybierz recepturę>"
+	else
+		pCtrl.value = g_pZUIDPA.m_pRecepta.text
+	end if
+	page_.ctrl(CTRLID_ROW_WYR_SUR).hide = (g_pZUIDPA.m_eMode = 1) or (g_pZUIDPA.m_pRecepta is nothing)
+	page_.ctrl(CTRLID_ROW_RULE).hide = (g_pZUIDPA.m_pRecepta is nothing)
+
+	c##CTRLID_RECEPTA_NAZWA##_ongetdata = true
+end function
+
+function c##CTRLID_RECEPTA_NAZWA##_ondataentered(pCtrl, strValue)
+	if (strValue = "") then
+		set g_pZUIDPA.m_pRecepta = nothing
+	end if
+
+	c##CTRLID_RECEPTA_NAZWA##_ondataentered = true
+end function
+
+function c##CTRLID_RADIO_MODE##_ongetdata(pCtrl)
+	pCtrl.value = g_pZUIDPA.m_eMode
+	c##CTRLID_RADIO_MODE##_ongetdata = true
+end function
+
+function c##CTRLID_WYR_SUR_LABEL##_ongetdata(pCtrl)
+	select case g_pZUIDPA.m_eMode
+	case 2
+		pCtrl.value = "Wyrób"
+	case 3
+		pCtrl.value = "Surowiec"
+	case else
+		pCtrl.value = ""
+	end select
+
+	c##CTRLID_WYR_SUR_LABEL##_ongetdata = true
+end function
+
+function c##CTRLID_WYR_SUR_NAZWA##_ongetdata(pCtrl)
+	if (g_pZUIDPA.m_pWyrobLubSurowiec is nothing) then
+		select case g_pZUIDPA.m_eMode
+		case 2
+			pCtrl.value = "<wybierz wyrób>"
+		case 3
+			pCtrl.value = "<wybierz surowiec>"
+		case else
+			pCtrl.value = ""
+		end select
+	else
+		pCtrl.value = g_pZUIDPA.m_pWyrobLubSurowiec.text
+	end if
+
+	c##CTRLID_WYR_SUR_NAZWA##_ongetdata = true
+end function
+
+function c##CTRLID_WYR_SUR_NAZWA##_ondataentered(pCtrl, strValue)
+	if (strValue = "") then
+		set g_pZUIDPA.m_pWyrobLubSurowiec = nothing
+	end if
+
+	c##CTRLID_WYR_SUR_NAZWA##_ondataentered = true
+end function
+
+function c##CTRLID_RADIO_MODE##_ondataentered(pCtrl, strValue)
+	g_pZUIDPA.m_eMode = pCtrl.value
+	select case g_pZUIDPA.m_eMode
+	case 1
+		set g_pZUIDPA.m_pWyrobLubSurowiec = nothing
+	case 2
+		if g_pZUIDPA.m_pRecepta.listWyrob.exists(1) then
+			set g_pZUIDPA.m_pWyrobLubSurowiec = g_pZUIDPA.m_pRecepta.listWyrob.get(1).pProdukt
+		else
+			set g_pZUIDPA.m_pWyrobLubSurowiec = nothing
+		end if
+	case 3
+		if g_pZUIDPA.m_pRecepta.listSurowce.exists(1) then
+			set g_pZUIDPA.m_pWyrobLubSurowiec = g_pZUIDPA.m_pRecepta.listSurowce.get(1).pProdukt
+		else
+			set g_pZUIDPA.m_pWyrobLubSurowiec = nothing
+		end if
+	end select
+	c##CTRLID_RADIO_MODE##_ondataentered = true
+end function
+
+'--------------------------------------------------------------------------
+' Wybór recepty
+'--------------------------------------------------------------------------
+function fcancel()
+	page_.goback
+end function
+
+function ffill()
+
+	if (g_pZUIDPA.m_pRecepta is nothing) then
+		view_message 6318, 0
+		exit function
+	end if
+
+	if (g_pZUIDPA.m_curIlosc <= 0) then
+		view_message 6319, 0
+		exit function
+	end if
+	if g_pZUIDPA.m_eMode <> 1 then
+		if g_pZUIDPA.m_pWyrobLubSurowiec is nothing then
+			trans_.message 0,0,"Należy wskazać produkt"
+			exit function
+		end if
+	end if
+
+	page_.result = CLng(CMD_CHOICE)
+	page_.goback
+end function
+
+
+'--------------------------------------------------------------------------
+' open & close
+'--------------------------------------------------------------------------
+
+function fopen()
+	page_.result = 0
+	fopen = true
+end function
+
+]]></script>
+</config>
+<header>
+</header>
+<body>
+
+QXF_BEGIN
+	<tr>
+		QXC_LABEL_REQ(Receptura, 1)
+		
+		<td width='min' keepline='true' colspan='RCELL_SPAN'>
+			QXE_EDIT_CUSTOM_DELONLY(CTRLID_RECEPTA_NAZWA, 40)
+			QXE_PICTURE_ACTION(-1, PICTURE_CHOICE_N5RECEPTA, varFunctionHLI="choose_recepta", Wybór receptury)
+		</td>
+
+	</tr>
+
+	QXR_SEPARATOR(1)
+
+	<tr name='CTRLID_ROW_RULE' hide='true'>
+		QXC_LABEL(Zasada wypełniania, 1)
+		<td colspan='RCELL_SPAN'>
+			<radio name='CTRLID_RADIO_MODE' border='0'>
+				<t>Wykonaj recepturę 'Ilość' razy</t>
+				<t>Wyprodukuj wskazaną ilość wyrobu</t>
+				<t>Zużyj wskazaną ilość surowca</t>
+				<transfer mode='custom' />
+			</radio>
+		</td>
+	</tr>
+
+
+	<tr name='CTRLID_ROW_WYR_SUR' hide='true'>
+		<td>
+			QXE_LABEL_CUSTOM_REQ(CTRLID_WYR_SUR_LABEL,10)
+		</td>
+		
+		<td width='min' keepline='true' colspan='RCELL_SPAN'>
+			QXE_EDIT_CUSTOM_DELONLY(CTRLID_WYR_SUR_NAZWA, 40)
+			QXE_PICTURE_ACTION(-1, PICTURE_CHOICE_N5PRODUKT, varFunctionHLI="choose_wyrsur", Wybór surowca/wyrobu)
+		</td>
+
+	</tr>
+	QXR_SEPARATOR(1)
+
+	QXR_QUANTITY_CUSTOM(Ilość, CTRLID_WYROB_ILOSC, FORM_SPAN)
+
+QXF_END
+
+QXX_BUTTON_PAIR(Wypełnij,,ffill,Anuluj,,fcancel)
+
+</body>
+</page>

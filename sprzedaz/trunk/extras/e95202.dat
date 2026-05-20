@@ -1,0 +1,502 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!-- IDAGA-->
+<!--
+RAPTEMPLATE_CENNIK_STANDARD
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1250.h"
+
+
+
+
+#define NETTO	1
+#define BRUTTO	2
+
+#macro RXE_QUANTITY_PRZELICZ(_val_col_,n,bNetto)						<t><%so.write doc_.afc.display.quantity(g_ParamCustom.przelicz_wal(pRec , "_val_col_",nKurs , n , bNetto),strWaluta,nPrec)%></t>
+#macro RXE_QUANTITY_LOCAL(_val_col_,_unit_col_,_prec_col_,n,bNetto)		<t><%so.write doc_.afc.display.quantity(g_ParamCustom.get_cena(pRec , "_val_col_" , n , bNetto ),pRec("_unit_col_"),clng(pRec("_prec_col_")-1))%></t>
+
+
+#define RAPORT_TITLE		Cennik
+
+
+
+-->
+
+<page width='20000' style='36'  margins='700,700,700,700'>
+<config>
+	<title>
+	RAPORT_TITLE
+	</title>
+	<script>
+	<![CDATA[
+
+function section_hideshow_hli(byref pHLI)
+doc_.afc.formsection.section_hideshow page_, pHLI.prop(100)
+end function
+
+]]>
+	</script>
+</config>
+<header>
+</header>
+<body >
+RAPORT_HEADER(3,0)	
+<t fontsize='7' size='1' /><br/>
+<t fontsize='7' size='1' /><br/>
+<t fontsize='7' size='1' /><br/>
+
+<%
+dim bCena1,strCena1
+dim bCena2,strCena2
+dim bCena3,strCena3
+dim bCena4,strCena4
+dim bCena5,strCena5
+dim bCena6,strCena6
+dim bNetto
+dim strWaluta,bPrzelicz,nPrec,nKurs,nOldKurs
+dim strNettoBrutto 
+nOldKurs = ccur(1)
+
+
+function query()
+	query = "select 'c_grupa_id'=t_grpr.idObj, 'c_grupa_nazwa'=t_grpr.strNazwa, 'lp'= t_prod.coll_lp , 'c_prod_idobj'= t_prod.p_idobj,'c_prod_nazwa'=t_prod.p_strNazwa,'c_prod_index'=t_prod.p_strIndeks," +_
+	"'c_cena1'=t_prod.c_curCenaNetto1,'c_cena2'=t_prod.c_curCenaNetto2,'c_cena3'=t_prod.c_curCenaNetto3," +_
+	"'c_cena4'=t_prod.c_curCenaNetto4,'c_cena5'=t_prod.c_curCenaNetto5,'c_cena6'=t_prod.c_curCenaNetto6, " +_
+	"'c_cenab1'=t_prod.c_curCenaBrutto1,'c_cenab2'=t_prod.c_curCenaBrutto2,'c_cenab3'=t_prod.c_curCenaBrutto3," +_
+	"'c_cenab4'=t_prod.c_curCenaBrutto4,'c_cenab5'=t_prod.c_curCenaBrutto5,'c_cenab6'=t_prod.c_curCenaBrutto6, " +_
+	"'c_opak_nazwa'=t_prod.c_strNazwa,'c_waluta'=t_waluta.strSkrot,'c_prec'=t_waluta.nDokladnosc,'waluta_id'=t_waluta.idobj,  " +_
+	"'c_grupa' =10116 , 'c_oznprod' = t_prod.p_strCecha1 "+_
+	" from vlist_n5produkt_listOpakowania as t_prod " +_
+	"join n5jednostka t_waluta on t_prod.c_pWaluta = t_waluta.idobj " +_
+	"join n5grupaproduktow t_grpr on t_grpr.idobj= t_prod.p_pGrupaProd "+_
+	"where t_prod.p_pGrupaProd in (select tmp_group_idobj from #tmp_prod_hierarchy) and %1 and %2 and %4 " +_
+	"order by c_grupa_nazwa, c_prod_nazwa, c_prod_index, c_opak_nazwa desc "
+end function
+%>
+<%
+dim utilProdHierarchy : set utilProdHierarchy = doc_.getmodule(60246)
+dim pProdHierarchy : set pProdHierarchy = utilProdHierarchy.new_prod_hierarchy()
+
+dim g_ModuleRapCustom:set g_ModuleRapCustom = doc_.getmodule(43020)
+dim g_ParamCustom
+dim pGrupaParam
+
+function default_param()
+	'TABLICA PARAMETRÓW
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+	'PARAMETRY: nazwa, indeks, data wystawienia
+ 	pParamArray.add doc_.afc.rap.param.new_text("Nazwa").bind("t_prod","p_strNazwa")
+ 	pParamArray.add doc_.afc.rap.param.new_text("Indeks").bind("t_prod","p_strIndeks")
+
+	'PARAMETR: grupa produktów
+	dim pParamFactory : set pParamFactory = doc_.afc.rap.param
+
+	set pGrupaParam = doc_.afc.rap.param.new_text("Grupa produktów").bindexpr("strNazwa")
+	pParamArray.add pGrupaParam
+
+	'PARAMETR: dostępność
+	set pParamFactory = doc_.afc.rap.param
+	dim pParam: Set pParam = pParamFactory.new_choice("Dostępność")
+	pParamFactory.init_on_enum pParam, TYPEID_N5PRODUKT, "eAktywny"
+ 	pParamArray.add pParam.bind("t_prod","p_eAktywny")
+	pParam.selected.value(1) = false
+
+	
+	set g_ParamCustom = g_ModuleRapCustom.new_custom("Ceny")
+	g_ParamCustom.cena1 = util_.ProfilGlobalny(GLOBPROF_CENA1_NAME)
+	g_ParamCustom.cena2 = util_.ProfilGlobalny(GLOBPROF_CENA2_NAME)
+	g_ParamCustom.cena3 = util_.ProfilGlobalny(GLOBPROF_CENA3_NAME)
+	g_ParamCustom.cena4 = util_.ProfilGlobalny(GLOBPROF_CENA4_NAME)
+	g_ParamCustom.cena5 = util_.ProfilGlobalny(GLOBPROF_CENA5_NAME)
+	g_ParamCustom.cena6 = util_.ProfilGlobalny(GLOBPROF_CENA6_NAME)
+	g_ParamCustom.nettobrutto = clng(1)
+	pParamArray.add g_ParamCustom
+
+	set default_param = pParamArray
+end function
+%>
+
+
+<%
+function section_header_1(byref pSection,byref pRec)
+
+
+
+%>
+<tr userprop='propc_section_start="1" propc_section_hidden="0" propc_section_req="0"' fontsize='4'>
+	
+	<td style='27' 	colspan='3'>
+	
+	
+	RXE_AUTOTEXT_LINK_FORM_CCC(c_grupa,c_grupa_id,c_grupa_nazwa)
+	</td>
+	<%if bCena1 then%>
+	<td style='27'/>
+	<%end if%>
+	<%if bCena2 then%>
+	<td style='27'/>
+	<%end if%>
+	<%if bCena3 then%>
+	<td style='27'/>
+	<%end if%>
+	<%if bCena4 then%>
+	<td style='27'/>
+	<%end if%>
+	<%if bCena5 then%>
+	<td style='27'/>
+	<%end if%>
+	<%if bCena6 then%>
+	<td style='27'/>
+	<%end if%>
+	
+</tr>
+<%
+nSectionPicCounter=nSectionPicCounter+1
+end function
+%>
+<%
+function section_footer_1(byref pSection)
+%>
+<tr hide='true' userprop='propc_section_end="1"'><td colspan='3' />
+	<%if bCena1 then%>
+	<td />
+	<%end if%>
+	<%if bCena2 then%>
+	<td />
+	<%end if%>
+	<%if bCena3 then%>
+	<td />
+	<%end if%>
+	<%if bCena4 then%>
+	<td />
+	<%end if%>
+	<%if bCena5 then%>
+	<td />
+	<%end if%>
+	<%if bCena6 then%>
+	<td />
+	<%end if%>
+
+</tr>
+<tr border='0'><td colspan='3' />
+	<%if bCena1 then%>
+	<td />
+	<%end if%>
+	<%if bCena2 then%>
+	<td />
+	<%end if%>
+	<%if bCena3 then%>
+	<td />
+	<%end if%>
+	<%if bCena4 then%>
+	<td />
+	<%end if%>
+	<%if bCena5 then%>
+	<td />
+	<%end if%>
+	<%if bCena6 then%>
+	<td />
+	<%end if%>
+</tr>
+<%
+end function
+%>
+
+
+<%
+function body_header(byref pSection,byref pRec)
+
+	
+
+	bCena1 = g_ParamCustom.bcena1
+	strCena1 = g_ParamCustom.strcena1
+
+	bCena2 = g_ParamCustom.bcena2
+	strCena2 = g_ParamCustom.strcena2
+
+	bCena3 = g_ParamCustom.bcena3
+	strCena3 = g_ParamCustom.strcena3
+
+	bCena4 = g_ParamCustom.bcena4
+	strCena4 = g_ParamCustom.strcena4
+
+	bCena5 = g_ParamCustom.bcena5
+	strCena5 = g_ParamCustom.strcena5
+
+	bCena6 = g_ParamCustom.bcena6
+	strCena6 = g_ParamCustom.strcena6
+
+	bNetto = g_ParamCustom.nettobrutto = 1
+
+	strWaluta = g_ParamCustom.waluta.strSkrot
+	nPrec = g_ParamCustom.waluta.nDokladnosc - 1
+	bPrzelicz = g_ParamCustom.przelicz
+
+
+	if bNetto then strNettoBrutto = " netto" else strNettoBrutto = " brutto"
+%>
+
+<%
+	if g_ParamCustom.dla_klienta and not g_ParamCustom.klient is nothing then
+%>
+<br/>
+<text bold='true' fontsize='6'>Cennik dla 
+<% so.write g_ParamCustom.klient.text %>
+</text>
+<br/>
+
+<%
+	end if
+%>
+<!--
+<table border='0'>
+<tbody>
+<tr>
+	<td>
+		<picture name='999' print='true' image='c:\logo_idaga.gif'></picture>
+	</td>
+	<td align='right'>
+		<t><%so.write util_.Dzisiaj%></t>
+	</td>
+</tr>
+</tbody>
+</table>
+-->
+
+<table border='1'>
+	<thead>	
+	<tr style='STYLE_TABLE_HEADER'>
+		<td width='min'>
+			<t>LP</t>
+		</td>
+		<td>
+			<t>Nazwa</t>
+		</td>
+#ifdef _IOW
+		<td>
+			<t>Oznaczenia producenta</t>
+		</td>
+#endif
+		<td width='min'>
+			<t>Indeks</t>
+		</td>
+		<% if bCena1 then %>
+		<td width='min'>
+			<text><%so.write strCena1 + strNettoBrutto%> </text>
+		</td>
+		<% end if %>
+		<% if bCena2 then %>
+		<td width='min'>
+			<text><%so.write strCena2 + strNettoBrutto%></text>
+		</td>
+		<% end if %>
+		<% if bCena3 then %>
+		<td width='min'>
+			<text><%so.write strCena3 + strNettoBrutto  %></text>
+		</td>
+		<% end if %>
+		<% if bCena4 then %>
+		<td width='min'>
+			<text><%so.write strCena4 + strNettoBrutto%></text>
+		</td>
+		<% end if %>
+		<% if bCena5 then %>
+		<td width='min'>
+			<text><%so.write strCena5 + strNettoBrutto%></text>
+		</td>
+		<% end if %>
+		<% if bCena6 then %>
+		<td width='min'>
+			<text><%so.write strCena6 + strNettoBrutto%></text>
+		</td>
+		<% end if %>
+	</tr>
+</thead>
+<tbody>
+<%
+end function
+%>
+
+
+<%
+function body_footer(byref pSection)
+%>
+</tbody>
+</table>
+<%
+end function
+%>
+
+
+<%function body_row(byref pSection,byref pRec)%>
+<%
+	if bPrzelicz then 
+		nKurs = g_ParamCustom.get_kurs(pRec.fields("waluta_id").value)
+	else
+		nKurs = 0
+	end if
+%>
+
+	<tr>
+		<td align='right'>
+			RXE_LP
+		</td>
+		<td>
+			RXX_PRODUKT_NAZWA  <% if (pRec("c_opak_nazwa")) <> "Podstawowe" then so.write "<t size='2'/><t>(" + cstr(pRec("c_opak_nazwa")) + ")</t>" end if%>	
+		</td>
+
+#ifdef _IOW
+		<td>
+			RXE_T(c_oznprod)
+		</td>
+#endif
+
+		<td>
+			RXX_PRODUKT_INDEKS
+		</td>
+		<% 
+			if bCena1 then 
+		%>
+		<td align='right'>
+			<% if bNetto then  %>
+				<% if bPrzelicz then  %>
+					RXE_QUANTITY_PRZELICZ(c_cena1,1,bNetto)
+				<% else  %>
+					RXE_QUANTITY_LOCAL(c_cena1,c_waluta,c_prec,1,bNetto)
+				<% end if  %>
+			<% else %>
+				<% if bPrzelicz then  %>
+					RXE_QUANTITY_PRZELICZ(c_cenab1,1,bNetto)
+				<% else  %>
+					RXE_QUANTITY_LOCAL(c_cenab1,c_waluta,c_prec,1,bNetto)
+				<% end if  %>
+			<% end if%>
+		</td>
+		<% end if %>
+		<% if bCena2 then %>
+		<td align='right'>
+			<% if bNetto then  %>
+				<% if bPrzelicz then  %>
+					RXE_QUANTITY_PRZELICZ(c_cena2,2,bNetto)
+				<% else  %>
+					RXE_QUANTITY_LOCAL(c_cena2,c_waluta,c_prec,2,bNetto)
+				<% end if  %>
+			<% else %>
+				<% if bPrzelicz then  %>
+					RXE_QUANTITY_PRZELICZ(c_cenab2,2,bNetto)
+				<% else  %>
+					RXE_QUANTITY_LOCAL(c_cenab2,c_waluta,c_prec,2,bNetto)
+				<% end if  %>
+			<% end if%>
+		</td>
+		<% end if %>
+		<% if bCena3 then %>
+		<td align='right'>
+			<% if bNetto then  %>
+				<% if bPrzelicz then  %>
+					RXE_QUANTITY_PRZELICZ(c_cena3,3,bNetto)
+				<% else  %>
+					RXE_QUANTITY_LOCAL(c_cena3,c_waluta,c_prec,3,bNetto)
+				<% end if  %>
+			<% else %>
+				<% if bPrzelicz then  %>
+					RXE_QUANTITY_PRZELICZ(c_cenab3,3,bNetto)
+				<% else  %>
+					RXE_QUANTITY_LOCAL(c_cenab3,c_waluta,c_prec,3,bNetto)
+				<% end if  %>
+			<% end if%>
+		</td>
+		<% end if %>
+		<% if bCena4 then %>
+		<td align='right'>
+			<% if bNetto then  %>
+				<% if bPrzelicz then  %>
+					RXE_QUANTITY_PRZELICZ(c_cena4,4,bNetto)
+				<% else  %>
+					RXE_QUANTITY_LOCAL(c_cena4,c_waluta,c_prec,4,bNetto)
+				<% end if  %>
+			<% else %>
+				<% if bPrzelicz then  %>
+					RXE_QUANTITY_PRZELICZ(c_cenab4,4,bNetto)
+				<% else  %>
+					RXE_QUANTITY_LOCAL(c_cenab4,c_waluta,c_prec,4,bNetto)
+				<% end if  %>
+			<% end if%>
+		</td>
+		<% end if %>
+		<% if bCena5 then %>
+		<td align='right'>
+			<% if bNetto then  %>
+				<% if bPrzelicz then  %>
+					RXE_QUANTITY_PRZELICZ(c_cena5,5,bNetto)
+				<% else  %>
+					RXE_QUANTITY_LOCAL(c_cena5,c_waluta,c_prec,5,bNetto)
+				<% end if  %>
+			<% else %>
+				<% if bPrzelicz then  %>
+					RXE_QUANTITY_PRZELICZ(c_cenab5,5,bNetto)
+				<% else  %>
+					RXE_QUANTITY_LOCAL(c_cenab5,c_waluta,c_prec,5,bNetto)
+				<% end if  %>
+			<% end if%>
+		</td>
+		<% end if %>
+		<% if bCena6 then %>
+		<td align='right'>
+			<% if bNetto then  %>
+				<% if bPrzelicz then  %>
+					RXE_QUANTITY_PRZELICZ(c_cena6,6,bNetto)
+				<% else  %>
+					RXE_QUANTITY_LOCAL(c_cena6,c_waluta,c_prec,6,bNetto)
+				<% end if  %>
+			<% else %>
+				<% if bPrzelicz then  %>
+					RXE_QUANTITY_PRZELICZ(c_cenab6,6,bNetto)
+				<% else  %>
+					RXE_QUANTITY_LOCAL(c_cenab6,c_waluta,c_prec,6,bNetto)
+				<% end if  %>
+			<% end if%>
+		</td>
+		<% end if %>
+	</tr>
+<%end function%>
+
+<%dim nSectionPicCounter : nSectionPicCounter = 10000%>
+
+
+<%
+dim pRapExec : set pRapExec = rapeng_.new_engine()
+with pRapExec
+	.add_body_ex getref("body_header"),getref("body_footer"),getref("body_row")
+	.add_group_section 0,getref("section_header_1"),getref("section_footer_1")
+	if .prepare("RAPORT_TITLE",default_param(),rapeng_.get_raport_param(),query()) then
+			dim pPerf : set pPerf = doc_.performing("Trwa przygotowywanie wyników...")
+				pProdHierarchy.fill_on_prodgrupa_param pGrupaParam
+			set pPerf = nothing
+		.perform
+	end if
+end with
+pProdHierarchy.manual_done() : set pProdHierarchy = nothing
+set utilProdHierarchy = nothing
+
+%>
+
+
+
+
+
+
+
+
+
+
+
+</body>
+<footer>
+</footer>
+</page>

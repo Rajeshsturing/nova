@@ -1,0 +1,553 @@
+#include "h1000.h"
+#include "h1004.h"
+#include "h1200.h"
+#include "h1201.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1232.h"
+
+
+#define CMD_CONTINUE	3001
+#define CMD_REGISTER	3002
+
+
+#define PAGE_WIZZARD_WYSYLKI_STEP1				20305
+#define PAGE_WIZZARD_WYSYLKI_STEP2				20306
+#define PAGE_WIZZARD_WYSYLKI_STEP3				20307
+#define PAGE_WIZZARD_WYSYLKI_STEP4				20309
+#define PAGE_WIZZARD_WYSYLKI_STEP5				20310
+
+
+<?xml version="1.0" encoding="windows-1250" ?>
+<page>
+<config>
+<title>Wizzard</title>
+<script>
+
+<!--
+	ALWAYS MANUAL
+	Kreator wysyłki
+-->
+
+<![CDATA[
+
+#include "50203"
+#include "50206"
+#include "50209"
+#include "50211"
+#include "50101"
+#include "50122"
+#include "50126"
+#include "50212"
+
+class CEmailWizzard
+
+	private m_pObject
+	private m_nObjectCounter
+
+	private m_countObjects
+
+	' zrodlo danych  - raport albo lista
+	public m_nDest ' odczytywane z radio (czy raport czy lista)
+	public m_nTypeID ' typ obiektów
+	public m_nIdObj	' idobj listy albo raportu
+	public m_strName ' nazwa listy albo raportu
+	public m_strWhere ' where dla tworzonego kursora
+	public m_pCursor
+
+	public m_bRegister
+	public m_bPrzyp
+	public m_dDataPrzyp
+	public m_tCzasPrzyp
+
+end class
+
+dim pParamClass
+
+
+function onPageExit(pWizzardPage)
+	onPageExit=PAGE_DEFAULT
+
+	'wizzard działający na obiekcie
+	dim pRoot
+	set pRoot=pWizzardPage.m_pPage.root
+	
+	select case ( pWizzardPage.m_nPage )
+		
+		case PAGE_WIZZARD_WYSYLKI_STEP1:
+			'jeżeli nie podano adresatów
+			if pWizzardPage.m_pPage.is_empty() then
+				MessageBox "Aby kontynuować musisz wybrać grupę adresatów.", "Kreator wysyłki", vbOKOnly, vbInformation
+				onPageExit=PAGE_DONOTEXIT
+				exit function
+			else
+				select case pParamClass.m_nDest
+					case 3:			
+						'uruchom raport i pobierz z niego czesci 
+						'zapytania
+						dim pRaport:set pRaport = trans_.getobj(TYPEID_SEARCHTYPE,pParamClass.m_nIdObj)
+						if pRaport is nothing then
+							onPageExit = PAGE_DONOTEXIT
+							exit function
+						end if
+						dim pPM: set pPM = doc_.getmodule(60114)
+						dim strButtons: strButtons = "Zastosuj raport"
+						dim strColumns, strDescription, strIds
+
+						dim strJoin, strWhere, strOrderBy, strGroupBy
+
+						if (pPM.get_search_filter_result(pRaport, _
+						strButtons, strColumns, _
+						strJoin, _
+						strWhere, _
+						strOrderBy, _
+						strGroupBy, _
+						strDescription, strIds)<>1) then
+							MessageBox "Musisz podać kryteria raportu i następnie go zastosować." , "Nie zastosowano raportu.", vbOKOnly, vbInformation
+							onPageExit=PAGE_DONOTEXIT
+							exit function
+						end if						
+						pParamClass.m_strWhere = strWhere
+
+					case 2:
+						dim pList:set pList = trans_.getobj(TYPEID_CHOICELIST,pParamClass.m_nIdObj)
+						if pList is nothing then
+							onPageExit = PAGE_DONOTEXIT
+							exit function
+						end if
+						dim elem
+						pParamClass.m_strWhere = " idobj=0 "
+						for each elem in pList.listElement
+							pParamClass.m_strWhere = pParamclass.m_strWhere + " or idobj=" + cstr(elem.idElement)
+						next
+					case 1:
+						pParamClass.m_strWhere = " eAktywny=1 "																								
+				end select
+			end if
+
+		case PAGE_WIZZARD_WYSYLKI_STEP2:
+			'nie podano tytulu wysylki
+			if (len( pRoot.strTytul )=0) then
+				MessageBox "Aby kontynuować musisz podać tytuł wysyłki.", "Kreator wysyłki", vbOKOnly, vbInformation
+				onPageExit=PAGE_DONOTEXIT
+				exit function
+			end if
+
+		case PAGE_WIZZARD_WYSYLKI_STEP3:
+			'sprawdz czy podano rodzaj wysylki
+			if (pRoot.cWysylkaEmail="0" and _
+				pRoot.cWysylkaFax="0" and _
+				pRoot.cWysylkaWydruk="0") then
+					MessageBox "Aby kontynuować musisz wybrać metodę wysyłki.", "Kreator wysyłki", vbOKOnly, vbInformation
+					onPageExit=PAGE_DONOTEXIT
+					exit function
+			end if
+		case PAGE_WIZZARD_WYSYLKI_STEP4:
+			
+			if pParamClass.m_bPrzyp = "1" then
+				if pParamClass.m_dDataPrzyp < srvDate then
+					MessageBox "Nieprawidłowa data przypomnienia.", "Kreator wysyłki", vbOKOnly, vbInformation
+					onPageExit=PAGE_DONOTEXIT
+				elseif pParamClass.m_dDataPrzyp = srvDate() then
+					if pParamClass.m_tCzasPrzyp < srvTime() or pParamClass.m_tCzasPrzyp = doc_.afc.globals.nulltime() then
+						MessageBox "Nieprawidłowy czas przypomnienia.", "Kreator wysyłki", vbOKOnly, vbInformation
+						onPageExit=PAGE_DONOTEXIT
+					end if					
+				end if
+			end if
+
+	end select
+
+end function
+
+function onPageEnter(pWizzardPage)
+	'wizzard działający na obiekcie
+	dim pRoot
+	set pRoot=pWizzardPage.m_pPage.root
+
+	select case ( pWizzardPage.m_nPage )
+		case PAGE_WIZZARD_WYSYLKI_STEP5
+			'wylicz podsumowanie
+			dim pInformation
+
+'			if (showWorking(pRoot)) then
+'				set pInformation=doc_.performing("Tworzenie podsumowania . . .")
+'			end if
+
+			set pParamClass.m_pCursor = trans_.createrawcursor(pParamClass.m_nTypeID , pParamClass.m_strWhere , "" , "")
+
+			dim nDokumentow:nDokumentow=getLiczbaDokumentow(pRoot)
+			dim nAdresatow:nAdresatow=getLiczbaAdresatow(pParamClass.m_pCursor)
+			dim nWysylki:nWysylki=getLiczbaWysylek(pRoot)
+			dim nWysylek:nWysylek=clng(nWysylki*nDokumentow*nAdresatow)
+
+			if (pRoot.cWysylkaEmail="1") then
+				nWysylek=nWysylek+nAdresatow
+			end if
+
+			pWizzardPage.m_pPage.ctrl(1).text=CStr(nWysylek)
+
+			set pInformation=nothing
+
+		case PAGE_WIZZARD_WYSYLKI_STEP4:
+			if (getCurrentWykonawca() is nothing) then
+				pWizzardPage.m_pPage.ctrl(5).disable=true
+			end if
+
+	end select
+	
+end function
+
+function onPageInit(pWizzardPage)
+	'wizzard działający na obiekcie
+	dim pRoot
+	set pRoot=pWizzardPage.m_pPage.root
+
+	select case ( pWizzardPage.m_nPage )
+		case PAGE_WIZZARD_WYSYLKI_STEP4:
+			if (getCurrentUser().pWykonawca is nothing) then
+				MessageBox "Aktualnie zalogowany użytkownik nie ma podanego domyślnego wykonawcy. Rejestracja wysyłki w zadaniach nie będzie możliwa.", "Kreator wysyłki", vbOKOnly, vbInformation				
+			end if
+
+	end select
+
+end function
+
+dim pCommonInformation	'komunikat "wysyłanie trwa"
+
+sub getCommonInformation()
+	set pCommonInformation=doc_.performing("Wysyłanie trwa . . . ")
+end sub
+
+'-----------------------------------------------------------------------
+'gdy kończymy działanie wizzarda wysyłamy wszystko
+'-----------------------------------------------------------------------
+function onWizzardComplete(pWizzardPage):onWizzardComplete=false
+	dim id:id = pWizzardPage.m_pPage.root.idobj
+
+	'nowa tranzakcja - nie zapisujemy obiektu na ktorym dzialal wizzard
+	dim pTrans
+	set pTrans=trans_.createsubtran()
+
+	set pMapi=nothing
+
+	'wizzard działający na obiekcie
+	dim pRoot
+	set pRoot= trans_.getobj(TYPEID_N5WIZZARDEMAIL,id)'pWizzardPage.m_pPage.root
+
+	'ustaw obiekt MAPI gdy wysylka by email
+
+	if (pRoot.cWysylkaEmail="1") then
+
+		dim bExit : bExit = false
+		do while true
+			'podłączenie się do klienta poczty elektronicznej
+			if (not Mapi_connect()) then
+				dim nAnswer : nAnswer = MessageBox("Nie udało się podłączyć do poczty elektronicznej." +_
+				"Czy chcesz zainstalować/sprawdzić komponenty poczty ?", "Nie można podłączyć poczty e-mail", vbYesNo, vbQuestion)
+				if nAnswer <> vbYes then
+					bExit = true
+					exit do
+				else
+					if not doc_.getmodule(60126).install_mapi() then
+						bExit = true
+						exit do
+					end if
+				end if
+			else
+				exit do
+			end if
+		loop
+		
+		if bExit then
+			exit function
+		end if
+	end if
+
+	getCommonInformation
+
+	dim iAdresat:iAdresat=1
+'	while pRoot.pChoiceList.listElement.exists(iAdresat)
+	set pParamClass.m_pCursor = trans_.createrawcursor(pParamClass.m_nTypeID , pParamClass.m_strWhere , "" ,  "" )
+	dim pElem
+	for each pElem in pParamClass.m_pCursor'pRoot.pChoiceList.listElement
+
+
+			dim arrAttachemnts
+			set arrAttachemnts=trans_.afc.new_navoarray()
+
+			dim pObj
+			set pObj= pElem
+
+			'wyslij dokumenty dla danego obiektu
+			dim iDok:iDok=1
+			dim pD
+			for each pD in pRoot.listDokumenty
+'			while pRoot.listDokumenty.exists(iDok)
+				
+				if not send(pObj, pD.pDokument, pRoot) then
+					set pCommonInformation=nothing
+					MessageBox "Działanie kreatora wysyłki zostało przerwane.", "Kreator wysyłki", vbOKOnly, vbInformation
+					exit function
+				end if
+
+				arrAttachemnts.Add pD.pDokument
+				iDok=iDok+1
+			next
+
+			'dodane, aby nie rejestrował w zadaniach nie wysłanych dokumentów
+			dim bRejestrujThis:bRejestrujThis = true
+			
+			'wysyłaj pocztą elektroniczną
+			if (pRoot.cWysylkaEmail="1") then
+				if (not send_byEMail(pObj, arrAttachemnts, pRoot)) then
+
+					set pCommonInformation=nothing
+					
+					if MessageBox("Nie udało się wysłać e-mail'a." + _
+					" Chcesz spróbować wysłać resztę dokumentów?", "Kreator wysyłki", vbYesNo, vbQuestion)<>vbYes then
+						exit function
+					end if
+					
+					bRejestrujThis = false
+					getCommonInformation
+
+				end if
+			end if
+
+			'zarejestruj w zadaniach
+			if (pRoot.cZarejestruj="1" and bRejestrujThis) then
+				if (not SaveDokumentZadanie(pObj, arrAttachemnts, pRoot.strTytul, pRoot.strTresc , pParamClass) ) then
+
+					set pCommonInformation=nothing
+
+					if MessageBox("Nie udało się zarejestrować wysyłki. " + _
+					" Chcesz spróbować wysłać resztę dokumentów?", "Kreator wysyłki", vbYesNo, vbQuestion )=vbYes then
+						trans_.discard
+					else
+						exit function
+					end if
+
+					getCommonInformation
+
+				end if
+			end if
+
+
+		iAdresat=iAdresat+1
+
+
+	next
+
+	set pCommonInformation=nothing
+	set pMapi=nothing
+
+	onWizzardComplete=true
+
+	MessageBox "Działanie kreatora wysyłki zakończyło się pomyślnie", "Kreator wysyłki", vbOKOnly, vbInformation
+end function
+
+
+'-----------------------------------------------------------------------
+'true gdy nalezy pokazac komunikat - duzo danych
+'uzywane przy krokach wizzarda
+'-----------------------------------------------------------------------
+function showWorking(pRoot):showWorking=false
+	if (pRoot.listDokumenty.exists(10) or _
+		pRoot.pChoiceList.listElement.exists(10)) then
+			showWorking=true
+	end if
+end function
+
+dim pMapi		'jednej obiekt globalny dla poczty
+
+#include "50226"
+
+'-----------------------------------------------------------------------
+'podlacz sie do klienta poczty
+'-----------------------------------------------------------------------
+function Mapi_connect():Mapi_connect=false
+#ifdef _DEBUG
+#else
+	on error resume next
+#endif
+
+	dim pNavoMapi
+	set pNavoMapi=new CNavoMAPI
+
+	if (not pNavoMapi.connect()) then
+		exit function
+	end if
+
+	set pMapi=pNavoMapi.getMAIL()
+	Mapi_connect=true
+end function
+
+'-----------------------------------------------------------------------
+'wysyla podany dokument dla podanego obiektu
+'-----------------------------------------------------------------------
+function send(byref pObj, byref pDok, byref pRoot):send=false
+	if (pRoot.cWysylkaFax="1") then
+		send_byFax pObj, pDok, pRoot
+	end if
+
+	if (pRoot.cWysylkaWydruk="1") then
+		send_Print pObj, pDok, pRoot
+	end if
+
+	send=true
+end function
+
+'-----------------------------------------------------------------------
+'wysyla dokument poczta elektroniczna
+'-----------------------------------------------------------------------
+function send_byEMail(byref pObj, byref pDoks, byref pRoot):send_byEMail=false
+	if ( SendDokument(pObj,"", "" ,pDoks, pRoot.strTytul, pRoot.strTresc, pMapi, nothing) ) then
+		send_byEMail=true
+	else
+		'jezeli brak emaila to sprawdzaj czy mamy robic cos dalej
+		'i jezeli tak to robimy
+
+		dim pDok, bSthDone:bSthDone=false
+
+		dim i
+		for i=0 to pDoks.Count()-1
+
+			set pDok=pDoks.Value (i)
+
+			if (pRoot.cWysylkaEmailFax="1") then
+				send_byEMail=send_byFax(pObj, pDok, pRoot)
+				bSthDone=true
+			end if
+
+			if (pRoot.cWysylkaEmailWydruk="1") then
+				send_byEMail=send_Print(pObj, pDok, pRoot)
+				bSthDone=true
+			end if
+
+		next
+
+			
+			dim strTo:strTo=""
+			select case (pObj.type)
+				case TYPEID_N5PRACOWNIK
+					strTo=pObj.strEmail
+				case TYPEID_N5KLIENT_PRACOWNIK
+					strTo=pObj.strEmail
+				case TYPEID_N5KLIENT
+					strTo=pObj.strEmail
+			end select
+
+			'jezeli nie mial adresu e-mail'owego i nie
+			'i nie mielismy nic wiecej robic to zwracamy,
+			'ze sie udalo - nie mial e-maila - to nie jest traktowane
+			'jako blad wysylki
+			if ((not bSthDone) and (strTo="")) then
+				send_byEMail=true
+			end if
+
+
+	end if
+end function
+
+'-----------------------------------------------------------------------
+'wyślij faxem
+'-----------------------------------------------------------------------
+function send_byFax(byref pObj, byref pDok, byref pRoot)
+	'todo:
+#ifdef _DEBUG
+	MsgBox "By Fax " + CStr(pObj.type) + ":" + CStr(pObj.idobj)
+#endif
+end function
+
+'-----------------------------------------------------------------------
+'drukuj
+'-----------------------------------------------------------------------
+function send_Print(byref pObj, byref pDok, byref pRoot)
+	'todo:
+#ifdef _DEBUG
+'	MsgBox "Print " + CStr(pObj.type) + ":" + CStr(pObj.idobj)
+#endif
+	print_document pDok
+
+end function
+
+'-----------------------------------------------------------------------
+'pobierz liczbe dokumentow
+'-----------------------------------------------------------------------
+function getLiczbaDokumentow(byref pRoot)
+	getLiczbaDokumentow=pRoot.listDokumenty.count()
+end function
+
+'-----------------------------------------------------------------------
+'pobierz liczbe adresatow
+'-----------------------------------------------------------------------
+function getLiczbaAdresatow(byval pCursor)
+	dim i:i=1
+	
+	while pCursor.exists(i)
+		i=i+1
+	wend
+
+	getLiczbaAdresatow=(i-1)
+end function
+
+'-----------------------------------------------------------------------
+'pobierz przewidywane liczbe wysylek (typow wysylek)
+'przewidywana bo ktos kto nie ma e-mail'a moze zaznaczyc, ze
+'chce wtedy faxem i wydruk
+'-----------------------------------------------------------------------
+function getLiczbaWysylek(byref pRoot)
+	getLiczbaWysylek=0
+
+	if (pRoot.cWysylkaFax="1") then getLiczbaWysylek=getLiczbaWysylek+1
+	if (pRoot.cWysylkaWydruk="1") then getLiczbaWysylek=getLiczbaWysylek+1
+end function
+
+'-----------------------------------------------------------------------
+'uruchomienie calego wizzarda
+'-----------------------------------------------------------------------
+function run()
+	dim pWizzard
+	set pWizzard=CWizzard(true)
+
+	set pParamClass = new CEmailWizzard	
+	pWizzard.add_container pParamClass
+	pParamClass.m_nDest = 1
+	pParamClass.m_nTypeID = TYPEID_N5KLIENT
+
+	pParamClass.m_dDataPrzyp = doc_.afc.globals.nulldate()
+	pParamClass.m_tCzasPrzyp = doc_.afc.globals.nulltime()
+	pParamClass.m_bPrzyp = "0"
+	pParamClass.m_bRegister = "0"
+
+	if trans_.isvar(GVAR_OBJECT) then		
+		pWizzard. set_objectID trans_.var(GVAR_OBJECT)
+	end if
+
+	pWizzard.add_step PAGE_WIZZARD_WYSYLKI_STEP1
+	pWizzard.add_step PAGE_WIZZARD_WYSYLKI_STEP2
+	pWizzard.add_step PAGE_WIZZARD_WYSYLKI_STEP3
+	pWizzard.add_step PAGE_WIZZARD_WYSYLKI_STEP4
+	pWizzard.add_step PAGE_WIZZARD_WYSYLKI_STEP5
+
+	pWizzard.run
+end function
+
+function fopen()
+	fopen=false
+	if HARUI(UAR_CMDID(CMDID_WIZZARD_EMAIL)) then
+		run
+	end if
+end function
+
+]]>
+
+</script>
+</config>
+
+<body>
+</body>
+
+</page>

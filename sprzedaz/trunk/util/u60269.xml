@@ -1,0 +1,263 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200.h"
+#include "h1201.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1240.h"
+-->
+<page style='STYLE_PAGE'>
+<config>
+
+<script>
+<![CDATA[
+
+'-----------------------------------------------------------------------------
+' (c) Navo 2003 Ltd.
+' Spikowski Piotr
+'
+' Export wizytówki firmy i pracownika
+'-----------------------------------------------------------------------------
+
+'MessageBox
+#include "50122"
+
+'fire_choice_list
+#include "50200"
+
+'srvDate
+#include "50126"
+
+dim g_nFirmaKlientID
+g_nFirmaKlientID = CLng(0)
+
+'-----------------------------------------------------------------------------
+' Eksport pracowników i firmy jako klientów
+'-----------------------------------------------------------------------------
+function create_klient_from_firma()
+	dim pKlient : set pKlient = trans_.newobj(TYPEID_N5KLIENT)
+	'wypełnić wg n5firma_XMLOnObj
+	set create_klient_from_firma = pKlient
+end function
+
+function create_prac_klienta_from_prac(byref pKlient,byref pPracownik)
+	dim pPracKlienta : set pPracKlienta = trans_.newobj(TYPEID_N5KLIENT_PRACOWNIK)
+	'wypełnić wg n5pracownik_XMLOnObj
+	set create_prac_klienta_from_prac = pPracKlienta
+end function
+
+function ExportBusinessCard(byref pWorkersArr, byref pSO): ExportBusinessCard = false
+	'Zainicjowanie manager'a exportu
+	dim pEFM : set pEFM = doc_.getmodule(60272)
+	dim pExportFilter : set pExportFilter = pEFM.new_exp_filter()
+	set pSO = pExportFilter.preprare_export_ex(pSO)
+
+	dim pFirmaAsKlient : set pFirmaAsKlient = create_klient_from_firma()
+	pExportFilter.exportobj pFirmaAsKlient
+		
+	dim i
+	for i = 0 to pWorkersArr.UpperIndex()
+		pExportFilter.exportobj create_prac_klienta_from_prac(pFirmaAsKlient,_
+			trans_.getobj(TYPEID_N5PRACOWNIK, pWorkersArr.Value(i)))
+	next
+	
+	ExportBusinessCard = (pExportFilter.done_export(pSO,"") = 0)
+end function
+
+'-----------------------------------------------------------------------------
+'SMIECI
+'-----------------------------------------------------------------------------
+
+private function n5firma_XMLBefObj(byref pExportMan, byref pObject)
+	n5firma_XMLBefObj = false
+end function
+
+private function n5firma_XMLOnObj(byref pExportMan, byref pObject): set n5firma_XMLOnObj = nothing
+
+	'Wyszukanie odpowiedniej grupy klientów
+	dim nIdGrupaKlient
+	nIdGrupaKlient = trans_.findobjid(TYPEID_N5GRUPAKLIENT, "strNazwa = 'Importowani'")
+
+	dim pPageSuggest
+
+	if (nIdGrupaKlient <= 0) then
+		
+		pExportMan.performing_destroy
+
+		'Informacja wyjaśniająca
+		MessageBox "Jeśli Twoja wizytówka zostanie zaimportowana, firma zostanie dodana do pewnej grupy klientów. Wybierz, jaka to ma być grupa.", "Wizytówka", vbOKOnly, vbInformation
+		
+		do
+			
+			'Wybór ręczny
+			nIdGrupaKlient = fire_choice_list(TYPEID_N5GRUPAKLIENT, "", "", "", "strNazwa","")
+
+			if (nIdGrupaKlient<=0) then
+				
+				if MessageBox ("Nie wybrano grupy klientów. Musisz ją wybrać. Chcesz spróbować jeszcze raz?", "Grupa klientów", vbYesNo, vbQuestion) <> vbYes then
+					pExportMan.cancelExport
+					exit function
+				end if
+
+			end if
+
+		loop until (nIdGrupaKlient > 0)
+
+		pExportMan.performing_restore
+
+	end if
+
+	dim pGrupaKlientow
+	set pGrupaKlientow = trans_.getobj(TYPEID_N5GRUPAKLIENT, nIdGrupaKlient)
+
+	if (pGrupaKlientow is nothing) then
+		pExportMan.cancelExport
+		exit function
+	end if
+
+	'Eksport referencji
+	pExportMan.fromObject pGrupaKlientow
+	pExportMan.fromObject pObject.pBank1
+	pExportMan.fromObject pObject.pBank2
+	pExportMan.fromObject pObject.pBank3
+	pExportMan.fromObject pObject.pWaluta
+	pExportMan.fromObject pObject.pMiejscowosc
+
+	if (pExportMan.isCanceled()) then
+		exit function
+	end if
+	
+	dim pXMLObj
+	set pXMLObj = pExportMan.newVirtualObject( TYPEID_N5KLIENT )
+
+	g_nFirmaKlientID = pExportMan.getCurrentID()
+
+	'Ustawienie referencji
+	pXMLObj("pBank1")			= objectID(pObject.pBank1)
+	pXMLObj("pBank2")			= objectID(pObject.pBank2)
+	pXMLObj("pBank3")			= objectID(pObject.pBank3)
+	pXMLObj("pWaluta")			= objectID(pObject.pWaluta)
+	pXMLObj("pGrupaKlient")		= objectID(pGrupaKlientow)
+	pXMLObj("pMiejscowosc")		= objectID(pObject.pMiejscowosc)
+	
+	'Ustawienie zwykłych pól
+	pXMLObj("eTypDT")				= CLng(N5KLIENT_DT_DOWOD)
+	pXMLObj("strNazwisko")			= pObject.strNazwa
+	pXMLObj("strImie")				= "Firma"
+	pXMLObj("dDataUr")				= trans_.afc.globals.nulldate()
+	pXMLObj("ePlec")				= CLng(N5KLIENT_PLEC_MEZCZYZNA)
+	pXMLObj("eAktywny")				= CLng(N5KLIENT_AKTYWNY)
+	pXMLObj("eKlasaKlienta")		= CLng(N5KLIENT_MALY)
+	pXMLObj("ePrywat")				= CLng(N5KLIENT_FIRMA)
+	pXMLObj("ewiarfin")				= CLng(N5KLIENT_FINANSE_NIEZN)
+	pXMLObj("strIndeks")			= pObject.strSkrot
+	pXMLObj("strNazwa")				= pObject.strNazwa
+ 	pXMLObj("strSkrot")				= pObject.strSkrot
+ 	pXMLObj("strUlica")				= pObject.strUlica
+ 	pXMLObj("strNrDomu")			= pObject.strNrDomu
+ 	pXMLObj("strNrLokalu")			= pObject.strNrLokalu
+ 	pXMLObj("strKod")				= pObject.strKod
+ 	pXMLObj("strTel1")				= pObject.strTel1
+ 	pXMLObj("strTel2")				= pObject.strTel2
+ 	pXMLObj("strTel3")				= pObject.strTel3
+ 	pXMLObj("strEmail")				= pObject.strEmail
+ 	pXMLObj("strWWW")				= pObject.strWWW
+ 	pXMLObj("strSad")				= pObject.strSad
+ 	pXMLObj("strNIP")				= pObject.strNIP
+ 	pXMLObj("strREGON")				= pObject.strREGON
+ 	pXMLObj("strRachunek1")			= pObject.strRachunek1
+ 	pXMLObj("strPrzeznaczenie1")	= pObject.strPrzeznaczenie1
+ 	pXMLObj("strRachunek2")			= pObject.strRachunek2
+ 	pXMLObj("strPrzeznaczenie2")	= pObject.strPrzeznaczenie2
+ 	pXMLObj("strRachunek3")			= pObject.strRachunek3
+ 	pXMLObj("strPrzeznaczenie3")	= pObject.strPrzeznaczenie3
+	pXMLObj("strFax")				= pObject.strFax
+
+	set n5firma_XMLOnObj = pXMLObj
+end function
+
+private function n5pracownik_XMLBefObj(byref pExportMan, byref pObject)
+	n5pracownik_XMLBefObj = false
+end function
+
+private function n5pracownik_XMLOnObj(byref pExportMan, byref pObject): set n5pracownik_XMLOnObj = nothing
+
+	if (pExportMan.isCanceled()) then
+		exit function
+	end if
+	
+	dim pXMLObj
+	set pXMLObj = pExportMan.newVirtualObject( TYPEID_N5KLIENT_PRACOWNIK )
+
+	'Ustawienie zwykłych pól
+	pXMLObj("pKlient")		= g_nFirmaKlientID
+	pXMLObj("strNazwisko")	= pObject.strNazwisko
+	pXMLObj("strImie")		= pObject.strImie
+	pXMLObj("strImie2")		= pObject.strImie2
+	pXMLObj("ePlec")		= pObject.ePlec
+	pXMLObj("strTel1")		= pObject.StrTel1
+	pXMLObj("strTel2")		= pObject.StrTel2
+	pXMLObj("strTel3")		= pObject.StrTel3
+	pXMLObj("StrTel4")		= pObject.StrTel4
+	pXMLObj("strFax")		= pObject.strFax
+	pXMLObj("strEmail")		= pObject.strEmail
+	pXMLObj("strEmail2")	= pObject.strEmail2
+	pXMLObj("strWWW")		= pObject.strWWW
+	pXMLObj("strStanowisko")= pObject.strStanowisko
+	pXMLObj("eStanCywilny") = CLng(N5KLIENT_PRACOWNIK_NIEZNANY)
+	pXMLObj("eAktywny")		= CLng(N5KLIENT_PRACOWNIK_AKTYWNY)
+
+	if (pObject.dDataUr <> trans_.afc.globals.nulldate()) then
+		pXMLObj("nWiek")	= CLng(Year(srvDate()) - Year(CDate(pObject.dDataUr)))
+	end if
+	
+	set n5pracownik_XMLOnObj = pXMLObj
+end function
+
+dim pPrerformingXML
+set pPrerformingXML = nothing
+
+dim strOldXMLText
+
+'-----------------------------------------------------------------------------
+' Event: Torzymy performing
+'-----------------------------------------------------------------------------
+function XMLExport_CreatePerforming(byref pExpMan, byval strToDisplay)
+
+	strToDisplay = "PRELOAD " + strToDisplay
+	
+	if (strOldXMLText=strToDisplay) then
+		exit function
+	end if
+
+	if (pPrerformingXML is nothing) then
+		page_.updateview
+		set pPrerformingXML = doc_.performing( strToDisplay )
+		strOldXMLText = strToDisplay
+		exit function
+	end if
+
+	pPrerformingXML.text = strToDisplay
+	strOldXMLText = strToDisplay
+end function
+
+'-----------------------------------------------------------------------------
+' Event: Niszczymy performing
+'-----------------------------------------------------------------------------
+function XMLExport_DestroyPerforming(byref pExpMan)
+	set pPrerformingXML = nothing
+	strOldXMLText = ""
+end function
+
+
+]]>
+</script>
+
+</config>
+<body>
+</body>
+</page>

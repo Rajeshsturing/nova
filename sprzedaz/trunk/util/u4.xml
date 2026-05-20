@@ -1,0 +1,242 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+REV:KB:WORKING
+
+#include "h1000.h"
+#include "h1001.h"
+
+#define ENGINE_ERROR_FIRST		1001
+#define APP_WARNING_FIRST		4000
+#define APP_WARNING_LAST		4999
+
+#define MAX_MESSAGES_ON_PAGE	12
+
+#define CTRLID_MSGTABLE		201
+
+#define MY_IID	4
+#define PAGE_BACKCOLOR #E0E0E0
+#define MSG_BACKCOLOR  #F0F0F0
+-->
+<page backcolor='PAGE_BACKCOLOR' margins='200,200,200,200' width='10000'>
+
+<config>
+<startpos>topright</startpos>
+<iid>MY_IID</iid>
+
+<title>Komunikaty systemu</title>
+
+<script>
+<![CDATA[
+#include "50518"
+
+function fopen
+	dim bFound:bFound=false
+	dim pagestack
+	for each pagestack in doc_
+		if not pagestack.gettoppage is nothing then
+			if pagestack.gettoppage.iid = MY_IID then
+				bFound=true
+			end if
+		end if
+	next
+	doc_.postcommand("varCmd=CMD_REFRESH vn5040=MY_IID")
+	fopen = not bFound
+end function
+
+function frefresh
+	dim idError, idHelp,strDescription
+	do while doc_.getnewmessage(idError,idHelp,strDescription)
+		on_new_error_internal idError, idHelp,strDescription
+	loop
+	doc_.clearnewmessage
+	dim pBody: set pBody = page_.ctrl(CTRLID_MSGTABLE).body
+	'usuń nadmiarowe elementy
+	do while pBody.count > MAX_MESSAGES_ON_PAGE
+		pBody.remove pBody.row( MAX_MESSAGES_ON_PAGE + 1 ).ident
+	loop
+	kill_timer
+	set_timer
+	display_nx_trace
+end function
+
+private sub display_nx_trace
+	if trans_.isvar(COMMON_VAR_UISTYLE) then
+		'trans_.message 1002 , 0 , "COMMON_VAR_UISTYLE " + cstr(clng(trans_.var(COMMON_VAR_UISTYLE)))
+		if clng(trans_.var(COMMON_VAR_UISTYLE)) <> clng(1) then	
+			exit sub
+		end if
+	else
+		'trans_.message 1002 , 0 , "no COMMON_VAR_UISTYLE "
+	end if
+	
+	if nx_.trace.highest_error_class > 0 then		
+		
+    dim oRootTraceStream : set oRootTraceStream = doc_.createstreamobj()
+		dim oNXStream : set oNXStream = nothing
+
+    on error resume next
+    set oNXStream = nx_.trace.reinit(oRootTraceStream)
+    on error goto 0
+
+    if not oNXStream is nothing then		
+		  dim oPrevTraceStream : set oPrevTraceStream = doc_.createstreamobj()
+		  oPrevTraceStream.attach oNXStream
+		  oPrevTraceStream.rewind
+
+		  dim oXMLResultStream : set oXMLResultStream = doc_.createstreamobj()
+
+		  doc_.parsexml nx_.nxtrace2page(oXMLResultStream,0,0), oPrevTraceStream
+
+		  dim pPage : set pPage = doc_.getpagehli(asp_form_hli(20219,doc_.createhli(),oXMLResultStream))
+		  pPage.domodalauto()
+    end if
+    
+	end if
+end sub
+
+private function set_timer
+	doc_.timer 213,"varFunction='unbold_old_msgs' vn5040=4",5
+end function
+
+private function kill_timer
+	doc_.timer 213,"",0
+end function
+
+
+function fclose() : fclose=false
+	kill_timer
+end function
+
+private function unbold_tablesection(byref pSection)
+	dim pRow
+	for each pRow in pSection
+		dim pCell
+		for each pCell in pRow
+			dim pElement
+			for each pElement in pCell
+				pElement.fontsize = 3
+				pElement.forecolor = rgb(80,80,80)
+			next
+		next
+		pRow.backcolor = rgb(192,192,192)
+		pRow.backcolor2 = rgb(224,224,224)
+	next
+end function
+
+function unbold_old_msgs
+	'odtłuść wszystkie istniejące komórki
+	unbold_tablesection page_.ctrl(CTRLID_MSGTABLE).body
+	kill_timer
+end function
+
+function on_new_error_internal(nErrorCode,nIdHelp,strDesc)
+	dim bImportant : bImportant = ((clng(nErrorCode) >= ENGINE_ERROR_FIRST and clng(nErrorCode) < APP_WARNING_FIRST) or _
+		clng(nErrorCode) > APP_WARNING_LAST)
+
+	dim pBody: set pBody = page_.ctrl(CTRLID_MSGTABLE).body
+
+
+	'dodaj nowy wiersz
+	dim pRow : set pRow = pBody.insertnewrow(1)
+	
+
+	dim pCellErrNr
+	dim pCellErrMsg
+	
+	set pCellErrMsg=pRow.addnew(CTRL_TYPE_TABLECELL,-1)
+	set pCellErrNr=pRow.addnew(CTRL_TYPE_TABLECELL,-1)
+
+	'...........................................................
+	'komórka z kodem błędu
+	'...........................................................
+	pCellErrNr.width=clng( MINIMIZE_SIZE )
+	pCellErrNr.align = 1
+	
+	dim pStaticErrNr
+	set pStaticErrNr=pCellErrNr.addnew(CTRL_TYPE_STATIC, -1)
+
+	pStaticErrNr.text=CStr(nErrorCode)
+	pStaticErrNr.fontsize = 3
+
+	if bImportant then
+		pStaticErrNr.forecolor = rgb(255,0,0)
+	end if
+	
+	'...........................................................
+	'Komórka z opisem błędu
+	'...........................................................
+	dim pStaticErrMsg
+	set pStaticErrMsg=pCellErrMsg.addnew(CTRL_TYPE_STATICEX, -1)
+
+	pStaticErrMsg.text=CStr( strDesc )
+	pStaticErrMsg.width=clng( MAXIMIZE_SIZE )
+	pStaticErrMsg.fontsize = 3
+	pCellErrMsg.parent.backcolor = rgb(255,255,128)
+	
+	if bImportant then
+		pStaticErrMsg.forecolor = rgb(255,0,0)
+	end if
+	
+	if nIdHelp <> 0 then
+		set pStaticErrMsg.hli = doc_.createhlistr("vn1001=1030 vn1002=" + CStr(nIdHelp))
+	end if
+
+	if bImportant then
+'		page_.activate
+	end if
+
+end function
+
+function on_new_error(byref pErrorHLI)
+	'retrieve info from hyperlink - internal contract
+	dim bNXTrace : bNXTrace = false
+	dim nErrorCode : nErrorCode = pErrorHLI.prop(5000)
+	if nErrorCode = 7 then
+		bNXTrace = true
+	end if
+	dim nIdHelp : nIdHelp = pErrorHLI.prop(5001)
+	dim strDesc : strDesc = pErrorHLI.prop(5002)
+	on_new_error_internal nErrorCode,nIdHelp,strDesc
+
+	dim pBody: set pBody = page_.ctrl(CTRLID_MSGTABLE).body
+	'usuń nadmiarowe elementy
+	do while pBody.count > MAX_MESSAGES_ON_PAGE
+		pBody.remove pBody.row( MAX_MESSAGES_ON_PAGE + 1 ).ident
+	loop
+
+	kill_timer
+	set_timer
+
+	if bNXTrace then
+		display_nx_trace
+		page_.goback
+	end if
+end function
+]]>
+</script>
+</config>
+	<body>
+		<table name='CTRLID_MSGTABLE'>
+			<thead border='1' bold='true'>
+				<!--
+				<tr forecolor='white' backcolor='#7070FF' backcolor2='#f0f0f0'>
+					<td colspan='2' linealign='vcenter'>
+						<picture width='337' height='337' image='80218'/>
+						<t fontsize='2'>&nbsp;Komunikaty systemu</t>
+					</td>
+				</tr>
+				-->
+				<tr backcolor2='#C0C0C0' backcolor='#F0F0F0'>
+					<td >
+						<t>Opis</t>
+					</td>
+					<td align='right' >
+						<t>Numer</t>
+					</td>
+				</tr>
+			</thead>
+			<tbody fontsize='2' forecolor='#0080FF' border='1' >
+			</tbody>
+		</table>
+	</body>
+</page>

@@ -1,0 +1,1681 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200.h"
+#include "h1201.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1240.h"
+
+#define PERFORMING_INFO		"Tworzenie dokumentów . . . Proszę czekać . . ."
+
+
+
+-->
+<page>
+	<config>
+		<title>Wizzard</title>
+		<script>
+
+			<!--
+	ALWAYS MANUAL
+	Krator do wypełniania ze zlecenia produkcyjnego
+-->
+
+			<![CDATA[
+
+
+#define WIZZARD_ZLECPROD_STEP1		20537
+#define WIZZARD_ZLECPROD_STEP2		20538
+#define WIZZARD_ZLECPROD_STEP3		20539
+#define WIZZARD_ZLECPROD_STEP4		20540
+#define WIZZARD_ZLECPROD_STEP5		20544
+
+'MessageBox
+#include "50122"
+
+'CWizzard
+#include "50209"
+
+
+'view_message
+#include "50516"
+
+
+'fire_choice_list
+#include "50200"
+
+
+'class CProgressPage
+#include "50632"
+
+#include "50509"
+
+
+'-----------------------------------------------------------------------
+' Kontener wizzarda
+'-----------------------------------------------------------------------
+class CZlecProdWizzardContainer
+	public arrRealizacja	'Tablica z produktem i ilością
+	public m_nRPMode			'(1)rozchód na prod (2)dodaj do (3)nie twórz
+	public m_nRealMode			'(1)realizacja prod (2)dodaj do (3)nie twórz
+	public m_nPPMode			'(1)przychod z produkcji (2) dodaj do (3) nie twórz
+	public m_bShowForms
+
+	public m_arr_idRealizacjaProd
+	public arrCollectorData
+
+	public m_iZlecProd		'Zlecenie produkcyjne
+	public m_iRP
+	public m_iPP
+	public m_iRealProd
+  public m_pZlecProdKlient
+
+	public m_idMagSur
+	public m_idMagProd
+	public m_idMagWyr
+
+	private sub class_initialize()
+		m_iZlecProd = clng(0)
+		m_iRP = clng(0)
+		m_iPP = clng(0)
+		m_iRealProd = clng(0)
+
+		m_idMagSur = clng(0)
+		m_idMagProd = clng(0)
+		m_idMagWyr = clng(0)
+
+		set arrRealizacja = doc_.afc.new_navoarray()
+		set m_arr_idRealizacjaProd = doc_.afc.new_navoarray()
+		set arrCollectorData = doc_.afc.new_navoarray()
+    
+    set m_pZlecProdKlient = nothing
+
+		m_nRPMode = CLng(1)
+		m_nRealMode = CLng(1)
+		m_nPPMode = clng(1)
+		m_bShowForms = cstr("0")
+	end sub
+
+
+
+	public function from_collector (byref page)
+
+
+		set arrCollectorData = doc_.afc.new_navoarray()
+
+		dim pM60224 : set pM60224 = doc_.getmodule(60224)
+		dim pM60277EDI : set pM60277EDI = doc_.getmodule(60277)
+
+		dim pTransfer : set pTransfer = pM60224.new_Cipher_CPT_711_720_Transfer()
+
+		dim strRecordData
+		dim nRecordNr : nRecordNr = 0
+		dim answer:answer = -100
+
+		dim strKod,curIlosc,curCena,strNazwa,curKrotnosc
+
+		if pTransfer.begin_receive() then
+
+			dim pPP : set pPP = new CProgressPage
+			pPP.init "Pobieranie danych z kolektora"		
+
+			do while pTransfer.receive(nRecordNr,strRecordData)							
+			
+				if not pM60224.crack_cipher_record(strRecordData,strKod, curCena,curIlosc,strNazwa) then
+					exit function
+				end if
+				
+				arrCollectorData.add strRecordData
+			
+				pPP.update "Wczytano rekord nr " + cstr(nRecordNr)
+
+				if pPP.is_broken() then
+					exit function
+				end if
+
+				nRecordNr = nRecordNr + 1
+
+			loop
+
+			pTransfer.end_receive
+			set pPP = nothing
+
+		end if
+
+		dim elem,bFoundKod,bFoundIlosc,iter_zlec
+		bFoundKod = false
+		bFoundIlosc = false
+		iter_zlec = 1
+
+
+		dim pTab,curKrot
+		set pTab = doc_.afc.new_tb(page).attach( page.ctrl(1) ).removeall
+
+		'a teraz formatowanie tego co dostalismy i porownywanie z zawartoscia zlecenia
+		for each elem in get_zlec_prod().listPozycje
+			bFoundKod = false
+			bFoundIlosc = false
+			dim iter,strData
+			for iter = 0 to arrCollectorData.Upperindex
+				strData = arrCollectorData.value(iter)
+				pM60224.crack_cipher_record strData,strKod, curCena,curIlosc,strNazwa				
+
+				if strKod = elem.pOpak.strEan then
+					bFoundKod = true
+
+					curKrot = elem.pProdukt.listOpakowania.get(elem.pProdukt.listOpakowania.count()).currKrotnosc
+					curIlosc = ccur(curIlosc * curKrot)
+
+					if elem.curIloscOpakPoz >= curIlosc  then
+						bFoundIlosc = true												
+					end if					
+					exit for
+				end if
+			next
+
+			if bFoundIlosc then
+				arrRealizacja.value(iter_zlec-1) = curIlosc
+			else
+				if bFoundKod then
+					arrRealizacja.value(iter_zlec-1) = elem.curIloscOpakPoz
+					trans_.message 1002 , 0 , "Znaleziono w danych kolektora pozycje opowiadająca pozycji zlecenia: pozycja nr " + cstr(iter_zlec) + ", " + elem.pProdukt.text + ", ale ilosc pozostałą do realizacji jest mniejsza niz wczytana z kolektora."
+				else
+					arrRealizacja.value(iter_zlec-1) = ccur(0)
+					trans_.message 1002 , 0 , "Nie znaleziono w danych kolektora pozycji opowiadająca pozycji zlecenia: pozycja nr " + cstr(iter_zlec) + ", " + elem.pProdukt.text
+				end if
+			end if
+
+
+			pTab.newrow.newcell
+		
+			pTab.cell.width = CLng(MAXIMIZE_SIZE)
+			pTab.addtext( elem.pProdukt.text )
+
+			pTab.newcell.addctrl CTRL_TYPE_CURRENCY, iter_zlec -1  + 100
+			pTab.element.precision = CLng(elem.pProdukt.pJednostkaEwid.nDokladnosc - 1)
+			pTab.element.unit = CStr(elem.pProdukt.pJednostkaEwid.strSkrot)
+
+			pTab.element.value = CCur(arrRealizacja.Value(iter_zlec - 1))
+			pTab.element.size = 10
+
+			iter_zlec = iter_zlec + 1
+		next
+
+	end function
+
+
+	public function get_zlec_prod()
+		if m_iZlecProd = 0 then
+			set get_zlec_prod = nothing
+		else
+			set get_zlec_prod = trans_.getobj(TYPEID_N5ZLECPROD,m_iZlecProd)
+		end if
+	end function
+
+	public function get_rp()
+		if m_iRP = 0 then
+			set get_rp = nothing
+		else
+			set get_rp = trans_.getobj(TYPEID_N5DOKMAG,m_iRP)
+		end if
+	end function
+
+	public function get_pp()
+		if m_iPP = 0 then
+			set get_pp = nothing
+		else
+			set get_pp = trans_.getobj(TYPEID_N5DOKMAG,m_iPP)
+		end if
+	end function
+
+	
+end class
+
+
+dim pDHMBalanceModule : set pDHMBalanceModule = doc_.getmodule(60261)
+dim pDHMBalanceObj : set pDHMBalanceObj = nothing
+
+
+
+
+'-----------------------------------------------------------------------
+' Przygotuj obiekt wizzarda, dodaj odpowiednie kroki, kontener wizzarda
+' i uruchom go.
+' !UWAGA! Wizzard ma być uruchomiony w nowej transkacji ponieważ robi
+' swoje obiekty i modyfikuje je !! Uzywaj creasubtram lub OPEN_STATICPAGE
+'
+' nTypeId - TYPEID_N5DOKMAG lub TYPEID_N5ZLECPROD
+' nIdObj  - idobj obiektu z nTypeId
+'-----------------------------------------------------------------------
+function ZlecProdWizzard_Start(byval nTypeId, byval nIdObj, byref pContainer)
+
+	'Robimy obiekt wizzarda, ktory nie pracuje
+	'na obiekcie bazodanowym -> CWizzard(false)
+	dim pRulesWizzard
+	set pRulesWizzard = CWizzard( false )
+
+  if not pContainer is nothing then
+	  'Dodajemy container do wizzarda
+	  pRulesWizzard.add_container pContainer 
+    
+	  if (nTypeId = TYPEID_N5ZLECPROD) then
+		  pRulesWizzard.add_step WIZZARD_ZLECPROD_STEP3	'Wybór tworzonych dokumentów
+	  else
+		  pContainer.m_nRPMode = CLng(2)
+		  pContainer.m_iRP = clng(nIdObj)
+	  end if
+	  pRulesWizzard.add_step WIZZARD_ZLECPROD_STEP4	'Podsumowanie
+  else  
+
+	  'Inicjujemy kontener
+	  set pContainer = new CZlecProdWizzardContainer
+  	
+	  'Dodajemy container do wizzarda
+	  pRulesWizzard.add_container pContainer
+
+	  'Dodajmy pozostałe kroki wizzarda
+	  if (nTypeId = TYPEID_N5DOKMAG) then
+		  pRulesWizzard.add_step WIZZARD_ZLECPROD_STEP1	'Wybieramy zlecenie produkcyjne
+	  else
+		  pContainer.m_iZlecProd = clng(nIdObj)
+	  end if
+
+	  pRulesWizzard.add_step WIZZARD_ZLECPROD_STEP2	'Wybór iloście realizowanej dla pozycji
+
+	  if (nTypeId = TYPEID_N5ZLECPROD) then
+		  pRulesWizzard.add_step WIZZARD_ZLECPROD_STEP3	'Wybór tworzonych dokumentów
+	  else
+		  pContainer.m_nRPMode = CLng(2)
+		  pContainer.m_iRP = clng(nIdObj)
+	  end if
+	  pRulesWizzard.add_step WIZZARD_ZLECPROD_STEP4	'Podsumowanie
+  end if  
+
+	'Uruchamiamy cały wizzard. Teraz będą już wołane
+	'zdarzenia onPageEnter, onPageExit, onWizzardComplered itd.
+	pRulesWizzard.run
+
+end function
+
+
+'----------------------------------------------------------------------
+' Uproszczony kreator realizacji zlecenia produkcyjnego (Hjort-Knudsen)
+'----------------------------------------------------------------------
+function ZlecProdWizzard_Automat(byval nTypeId, byval nIdObj)
+
+   dim pRulesWizzard
+   set pRulesWizzard = CWizzard(false)
+
+   'Inicjujemy kontener
+   dim pContainer
+   set pContainer = new CZlecProdWizzardContainer
+
+   'Id dla zlecenia produkcyjnego
+   pContainer.m_iZlecProd = clng(nIdObj)
+
+   'pobierz ilość do realizacji
+   dim iPos: iPos = 0
+   dim pZlecProdPos
+   dim bSaWartosciDodatnie: bSaWartosciDodatnie = false
+
+   'pobranie ilości pozycji do realizacji
+   for each pZlecProdPos in pContainer.get_zlec_prod().listPozycje
+
+	  if (pContainer.arrRealizacja.UpperIndex() < iPos) then
+			'Dodaj pozycje z ilością początkową
+			pContainer.arrRealizacja.Add CCur(pZlecProdPos.curIloscOpakPoz)
+		end if
+
+	  if (CCur(pContainer.arrRealizacja.Value(iPos)) < 0) then
+			MessageBox "Pozycja " + CStr(pZlecProdPos.pProdukt.text) + " ma podaną niepoprawną, ujemną ilość.", "Błędna wartość", vbOKOnly, vbInformation
+			exit function
+	  elseif (CCur(pContainer.arrRealizacja.Value(iPos))>0) then
+			bSaWartosciDodatnie = true
+	  end if
+
+	  iPos = iPos + 1
+	next
+
+	if (not bSaWartosciDodatnie) then
+		MessageBox "Nie określono dodatniej ilości dla żadnej pozycji zlecenia.", "Błędna wartość", vbOKOnly, vbInformation
+		exit function
+	end if
+  
+  'pobierz id magazynu (surowce, produkcyja, wyroby gotowe)
+  pContainer.m_idMagSur = choose_magazyn_surowce(pContainer.m_idMagSur)
+	pContainer.m_idMagProd = choose_magazyn_produkcja(pContainer.m_idMagProd)
+	pContainer.m_idMagWyr = choose_magazyn_wyrobow(pContainer.m_idMagWyr)
+
+	dim pM60234 : set pM60234 = doc_.getmodule(60234)
+	dim iter
+	dim dblKrotnoscRecepty
+	dim curIloscWyrobuDoZrobienia
+
+	'zmienne logicze sprawdzające poprawność tworzonych dokumentów
+    dim bRP_Ok : bRP_Ok = false
+    dim bRealProd_Ok : bRealProd_Ok = false
+ 
+    dim idRP : idRP = make_rp_external(pContainer)
+	if idRP = 0 then
+		'exit function
+	else
+		pContainer.m_iRP = idRP
+    bRP_Ok = true
+	end if
+
+	if not make_real_external(pContainer) then
+		'exit function
+    else
+       bRealProd_Ok = true
+	end if
+
+	with pContainer
+	  if .m_idMagSur <> 0 then
+		create_raport_by_braki_magazynowe .m_idMagSur
+	  else
+		create_raport_by_braki_magazynowe .m_idMagProd
+	  end if
+
+	  'update zlecenia wypełnianie pozycji
+	  iter = 0
+	  for each pZlecProdPos in .get_zlec_prod().listPozycje
+		  if pZlecProdPos.curIloscOpakPoz >= CCur(.arrRealizacja.Value(iter)) then
+		     pZlecProdPos.curIloscOpakPoz = pZlecProdPos.curIloscOpakPoz - CCur(.arrRealizacja.Value(iter))
+          else
+             trans_.message 7000, 0, "Ilość realizowana nie może być większa od ilości pozycji na zleceniu."
+             exit function
+          end if
+			iter = iter + 1
+	  next
+
+	  if not trans_.saveobjects() then
+		 nx_.trace.fatal "FRP009", "Zachowanie dokumentów nieudane"
+		 exit function
+      else
+		  if bRP_Ok and bRealProd_Ok then
+			MessageBox "Działanie kreatora zakończone powodzeniem. " + vbNewLine + "Utworzono dokumenty: Rozchód na produkcję oraz Realizacja produkcji" ,_
+					   "Kreator realizacji zlecenia produkcyjnego", vbOKOnly, vbInformation
+		  else
+			MessageBox "Działanie kreatora zakończone niepowodzeniem. ", "Kreator realizacji zlecenia produkcyjnego", vbOKOnly, vbInformation
+		  end if
+	  end if
+	end with
+
+	trans_.discard
+
+end function
+
+function ZlecProdWizzard_Start_Prod(byval idProd)
+	dim pRulesWizzard
+	set pRulesWizzard = CWizzard( false )
+
+	'Inicjujemy kontener
+	dim pContainer
+	set pContainer = new CZlecProdWizzardContainer
+  pContainer.m_arr_idRealizacjaProd.Value(0) = idProd
+	
+	'Dodajemy container do wizzarda
+	pRulesWizzard.add_container pContainer
+
+  pRulesWizzard.add_step WIZZARD_ZLECPROD_STEP5	'Wybór ilości do produkcji
+	pRulesWizzard.add_step WIZZARD_ZLECPROD_STEP3	'Wybór tworzonych dokumentów
+	pRulesWizzard.add_step WIZZARD_ZLECPROD_STEP4	'Podsumowanie
+
+	'Uruchamiamy cały wizzard. Teraz będą już wołane
+	'zdarzenia onPageEnter, onPageExit, onWizzardComplered itd.
+	pRulesWizzard.run
+end function
+
+'-----------------------------------------------------------------------
+' Zdarzenie na wyjście z danego kroku wizzarda
+'-----------------------------------------------------------------------
+function onPageExit(pWizzardPage)
+
+	select case ( pWizzardPage.m_nPage )
+		case WIZZARD_ZLECPROD_STEP1
+			'Sprawdzamy czy wybrano zlecenie produkcyjne
+			if (pWizzardPage.m_pContainer.m_iZlecProd = 0) then
+				MessageBox "Musisz wybrać zlecenie produkcyjne.", "Brak danych", vbOKOnly, vbInformation
+				onPageExit=PAGE_DONOTEXIT
+				exit function
+			end if
+
+		case WIZZARD_ZLECPROD_STEP2
+			'Sprawdzaj poprawność wpisanych ilości
+			if (not pozycjecheck(pWizzardPage.m_pPage, pWizzardPage.m_pContainer)) then
+				onPageExit=PAGE_DONOTEXIT
+				exit function
+			end if
+
+		case WIZZARD_ZLECPROD_STEP3
+#ifdef _KOMPOZYTY
+      if pWizzardPage.m_pContainer.m_iZlecProd = clng(0) then
+        createZlecProd pWizzardPage.m_pContainer
+      end if
+#endif
+			'Sprawdzamy czy jest jakiś dokument do swtorzenia
+			'lub czy jest jakiś wybrany
+			if (pWizzardPage.m_pContainer.m_nRPMode = 3 and _
+				pWizzardPage.m_pContainer.m_nRealMode = 3 and _
+				pWizzardPage.m_pContainer.m_nPPMode = 3) then
+				MessageBox "Musisz wybrać istniejący lub określić jakiś dokument do stworzenia.", "Nie wybrano", vbOKOnly, vbInformation
+				onPageExit=PAGE_DONOTEXIT
+				exit function
+			end if
+
+			if (pWizzardPage.m_pContainer.m_nRPMode = 2 and _
+				pWizzardPage.m_pContainer.m_iRP = 0) then
+				MessageBox "Musisz wybrać dokument RP.", "Nie wybrano", vbOKOnly, vbInformation
+				onPageExit=PAGE_DONOTEXIT
+				exit function
+			end if
+
+			if (pWizzardPage.m_pContainer.m_nRealMode = 2 and _
+				pWizzardPage.m_pContainer.m_iRealProd = 0) then
+				MessageBox "Musisz wybrać dokument realizacji produkcji.", "Nie wybrano", vbOKOnly, vbInformation
+				onPageExit=PAGE_DONOTEXIT
+				exit function
+			end if
+
+			if (pWizzardPage.m_pContainer.m_nPPMode = 2 and _
+				pWizzardPage.m_pContainer.m_iPP = 0) then
+				MessageBox "Musisz wybrać dokument przychodu z produkcji.", "Nie wybrano", vbOKOnly, vbInformation
+				onPageExit=PAGE_DONOTEXIT
+				exit function
+			end if
+           
+			
+	end select
+	
+	onPageExit=PAGE_DEFAULT
+end function
+
+'-----------------------------------------------------------
+'tworzy zlecenie produkcyjne dla zadanej ilości do produkcji
+'-----------------------------------------------------------
+function createZlecProd(byref pContainer)
+  'id produktu
+  dim idProdukt : idProdukt = CLng(pContainer.m_arr_idRealizacjaProd.Value(0))
+  'ilość do produkcji
+  dim curIlosc : curIlosc = CCur(pContainer.arrRealizacja.Value(0))
+  'klient
+  dim pKlient : set pKlient = pContainer.m_pZlecProdKlient
+  
+  if curIlosc = ccur(0) then
+    exit function
+  end if
+  
+  dim pSubTrans 
+  set pSubTrans = trans_.createsubtran()
+  
+  dim pOpenFormZlecProd : set pOpenFormZlecProd = nothing
+  dim pFormZlecProd : set pFormZlecProd = nothing
+  
+  trans_.var(APPVAR_REJESTR_TYP) = clng(N5REJESTRDOK__ZLECPROD)
+  set pOpenFormZlecProd = doc_.getmodule(60129).prepare_form_open_command(TYPEID_N5ZLECPROD,0,0)
+  
+  if pOpenFormZlecProd is nothing then
+    exit function
+  end if
+  set pFormZlecProd = doc_.getpagehli(pOpenFormZlecProd)
+  if pFormZlecProd is nothing then
+    exit function
+  end if
+  
+  'pFormZlecProd.enableedit = true
+  if not fill_zlecprod(pFormZlecProd.root, idProdukt, curIlosc, pKlient) then
+    trans_.message 1002 , 0 , "Brak pozycji zamówienia które można zrealizować"
+    exit function
+  end if
+
+  'id zlecenia produkcyjnego
+  pContainer.m_iZlecProd = pFormZlecProd.root.idobj
+
+  pFormZlecProd.fsave
+  set pSubTrans = nothing
+  
+end function
+
+'-----------------------------
+'wypełnia zlecenie produkcyjne
+'-----------------------------
+function fill_zlecprod(byref pZlecProd, byval idProdukt, byval curIlosc, byval pKlient) : fill_zlecprod = false
+  
+  set pZlecProd.pKlient = pKlient
+	pZlecProd.dDataReal = trans_.var(GVAR_TODAY)
+  dim pProdukt
+  if idProdukt > clng(0) then
+    set pProdukt = trans_.getobj(TYPEID_N5PRODUKT,idProdukt)
+  end if
+
+  dim nowa_pozycja
+	if pProdukt.eRodzaj = N5PRODUKT_TOWAR and curIlosc > 0 and pProdukt.prod_cWyrob = "1"  then
+		set nowa_pozycja = pZlecProd.listPozycje.addnew()
+		fill_pozzlecprod nowa_pozycja, pProdukt, curIlosc
+		fill_zlecprod = true
+	else
+		if pProdukt.eRodzaj <> N5PRODUKT_TOWAR then
+			trans_.message 1002 , 0 , "Pomijam pozycją zamówienia (usługa)"
+		else
+			if pProdukt.prod_cWyrob <> "1" then
+				trans_.message 1002 , 0 , "Pomijam pozycją zamówienia (nie jest wyrobem)"
+			else
+				if curIlosc = 0 then
+					trans_.message 1002 , 0 , "Pomijam pozycją zamówienia (ilość pozostała do realizacji to 0)"
+				end if
+			end if
+		end if					
+	end if
+end function
+
+'---------------------------------------
+'wypełnia pozycję zlecenia produkcyjnego
+'---------------------------------------
+sub fill_pozzlecprod(byref pozycja, byval pProdukt, byval curIlosc)
+	set pozycja.pProdukt = pProdukt
+	set pozycja.pOpak = pProdukt.listOpakowania.get(1)
+	pozycja.curIloscOpak = curIlosc
+	pozycja.curIloscOpakPoz = curIlosc
+end sub
+
+'-----------------------------------------------------------------------
+' Sprawdzaj poprawności wpisanych ilości
+'-----------------------------------------------------------------------
+function pozycjecheck(byref pPage, byref pContainer): pozycjecheck = false
+
+	dim iPos: iPos = 0
+	dim pZlecProdPos
+	dim bSaWartosciDodatnie: bSaWartosciDodatnie = false
+	for each pZlecProdPos in pContainer.get_zlec_prod().listPozycje
+
+		if (pContainer.arrRealizacja.UpperIndex()<iPos) then
+			'Dodaj pozycje z ilością początkową
+			pContainer.arrRealizacja.Add CCur(pZlecProdPos.curIloscOpak)
+		end if
+
+		dim pCtrl
+		set pCtrl = pPage.trygetctrl(iPos + 100)
+
+		if (not pCtrl is nothing) then
+			pContainer.arrRealizacja.Value(iPos) = CCur(pCtrl.value)
+		end if
+
+		if (CCur(pContainer.arrRealizacja.Value(iPos))<0) then
+			MessageBox "Pozycja " + CStr(pZlecProdPos.pProdukt.text) + " ma podaną niepoprawną, ujemną ilość.", "Błędna wartość", vbOKOnly, vbInformation
+			exit function
+		elseif (CCur(pContainer.arrRealizacja.Value(iPos))>0) then
+			bSaWartosciDodatnie = true
+		end if
+
+		iPos = iPos + 1
+	next
+
+	if (not bSaWartosciDodatnie) then
+		MessageBox "Nie określono dodatniej ilości dla żadnej pozycji zlecenia.", "Błędna wartość", vbOKOnly, vbInformation
+		exit function
+	end if
+
+	pozycjecheck = true
+end function
+
+'-----------------------------------------------------------------------
+' Zdarzenie wejscia na dana strone
+'-----------------------------------------------------------------------
+function onPageEnter(pWizzardPage)
+
+	select case ( pWizzardPage.m_nPage )
+		case WIZZARD_ZLECPROD_STEP2
+			'Wypełnij listę pozycjami zlecenia by można było zmodyfikować ilości		
+			create_pozycjezlecenia pWizzardPage.m_pPage, pWizzardPage.m_pContainer
+
+		case WIZZARD_ZLECPROD_STEP4
+			'Tworzymy podsumowanie
+			create_summary pWizzardPage.m_pPage, pWizzardPage.m_pContainer
+      
+		case WIZZARD_ZLECPROD_STEP5
+			create_ilosc_prod pWizzardPage.m_pPage, pWizzardPage.m_pContainer
+
+	end select
+
+end function
+
+dim g_pPerforming
+set g_pPerforming = nothing
+
+function ZuzycieIdealne_PerformingRecreate()
+	if (g_pPerforming is nothing) then
+		set g_pPerforming = doc_.performing(PERFORMING_INFO)
+	end if
+end function
+
+function ZuzycieIdealne_PerformingDestroy()
+	set g_pPerforming = nothing
+end function
+
+function choose_magazyn_surowce(idMagSur)
+	choose_magazyn_surowce = clng(0)
+	if idMagSur <> 0 then
+		choose_magazyn_surowce = idMagSur
+		exit function
+	end if
+	dim idChoice : idChoice = fire_choice_list( TYPEID_N5MAGAZYN,"Magazyn surowców","","eTyp in (N5TYPMAG_PODSTAWOWY)","","")
+	choose_magazyn_surowce = idChoice
+end function
+
+
+function init_stany_magazynowe_by_rozchprod(byref rp , byval idmag):init_stany_magazynowe_by_rozchprod = true
+#ifdef APPCONFIG_POZWOL_REALIZOAWAC_PROD_GDY_BRAKI	
+	DEBUG_MESSAGE("Kreator realizacji produkcji: init stany magazynowe")
+	set pDHMBalanceObj = pDHMBalanceModule.new_dhm_balance()
+	DEBUG_MESSAGE("Kreator realizacji produkcji: fill_dhm_balance_by_rozchod_na_prod ")
+	if not pDHMBalanceModule.fill_dhm_balance_by_rozchod_na_prod( pDHMBalanceObj , rp , idmag) then
+		exit function
+	end if
+	DEBUG_MESSAGE("Kreator realizacji produkcji: update_rozchod_na_prod_by_dhmbalance ")
+	init_stany_magazynowe_by_rozchprod = pDHMBalanceModule.update_rozchod_na_prod_by_dhmbalance (pDHMBalanceObj , rp )	
+#endif
+end function
+
+
+private function create_raport_by_braki_magazynowe(idmag)
+#ifdef APPCONFIG_POZWOL_REALIZOAWAC_PROD_GDY_BRAKI
+	dim strMag: strMag = trans_.getobj(TYPEID_N5MAGAZYN,.m_idMagSur).text
+	if pDHMBalanceModule.invalid_quantity ( pDHMBalanceObj , idmag ) then
+		if MessageBox ("W czasie realizacji produkcji wykryto braki na magazynach surowców. Chcesz wyświetlic raport?", "Realizacja zlecenia produkcyjnego", vbYesNo, vbQuestion) = vbYes then
+			pDHMBalanceModule.create_raport pDHMBalanceObj , strMag
+		end if
+	end if
+#endif
+end function
+
+
+
+function init_stany_magazynowe_by_recepta(byref recepta , byval idmag):init_stany_magazynowe_by_recepta = true
+#ifdef APPCONFIG_POZWOL_REALIZOAWAC_PROD_GDY_BRAKI	
+	if pDHMBalanceObj is nothing then
+		DEBUG_MESSAGE("Kreator realizacji produkcji: init stany magazynowe")
+		set pDHMBalanceObj = pDHMBalanceModule.new_dhm_balance()
+	end if
+
+	DEBUG_MESSAGE("Kreator realizacji produkcji: fill_dhm_balance_by_recepta ")
+	if not pDHMBalanceModule.fill_dhm_balance_by_recepta( pDHMBalanceObj , recepta , idmag) then
+		init_stany_magazynowe_by_recepta = false
+		exit function
+	end if
+	init_stany_magazynowe_by_recepta = true
+#endif
+end function
+
+
+
+function choose_magazyn_produkcja(byval idMagProd)
+	choose_magazyn_produkcja = clng(0)
+	if idMagProd <> 0 then
+		choose_magazyn_produkcja = idMagProd
+		exit function
+	end if
+	dim idChoice : idChoice = fire_choice_list( TYPEID_N5MAGAZYN,"Magazyn produkcyjny","","eTyp in (N5TYPMAG_PRODUKCJAWTOKU)","","")
+	choose_magazyn_produkcja = idChoice
+end function
+
+function choose_magazyn_wyrobow(byval idMagWyr)
+	choose_magazyn_wyrobow = clng(0)
+	if idMagWyr <> 0 then
+		choose_magazyn_wyrobow = idMagWyr
+		exit function
+	end if
+	choose_magazyn_wyrobow = fire_choice_list( TYPEID_N5MAGAZYN,"Magazyn wyrobów gotowych","","eTyp in (N5TYPMAG_PODSTAWOWY)","","")
+end function
+
+'-----------------------------------------------------------------------
+' Zakończenie wizzarda
+'-----------------------------------------------------------------------
+function onWizzardComplete(pWizzardPage): onWizzardComplete=true
+	if realize_wizzard(pWizzardPage.m_pContainer) then
+		MessageBox "Działanie kreatora zakończyło się powodzeniem", "Kreator realizacji produkcji", vbOKOnly, vbInformation 
+	else
+		MessageBox "Działanie kreatora nie powiodło się", "Kreator realizacji produkcji", vbOKOnly, vbInformation 
+	end if
+end function
+
+'-----------------------------------------------------------------------
+' prepares RP, saves and returns idobj of RP or 0 when failed
+'-----------------------------------------------------------------------
+function make_rp_external(byref oContainer)
+	dim pSubTrans
+	set pSubTrans = trans_.createsubtran()
+	make_rp_external = make_rp(oContainer)
+	set pSubTrans = nothing
+	trans_.autorollback true
+end function
+
+function make_rp(byref oContainer) : make_rp = clng(0)
+	dim iter
+	dim pM60234 : set pM60234 = doc_.getmodule(60234)
+	'--------- Dokument RP -------------
+	dim pRozchodNaProd
+	set pRozchodNaProd = nothing
+	dim pZlecProdPos
+
+	if (oContainer.m_nRPMode = 2) then
+		set pRozchodNaProd = oContainer.get_rp()
+	end if
+
+	if (oContainer.m_nRPMode <> 3) then
+		if pRozchodNaProd is nothing then
+			set pRozchodNaProd = pM60234.prepare_rp_on_zlecprod(oContainer.get_zlec_prod())
+				if not oContainer.get_zlec_prod().pKwalifikatorEx is nothing then	'przenies kwalifikator na docelowy dokument
+					if not pRozchodNaProd is nothing then
+						set pRozchodNaProd.pKwalifikatorEx = oContainer.get_zlec_prod().pKwalifikatorEx
+					end if
+				end if
+		end if
+		if pRozchodNaProd is nothing then
+			exit function
+		end if
+		'---- wypełnianie pozycji
+		iter = 0
+		for each pZlecProdPos in oContainer.get_zlec_prod().listPozycje
+			dim curIloscWyrobuDoZrobienia
+			curIloscWyrobuDoZrobienia = CCur(oContainer.arrRealizacja.Value(iter))
+			if (curIloscWyrobuDoZrobienia > ccur(0.0)) then
+				dim dblKrotnoscRecepty
+				if not pM60234.convert_il_wyrobu_na_krotnosc( _
+					pZlecProdPos.pProdukt.idobj, pZlecProdPos.pOpak.idobj, _
+					curIloscWyrobuDoZrobienia,pZlecProdPos.pRecepta,dblKrotnoscRecepty) then
+					exit function
+				end if
+
+				pM60234.fill_rp_poz_on_recepta pRozchodNaProd,pZlecProdPos.pRecepta,dblKrotnoscRecepty
+			end if
+			iter = iter + 1
+		next
+	end if
+
+
+	'przypisanie magazynow jesli nie ma
+
+	if not pRozchodNaProd is nothing then
+		if pRozchodNaProd.pMagZrod is nothing then
+			oContainer.m_idMagSur = choose_magazyn_surowce(oContainer.m_idMagSur)
+			if oContainer.m_idMagSur = 0 then
+				nx_.trace.fatal "FRP004", "Nie wybrano magazynu surowców"
+				exit function
+			end if
+
+			set pRozchodNaProd.pMagZrod = trans_.getobj(TYPEID_N5MAGAZYN,oContainer.m_idMagSur)
+			if not init_stany_magazynowe_by_rozchprod ( pRozchodNaProd , oContainer.m_idMagSur) then
+				create_raport_by_braki_magazynowe oContainer.m_idMagSur
+				trans_.discard
+				exit function
+			end if
+		
+		end if
+
+#ifdef _TEST
+	'kontrola dostępności surowców na magazynie
+	if not pRozchodNaProd.pMagZrod is nothing then
+		dim pPosRP, curStan, curIloscRP
+		dim bPartRP : bPartRP = false
+		for each pPosRP in pRozchodNaProd.listPozycje
+			if not pPosRP.pProdukt is nothing and not pPosRP.pOpak is nothing then
+				curIloscRP = getIloscRP(oContainer.get_zlec_prod(),pPosRP.pProdukt.IdObj,pPosRP.pOpak.IdObj)          
+				pPosRP.curIloscOpak = pPosRP.curIloscOpak - curIloscRP
+				if pPosRP.curIloscOpak > ccur(0) then
+					curStan = get_stan_mag_for_prod_opak_mag(pRozchodNaProd.pMagZrod.IdObj,pPosRP.pProdukt.IdObj,pPosRP.pOpak.IdObj)
+					dim strMsg : strMsg = ""
+					if curStan = ccur(0) then
+						strMsg = "Pominąć pozycję RP?"
+					elseif curStan < pPosRP.curIloscOpak then
+						strMsg = "Wydać dostepną ilość?"
+					end if
+					if strMsg <> "" then
+						dim curBrakIlosc : curBrakIlosc = ccur(pPosRP.curIloscOpak - curStan)
+						dim strNazwaProd : strNazwaProd = pPosRP.pProdukt.strNazwa
+						dim strSkrot : strSkrot = pPosRP.pProdukt.pJednostkaEwid.strSkrot
+						dim strMag : strMag = pRozchodNaProd.pMagZrod.strNazwa
+						if MessageBox("Brak wystarczającej ilości surowca: " + strNazwaProd + " na magazynie " + strMag + vbNewLine +_ 
+							"Brakująca ilość: " + cstr(curBrakIlosc) + " " + strSkrot + vbNewLine +_ 
+							"Ilość dostępna: " + cstr(curStan) + " " + strSkrot + vbNewLine +_ 
+							strMsg, "Brak surowca", vbYesNo, vbQuestion) = vbYes then
+							pPosRP.curIloscOpak = ccur(curStan)
+							bPartRP = true
+						end if
+					end if  
+				end if  
+			end if
+		next
+		'usuń pozycje zerowe
+		dim bIsPoz
+		removeEmptyPos pRozchodNaProd, bIsPoz
+		if bPartRP then
+			for iter = 0 to oContainer.arrRealizacja.upperIndex
+				oContainer.arrRealizacja.Value(iter) = ccur(0)
+			next
+		end if
+		if not bIsPoz then
+			exit function
+		end if
+	end if
+#endif
+
+		if pRozchodNaProd.pMagDocel is nothing then
+			oContainer.m_idMagProd = choose_magazyn_produkcja(oContainer.m_idMagProd)
+			if oContainer.m_idMagProd = 0 then
+				nx_.trace.fatal "FRP005", "Nie wybrano magazynu produkcji w toku"
+				exit function
+			end if
+			set pRozchodNaProd.pMagDocel = trans_.getobj(TYPEID_N5MAGAZYN,oContainer.m_idMagProd)
+		end if
+
+		dim idRP : idRP = pRozchodNaProd.idobj
+
+		ZuzycieIdealne_PerformingRecreate
+		if not trans_.save() then
+			nx_.trace.fatal "FRP001", "Nie można zachować dokumentu RP"
+			ZuzycieIdealne_PerformingDestroy
+			exit function
+		else
+			nx_.trace.info "IRP001", "Zachowano dokument " + trans_.getobj(TYPEID_N5DOKMAG,idRP).text
+		end if
+		ZuzycieIdealne_PerformingDestroy
+	end if
+	
+	trans_.autorollback false
+	set pRozchodNaProd = nothing
+	set pZlecProdPos = nothing
+	
+	make_rp = idRP
+end function
+
+sub removeEmptyPos(pRP,bIsPoz)
+	dim pPosRP, iter
+	bIsPoz = false
+	for iter = pRP.listPozycje.count() to 1 step -1
+		if pRP.listPozycje.exists(iter) then
+			set pPosRP = pRP.listPozycje.get(iter)
+			if pPosRP.curIloscOpak = ccur(0) then
+				pRP.listPozycje.delete(iter)
+			end if
+		end if
+	next
+	if pRP.listPozycje.count() > clng(0) then
+		bIsPoz = true
+	end if
+end sub
+
+'zwraca sumę ilości surowca z wszystkich RP powiązanych ze zleceniem
+function getIloscRP(pZlecProd,idProd,idOpak) : getIloscRP = ccur(0)
+	dim strSQL
+	strSQL = "select 'idProd'=vdm.c_pprodukt,'idOpak'=vdm.c_popak,'ilosc'=sum(vdm.c_curiloscopak) " + vbNewLine +_
+		"from vlist_n5dokmag_listPozycje vdm " + vbNewLine +_
+		"inner join n5rejestrdok rd on vdm.p_prejestrdok = rd.idobj " + vbNewLine +_
+		"where vdm.p_wrefdokhandl = " + cstr(pZlecProd.idobj) + " and vdm.p_wrefdokhandl_wrt = TYPEID_N5ZLECPROD and " + vbNewLine +_
+		"vdm.c_pprodukt = " + cstr(idProd) + " and vdm.c_popak = " + cstr(idOpak) + " and rd.eTyp = N5REJESTRDOK__RP " + vbNewLine +_
+		"group by vdm.c_pprodukt,vdm.c_popak"
+	dim oRS : set oRS = trans_.createadors(strSQL)
+	if oRS.recordCount > clng(0) then
+		getIloscRP = ccur(oRS("ilosc").value)
+	end if
+end function
+
+function make_pp_external(byref oContainer)
+	dim pSubTrans
+	set pSubTrans = trans_.createsubtran()
+	make_pp_external = make_pp(oContainer)
+	set pSubTrans = nothing
+	trans_.autorollback true
+end function
+
+function make_pp(byref oContainer) : make_pp = clng(0)
+	dim pM60234 : set pM60234 = doc_.getmodule(60234)
+
+	'Dokument PP
+	dim pDokmag_PP : set pDokmag_PP = nothing
+	if (oContainer.m_nPPMode = 2) then
+		set pDokmag_PP = oContainer.get_pp()
+	end if
+	
+	if (oContainer.m_nPPMode <> 3 ) then
+		if pDokmag_PP is nothing then
+			set pDokmag_PP = pM60234.prepare_pp_on_zlecprod(oContainer.get_zlec_prod())
+				if not oContainer.get_zlec_prod().pKwalifikatorEx is nothing then	'przenies kwalifikator na docelowy dokument
+					if not pDokmag_PP is nothing then
+						set pDokmag_PP.pKwalifikatorEx = oContainer.get_zlec_prod().pKwalifikatorEx
+					end if
+				end if
+		end if
+		if pDokmag_PP is nothing then
+			exit function
+		end if
+		dim pZlecProdPos
+#ifdef _IOW
+		'wczytywanie wyrobow ze zlec-prod
+		if pDokmag_PP.listPozycje.exists(1) then
+			pDokmag_PP.listPozycje.deleteall
+        end if
+		for each pZlecProdPos in oContainer.get_zlec_prod().listPozycje
+			dim oPozWyrobIOW : set oPozWyrobIOW = pDokmag_PP.listPozycje.addnew()
+			set oPozWyrobIOW.pProdukt = pZlecProdPos.pProdukt
+			set oPozWyrobIOW.pOpak = oPozWyrobIOW.pProdukt.listOpakowania.get(oPozWyrobIOW.pProdukt.listOpakowania.findonid(pZlecProdPos.pOpak.idobj))
+			
+			'KB: upraszczamy tutaj i zakladamy ze w IOW realizacja jest zawsze calkowita (to sa remonty)
+			oPozWyrobIOW.curIloscOpak = pZlecProdPos.curIloscOpakPoz
+		next
+#else		
+		'---- wypełnianie pozycji
+		dim iter : iter = 0
+		dim curIloscWyrobuDoZrobienia
+		dim dblKrotnoscRecepty
+		for each pZlecProdPos in oContainer.get_zlec_prod().listPozycje
+			curIloscWyrobuDoZrobienia = CCur(oContainer.arrRealizacja.Value(iter))
+			if (curIloscWyrobuDoZrobienia > ccur(0.0)) then
+				
+				if not pM60234.convert_il_wyrobu_na_krotnosc( _
+					pZlecProdPos.pProdukt.idobj, pZlecProdPos.pOpak.idobj, _
+					curIloscWyrobuDoZrobienia,pZlecProdPos.pRecepta,dblKrotnoscRecepty) then
+					exit function
+				end if
+
+				pM60234.fill_pp_poz_on_recepta pDokmag_PP,pZlecProdPos.pRecepta,dblKrotnoscRecepty
+			end if
+			iter = iter + 1
+		next
+#endif
+	end if
+	
+	if not pDokmag_PP is nothing then
+		if pDokmag_PP.pMagZrod is nothing then
+			oContainer.m_idMagProd = choose_magazyn_produkcja(oContainer.m_idMagProd)
+			if oContainer.m_idMagProd = 0 then
+				nx_.trace.fatal "FRP006", "Nie wybrano magazynu produkcji w toku"
+				exit function
+			end if
+			set pDokmag_PP.pMagZrod = trans_.getobj(TYPEID_N5MAGAZYN,oContainer.m_idMagProd)
+		end if
+		if pDokmag_PP.pMagDocel is nothing then
+			oContainer.m_idMagWyr = choose_magazyn_wyrobow(oContainer.m_idMagWyr)
+			if oContainer.m_idMagWyr = 0 then
+				nx_.trace.fatal "FRP007", "Nie wybrano magazynu wyrobów gotowych"
+				exit function
+			end if
+			set pDokmag_PP.pMagDocel = trans_.getobj(TYPEID_N5MAGAZYN,oContainer.m_idMagWyr)
+		end if
+
+		dim idPP : idPP = pDokmag_PP.idobj
+		dim strNrDok : strNrDok = pDokmag_PP.text
+
+		ZuzycieIdealne_PerformingRecreate
+		if not trans_.save() then
+			nx_.trace.fatal "FRP002", "Nie można zachować dokumentu PP"
+			ZuzycieIdealne_PerformingDestroy
+			exit function
+		else
+			nx_.trace.info "IRP002", "Zachowano dokument " + trans_.getobj(TYPEID_N5DOKMAG,idPP).text
+		end if
+		ZuzycieIdealne_PerformingDestroy
+	end if
+	
+	trans_.autorollback false
+	set pDokmag_PP = nothing
+	set pZlecProdPos = nothing
+	
+	make_pp = idPP
+end function
+
+function make_real_external(byref oContainer)
+	dim pSubTrans
+	set pSubTrans = trans_.createsubtran()
+	dim iAccuracyLevel : iAccuracyLevel = trans_.var(GVAR_GM_ACCURACY_LEVEL)
+	'tylko gdy jest tworzone swieze RP
+	if (oContainer.m_nRPMode = 1) then
+		trans_.var(GVAR_GM_ACCURACY_LEVEL) = clng(GM_ACCURACY_NONE)
+	end if
+	make_real_external = make_real(oContainer)
+	trans_.var(GVAR_GM_ACCURACY_LEVEL) = iAccuracyLevel
+	set pSubTrans = nothing
+	trans_.autorollback true
+end function
+
+'----------------------------------------------------------
+'znajduje indeks w tabeli z IdObj produktu i opakowania IOW
+'----------------------------------------------------------
+function FindProdZP(byref pArrayIdProd, byref pArrayIdOpak, nIdProdukt, nIdOpak)
+  FindProdZP = clng(-1)
+  dim iter
+  for iter = 0 to pArrayIdProd.UpperIndex
+    if pArrayIdProd.value(iter) = nIdProdukt and pArrayIdOpak.value(iter) = nIdOpak then
+      FindProdZP = clng(iter)
+      exit for
+    end if
+  next
+end function
+
+function make_real(byref oContainer) : make_real = false
+	dim pM60234 : set pM60234 = doc_.getmodule(60234)
+	'Dokumenty realizacji produkcji
+	dim pRealProd : set pRealProd = nothing
+
+	if (oContainer.m_nRealMode = 2) then
+		set pRealProd = trans_.getobj(TYPEID_N5REALPROD,oContainer.m_iRealProd)
+	end if
+
+	if (oContainer.m_nRealMode <> 3) then
+		'tu pętla ktora stworzy tyle ile trzeba		
+		dim iter_pos
+		for iter_pos = 1 to oContainer.get_zlec_prod().listPozycje.count()
+
+			dim curIloscWyrobuDoZrobienia
+			dim dblKrotnoscRecepty
+
+			curIloscWyrobuDoZrobienia = CCur(oContainer.arrRealizacja.Value(iter_pos-1))
+			if (curIloscWyrobuDoZrobienia > ccur(0.0)) then
+
+				'if pRealProd is nothing then
+				set pRealProd = pM60234.prepare_realprod_on_zlecprod(oContainer.get_zlec_prod())	
+							if not oContainer.get_zlec_prod().pKwalifikatorEx is nothing then						'przenies kwalifikator na docelowy dokument
+		 						if not pRealProd is nothing then
+									set pRealProd.pKwalifikatorEx = oContainer.get_zlec_prod().pKwalifikatorEx
+								end if
+							end if
+				'end if
+
+				if pRealProd is nothing then
+					exit function
+				end if				
+
+				'---- wypełnianie pozycji
+		dim pZlecProdPos
+#ifdef _IOW
+        'musi byc wybrane zlecenie
+		if pRealProd.pZlecProd is nothing then
+			MessageBox "Brak zlecenia produkcyjnego", "Wypełnij wg zlecenia", vbOKOnly, vbInformation
+			exit function
+		end if
+        if pRealProd.listPozycje.exists(1) then 
+			pRealProd.listPozycje.deleteall
+        end if
+
+		'wczytywanie surowcow z RP
+		'tworzymy kursor z RP ktore są powiazane z tym samym zleceniem		
+		dim sqlQuery : sqlQuery = doc_.afc.convert.formatter("wrefDokHandl=%1 and wrefDokHandl_wrt=%2 and nTypDok=N5REJESTRDOK__RP") _
+			.add(cstr(pRealProd.pZlecProd.idobj)).add(cstr(pRealProd.pZlecProd.type)).done()
+		dim oCursor : set oCursor = trans_.createrawcursor(TYPEID_N5DOKMAG, sqlQuery, "dDataWyst, idobj" , "")
+		dim oDokMag
+		for each oDokMag in oCursor
+
+		'dla każdego RP odszukaj ZP (zwroty z produkcji - jako PP)
+		sqlQuery = doc_.afc.convert.formatter("wrefDokHandl=%1 and wrefDokHandl_wrt=%2 and curExtra5=%3 and nTypDok=N5REJESTRDOK__PP") _
+			.add(cstr(pRealProd.pZlecProd.idobj)).add(cstr(pRealProd.pZlecProd.type)).add(cstr(oDokMag.IdObj)).done()
+			dim oCursorZP : set oCursorZP = trans_.createrawcursor(TYPEID_N5DOKMAG, sqlQuery, "dDataWyst, idobj" , "")      
+
+			dim pArrayIdProd: set pArrayIdProd = doc_.afc.new_navoarray()
+			dim pArrayIdOpak: set pArrayIdOpak = doc_.afc.new_navoarray()
+			dim pArrayIlosc: set pArrayIlosc = doc_.afc.new_navoarray()
+			'zapamiętaj produkty zwracane
+			dim dok_mag_pos_zp, nIndeks
+			dim oDokMagZP
+			for each oDokMagZP in oCursorZP      
+				for each dok_mag_pos_zp in oDokMagZP.listPozycje
+					if dok_mag_pos_zp.pProdukt.prod_cSurowiec = "1" and dok_mag_pos_zp.pProdukt.prod_cWyrob="0" then
+						nIndeks = FindProdZP(pArrayIdProd, pArrayIdOpak, dok_mag_pos_zp.pProdukt.IdObj,dok_mag_pos_zp.pOpak.IdObj)
+						if nIndeks = clng(-1) then
+							'zapamiętaj produkt i ilość
+							pArrayIdProd.add dok_mag_pos_zp.pProdukt.IdObj
+							pArrayIdOpak.add dok_mag_pos_zp.pOpak.IdObj
+							pArrayIlosc.add dok_mag_pos_zp.curIloscOpak
+						else
+							'dodaj ilość
+							pArrayIlosc.value(nIndeks) = pArrayIlosc.value(nIndeks) + dok_mag_pos_zp.curIloscOpak
+						end if
+					end if
+				next
+			next
+    
+			dim dok_mag_pos
+			for each dok_mag_pos in oDokMag.listPozycje
+				if dok_mag_pos.pProdukt.prod_cSurowiec = "1" and dok_mag_pos.pProdukt.prod_cWyrob="0" then
+					dim surowiec:set surowiec = pRealProd.listPozycje.addnew()
+					set surowiec.pProdukt = dok_mag_pos.pProdukt
+					set surowiec.pOpak = surowiec.pProdukt.listOpakowania.get(surowiec.pProdukt.listOpakowania.findonid(dok_mag_pos.pOpak.idobj))
+					nIndeks = FindProdZP(pArrayIdProd, pArrayIdOpak, dok_mag_pos.pProdukt.IdObj,dok_mag_pos.pOpak.IdObj)
+					if nIndeks > clng(-1) then
+						'odejmij ilość z ZP
+						dim curIlosc: curIlosc = pArrayIlosc.value(nIndeks)
+						if curIlosc > dok_mag_pos.curIloscOpak then
+							curIlosc = dok_mag_pos.curIloscOpak
+						end if
+						surowiec.curIloscOpak = dok_mag_pos.curIloscOpak - curIlosc
+						pArrayIlosc.value(nIndeks) = pArrayIlosc.value(nIndeks) - curIlosc
+					else
+						surowiec.curIloscOpak = dok_mag_pos.curIloscOpak
+					end if
+				end if
+			next		
+		next
+		'wczytywanie wyrobow ze zlec-prod
+		if pRealProd.listWyrob.exists(1) then
+			pRealProd.listWyrob.deleteall
+        end if
+		for each pZlecProdPos in pRealProd.pZlecProd.listPozycje
+			dim oPozWyrobIOW : set oPozWyrobIOW = pRealProd.listWyrob.addnew()
+			set oPozWyrobIOW.pProdukt = pZlecProdPos.pProdukt
+			set oPozWyrobIOW.pOpak = oPozWyrobIOW.pProdukt.listOpakowania.get(oPozWyrobIOW.pProdukt.listOpakowania.findonid(pZlecProdPos.pOpak.idobj))
+			
+			'KB: upraszczamy tutaj i zakladamy ze w IOW realizacja jest zawsze calkowita (to sa remonty)
+			oPozWyrobIOW.curIloscOpak = pZlecProdPos.curIloscOpakPoz
+		next
+#else
+				set pZlecProdPos = oContainer.get_zlec_prod().listPozycje.get(iter_pos)
+				
+				if not pM60234.convert_il_wyrobu_na_krotnosc( _
+					pZlecProdPos.pProdukt.idobj, pZlecProdPos.pOpak.idobj, _
+					curIloscWyrobuDoZrobienia,pZlecProdPos.pRecepta,dblKrotnoscRecepty) then
+					exit function
+				end if
+
+				if not init_stany_magazynowe_by_recepta (pZlecProdPos.pRecepta , oContainer.m_idMagProd) then
+					create_raport_by_braki_magazynowe oContainer.m_idMagSur
+					trans_.discard
+					exit function
+				end if
+				if not pM60234.fill_real_prod_poz_on_recepta (pRealProd,pZlecProdPos.pRecepta,dblKrotnoscRecepty,pDHMBalanceObj ) then
+					create_raport_by_braki_magazynowe oContainer.m_idMagSur
+					trans_.discard
+					exit function	
+				end if
+#endif        
+			
+				oContainer.m_arr_idRealizacjaProd.add pRealProd.idobj
+
+			end if
+
+
+		next
+
+	end if
+
+
+	dim iter_rp
+	for iter_rp = 0 to oContainer.m_arr_idRealizacjaProd.UpperIndex()
+		set pRealProd =  trans_.getobj(TYPEID_N5REALPROD,oContainer.m_arr_idRealizacjaProd.value(iter_rp))
+
+		if not pRealProd is nothing then
+			if pRealProd.pMagazyn is nothing then
+				oContainer.m_idMagProd = choose_magazyn_produkcja(oContainer.m_idMagProd)
+				if oContainer.m_idMagProd = 0 then
+					exit function
+				end if
+				set pRealProd.pMagazyn = trans_.getobj(TYPEID_N5MAGAZYN,oContainer.m_idMagProd)
+			end if
+		end if
+	next	
+
+	ZuzycieIdealne_PerformingRecreate
+	if not trans_.save() then
+		nx_.trace.fatal "FRP008", "Zachowanie dokumentów realizacji produkcji nieudane"
+		ZuzycieIdealne_PerformingDestroy
+		exit function
+	else
+		for iter_rp = 0 to oContainer.m_arr_idRealizacjaProd.UpperIndex()
+			set pRealProd =  trans_.getobj(TYPEID_N5REALPROD,oContainer.m_arr_idRealizacjaProd.value(iter_rp))
+			nx_.trace.info "IRP003", "Zachowano dokument " + pRealProd.text
+		next
+	end if
+	ZuzycieIdealne_PerformingDestroy
+	trans_.autorollback false
+
+	make_real = true
+end function
+
+function realize_wizzard(byref oDataContainer) : realize_wizzard = false
+
+  if oDataContainer.m_iZlecProd = clng(0) then
+    trans_.message 7000, 0, "Nie udało się utworzyć zlecenia produkcyjnego"
+    exit function    
+  end if
+
+#ifndef _KOMPOZYTY  
+	oDataContainer.m_idMagSur = choose_magazyn_surowce(oDataContainer.m_idMagSur)
+	oDataContainer.m_idMagProd = choose_magazyn_produkcja(oDataContainer.m_idMagProd)
+#else
+	dim idMagProd : idMagProd = trans_.findobjid(TYPEID_N5MAGAZYN,"strNazwa = 'Produkcja w toku'")
+	if idMagProd > clng(0) then
+		oDataContainer.m_idMagProd = idMagProd
+	else
+		oDataContainer.m_idMagProd = choose_magazyn_produkcja(oDataContainer.m_idMagProd)
+	end if
+#endif
+	oDataContainer.m_idMagWyr = choose_magazyn_wyrobow(oDataContainer.m_idMagWyr)
+
+
+	dim pM60234 : set pM60234 = doc_.getmodule(60234)
+	dim iter
+	dim pZlecProdPos
+	dim dblKrotnoscRecepty
+	dim curIloscWyrobuDoZrobienia
+
+	dim idRP : idRP = make_rp_external(oDataContainer)
+	if idRP = 0 then
+		'exit function
+	else
+		oDataContainer.m_iRP = idRP
+	end if
+
+	if not make_real_external(oDataContainer) then
+		'exit function
+	end if
+
+	dim idPP : idPP = make_pp_external(oDataContainer)
+	if idPP = 0 then
+		'exit function
+	else
+		oDataContainer.m_iPP = idPP
+	end if
+
+	with oDataContainer
+
+		if .m_idMagSur <> 0 then
+			create_raport_by_braki_magazynowe .m_idMagSur
+		else
+			create_raport_by_braki_magazynowe .m_idMagProd
+		end if
+
+		'---- update zlecenia wypełnianie pozycji
+		iter = 0
+		for each pZlecProdPos in .get_zlec_prod().listPozycje
+			if pZlecProdPos.curIloscOpakPoz >= CCur(.arrRealizacja.Value(iter)) then
+			  pZlecProdPos.curIloscOpakPoz = pZlecProdPos.curIloscOpakPoz - CCur(.arrRealizacja.Value(iter))
+      else
+        trans_.message 7000, 0, "Ilość realizowana nie może być większa od ilości pozycji na zleceniu."
+        exit function
+      end if
+			iter = iter + 1
+		next
+
+		if not trans_.saveobjects() then
+			nx_.trace.fatal "FRP009", "Zachowanie dokumentów nieudane"
+			exit function
+		end if
+
+		if .m_bShowForms="1" then
+			if .m_iRP <> 0  then
+				doc_.postcommand doc_.afc.convert.formatter(" OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5DOKMAG,%1,USAGE_VIEW) ") _
+					.add(.m_iRP).done()
+			end if
+			dim iter_rp
+			for iter_rp = 0 to .m_arr_idRealizacjaProd.UpperIndex()
+				if .m_arr_idRealizacjaProd.value(iter_rp) <> 0 then
+					doc_.postcommand doc_.afc.convert.formatter(" OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5REALPROD,%1,USAGE_VIEW) ") _
+					.add(.m_arr_idRealizacjaProd.value(iter_rp)).done()
+				end if
+			next
+			if .m_iPP <> 0 then
+				doc_.postcommand doc_.afc.convert.formatter(" OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5DOKMAG,%1,USAGE_VIEW) ") _
+					.add(.m_iPP).done()
+			end if
+		end if
+	end with
+
+	trans_.discard
+	realize_wizzard = true
+end function
+
+
+'-----------------------------------------------------------------------
+'WIZZARD_ZLECPROD_STEP4:
+'Tworzymy podsumowanie
+'-----------------------------------------------------------------------
+function create_summary(byref pPage, byref pContainer)
+
+	dim pTab
+	set pTab = doc_.afc.new_tb(pPage).attach( pPage.ctrl(2) ).removeall
+
+	select case pContainer.m_nRPMode
+		case 1
+			pTab.newrow.newcell
+			pTab.addtext "Stworzony zostanie nowy rozchód na produkcje"
+		case 2
+			pTab.newrow.newcell
+			pTab.addtext "Pozycje zostaną uwzględnione w istniejącym dokumencie RP - " + CStr(pContainer.get_rp().text)
+	end select
+
+	select case pContainer.m_nRealMode
+		case 1
+			pTab.newrow.newcell
+			pTab.addtext "Stworzona zostanie nowa realizacja produkcji"
+		case 2
+			pTab.newrow.newcell
+			pTab.addtext "Pozycje zostaną uwzględnione w istniejącej realizacji produkcji - " + _
+				trans_.getobj(TYPEID_N5REALPROD,pContainer.m_iRealProd).text
+	end select
+
+	select case pContainer.m_nPPMode
+		case 1
+			pTab.newrow.newcell
+			pTab.addtext "Stworzona zostanie nowy przychód produkcji"
+		case 2
+			pTab.newrow.newcell
+			pTab.addtext "Pozycje zostaną uwzględnione w istniejącym dokumencie PP- " + CStr(pContainer.get_pp().text)
+	end select
+
+	set pTab = doc_.afc.new_tb(pPage).attach( pPage.ctrl(1) ).removeall
+
+#ifdef _KOMPOZYTY
+  if pContainer.m_iZlecProd = clng(0) then
+    exit function
+  end if
+#endif
+
+	dim iPos: iPos = 0
+	dim pZlecProdPos
+	for each pZlecProdPos in pContainer.get_zlec_prod().listPozycje
+
+		if (pContainer.arrRealizacja.UpperIndex()<iPos) then
+			'Dodaj pozycje z ilością początkową
+			pContainer.arrRealizacja.Add CCur(pZlecProdPos.curIloscOpak)
+		end if
+
+		if (pContainer.arrRealizacja.Value(iPos)>0) then
+			pTab.newrow.newcell
+			
+			pTab.cell.width = CLng(MAXIMIZE_SIZE)
+			pTab.addtext( pZlecProdPos.pProdukt.text )
+
+			pTab.newcell.addctrl CTRL_TYPE_CURRENCY, iPos + 100
+			pTab.element.border = CLng(0)
+			pTab.element.disable = true
+			pTab.element.precision = CLng(pZlecProdPos.pProdukt.pJednostkaEwid.nDokladnosc - 1)
+			pTab.element.unit = CStr(pZlecProdPos.pProdukt.pJednostkaEwid.strSkrot)
+
+			pTab.element.value = CCur(pContainer.arrRealizacja.Value(iPos))
+			pTab.element.size = 10
+		end if
+
+		iPos = iPos + 1
+	next
+
+
+end function
+
+'-----------------------------------------------------------------------
+'WIZZARD_ZLECPROD_STEP2:
+'Wypełnij listę pozycjami zlecenia by można było zmodyfikować ilości
+'-----------------------------------------------------------------------
+function create_pozycjezlecenia(byref pPage, byref pContainer)
+
+	dim pTab
+	set pTab = doc_.afc.new_tb(pPage).attach( pPage.ctrl(1) ).removeall
+
+	dim iPos: iPos = 0
+	dim pZlecProdPos
+	for each pZlecProdPos in pContainer.get_zlec_prod().listPozycje
+
+		if (pContainer.arrRealizacja.UpperIndex()<iPos) then
+			'Dodaj pozycje z ilością początkową
+			pContainer.arrRealizacja.Add CCur(pZlecProdPos.curIloscOpakPoz)
+		end if
+
+		pTab.newrow.newcell
+		
+		pTab.cell.width = CLng(MAXIMIZE_SIZE)
+		pTab.addtext( pZlecProdPos.pProdukt.text )
+
+		pTab.newcell.addctrl CTRL_TYPE_CURRENCY, iPos + 100
+		pTab.element.precision = CLng(pZlecProdPos.pProdukt.pJednostkaEwid.nDokladnosc - 1)
+		pTab.element.unit = CStr(pZlecProdPos.pProdukt.pJednostkaEwid.strSkrot)
+
+		pTab.element.value = CCur(pContainer.arrRealizacja.Value(iPos))
+		pTab.element.size = 10
+
+		iPos = iPos + 1
+	next
+
+end function
+
+'------------------------------------------------------------
+'WIZZARD_ZLECPROD_STEP5:
+'Wypełnij ilość do produkcji - bezpośrednio z karty produktu
+'------------------------------------------------------------
+function create_ilosc_prod(byref pPage, byref pContainer)
+	dim pTab
+	set pTab = doc_.afc.new_tb(pPage).attach(pPage.ctrl(1)).removeall
+
+	pContainer.arrRealizacja.Add CCur(1)
+
+	pTab.newrow.newcell
+	
+  dim idProd : idProd = pContainer.m_arr_idRealizacjaProd.Value(0)
+  if idProd > clng(0) then
+    dim pProd : set pProd = trans_.getobj(TYPEID_N5PRODUKT,idProd)
+	  pTab.cell.width = CLng(MAXIMIZE_SIZE)
+	  pTab.addtext(pProd.text)
+
+	  pTab.newcell.addctrl CTRL_TYPE_CURRENCY, 100
+	  pTab.element.precision = CLng(pProd.pJednostkaEwid.nDokladnosc - 1)
+	  pTab.element.unit = CStr(pProd.pJednostkaEwid.strSkrot)
+
+	  pTab.element.value = CCur(pContainer.arrRealizacja.Value(0))
+	  pTab.element.size = 10
+  end if
+end function
+
+#comment '-----------------------------------------------------------------------------------
+#comment 'zlecenia drabinkowe
+#comment '-----------------------------------------------------------------------------------
+
+'-- klasa zawiera informacje dla edytora zlecen produkcyjnych do wyprodukowania (jedna pozycja)
+class czlec_prod_design_item
+	private sub class_initialize()
+		m_iLevel = clng(0)
+		m_idWyrobProd = clng(0)
+		m_idWyrobOpak = clng(0)
+		m_curIloscProd = ccur(0.0)
+		m_curStanMag = ccur(0.0)
+		m_curIloscZlec = ccur(0.0)
+	end sub
+	public sub init(byval iLevel,byval idWyrobProd,byval idWyrobOpak,byval curIloscProd,byval curStanMag,byval curIloscZlec)
+		m_iLevel = iLevel	
+		m_idWyrobProd = idWyrobProd
+		m_idWyrobOpak = idWyrobOpak
+		m_curIloscProd = curIloscProd
+		m_curStanMag = curStanMag
+		m_curIloscZlec = curIloscZlec
+	end sub
+	public property get level()
+		level = m_iLevel
+	end property
+	public property get id_wyrob_prod()
+		id_wyrob_prod = m_idWyrobProd
+	end property
+	public property get id_wyrob_opak()
+		id_wyrob_opak = m_idWyrobOpak
+	end property
+	public property get ilosc_prod_rec()
+		ilosc_prod_rec = m_curIloscProd
+	end property
+	public property get stan_mag()
+		stan_mag = m_curStanMag
+	end property
+	public property get ilosc_zlec()
+		ilosc_zlec = m_curIloscZlec
+	end property
+	public property set ilosc_zlec(curIlosc)
+		m_curIloscZlec = curIlosc
+	end property
+
+	private m_iLevel		'level na drabince
+	private m_idWyrobProd
+	private m_idWyrobOpak
+	private m_curIloscProd	'ilosc wynikajaca z receptur
+	private m_curStanMag	'stan magazynowy
+	private m_curIloscZlec	'ilosc na zlecenie (poczatkowo cur-ilosc-prod)
+end class
+
+'-- zarzadza projektowaniem zlecen produkcyjnych
+'-- use case:
+'--
+'-- 1. wypelnij potrzebna iloscia wyrobu finalnego (add_to_request) 
+'-- 2. wywolaj fill_from_db
+'-- 3. przetwarzaj wynik w tablicy 
+class czlec_prod_design
+	private sub class_initialize()
+		set m_oNXArrayRequest = nx_.new_array()
+		set m_oNXArrayResponse = nx_.new_array()
+	end sub
+	'-- dodaj request do tablicy
+	public sub add_to_request(byval idWyrobProd,byval idWyrobOpak,byval curIlosc)
+		dim oZPDI : set oZPDI = new czlec_prod_design_item
+		oZPDI.init -1, idWyrobProd, idWyrobOpak, ccur(0.0), ccur(0.0), curIlosc
+		m_oNXArrayRequest.add oZPDI
+	end sub
+	'-- zwraca drzewo produkcji w formie notyfikacji do wskazanego delegate'a
+	public sub get_drzewo_produkcji(byval bSurowce,byval bWyroby,byval bPolprod,byref fpRowDelegate,byref oExtraParam)	
+		dim oM60234 : set oM60234 = doc_.getmodule(60234)
+		dim oPTH : set oPTH = oM60234.new_tree_prod_holder
+		
+		dim iter		
+		for iter = 0 to m_oNXArrayRequest.upper_index
+			dim oZPDI : set oZPDI = m_oNXArrayRequest(iter)			
+			oPTH.fill_request_one oZPDI.id_wyrob_prod,oZPDI.id_wyrob_opak,oZPDI.ilosc_zlec
+		next
+
+		dim oRS : set oRS = oPTH.get_drzewo_produkcji(bSurowce, bWyroby, bPolprod)
+		do while not oRS.EOF
+			fpRowDelegate oRS, oExtraParam
+			oRS.MoveNext
+		loop
+
+    oPTH.manual_done()
+		set oPTH = nothing
+	end sub
+	'-- utworz zapytanie, wypelnij je podanym żądaniem i wczytaj wyniki
+	public function fill_from_db()
+		set fill_from_db = nothing
+		dim oM60234 : set oM60234 = doc_.getmodule(60234)
+		dim oPTH : set oPTH = oM60234.new_tree_prod_holder
+		dim iter		
+		for iter = 0 to m_oNXArrayRequest.upper_index
+			dim oZPDI : set oZPDI = m_oNXArrayRequest(iter)			
+			oPTH.fill_request_one oZPDI.id_wyrob_prod,oZPDI.id_wyrob_opak,oZPDI.ilosc_zlec
+		next
+		
+		m_oNXArrayResponse.removeall()
+		
+		dim oRS : set oRS = oPTH.get_potrzebne_zlecenia_prod("")
+		do while not oRS.EOF
+			set oZPDI = new czlec_prod_design_item
+			oZPDI.init clng(oRS("iMaxLevel")), clng(oRS("idSurProd")), clng(oRS("idSurOpak")),_
+				ccur(oRS("curNeedSur")), ccur(oRS("curExitsSur")), ccur(oRS("curNeedSur"))
+			oRS.MoveNext
+			m_oNXArrayResponse.add oZPDI
+		loop
+    oPTH.manual_done()
+		set oPTH = nothing
+		set fill_from_db = m_oNXArrayResponse
+	end function
+	
+	'funckcja tworzy zlecenia produkcyjne poczawszy od najglebszego poziomu, zwraca tablice zlecen
+	public function create_zlec_prod : set create_zlec_prod = nothing
+		dim oNXArrayZP : set oNXArrayZP = nx_.new_array()
+		dim iLastLevel : iLastLevel = -1
+		dim oCurrZP : set oCurrZP = nothing
+		dim idRejestrZlecProd : idRejestrZlecProd = clng(0)
+		
+		dim pM60234 : set pM60234 = doc_.getmodule(60234)
+		
+		dim iter		
+		for iter = 0 to m_oNXArrayResponse.upper_index
+			dim oZPDI : set oZPDI = m_oNXArrayResponse(iter)
+			'rozpocznij nowe zlecenie przy zmianie poziomu
+			if oZPDI.level <> iLastLevel then
+				iLastLevel = oZPDI.level
+				set oCurrZP = pM60234.prepare_zlecprod(idRejestrZlecProd,false)
+				if oCurrZP is nothing then
+					exit function
+				end if
+				oNXArrayZP.add oCurrZP
+			end if
+			dim oPozZP : set oPozZP = oCurrZP.listPozycje.addnew()
+			with oPozZP
+				dim oWyrob : set oWyrob = trans_.getobj(TYPEID_N5PRODUKT,oZPDI.id_wyrob_prod)
+				dim oWyrobOpak : set oWyrobOpak = oWyrob.listOpakowania.get(oWyrob.listOpakowania.findonid(oZPDI.id_wyrob_opak))
+				set .pProdukt = oWyrob
+				set .pOpak = oWyrobOpak
+				.curIloscOpak = oZPDI.ilosc_zlec
+			end with
+		next
+		
+		set create_zlec_prod = oNXArrayZP
+	end function
+	
+	private m_oNXArrayRequest	'co chcemy aby bylo wyprodukowane
+	private m_oNXArrayResponse	'co musimy wyprodukowac po drodze (polprodukty)
+end class
+
+function new_zlec_prod_design
+	set new_zlec_prod_design = new czlec_prod_design
+end function
+
+'--- buduje wiersz z wynikami prod-tree (za pomoca table buildera)
+function ui_prod_tree_row_builder(oRS, oTB)
+	dim idWyrobProd : idWyrobProd = clng(oRS("idWyrProd"))
+	dim idWyrobOpak : idWyrobOpak = clng(oRS("idWyrOpak"))
+	dim idSurProd : idSurProd = clng(oRS("idSurProd"))
+	dim idSurOpak : idSurOpak = clng(oRS("idSurOpak")) 
+	dim strPath : strPath = cstr(oRS("strPath"))
+	dim curLicz : curLicz = ccur(oRS("curLicz"))
+	dim curMian : curMian = ccur(oRS("curMian"))
+	dim iLP : iLP = clng(oRS("iLP"))
+	dim iLevel : iLevel = clng(oRS("iLevel"))
+	dim iSubLP : iSubLP = clng(oRS("iSubLP"))
+	dim oWyrob : set oWyrob = trans_.getobj(TYPEID_N5PRODUKT,idWyrobProd)
+	dim oSurow : set oSurow = trans_.getobj(TYPEID_N5PRODUKT,idSurProd)
+	dim oWyrobOpak : set oWyrobOpak = oWyrob.listOpakowania.get(oWyrob.listOpakowania.findonid(idWyrobOpak))
+	dim oSurowOpak : set oSurowOpak = oSurow.listOpakowania.get(oSurow.listOpakowania.findonid(idSurOpak))
+	oTB.newrow
+	
+	'make indents
+	dim iCount : iCount = iLevel
+	do while iCount > 0
+		oTB.newcell.cell.width = 250			
+		iCount = iCount - 1
+	loop	
+	
+'	oTB.newcell.addtext oWyrob.strIndeks
+	oTB.newcell.addtext oSurow.strIndeks
+	'make padding
+	iCount = 10 - iLevel
+	do while iCount > 0
+		oTB.newcell.cell.width = 250			
+		iCount = iCount - 1
+	loop
+	
+	oTB.newcell.cell.align=ALIGN_RIGHT
+	oTB.addtext doc_.afc.display.quantity(ccur(curLicz /curMian),oSurowOpak.pJednOpak.strSkrot,oSurowOpak.pJednOpak.nDokladnosc - 1)
+end function
+
+function create_delegate_for_ui_prod_tree_row_builder()
+	set create_delegate_for_ui_prod_tree_row_builder = GetRef("ui_prod_tree_row_builder")
+end function
+
+function newZlecProdWizzardContainer : set newZlecProdWizzardContainer = nothing
+  set newZlecProdWizzardContainer = new CZlecProdWizzardContainer
+end function
+
+]]>
+
+		</script>
+	</config>
+
+	<body>
+	</body>
+
+</page>

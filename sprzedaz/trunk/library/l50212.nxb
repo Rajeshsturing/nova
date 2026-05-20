@@ -1,0 +1,612 @@
+'------------------------------------------------------
+'(c)NAVO 2001
+'Navo Source Safe
+'Spikowski Piotr
+'------------------------------------------------------
+
+#include "50203"
+#include "50516"
+#include "50211"
+#include "50122"
+#include "50125"
+
+'-----------------------------------------------------------------------
+'zwaraca sciezke dla Moje Dokumenty dla danego user'a i aplikacji
+'np. c:\Moje Dokumenty\Piotr\Navo Kontakt 2002\
+'-----------------------------------------------------------------------
+private function getUserDirectory()
+	dim pSystem
+	set pSystem=doc_.system
+	
+	getUserDirectory=pSystem.SpecialFolder(NSF_MYDOCUMENTS) + _
+		"\" + trans_.var(GVAR_APPLICATION)
+end function
+
+
+dim pFD			'obiekt CFileDrive
+
+
+'-----------------------------------------------------------------------
+'robiemy obiekt CFileDrive - bez niego nic nie bedziemy mogli zadzialac
+'-----------------------------------------------------------------------
+private function Create_FileDriveObject()
+	if (not isObject(pFD)) then
+		dim bOK
+		set pFD=CFileDrive(bOK)
+
+		Create_FileDriveObject=bOK
+
+		if (not bOK) then
+			' 1, 0, "Nie uda³o siê stworzyæ obiekytu ""FileSystemObject"""
+			view_message 6045, 0
+		end if
+
+	else
+		Create_FileDriveObject=true
+	end if
+
+end function
+
+
+
+'-----------------------------------------------------------------------
+'Sprawdza czy istnieje folder user'a i jezeli nie to go robi
+'zwraca true jezeli sie udalo - folder istnieje
+'-----------------------------------------------------------------------
+private function checkUserDirectory(): checkUserDirectory=false
+
+	'nie udalo sie uruchomic sprawdzenia katalogow
+	if (not Create_FileDriveObject()) then
+		exit function
+	end if
+
+	if (not pFD.IsFolder( getUserDirectory() )) then
+		
+		if (not pFD.CreatePath( getUserDirectory() )) then
+			exit function
+		end if
+
+	end if
+
+	checkUserDirectory=true
+end function
+
+
+
+'-----------------------------------------------------------------------
+'zwraca nazwe pliku na podstawie dokumentu
+'-----------------------------------------------------------------------
+private function getFileName(byref pDokument)
+	getFileName=pFD.GetFileName( RemoveComputerName(pDokument.strFileName) )
+end function
+
+
+private function getDocumentsFolder(byref pDokumentTyp):getDocumentsFolder=""
+	
+	if (not pDokumentTyp.pTypNadrzedny is nothing) then
+		getDocumentsFolder=getDocumentsFolder(pDokumentTyp.pTypNadrzedny)
+	end if
+
+	getDocumentsFolder=getDocumentsFolder + "\" + pDokumentTyp.strNazwa
+end function
+
+'-----------------------------------------------------------------------
+'zwraca folder do dokumentu
+'-----------------------------------------------------------------------
+private function getDocumentDirectory(byref pDokument)
+	getDocumentDirectory=getUserDirectory() + getDocumentsFolder(pDokument.pTypDokumentu)
+end function
+
+dim bCheckOutToOryginalPath: bCheckOutToOryginalPath = false
+dim strOrgPath: strOrgPath=""
+
+function getCheckOutPath(byref pDokument)
+	if (not Create_FileDriveObject()) then
+		exit function
+	end if
+
+	getCheckOutPath = getDocumentDirectory(pDokument) + "\" + getFileName(pDokument)
+end function
+
+'-----------------------------------------------------------------------
+'... z pozdrownieniami od Miscrosoft'u :-)
+'-----------------------------------------------------------------------
+private function checkOut(byref pDokument, byref strCheckedOutPath): checkOut=false
+
+	if (not pDokument.exlock) then
+		view_message 6207, 0
+		exit function
+	end if
+	
+	strCheckedOutPath=""
+
+	'brak pliku w dokumencie
+	if (pDokument.fPlik.isEmpty()) then
+		' 1, 0, "Wybrany dokument nie zawiera pliku."
+		view_message 6046, 0
+		exit function
+	end if
+
+
+	'create pFD object
+	if (not Create_FileDriveObject()) then
+		exit function
+	end if
+
+
+	'pelna sciezka do danego dokumentu i user'a
+	dim strFilePath
+
+	if (not bCheckOutToOryginalPath) then
+		strFilePath = getCheckOutPath( pDokument )
+	else
+		strFilePath = strOrgPath
+	end if
+
+#ifdef _PAKART
+	trans_.message 1002, 0, "Próba wypo¿yczenia dokumentu z lokalizacji: " + strFilePath
+#endif
+
+	'jezeli dokument zostal wypozyczony
+	if (not pDokument.pUzytkWypoz is nothing) then
+	
+		'jezeli ktos inny go wypozyczyl to my juz nie mozemy
+		if (pDokument.pUzytkWypoz.idObj<>getCurrentUserID()) then
+
+			if MessageBox("Dokument jest wypo¿yczony przez innego u¿ytkownik. Chcesz pracowaæ z dokumentem w trybie tylko do odczytu?", "Pobraæ jako tylko do odczytu?", vbYesNo, vbQuestion )=vbYes then
+
+				dim pSystem
+				set pSystem=doc_.system
+
+				strCheckedOutPath=pSystem.createtempfilename("x", pFD.GetFileExtension( getFileName(pDokument) ) )
+
+				checkOut=GetLatestVersionDesc(pDokument, strCheckedOutPath, true)
+				exit function
+			else
+				' 1, 0, "Nie mo¿na wypo¿yczyæ tego dokumentu poniewa¿ jest on ju¿ wypo¿yczony przez innego u¿ytkownika."
+				view_message 6047, 0
+				exit function
+			end if
+
+		else
+			'jezeli my sami go wypozyczylismy to po co go wypozyczac 2'gi raz
+
+			if (pFD.isFile(strFilePath)) then
+				'jezeli plik istnieje to jest juz ok
+				' 1, 0, "Dokument do edycji znajduje siê w " + FormatPathWithCompName(pDokument.strCheckoutFileName)
+				view_message1 4013, 0, cstr(FormatPathWithCompName(pDokument.strCheckoutFileName))
+				
+				strCheckedOutPath=strFilePath
+				checkOut=true
+
+				exit function
+			end if
+			
+		end if
+
+	end if
+
+	'tworzymy katalog user'a jezeli go nie ma
+	if (not checkUserDirectory()) then
+		' 1, 0, "Utworzenie katalogu lub jego sprawdzenie nie jest mo¿liwe (" + getUserDirectory() + ")"
+		
+		dim szUserDir: szUserDir = getUserDirectory()
+		view_message1 6048, 0, szUserDir
+
+		exit function
+	end if
+
+	'tworzymy teraz katalog ale dla danego user'a i dokumentu
+	if (not pFD.IsFolder( getDocumentDirectory(pDokument) )) then
+		if (not pFD.CreatePath( getDocumentDirectory(pDokument) )) then
+			' 1, 0, "Utworzenie katalogu lub jego sprawdzenie nie jest mo¿liwe (" + getDocumentDirectory(pDokument) + ")"
+			view_message1 6049, 0, getDocumentDirectory(pDokument)
+			exit function
+		end if
+	end if
+
+	if (pFD.isFile(strFilePath)) then
+		if (not pFD.isReadOnly(strFilePath)) then
+
+			if (not bCheckOutToOryginalPath) then
+				if MessageBox("Na dysku istnieje plik """ + pFD.GetFileName(strFilePath) + _
+				 """ z mozliwoœci¹ zapisu. Móg³ on ulec zmianie. Czy chcesz kontynuowaæ i nadpisaæ istniej¹cy plik?", "Nadpisaæ?", vbYesNo, vbQuestion)<>vbYes then
+					exit function
+				end if
+			end if
+
+		end if
+	end if
+
+	bCheckOutToOryginalPath = false
+
+	if (not saveOnDisk(pDokument,strFilePath)) then
+		' 1, 0, "Zapis pliku na dysk siê nie uda³."
+		view_message 6050, 0
+		exit function
+	end if
+
+	'plik nie istnieje na dysku
+	if (not pFD.isFile(strFilePath)) then
+		' 1, 0, "Zapisanie pliku na dysk siê nie uda³o."
+		view_message 6051, 0
+		exit function
+	end if
+
+	
+	'plik bez atrybutow read-only
+	pFD.removeReadOnly strFilePath
+
+	
+	'zapisujemy iz plik zostal wypozyczony do obiektu dokumentu
+	set pDokument.pUzytkWypoz=getCurrentUser()
+	pDokument.strCheckoutFileName=AddComputerName(strFilePath)
+
+
+	'proba zapisu danych z inf. o wypozyczeniu
+	if (not trans_.saveobjects()) then
+		
+		'ustaw atrybut read-only - nie udalo sie wypozyczyc
+		pFD.setReadOnly strFilePath
+
+		' 1, 0, "Nie uda³ siê zapis danych dokumentu - wypo¿yczanie zosta³o przerwane."
+		view_message 6052, 0
+		exit function
+
+	end if
+	
+
+	'ok - plik jest wypozyczony - zwracamy sciezke
+	strCheckedOutPath=strFilePath
+	' 1, 0, "Dokument do edycji znajduje siê w " + FormatPathWithCompName(strCheckedOutPath)
+	view_message1 4014, 0, cstr(FormatPathWithCompName(strCheckedOutPath))
+	checkOut=true
+end function
+
+
+'-----------------------------------------------------------------------
+'... z pozdrownieniami od Miscrosoft'u :-)
+'-----------------------------------------------------------------------
+private function undoCheckOut(byref pDokument): undoCheckOut=false
+
+	'brak pliku w dokumencie
+	if (pDokument.fPlik.isEmpty()) then
+		' 1, 0, "Wybrany dokument nie zawiera pliku."
+		view_message 6053, 0
+		exit function
+	end if
+
+	'jezeli dokument nie zostal wypozyczony
+	if (pDokument.pUzytkWypoz is nothing) then
+		' 1, 0, "Wybrany dokument nie zosta³ wypo¿yczony."
+		view_message 6054, 0
+		exit function
+	end if
+
+	'jezeli ktos inny go wypozyczyl to my nie mozemy go wycofac z oddania
+	if (pDokument.pUzytkWypoz.idObj<>getCurrentUserID()) then
+		' 1, 0, "Ten dokument mo¿e oddaæ jedynie " + getCurrentUser().strLogin
+		view_message1 6055, 0, cstr(pDokument.pUzytkWypoz.strLogin)
+		exit function
+	end if
+
+	if (not Create_FileDriveObject()) then
+		exit function
+	end if
+
+	dim strFilePath
+	strFilePath=RemoveComputerName( pDokument.strCheckoutFileName )
+
+	'jezeli istnieje plik na dysku i mogl ulec zmianie to sie pytamy
+	if (pFD.isFile(strFilePath)) then
+		if (not pFD.isReadOnly(strFilePath)) then
+
+			if MessageBox("Na dysku istnieje plik """ + pFD.GetFileName(strFilePath) + _
+			 """ z mozliwoœci¹ zapisu. Móg³ on ulec zmianie. Czy chcesz wycofaæ wprowadzone zmiany i nadpisaæ plik?", "Nadpisaæ?", vbYesNo, vbQuestion )<>vbYes then
+				exit function
+			end if
+
+		end if
+	end if
+
+	
+	'zapisujemy iz nie jest juz wypozyczony
+	set pDokument.pUzytkWypoz=nothing
+	pDokument.strCheckoutFileName=""
+
+
+	'proba zapisu danych z inf. o wypozyczeniu
+	if (not trans_.saveobjects()) then
+		
+		' 1, 0, "Nie uda³ siê zapis danych dokumentu - wycofanie wypo¿yczenia zosta³o przerwane."
+		view_message 6056, 0
+		exit function
+
+	end if
+
+	undoCheckOut=GetLatestVersionDesc(pDokument, strFilePath, true)
+end function
+
+
+'-----------------------------------------------------------------------
+'... z pozdrownieniami od Miscrosoft'u :-)
+'-----------------------------------------------------------------------
+private function checkIn(byref pDokument): checkIn=false
+	
+	'brak pliku w dokumencie
+	if (pDokument.fPlik.isEmpty()) then
+		' 1, 0, "Wybrany dokument nie zawiera pliku."
+		view_message 6057, 0
+		exit function
+	end if
+
+	'jezeli dokument nie zostal wypozyczony
+	if (pDokument.pUzytkWypoz is nothing) then
+		' 1, 0, "Wybrany dokument nie zosta³ wypo¿yczony."
+		view_message 6058, 0
+		exit function
+	end if
+
+	'jezeli ktos inny go wypozyczyl to my nie mozemy go wycofac z oddania
+	if (pDokument.pUzytkWypoz.idObj<>getCurrentUserID()) then
+		' 1, 0, "Ten dokument mo¿e oddaæ jedynie " + getCurrentUser().strLogin
+		view_message1 6059, 0, cstr(pDokument.pUzytkWypoz.strLogin)
+		exit function
+	end if
+
+
+	if (not Create_FileDriveObject()) then
+		exit function
+	end if
+
+
+	dim strFilePath
+	strFilePath=RemoveComputerName( pDokument.strCheckoutFileName )
+
+
+	'jezeli nie ma pliku to nie ma co oddawac
+	if (not pFD.isFile(strFilePath)) then
+		' 1, 0, "Plik " + strFilePath + " nie istnieje."
+		view_message1 6060, 0, cstr(strFilePath)
+		exit function
+	end if
+
+	if (pFD.isReadOnly(strFilePath)) then
+		if MessageBox("Na dysku istnieje plik """ + pFD.GetFileName(strFilePath) + _
+		 """ posiadaj¹cy atrybuty tylko do odczytu. Prawdopodobnie nie ma potrzeby oddawania go do projektu. Chcesz kontynuowaæ wczytywanie pliku do projektu?", "Wczytaæ plik?", vbYesNo, vbQuestion )<>vbYes then
+			exit function
+		end if
+	end if
+
+	'zapisujemy iz nie jest juz wypozyczony i oddajemy plik
+	pDokument.fPlik.Attach strFilePath
+	set pDokument.pUzytkWypoz=nothing
+	pDokument.strCheckoutFileName=""
+
+
+	'proba zapisu danych z inf. o wypozyczeniu
+	if (not trans_.saveobjects()) then
+		
+		' 1, 0, "Nie uda³ siê zapis danych dokumentu - oddawanie pliku do projektu zostalo wycofane."
+		view_message 6061, 0
+		exit function
+
+	end if
+
+	pFD.setReadOnly strFilePath
+	checkIn=true
+end function
+
+
+'-----------------------------------------------------------------------
+'Rozpoczyna podglad danego dukumentu - tworzy plik tymczasowy o atrybutach
+'read-only i probuje uruchomic odpowiedni program do otwarcia pliku
+'-----------------------------------------------------------------------
+private function View(byref pDokument):View=false
+
+	'brak pliku w dokumencie
+	if (pDokument.fPlik.isEmpty()) then
+		' 1, 0, "Wybrany dokument nie zawiera pliku."
+		view_message 6062, 0
+		exit function
+	end if
+
+	'create pFD object
+	if (not Create_FileDriveObject()) then
+		exit function
+	end if
+
+	'tworzymy katalog user'a jezeli go nie ma
+	if (not checkUserDirectory()) then
+		' 1, 0, "Utworzenie katalogu lub jego sprawdzenie nie jest mo¿liwe (" + getUserDirectory() + ")"
+		view_message1 6063, 0, cstr(getUserDirectory())
+		exit function
+	end if
+
+	'tworzymy teraz katalog ale dla danego user'a i dokumentu
+	if (not pFD.IsFolder( getDocumentDirectory(pDokument) )) then
+		if (not pFD.CreatePath( getDocumentDirectory(pDokument) )) then
+			' 1, 0, "Utworzenie katalogu lub jego sprawdzenie nie jest mo¿liwe (" + getDocumentDirectory(pDokument) + ")"
+			view_message1 6064, 0, cstr(getDocumentDirectory(pDokument))
+			exit function
+		end if
+	end if
+	
+	'pelna sciezka do danego dokumentu i user'a
+	dim strFilePath
+	strFilePath=getDocumentDirectory(pDokument)+"\"+getFileName(pDokument)
+
+	'jezeli dokument zostal wypozyczony
+	if (not pDokument.pUzytkWypoz is nothing) then
+		'jezeli jest wypozyczony przez nas samych
+		if (pDokument.pUzytkWypoz.idObj=getCurrentUserID()) then
+			if MessageBox("Wybrany dokument zosta³ przez Ciebie wypo¿yczony. Nast¹pi podgl¹d dokumentu z mo¿liwoœci¹ jego zapisu. Chcesz kontynuowaæ?", "Edytowaæ dokument?", vbYesNo, vbQuestion )<>vbYes then
+				exit function
+			end if
+
+			View=Edit(pDokument)
+			exit function
+		end if
+	end if
+
+	if (pFD.isFile(strFilePath)) then
+		if (not pFD.isReadOnly(strFilePath)) then
+			if MessageBox("Na dysku istnieje plik """ + pFD.GetFileName(strFilePath) + _
+			 """ z mo¿liwoœci¹ zapisu. Chcesz kontynuowaæ pobieranie pliku do podgl¹du i nadpisaæ istniej¹cy plik?", "Wczytaæ plik?", vbYesNo, vbQuestion )<>vbYes then
+				exit function
+			end if
+		end if
+	end if
+
+	'jezeli nie jest wypozyczony to pobieramy wersje i juz
+	if GetLatestVersionDesc(pDokument, strFilePath, true) then
+		View=Run(strFilePath)
+	end if
+
+
+end function
+
+
+
+'-----------------------------------------------------------------------
+'Rozpoczyna edycje podanego dokumentu i oczywiscie go wypozycza
+'-----------------------------------------------------------------------
+private function Edit(byref pDokument):Edit=false
+
+	'brak pliku w dokumencie
+	if (pDokument.fPlik.isEmpty()) then
+		' 1, 0, "Wybrany dokument nie zawiera pliku."
+		view_message 6065, 0
+		exit function
+	end if
+
+	'sciezka wypozyczenia
+	dim strFilePath
+	
+	'nie udalo sie wypozyczenie dokumentu
+	if (not checkOut(pDokument, strFilePath)) then
+		exit function
+	end if
+
+	'uruchom
+	Edit=Run(strFilePath)
+end function
+
+
+
+'-----------------------------------------------------------------------
+'uruchamia podany dokument lub aplikacje
+'-----------------------------------------------------------------------
+private function Run(byval strDocumentName):Run=false
+	dim pSystem
+	set pSystem=doc_.system
+
+	Run=pSystem.ShellOpen(strDocumentName, pFD.getFolderName(strDocumentName), "")
+
+	if (not Run) then
+		' 1, 0, "Nie uda³o siê otworzyæ dokumentu jego domyœlnym programem. Bêdziesz musia³ go otworzyæ rêcznie. Dotyczy pliku """ + _
+		'	strDocumentName + """"
+		view_message1 6066, 0, cstr(strDocumentName)
+	end if
+
+end function
+
+
+private function print_document(byref oDocument) : print_document = false
+	'create pFD object
+	if (not Create_FileDriveObject()) then
+		exit function
+	end if
+	dim strTempPath
+	strTempPath = doc_.system.createtempfilename("x", pFD.GetFileExtension( getFileName(oDocument) ) )
+
+	if not GetLatestVersionDesc(oDocument, strTempPath, false) then
+		exit function
+	end if
+
+	print_document = print_file(strTempPath)
+end function
+
+private function print_file(byval strFilePath)
+	print_file = doc_.system.shellprint(strFilePath)
+end function
+
+'-----------------------------------------------------------------------
+'pobiera ostatnia wersje do pliku o nazwie i lokalizacji w strDestPath
+'-----------------------------------------------------------------------
+private function GetLatestVersionDesc(byref pDokument, byval strDestPath, byval bReadOnly):GetLatestVersionDesc=false
+
+	if (pDokument.fPlik.isEmpty()) then
+		'brak pliku zapisanego w obiekcie n5dokument
+		' 1, 0, "Brak pliku reprezentuj¹cego wybrany dokument."
+		view_message 6067, 0
+		exit function
+	end if
+
+	if (Create_FileDriveObject()) then
+
+		'podany folder nie istnieje
+		if (not pFD.IsFolder(pFD.getFolderName(strDestPath))) then
+			' 1, 0, "Podany folder nie istnieje """ + pFD.getFolderName(strDestPath) + """"
+			view_message1 6068, 0, cstr(pFD.getFolderName(strDestPath))
+			exit function
+		end if
+
+		if (not saveOnDisk(pDokument,strDestPath)) then
+			' 1, 0, "Zapis pliku na dysk siê nie uda³."
+			view_message 6069, 0
+			exit function
+		end if
+
+		if (not pFD.isFile(strDestPath)) then
+			' 1, 0, "Zapis pliku na dysk siê nie uda³."
+			view_message 6070, 0
+			exit function
+		end if
+		
+		'ustaw atrybuty tylko do odczytu
+		if (bReadOnly) then
+			pFD.setReadOnly strDestPath
+		else
+			pFD.removeReadOnly strDestPath
+		end if
+
+		'udalo sie
+		GetLatestVersionDesc=true
+
+	else
+		
+		'wystapil blad przy robieniu obiektu FileSystemObject
+		' 1, 0, "Nie uda³o siê stworzyæ obiekytu ""FileSystemObject"""
+		view_message 6071, 0
+
+	end if
+
+end function
+
+private function saveOnDisk(byref pDokument, byval strFilePath):saveOnDisk=false
+	err.clear
+	on error resume next
+
+	pDokument.fPlik.save strFilePath
+
+	if err.number<>0 then
+		exit function
+	end if
+
+	saveOnDisk=true
+end function
+
+
+private function NotifyUserWithDocument(byref pDokument)
+	if (pDokument.pUzytkWypoz is nothing) then
+		exit function
+	end if
+
+	dim pUser
+	set pUser=getCurrentUser()
+
+	chat_SendMessageToUserA "U¿ytkownik " + pUser.strNazwa + " chcia³by wypo¿yczyæ dokument " + pDokument.strTematDokum + ", który masz aktualnie wypo¿yczny.", _
+					pDokument.pUzytkWypoz.idobj, _
+					TYPEID_N5DOKUMENT, pDokument.IdObj, NOTIFY_CODE_PERFORMER_USER
+end function

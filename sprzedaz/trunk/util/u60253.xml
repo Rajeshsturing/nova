@@ -1,0 +1,775 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!-- 
+#include "h1000.h"
+#include "h1201.h"
+#include "h1203.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1234.h"
+
+REV:KB:20030527
+
+#define CTRLID_SYMBOL_KONTA		   1
+#define CTRLID_DATA_TRANSAKCJI   2
+
+-->
+<page  width='12000' style='STYLE_PAGE'>
+  <config>
+    <title>Moduł Serwisowy (edycja 2018)</title>
+    <script>
+      <![CDATA[
+
+'messagebox
+#include "50122"
+#include "50208"
+
+'asp_raport_appfile
+#include "50518"	
+
+'setglobprof
+#include "50203"
+
+'nx_trace
+#include "50519"
+
+#include "50517"
+
+#include "50211"
+
+'initialize_transaction_oper
+#include "50525"
+
+function fopen()
+	page_.ctrl(CTRLID_SYMBOL_KONTA).value = "like '201%'"
+	page_.ctrl(CTRLID_DATA_TRANSAKCJI).value = "between {d '2018-01-01'} and {d '2018-12-31'}"
+	fopen = true
+end function
+
+function setup_transaction
+	dim strSymbol: strSymbol = page_.ctrl(CTRLID_SYMBOL_KONTA).value
+	dim strDataTrans: strDataTrans = page_.ctrl(CTRLID_DATA_TRANSAKCJI).value
+
+	dim pM60182: set pM60182 = doc_.getmodule(60182)
+	dim where_str: where_str = " and d.dDataKsieg between " +_
+		trans_.afc.convert.date2SQL(pM60182.RokKsiegowy_Poczatek()) + " and " +_
+		trans_.afc.convert.date2SQL(pM60182.RokKsiegowy_Koniec())
+
+	dim strSQL
+	strSQL = "select max(k.IdObj) idKonto,max(k.strSymbol) symbol,t.IdObj idTrans,max(t.strSymTrans) symbol_trans, " + vbNewLine +_
+					 "sum(d.curwn)-sum(d.curma) saldo_dekret, " + vbNewLine +_
+					 "(select sum(trop_curWn)-sum(trop_curMa) from n5transakcja_operacja where trop_pTransakcja = t.IdObj and trop_dDataOp " + strDataTrans + ") saldo_trans " + vbNewLine +_
+					 "from " + vbNewLine +_
+					 "n5dekret d " + vbNewLine +_
+					 "inner join n5konto k on d.pkonto = k.IdObj " + vbNewLine +_
+					 "inner join n5transakcja t on d.ptransakcja = t.IdObj " + vbNewLine +_
+					 "where k.strSymbol " + strSymbol + " and d.ddataksieg " + strDataTrans + " and t.dDataRozp " + strDataTrans + where_str + vbNewLine +_
+					 "group by t.IdObj " + vbNewLine +_
+					 "having (sum(d.curwn)-sum(d.curma)) <> (select sum(trop_curWn)-sum(trop_curMa) from n5transakcja_operacja where trop_pTransakcja = t.IdObj and trop_dDataOp " + strDataTrans + ")"
+	dim pPerf : set pPerf = doc_.performing("Trwa przygotowywanie danych...")
+	dim oRS: set oRS = trans_.createadors(strSQL)
+	set pPerf = nothing
+	
+	dim pMsgPage: set pMsgPage = doc_.getmodule(60340)
+	dim iResultPotw : iResultPotw = pMsgPage.buildPotw(oRS)
+
+	if iResultPotw = vbOK then
+		oRS.movefirst
+		
+		do while not oRS.EOF
+		
+			dim curWn: curWn = ccur(0)
+			dim curMa: curMa = ccur(0)
+			dim curRoznica: curRoznica = ccur(oRS("saldo_dekret").value) - ccur(oRS("saldo_trans").value)
+			if curRoznica < ccur(0) then
+				curMa = abs(curRoznica)
+			else
+				curWn = curRoznica
+			end if
+		
+			dim oTransOper,oTrans
+			dim idTrans: idTrans = clng(oRS("idTrans").value)
+			if idTrans > clng(0) then
+				set oTrans = trans_.getobj(TYPEID_N5TRANSAKCJA,idTrans)
+				initialize_transaction_oper oTrans, oTransOper
+				oTransOper.trop_curWn = curWn
+				oTransOper.trop_curMa = curMa
+				oTransOper.trop_strOpis = "uzgodnienie"
+				if not trans_.saveobjects() then
+				end if          
+			end if
+			
+			oRS.movenext
+		loop
+	end if
+	
+end function
+
+function document_file_copy
+	'ścieżka zapius
+	dim strPath: strPath = "c:\temp\files\"
+	
+	on error resume next
+	dim pFD, bOK
+	set pFD = CFileDrive(bOK)
+	if (bOK) then
+		if (not pFD.IsFolder(strPath)) then
+			if (not pFD.CreateFolder(strPath)) then
+				exit function
+			end if
+		end if		
+	end if
+	on error goto 0
+
+	'pobierz wszystkie dokumenty
+	dim pCursorDocs
+	set pCursorDocs = trans_.createrawcursor(TYPEID_N5DOKUMENT, "", "", "")
+	dim oDokument
+	dim pPerf : set pPerf = doc_.performing("Trwa kopiowanie dokumentów do lokalizacji: " + strPath)
+	for each oDokument in pCursorDocs	
+		on error resume next
+		if (not oDokument.fPlik.isEmpty()) then
+			dim strFilePath: strFilePath = strPath + CStr(oDokument.IdObj) + "." + oDokument.fPlik.ext
+			pPerf.text = "Trwa kopiowanie dokumentów do lokalizacji: " + strFilePath
+			oDokument.fPlik.save strFilePath
+		end if
+		on error goto 0
+	next
+	set pPerf = nothing
+	
+end function
+
+function gm_ensure_accuracy_ui(bShowInfo)
+  dim t_start_all, t_end
+  t_start_all = Timer
+
+	dim pSubTrans: set pSubTrans = trans_.createsubtran()
+	dim pPerf : set pPerf = doc_.performing("Aktualizacja stanów magazynowych...")
+
+	dim varLog : set varLog = doc_.createstreamobj()
+	gm_ensure_accuracy_ui = gm_ensure_accuracy_internal(varLog)
+
+	dim iDummy : iDummy = getglobprofileLong(GLOBPROF_DUMMY_UPDATE)
+	setglobprofile GLOBPROF_DUMMY_UPDATE,iDummy+1
+	'commit if successfull or force failure if not
+	if true then
+		trans_.saveobjects
+	else
+		trans_.save
+		trans_.discard()
+	end if
+	
+	set pSubTrans = nothing
+	set pPerf = nothing
+ 
+  t_end = Timer
+ 
+#ifdef APPCONFIG_SHOW_EXEC_TIME    
+    trans_.message 0,0,"Operacja D, całkowity czas wykonania:" + cstr(t_end - t_start_all)
+#endif
+
+	if bShowInfo and not gm_ensure_accuracy_ui then
+		if MessageBox("Wykryto braki w magazynie. Czy wyświetlić raport ?","Aktualizacja stanów magazynowych",vbYesNo,vbQuestion) = vbYes then
+			NX_TRACE_START_STREAM("Aktualizacja stanów magazynowych",nothing)
+			gm_log_2_msg varLog
+			NX_TRACE_SHOW_LOG(1)
+		end if
+	end if
+
+end function
+
+'--------------------------------------------------
+'-----  funkcja dla obiektu n5ptop, n5ptstan  -----
+'--------------------------------------------------
+function pt_ensure_accuracy_ui(bDummy)
+	dim pSubTrans: set pSubTrans = trans_.createsubtran()
+	dim pPerf : set pPerf = doc_.performing("Aktualizacja stanów płatności...")
+
+	dim varLog : set varLog = doc_.createstreamobj()
+	pt_ensure_accuracy_ui = pt_ensure_accuracy_internal(varLog)
+
+	dim iDummy : iDummy = getglobprofileLong(GLOBPROF_DUMMY_UPDATE)
+	setglobprofile GLOBPROF_DUMMY_UPDATE,iDummy+1
+	'commit if successfull or force failure if not
+	if true then
+		trans_.saveobjects
+	else
+		trans_.save
+		trans_.discard()
+	end if
+	
+	set pSubTrans = nothing
+	set pPerf = nothing
+
+	if not pt_ensure_accuracy_ui then
+			NX_TRACE_START_STREAM("Aktualizacja stanów płatności",nothing)
+			NX_TRACE_SHOW_LOG(1)
+	end if
+
+end function
+
+'-------------------------------------------------------------------------
+#define TMP_STANMAG_TABLE_NAME	#tmp_stanmag_moment
+
+class CStanMagHelper
+    private bDisposed
+
+	private sub class_initialize()
+      bDisposed = false
+
+		dim strSQL
+		strSQL = "create table TMP_STANMAG_TABLE_NAME " + vbCrLf +_
+		"(" + vbCrLf +_
+		"tsm_pMagazyn integer not null," + vbCrLf +_
+		"tsm_pProdukt integer not null," + vbCrLf +_
+		"tsm_pOpak integer not null," + vbCrLf +_
+		"tsm_curCena decimal(14,4) not null," + vbCrLf +_
+		"tsm_curIloscOpakB decimal(14,4) not null," + vbCrLf +_
+		"tsm_curWartoscB decimal(12,2) not null," + vbCrLf +_
+		"tsm_curIloscOpakPI decimal(14,4) not null," + vbCrLf +_
+		"tsm_curWartoscPI decimal(12,2) not null," + vbCrLf +_
+		"tsm_curIloscOpakRI decimal(14,4) not null," + vbCrLf +_
+		"tsm_curWartoscRI decimal(12,2) not null," + vbCrLf +_
+		"PRIMARY KEY (tsm_pMagazyn, tsm_pProdukt, tsm_pOpak, tsm_curCena)" + vbCrLf +_
+		")" + vbCrLf
+
+		trans_.execsql strSQL
+	end sub
+
+public sub manual_done()
+  if not bDisposed then
+    bDisposed = true
+    
+   	dim strSQL
+		strSQL =  "drop table TMP_STANMAG_TABLE_NAME" + vbCrLf
+		trans_.execsql strSQL
+
+  end if
+end sub
+
+private sub class_terminate() 'OK
+	  manual_done()
+end sub
+	
+	public sub prefill()
+		dim strSQL : strSQL = "insert into TMP_STANMAG_TABLE_NAME " +_ 
+		"select distinct gmo_pMag, gmo_pProd, gmo_pOpak, gmo_curCena,0,0,0,0,0,0 from n5gmop"
+		trans_.execsql strSQL
+	end sub
+	
+	'-- stan ilościowy / wartosciowy na dany moment
+	public sub fill_stan_na_moment(byval nNumOpEnd,byval bDetails)
+		dim strSQL : strSQL = "insert into TMP_STANMAG_TABLE_NAME select gmo_pMag, gmo_pProd, gmo_pOpak,"
+		if bDetails then
+			strSQL = strSQL + "gmo_curCena"
+		else
+			strSQL = strSQL + "0"
+		end if
+		strSQL = strSQL + ",sum(gmo_curIlosc),sum(gmo_curWartosc),0,0,0,0 from n5gmop " +_
+			"where gmo_nNumOp <=" + cstr(nNumOpEnd) + " group by gmo_pMag, gmo_pProd, gmo_pOpak"
+		if bDetails then
+			strSQL = strSQL + "gmo_curCena"
+		end if
+		trans_.execsql strSQL
+	end sub
+
+	public sub exec_tmp_stanmag_moment(byval nNumOpStart,byval nNumOpEnd)
+		dim strSQL
+		strSQL = "exec n5stanmag_fill_timerange " + cstr(nNumOpStart) + "," + cstr(nNumOpEnd)
+
+		trans_.execsql strSQL
+	end sub
+end class
+
+'-------------------------------------------------------------------------
+function new_stan_mag_helper
+	set new_stan_mag_helper = new CStanMagHelper
+end function
+'-------------------------------------------------------------------------
+
+function sql_prepare_tmp_stanmag_moment()
+	dim strSQL
+
+ 
+
+	strSQL = "create table #tmp_stanmag_moment " + vbCrLf +_
+	"(" + vbCrLf +_
+	"pMagazyn integer not null," + vbCrLf +_
+	"pProdukt integer not null," + vbCrLf +_
+	"pOpak integer not null," + vbCrLf +_
+	"curIloscOpakB decimal(14,4) not null," + vbCrLf +_
+	"curIloscOpakPI decimal(14,4) not null," + vbCrLf +_
+	"curIloscOpakRI decimal(14,4) not null," + vbCrLf +_
+	"curWartoscB decimal(12,2) not null," + vbCrLf +_
+	"curWartoscPI decimal(12,2) not null," + vbCrLf +_
+	"curWartoscRI decimal(12,2) not null," + vbCrLf +_
+	"PRIMARY KEY (pMagazyn, pProdukt, pOpak)" + vbCrLf +_
+	")" + vbCrLf
+ 
+
+	trans_.execsql strSQL
+  
+  
+  strSQL="create index pokaz_daty_n5dokmag on N5DOKMAG (DDATAWYST ASC)" + vbCrLf 
+  
+  	trans_.execsql strSQL
+
+  
+end function
+
+function sql_exec_tmp_stanmag_moment(byval nNumOpStart,byval nNumOpEnd)
+	dim strSQL
+	strSQL = "exec n5stanmag_fill_timerange " + cstr(nNumOpStart) + "," + cstr(nNumOpEnd)
+
+	trans_.execsql strSQL
+end function
+
+function sql_clean_tmp_stanmag_moment()
+	dim strSQL
+	strSQL =  "drop table #tmp_stanmag_moment" + vbCrLf
+	trans_.execsql strSQL
+  
+   strSQL="drop index n5dokmag.pokaz_daty_n5dokmag  " + vbCrLf
+  
+  	trans_.execsql strSQL
+
+  
+end function
+
+'-------------------------------------------------------------------------
+function sql_find_mag_min_max_nr_4date(byval tablename, byref min_value, byref max_value, byval where_str)
+	sql_find_mag_min_max_nr_4date = false
+
+	dim sql : sql = "select min(nNumOper),max(nNumOper) from " + tablename + " where " + where_str
+
+	dim pRecordset
+	set pRecordset = trans_.createadors(sql)
+
+	if not pRecordset.EOF then
+		min_value = pRecordset.fields(0).value
+		max_value = pRecordset.fields(1).value
+		sql_find_mag_min_max_nr_4date = true
+	end if
+	
+	pRecordset.close
+	set pRecordset = nothing
+
+end function 
+
+'' GetMin - zwraca minimum
+function GetMin(byval param1, byval param2)
+
+	if param1 < param2 then
+		GetMin = param1
+	else
+		GetMin = param2
+	end if
+
+end function 
+
+'' zwraca min(min1 lub min2) 
+'' wartości NULL są pomijane
+function GetMinNotNull(byval param1, byval param2)
+	GetMinNotNull = null
+
+	if not isnull(param1) then
+		if not isnull(param2) then
+			GetMinNotNull = GetMin(param1,param2)
+		else
+			GetMinNotNull = param1
+		end if
+	elseif not isnull(param2) then
+			GetMinNotNull = param2
+	end if
+
+end function 
+
+function GetMax(byval param1, byval param2)
+
+	if param1 > param2 then
+		GetMax = param1
+	else
+		GetMax = param2
+	end if
+
+end function 
+
+function GetMaxNotNull(byval param1, byval param2)
+	GetMaxNotNull = null
+
+	if not isnull(param1) then
+		if not isnull(param2) then
+			GetMaxNotNull = GetMax(param1,param2)
+		else
+			GetMaxNotNull = param1
+		end if
+	elseif not isnull(param2) then
+			GetMaxNotNull = param2
+	end if
+
+end function 
+
+'''''' 
+
+function convert_date_range_to_num_oper_range(byval where_str,byref nNumOpStart,byref nNumOpEnd)
+
+	convert_date_range_to_num_oper_range = false
+	
+	dim dokmag_min : dokmag_min = null
+	dim dokmag_max : dokmag_max = null
+	sql_find_mag_min_max_nr_4date "n5dokmag",dokmag_min,dokmag_max,where_str
+
+	dim realprod_min : realprod_min = null
+	dim realprod_max : realprod_max = null
+	sql_find_mag_min_max_nr_4date "n5realprod",realprod_min,realprod_max,where_str
+
+	nNumOpStart = GetMinNotNull(dokmag_min, realprod_min)
+	nNumOpEnd = GetMaxNotNull(dokmag_max, realprod_max)
+
+	if not (isnull(nNumOpStart) or isnull(nNumOpEnd)) then
+		convert_date_range_to_num_oper_range = true
+	else
+		if isnull(nNumOpStart) then
+			nNumOpStart = clng(0)
+		end if
+		if isnull(nNumOpEnd) then
+			nNumOpEnd = clng(999999999)
+		end if
+	end if
+
+end function
+
+
+
+#comment '------------------------------------------------------- 
+#comment '------- funkcje serwisowe -----------------------------
+#comment '-------------------------------------------------------
+
+function rebuild_gm_from_dokmag_auto()
+	
+	dim oDokRangeRS : set oDokRangeRS = trans_.createadors( _
+		"select idobj from n5dokmag where dm_cZmianaEksport <> 0 order by nNumOper")
+
+	trans_.autorollback false
+
+  dim bAny : bAny = false
+	do while not oDokRangeRS.EOF
+		dim idDM : idDM = clng(oDokRangeRS(0))
+    dim oDokMag : set oDokMag = trans_.getobj(TYPEID_N5DOKMAG, idDM)
+    trans_.execsql "delete from n5gmop where gmo_nNumOp = " + cstr(oDokMag.nnumoper)
+		oDokMag.n5dokmag_rebuild_gm true
+		oDokRangeRS.MoveNext
+    bAny = true
+	loop
+
+  if bAny then
+	  setglobprofile GLOBPROF_GM_BORDER,GM_BORDER_ALL_BAD
+    rebuild_gm_from_dokmag_auto = trans_.saveobjects()
+  end if
+  
+end function
+
+#comment '-------- odbudowa stanów magazynowych z dokumentów  ----
+#comment '-------- ( rekordów n5gmop z n5dokmag i n5realprod)  ----
+#comment '-------- może być przydatne w przypadku gdy nie zgadzają się ilości, nie widać operacji -----
+
+function rebuild_gm_from_dokmag_range(byval nStartNumOp,byval nEndNumOp)
+	rebuild_gm_from_dokmag_range = false
+	
+	dim oDokRangeRS : set oDokRangeRS = trans_.createadors( _
+		"select idobj from n5dokmag where nNumOper between " +_
+		cstr(nStartNumOp) + " and " + cstr(nEndNumOp) + " order by nNumOper")
+
+	trans_.autorollback false
+
+	do while not oDokRangeRS.EOF
+		dim idDM : idDM = clng(oDokRangeRS(0))
+		trans_.getobj(TYPEID_N5DOKMAG,idDM).n5dokmag_rebuild_gm true
+		oDokRangeRS.MoveNext
+	loop
+
+	rebuild_gm_from_dokmag_range = trans_.saveobjects()
+end function
+
+function rebuild_pt_from_platnosc_range(byval nStartNumOp,byval nEndNumOp)
+	rebuild_pt_from_platnosc_range = false
+  
+  'dokonaj rebuild dokumentów tylko z obcą walutą
+  dim oDokRangeRS : set oDokRangeRS = trans_.createadors( _
+		  "select * from n5platnosc p " +_
+      "inner join n5jednostka j on p.pWalutaPodm = j.idobj " +_
+      "where nNumOper between " + cstr(nStartNumOp) + " and " + cstr(nEndNumOp) +_
+      " and j.strSkrot <> 'PLN' and j.eTyp = N5JEDNOSTKA_WALUTA " +_
+      "order by nNumOper")
+
+	trans_.autorollback false
+
+	do while not oDokRangeRS.EOF
+		dim idDM : idDM = clng(oDokRangeRS(0))
+		trans_.getobj(TYPEID_N5PLATNOSC,idDM).n5platnosc_rebuild_pt true
+		oDokRangeRS.MoveNext
+	loop
+
+	rebuild_pt_from_platnosc_range = trans_.saveobjects()
+end function
+
+function rebuild_gm_from_realprod_range(byval nStartNumOp,byval nEndNumOp)
+	rebuild_gm_from_realprod_range = false
+	
+	dim oDokRangeRS : set oDokRangeRS = trans_.createadors( _
+		"select idobj from n5realprod where nNumOper between " +_
+		cstr(nStartNumOp) + " and " + cstr(nEndNumOp) + " order by nNumOper")
+
+	trans_.autorollback false
+
+	do while not oDokRangeRS.EOF
+		dim idDM : idDM = clng(oDokRangeRS(0))
+		trans_.getobj(TYPEID_N5REALPROD,idDM).n5realprod_rebuild_gm
+		oDokRangeRS.MoveNext
+	loop
+
+	rebuild_gm_from_realprod_range = trans_.saveobjects()
+end function
+
+#define SINGLE_REBUILD_STEP_SIZE	199
+
+function rebuid_gm_from_dokmag()
+	rebuid_gm_from_dokmag = false
+	trans_.execsql "truncate table n5gmop"
+	trans_.execsql "truncate table n5gmstan"
+	dim oRangeRS
+	set oRangeRS = trans_.createadors("select isnull(min(nNumOper),0),isnull(max(nNumOper),0) from n5dokmag")
+	dim nNumOp
+	dim nEndNumOp
+	nNumOp = clng(oRangeRS(0))
+	nEndNumOp = clng(oRangeRS(1))
+	
+	'n5dokmag
+	dim pPerf
+	set pPerf = doc_.performing("Odbudowa stanów magazynowych...")
+	
+	do while nNumOp <= nEndNumOp
+		if not rebuild_gm_from_dokmag_range(nNumOp,nNumOp + SINGLE_REBUILD_STEP_SIZE) then
+			exit function
+		end if
+
+		nNumOp = nNumOp + SINGLE_REBUILD_STEP_SIZE + 1
+		pPerf.text = "Odbudowa stanów magazynowych, operacje " + cstr(nNumOp) + "..." + cstr(nNumOp + SINGLE_REBUILD_STEP_SIZE) + _
+			" z " + cstr(nEndNumOp)
+	loop
+
+	'n5realprod
+	set pPerf = doc_.performing("Odbudowa produkcji...")
+	
+	set oRangeRS = trans_.createadors("select isnull(min(nNumOper),0),isnull(max(nNumOper),0) from n5realprod")
+	nNumOp = clng(oRangeRS(0))
+	nEndNumOp = clng(oRangeRS(1))
+	
+	do while nNumOp < nEndNumOp
+		if not rebuild_gm_from_realprod_range(nNumOp,nNumOp + SINGLE_REBUILD_STEP_SIZE) then
+			exit function
+		end if
+
+		nNumOp = nNumOp + SINGLE_REBUILD_STEP_SIZE + 1
+		pPerf.text = "Odbudowa produkcji, operacje " + cstr(nNumOp) + "..." + cstr(nNumOp + SINGLE_REBUILD_STEP_SIZE) + _
+			" z " + cstr(nEndNumOp)
+	loop
+
+	setglobprofile GLOBPROF_GM_BORDER,GM_BORDER_ALL_BAD
+	rebuid_gm_from_dokmag = trans_.saveobjects()
+end function
+
+function rebuid_pt_from_platnosc()
+	rebuid_pt_from_platnosc = false
+	trans_.execsql "truncate table n5ptop"
+	trans_.execsql "truncate table n5ptstan"
+	dim oRangeRS
+	set oRangeRS = trans_.createadors("select isnull(min(nNumOper),0),isnull(max(nNumOper),0) from n5platnosc")
+	dim nNumOp
+	dim nEndNumOp
+	nNumOp = clng(oRangeRS(0))
+	nEndNumOp = clng(oRangeRS(1))
+	
+	'n5platnosc
+	dim pPerf
+	set pPerf = doc_.performing("Odbudowa stanów płatności...")
+	
+	do while nNumOp <= nEndNumOp
+		if not rebuild_pt_from_platnosc_range(nNumOp,nNumOp + SINGLE_REBUILD_STEP_SIZE) then
+			exit function
+		end if
+
+		nNumOp = nNumOp + SINGLE_REBUILD_STEP_SIZE + 1
+		pPerf.text = "Odbudowa stanów płatności, operacje " + cstr(nNumOp) + "..." + cstr(nNumOp + SINGLE_REBUILD_STEP_SIZE) + _
+			" z " + cstr(nEndNumOp)
+	loop
+  setglobprofile GLOBPROF_PLATNOSC_NUMER, nEndNumOp
+	setglobprofile GLOBPROF_PT_BORDER,GM_BORDER_ALL_BAD
+	rebuid_pt_from_platnosc = trans_.saveobjects()
+end function
+
+#comment '-------- ręczne sprawdzenie poprawności (system to sam też robi) ----
+
+function manual_gm_ensure_accuracy()
+	gm_ensure_accuracy_ui(true)
+	page_.goback
+end function
+
+#comment '-------- wymuszenie przebiegu uporzadkowania od początku z istniejących n5gmop  ----
+#comment '-------- może być przydatne w przypadku gdy nie zgadzają się ceny lub wartości -----
+
+function force_rebuild_gm()
+	dim pNAVOGMSrvr : set pNAVOGMSrvr = trans_.CreateServerExtension("navogm.n5gmsvr") 
+	dim varLog 'ma być pusty jeśli nie chcemy logować
+	set varLog = doc_.createstreamobj()
+
+'	trans_.execsql "truncate table n5gmstan"
+	
+	if not pNAVOGMSrvr.forcerepair(varLog) then
+		if MessageBox("Wykryto braki w magazynie. Czy wyświetlić raport ?","Aktualizacja stanów magazynowych",vbYesNo,vbQuestion) = vbYes then
+			NX_TRACE_START_STREAM("Aktualizacja stanów magazynowych",nothing)
+			gm_log_2_msg varLog
+			NX_TRACE_SHOW_LOG(1)
+		end if
+	else
+		setglobprofile GLOBPROF_GM_BORDER,GM_BORDER_ALL_RIGHT
+		trans_.saveobjects
+	end if
+	page_.goback
+end function
+
+
+'---------------------------------
+'odbudowa operacji na transakcjach
+'---------------------------------
+function rebuid_trop()
+  if MessageBox("Zostaną usunięte wszysktie operacje na transakcjach i wygenerowane od nowa. Czy kontynuować?", _
+                "Odbudowa operacji na transakcjach", vbYesNo, vbQuestion) = vbYes then
+  
+    'usunięcie zabezpieczenia odbudowy trop
+    dim pGlobProf : set pGlobProf = nx_get_globprofile_obj(GLOBPROF_REBUILD_TRANS_OPER)
+    if pGlobProf is nothing then
+      set pGlobProf = trans_.newobj(TYPEID_GLOBPROFILE)
+      pGlobProf.indeks = clng(GLOBPROF_REBUILD_TRANS_OPER)
+    end if  
+    pGlobProf.Wartosc = cstr(0)
+    if not trans_.saveobjects then
+      exit function
+    end if  
+    
+    'usunięcie straych trop'ów
+    trans_.execsql "delete from n5transakcja_operacja"  
+    
+    'odbudowa trop
+    doc_.getmodule(60121).rebuild_trops
+  end if
+end function
+
+function create_missing_dostawa_in_2018
+  create_missing_dostawa 2018
+end function
+
+function create_missing_dostawa_in_2019
+  create_missing_dostawa 2019
+end function
+
+function create_missing_dostawa_in_2017
+  create_missing_dostawa 2017
+end function
+function create_missing_dostawa_in_2016
+  create_missing_dostawa 2016
+end function
+function create_missing_dostawa_in_2015
+  create_missing_dostawa 2015
+end function
+function create_missing_dostawa_in_2014
+  create_missing_dostawa 2014
+end function
+function create_missing_dostawa(iRok)
+  trans_.var(GVAR_OPERATION_MODE) = clng(OPERATION_MODE_IMPORT)
+
+  dim idRejFVS:idRejFVS = choose_rejestr_dok("N5REJESTRDOK_FAKT_SP, N5REJESTRDOK_KOR_FAKT_SP, N5REJESTRDOK_WDT, N5REJESTRDOK_KOREKTA_WDT" , false , "Wybierz rejestr faktur")
+	
+  trans_.var(APPVAR_REJESTR_TYP) = clng(N5REJESTRDOK_DOSTAWA)
+	dim idRejDost:idRejDost = choose_rejestr_dok(N5REJESTRDOK_DOSTAWA , true , "Wybierz rejestr dostaw")
+	trans_.var(APPVAR_REJESTR_DOKUMENTOW) = clng(idRejDost)
+
+  dim oDocRS : set oDocRS = trans_.createadors( _
+    "select idobj from n5sprzedaz where year(ddatawyst) = " + cstr(iRok) +_
+    "and sprzed_pDostawa = 0 " +_
+    "and pRejestrDok = " + cstr(idRejFVS) +_
+    "and idobj not in (select pPopSprzed from n5sprzedaz where sprzed_pDostawa <> 0) " +_
+    "order by strNrDok")
+
+	'trans_.autorollback false
+
+	do while not oDocRS.EOF
+		dim idFV : idFV = clng(oDocRS(0))
+		trans_.message 0,0, "id=" + cstr(idFV)
+    
+    dim pSprzedaz: set pSprzedaz = trans_.getobj(TYPEID_N5SPRZEDAZ, idFV)
+    dim pDostawa : set pDostawa = trans_.newobj(TYPEID_N5SPRZEDAZ)
+		pDostawa.n5sprzedaz_copy_from_org pSprzedaz
+    pDostawa.strExtra1 = ""
+		set pSprzedaz.sprzed_pDostawa = pDostawa
+	
+		oDocRS.MoveNext
+    create_missing_dostawa = trans_.saveobjects()
+    if not create_missing_dostawa  then
+		  trans_.message 0,0, "FAILED create_missing_dostawa"
+      exit function
+    end if
+	loop
+
+	create_missing_dostawa = true
+  trans_.message 0,0, "SUCCESSED create_missing_dostawa"
+
+end function
+
+]]>
+    </script>
+  </config>
+  <body>
+    <t>Moduł Serwisowy (edycja 2018)</t>
+    <br/>
+    <br/>
+		<table>
+			<tbody>
+				<tr>
+					<td><t>Symbol konta</t></td>
+					<td><edit name='CTRLID_SYMBOL_KONTA' size='50' style='STYLE_CTRL'></edit></td>
+				</tr>
+				<tr>
+					<td><t>Data transakcji</t></td>
+					<td><edit name='CTRLID_DATA_TRANSAKCJI' size='50' style='STYLE_CTRL'></edit></td>
+				</tr>
+				<tr>
+					<td></td>
+					<td><button style='STYLE_BUTTON' href='varFunction="setup_transaction"' width='5000'>Uzgadnianie transakcji V-2</button></td>
+				</tr>
+				<tr><td><t></t></td></tr>
+			</tbody>
+		</table>
+    <button style='STYLE_BUTTON' href='varFunction="document_file_copy"' width='9000'>Kopiowanie pliku z obiektu dokumentu</button>
+    <br/>		
+    <button style='STYLE_BUTTON' href='varFunction="manual_gm_ensure_accuracy"' width='9000'>Aktualizacja cen i wartości (system też sam to robi)</button>
+    <br/>
+    <button style='STYLE_BUTTON' href='varFunction="rebuid_gm_from_dokmag"'>Kompletna odbudowa stanów mag. z dokumentów (czasochłonne)</button>
+    <br/>
+    <button style='STYLE_BUTTON' href='varFunction="rebuild_gm_from_dokmag_auto"'>Odbudowa stanów mag. z OZNACZONYCH dokumentów</button>
+    <br/>
+    <button style='STYLE_BUTTON' href='varFunction="force_rebuild_gm"'>Wymuszenie przeliczenia cen i wartości</button>
+    <br/>
+    <button style='STYLE_BUTTON' href='varFunction="rebuid_pt_from_platnosc"'>Odbudowa stanów płatności z dokumentów</button>
+    <br/>
+    <button style='STYLE_BUTTON' href='varFunction="rebuid_trop"'>Odbudowa operacji na transakcjach</button>
+    <br/>
+    <button style='STYLE_BUTTON' href='varFunction="create_missing_dostawa_in_2014"'>Generowanie brakujacych dostaw w 2014 r.</button>
+    <button style='STYLE_BUTTON' href='varFunction="create_missing_dostawa_in_2015"'>Generowanie brakujacych dostaw w 2015 r.</button>
+    <button style='STYLE_BUTTON' href='varFunction="create_missing_dostawa_in_2016"'>Generowanie brakujacych dostaw w 2016 r.</button>
+    <button style='STYLE_BUTTON' href='varFunction="create_missing_dostawa_in_2017"'>Generowanie brakujacych dostaw w 2017 r.</button>
+    <button style='STYLE_BUTTON' href='varFunction="create_missing_dostawa_in_2018"'>Generowanie brakujacych dostaw w 2018 r.</button>
+    <button style='STYLE_BUTTON' href='varFunction="create_missing_dostawa_in_2019"'>Generowanie brakujacych dostaw w 2019 r.</button>
+    <br/>
+  </body>
+</page>

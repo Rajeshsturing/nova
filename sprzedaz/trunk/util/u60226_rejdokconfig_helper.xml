@@ -1,0 +1,3227 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1004.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1231.h"
+#include "h1232.h"
+
+
+#define BTN_ANULUJ		0
+#define BTN_ZASTAP		-200
+#define BTN_DOPISZ		-300
+
+
+
+#define INCLUDE_BULID_CHOICELIST_ROW_WZ_MULTIPLE
+
+-->
+<page>
+<config>
+<script>
+<![CDATA[
+
+'Messagebox
+#include "50122"
+
+
+#include "50200"
+#include "50632"
+
+'nx_fire_multi_choice_list
+#include "50560"
+
+'SelectFolderNewFile
+#include "50123"
+
+'CFileDrive
+#include "50211"
+
+'checkUserDirectory
+#include "50212"
+
+'harui
+#include "50101"
+
+
+function export_document(byval pDocumentID , byval pDocumentTYPE , byval strHName , byval bSilent ):export_document = false
+	dim pDocExportModule
+	dim pOptPad:set pOptPad = doc_.getpagehli("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=60232")
+	dim nRes:nRes = pOptPad.domodalauto()
+
+	dim strFolderName
+	dim pSO
+
+#ifdef _METROX
+	if nRes = DOC_EXPORT_FORMAT_EDIXML_ECRPOLSKA or nRes = DOC_EXPORT_FORMAT_EDIXML_ECRPOLSKA_DE or nRes = DOC_EXPORT_FORMAT_EDIXML_ECRPOLSKA_EN then
+#else
+	if nRes = DOC_EXPORT_FORMAT_EDIXML_ECRPOLSKA then
+#endif  
+		set pDocExportModule = doc_.getmodule(60255)
+#ifdef _METROX
+		set pSO = pDocExportModule.dokhadl_to_ecod(pDocumentID , pDocumentTYPE, nRes)
+#else
+		set pSO = pDocExportModule.dokhadl_to_ecod(pDocumentID , pDocumentTYPE )
+#endif    
+		'zapis
+			
+		strFolderName = create_get_folder("EDI", strHName , bSilent)
+		if strFolderName <> "" then
+			pSO.save strFolderName
+			trans_.message 1002 , 0 , "Zapisano jako " + strFolderName
+		end if
+	end if	
+
+
+'	if nRes = DOC_EXPORT_FORMAT_EDIXML_ECRPOLSKA then
+'
+'		set pDocExportModule = doc_.getmodule(60255)
+'
+'		set pSO = pDocExportModule.dokhadl_to_edi(pDocumentID , pDocumentTYPE )
+'		
+'			
+'		strFolderName = create_get_folder("EDI" , strHName , bSilent)
+'		if strFolderName <> "" then
+'			pSO.save strFolderName
+'			trans_.message 1002 , 0 , "Zapisano jako " + strFolderName
+'		end if
+
+'	end if	
+
+end function
+
+
+function export_document_wz(byval pDocumentID, byval strHName, byval bSilent): export_document_wz = false
+	dim pDocExportModule
+	dim strFolderName
+
+	strFolderName = create_get_folder("EDI_WZ", strHName , bSilent)
+	if strFolderName <> "" then
+		set pDocExportModule = doc_.getmodule(60255)
+		dim strMsg: strMsg = pDocExportModule.dokmag_to_ecod(pDocumentID, N5REJESTRDOK__WZ, strFolderName)
+		if strMsg = "" then
+			  trans_.message 1002 , 0 , "Zapisano jako " + strFolderName
+		else
+		  trans_.message 1002 , 0 , "Wystąpił problem z eksportem dokumentu WZ do EDI: " + strMsg
+		end if
+	end if
+end function
+
+function create_get_folder(byval NAME , byval strHName , byval bSilent ):create_get_folder = ""
+
+	dim pFD, bOK
+	set pFD = CFileDrive(bOK)
+		
+
+	if (not checkUserDirectory()) then
+		' 1, 0, "Utworzenie katalogu lub jego sprawdzenie nie jest możliwe (" + getUserDirectory() + ")"
+		view_message1 6063, 0, cstr(getUserDirectory())
+		exit function
+	end if
+
+	'tworzymy teraz katalog ale dla danego user'a i rodzaju deklaracji
+	if (not pFD.IsFolder( getUserDirectory() + "\" + NAME )) then
+		if (not pFD.CreatePath( getUserDirectory() + "\" + NAME )) then
+			' 1, 0, "Utworzenie katalogu lub jego sprawdzenie nie jest możliwe (" + getPitFolder(pDokument) + ")"
+			view_message1 6064, 0, cstr(getUserDirectory() + "\" + NAME)
+			exit function
+		end if
+	end if
+
+	dim strStartPath : strStartPath = getUserDirectory() + "\"+ NAME +"\" + replace(replace(replace(replace(strHName," ","_"),"/","_"),"\","_"),":","_") + ".xml"
+	dim strFolderName
+	if bSilent then
+		strFolderName = strStartPath				
+	else
+		dim strStartFile : strStartFile = pFD.GetFileName( strStartPath )
+		strStartPath = pFD.GetPath( strStartPath )
+		strFolderName = SelectFolderNewFile(strStartPath, strStartFile)
+		dim strFileName
+		strFileName=pFD.GetFileName( strFolderName )
+		if (pFD.GetFileExtension( strFileName )="" and strFileName<>"") then
+			strFolderName=strFolderName+".xml"
+		end if
+				
+	end if
+
+	create_get_folder = strFolderName
+
+end function
+
+
+function choose_faktura_for_dokhandl(byval sourceDokHandlID  , byval SourceDokHandlType , byval destFakturaType ):choose_faktura_for_dokhandl = 0
+
+	dim strWhere
+	dim destFakturaTypeID
+	dim idFaktura
+	select case destFakturaType
+		case N5REJESTRDOK_FAKT_ZAK
+			'dla tego rejestru tworzymu fakturę zakupu
+			destFakturaTypeID = TYPEID_N5ZAKUP
+			'chcę utowrzyć fakturę zakupu zatem szukam czy dla danego dokumentu handlowego takiej faktury juz nie mam
+			strWhere = doc_.afc.convert.formatter( _
+				" pZamowienie=%1 and " + vbNewLine + _
+				" pRejestrDok in (select idobj from n5rejestrdok where eTyp = %2) " + vbNewLine ) _
+				(sourceDokHandlID)(destFakturaType).Done()
+			idFaktura = trans_.findobjid(TYPEID_N5ZAKUP , strWhere )
+
+		case else
+			#ifdef _DEBUG
+			trans_.message 1002,0,"DEBUG: choose_faktura_for_dokhandl = nie znany typ faktury - nie wiem jak szukac: " + cstr(destFakturaType)
+			#endif			
+			choose_faktura_for_dokhandl = clng(0)
+
+	end select
+
+	ask_and_choose idFaktura , strWhere , destFakturaTypeID
+
+	choose_faktura_for_dokhandl = idFaktura
+
+end function
+
+
+private function ask_and_choose(byref idResult , byval strWhere , byval nTypeID)
+
+	if idResult = 0 then
+		exit function
+	end if
+
+	dim nQuestionResult
+
+	'ZNALAZL WCZESNIEJ COŚ - zatem trzeba wybrać
+	if idResult > 0 then
+		nQuestionResult=MessageBoxCustom("Z dokumentem handlowym skojarzono już dokument o typie, jaki chcesz własnie utworzyć. Możesz mimo tego utworzyć nowy lub dodać pozycje do juz istniejącego. Co chcesz zrobić?", "Tworzenie dokumentu handlowego", vbYesNoCancel, vbQuestion, "Utwórz nowy;Edytuj;Anuluj")
+
+		select case nQuestionResult
+			case vbYes ' Nowy
+				idResult = 0
+				exit function 'zwróci funkcja 0 i utworzy się nowy
+			case vbCancel
+				idResult = -1
+		end select
+	else ' znalazł kilka
+		nQuestionResult=MessageBoxCustom("Z dokumentem handlowym skojarzono już kilka dokuemntów typu, który chcesz właśnie utworzyć. Możesz mimo tego utworzyć nowy lub dodać pozycje do juz istniejącego. Co chcesz zrobić ?",_
+    "Tworzenie dokumentu magazynowego", vbYesNoCancel, vbQuestion,_
+    "Utwórz nowy;Wybierz do edycji;Anuluj")
+		select case nQuestionResult
+			case vbYes ' Nowy
+				idResult = 0
+				exit function 'zwróci funkcja 0 i utworzy się nowy
+			case vbNo
+				'wybieramy
+				dim choice				
+				choice = fire_choice_list_disable_add( nTypeID,"Wybierz dokument handlowy","",strWhere,"strNrDok","")
+				if choice > 0 then
+					idResult = choice	
+				else
+					idResult = -1
+				end if
+			case vbCancel
+				idResult = -1
+		end select						
+	end if
+	
+end function
+
+
+
+
+
+
+function make_faktura_on_dokhandl(eMode,byref pDokHandl , byref pPage , byval nFakturaRejType) : make_faktura_on_dokhandl = false
+	DEBUG_MESSAGE("THIS_FILE: make_faktura_on_dokhandl")
+
+
+	'olewamy eMode - w przyszłości można to jakoś wykorzystac
+	'na razie po prostu tworzymy i wyswietlamy fakturę
+
+	'pobieramy id i typeid - zmienimy transkację i będzie nam to potrzebne
+	dim idDokHandl : idDokHandl = pDokHandl.idObj
+	dim nTypeIdDokHandl:nTypeIdDokHandl = pDokHandl.type
+
+	'zmieniamy środowisko, ale tylko lokalnie
+	dim pSubTrans
+	set pSubTrans = trans_.createsubtran()
+
+		'szukam czy dla danego dokumentu handlowego mam już fakturę
+		dim idFaktura:idFaktura = 0
+		idFaktura = choose_faktura_for_dokhandl(idDokHandl , nTypeIdDokHandl , nFakturaRejType)
+
+		if idFaktura < 0 then
+			exit function
+		end if
+
+
+
+		
+		dim pOpenFormFaktura		
+		dim pFormFaktura		
+
+		
+
+		trans_.var(APPVAR_REJESTR_TYP) = clng(0)
+		select case nFakturaRejType
+			case N5REJESTRDOK_FAKT_ZAK				
+
+				set pOpenFormFaktura = doc_.getmodule(60129).prepare_form_open_command(TYPEID_N5ZAKUP,idFaktura,0)
+				if pOpenFormFaktura is nothing then
+					exit function
+				end if
+				set pFormFaktura = doc_.getpagehli(pOpenFormFaktura)
+				if pFormFaktura is nothing then
+					exit function
+				end if
+				pFormFaktura.enableedit = true
+				if not pFormFaktura.root.n5zakup_fill_from_dokhandl(idDokHandl , nTypeIdDokHandl) then
+					exit function
+				end if
+
+			case else
+				#ifdef _DEBUG
+				trans_.message 1002 , 0 , "DEBUG: make_faktura_on_dokhandl: nie znam funkcji wypełniającej"
+				#endif
+		end select
+
+		pFormFaktura.domodalauto()
+		make_faktura_on_dokhandl = true
+
+	set pSubTrans = nothing
+		
+end function
+
+
+
+function get_first_dokhandl(byval pDokHandl)
+
+	if pDokHandl.type = TYPEID_N5SPRZEDAZ then
+
+		if pDokHandl.pPopSprzed is nothing then
+			get_first_dokhandl =  pDokHandl.idobj
+		else
+			if pDokHandl.pPopSprzed.pPopSprzed is nothing then
+				get_first_dokhandl =  pDokHandl.pPopSprzed.idobj				
+			else
+				get_first_dokhandl = get_first_dokhandl(pDokHandl.pPopSprzed)
+			end if
+		end if
+
+	elseif pDokHandl.type = TYPEID_N5ZAKUP then
+
+		if pDokHandl.pPopZakup is nothing then
+			get_first_dokhandl =  pDokHandl.idobj
+		else
+			if pDokHandl.pPopZakup.pPopZakup is nothing then
+				get_first_dokhandl =  pDokHandl.pPopZakup.idobj				
+			else
+				get_first_dokhandl = get_first_dokhandl(pDokHandl.pPopZakup)
+			end if
+		end if
+	end if
+
+end function
+
+
+
+
+function update_dokmag_by_dokhandl( byref pDokMag , byval idDokHandl, byval nTypeId):update_dokmag_by_dokhandl = true
+
+	dim pDokHandl:set pDokHandl = trans_.getobj(nTypeId,idDokHandl)
+	set pDokMag.wrefDokHandl = pDokHandl
+
+	dim pos_dokhandl
+	dim pos_dokhandl_kor
+	dim pos_dokmag
+	dim pos_dokmag_zwrot
+
+	'najpierw zerujemy wszystkie pozycje zwrotu
+	for each pos_dokmag_zwrot in pDokMag.listPozycje
+		pos_dokmag_zwrot.curIloscOpak = ccur(0)		
+	next
+
+
+	dim iter:iter = 1
+	dim curRoznica:curRoznica = ccur(0)
+	dim pDokOrg
+
+	if nTypeId = TYPEID_N5SPRZEDAZ then
+		set pDokOrg = pDokHandl.pPopSprzed
+	elseif nTypeId = TYPEID_N5ZAKUP then
+		set pDokOrg = pDokHandl.pPopZakup
+	end if
+
+	for each pos_dokhandl in pDokOrg.listPozycje
+		set pos_dokhandl_kor = pDokHandl.listPozycje.get(iter)
+		'na tych samych pozycjach powinny byc te same produkty, ale sprawdzimy :)
+		if  pos_dokhandl.pProdukt.idobj <>  pos_dokhandl_kor.pProdukt.idobj or _
+			pos_dokhandl.pOpak.idobj <>  pos_dokhandl_kor.pOpak.idobj then
+			'cos jest spieprzone
+			trans_.message 1002 , 0 , "Pozycje na fakturze i na jej korekcie nie zgadzają się ze sobą"
+			update_dokmag_by_dokhandl = false
+			exit function
+		end if
+		'mamy odpowiadające sobie pozycje
+		curRoznica = ccur(pos_dokhandl.curIloscOpak - pos_dokhandl_kor.curIloscOpak)
+
+			for each pos_dokmag_zwrot in pDokMag.listPozycje
+				if  pos_dokhandl.pProdukt.idobj = pos_dokmag_zwrot.pProdukt.idobj and _
+					pos_dokhandl.pOpak.idobj =  pos_dokmag_zwrot.pOpak.idobj then
+					'mamy te pozycje o ktora nam chodzi
+					pos_dokmag_zwrot.curIloscOpak = curRoznica
+					exit for
+				end if			
+			next
+
+		iter = iter + 1		
+	next
+	'a teraz usuwam nadmiarowe ze zwrotu
+	'początkowo zwrot to dokladna kopia wz lub pz, dlatego pozycje na tych samych miejsacch  sobie odpowiadają
+	'jade od końca
+	
+	for iter = pDokMag.listPozycje.count() to 1 step -1
+		set pos_dokmag_zwrot = pDokMag.listPozycje.get(iter)
+		set pos_dokmag = pDokMag.pDokMag.listPozycje.get(iter)		
+		'na wszelki wypadek sprawdze
+		if  pos_dokmag.pProdukt.idobj <> pos_dokmag_zwrot.pProdukt.idobj or _
+			pos_dokmag.pOpak.idobj <>  pos_dokmag_zwrot.pOpak.idobj then
+			'cos jest spieprzone
+			trans_.message 1002 , 0 , "Pozycje na dokumencie magazynowym i zwrocie nie zgadzają się ze sobą"
+			update_dokmag_by_dokhandl = false
+			exit function
+		end if
+		if pos_dokmag_zwrot.curIloscOpak = 0 then
+			'to usuwamy pozycję
+			pDokMag.listPozycje.delete(iter)
+		end if
+
+
+	next
+
+
+
+end function
+
+
+
+function fill_dokmag_from_dokhandl(byref pDokMag,byval idDokHandl, byval typeDokHandl) : fill_dokmag_from_dokhandl = false
+
+  
+	dim pDokHandl : set pDokHandl = trans_.getobj(typeDokHandl,idDokHandl)
+
+#ifdef APPCONFIG_OZNACZENIE_PRODUCENTA
+	set pDokMag.pKwalifikatorEX = pDokHandl.pKwalifikatorEX
+#endif
+	
+	'Ustawianie magazynów
+	' Jakie i skąd brać magazyn zalezy od:
+	'	- typu dokumentu magazynowego
+	'	- typu dokument handlowego
+	select case pDokMag.pRejestrDok.eTyp
+		case N5REJESTRDOK__WZ
+			'ustawiamy magazyn źródłowy
+
+			if pDokMag.pMagZrod is nothing then
+				if pDokMag.type = TYPEID_N5ZAMOWIENIE then
+					set pDokMag.pMagZrod = pDokHandl.pRejestrDok.wrefParam1
+				end if
+			end if
+
+
+			if pDokMag.pMagZrod is nothing then
+				if not setMagazyn(pDokMag ,"pMagZrod") then				
+					exit function
+				end if				
+			end if
+
+		case N5REJESTRDOK_REZERWACJE ' rezerwacja tworozna na razie tylko z zamowienia - a tam jest domyslny magazyn w ustawieniach
+			if pDokMag.pMagZrod is nothing then
+				' UWAGA! To musi byc wrefParam2 w odroznoieniu od pozostalych dokmag - dla zamowien
+				' wrefParam1 to sposo platnosci!!!
+				set pDokMag.pMagZrod = pDokHandl.pRejestrDok.wrefParam2
+			end if
+
+			if pDokMag.pMagZrod is nothing then
+				if not setMagazyn(pDokMag , "pMagZrod") then				
+					exit function
+				end if				
+			end if
+
+
+		case else 
+			#ifdef _DEBUG
+				trans_.message 1002 , 0 , "DEBUG:TODO: fill_dokmag_from_dokhandl - ustawianie magazynów"
+			#endif
+
+	end select
+
+	select case typeDokHandl
+		case TYPEID_N5ZAKUP
+			set pDokMag.pKlient = pDokHandl.pDostawca
+			set pDokMag.pKlient_JO = pDokHandl.pDostawca_JO
+		case else
+			set pDokMag.pKlient = pDokHandl.pKlient
+			set pDokMag.pKlient_JO = pDokHandl.pKlient_JO
+			set pDokMag.pKlientPracownik = pDokHandl.pKlientPracownik
+	end select
+  
+  dim nTypDokMag, nDokMagID
+  nTypDokMag = pDokMag.pRejestrDok.eTyp
+  nDokMagID = pDokMag.IdObj
+  
+  utworz_dokmag_z_dokhandl pDokHandl, nTypDokMag, nDokMagID  
+  
+	fill_dokmag_from_dokhandl = true
+
+end function
+
+
+
+private function fill_pozdokmag_from_pozdokhandl(byref pDestPoz, byref pSrcPoz , byval nTypeIDSource)
+	set pDestPoz.pProdukt = pSrcPoz.pProdukt
+	set pDestPoz.pOpak = pSrcPoz.pOpak	
+	select case nTypeIDSource
+		case TYPEID_N5ZAMOWIENIE
+			select case pDestPoz.parent.pRejestrDok.eTyp
+				case N5REJESTRDOK_REZERWACJE
+					pDestPoz.curIloscOpak = pSrcPoz.curIloscOpak
+				case N5REJESTRDOK__WZ,N5REJESTRDOK__PZ
+					pDestPoz.curIloscOpak = pSrcPoz.curIloscOpakPoz
+					pSrcPoz.pzam_curIloscOpakZreal = pSrcPoz.pzam_curIloscOpakZreal + pDestPoz.curIloscOpak
+					if pDestPoz.parent.cAutoCalc <> "1" then
+						pDestPoz.curCenaMag = pSrcPoz.curCenaNetto
+					end if
+				case else
+					trans_.message 1002 , 0 , "Wypełnianie pozycji dokumentu magazynowego z zamównienia -  nie znany typ dokumentu magazynowego - nie wiem, jakie ilości wstawić"									 
+			end select
+			if pDestPoz.curIloscOpak = 0 then
+				trans_.message 1002 , 0 , "Ilośc opakowań dla " +pDestPoz.text+ " zostałą ustawiona na 0 - oznacza to że pozycja ta musiała zostać już wcześniej zrealizowana lub ilość opakowań dla tej pozycji na zamówieniu wynosi właśnie 0"
+			end if
+
+		case TYPEID_N5ZAKUP
+			pDestPoz.curIloscOpak = pSrcPoz.curIloscOpak
+			pDestPoz.curCenaMag = pSrcPoz.curCenaNettoWal
+
+		case else
+			pDestPoz.curIloscOpak = pSrcPoz.curIloscOpak
+	end select
+end function
+
+
+function setMagazyn(byref pDokMag , byval strMagFld):setMagazyn = false
+	dim idMag : idMag  = fire_choice_list_disable_add(TYPEID_N5MAGAZYN ,"Wybierz magazyn wydania","","eTyp=N5TYPMAG_PODSTAWOWY","","")
+	if idMag = 0 then
+		exit function
+	else
+		set pDokMag.field(strMagFld) = trans_.getobj(TYPEID_N5MAGAZYN, idMag)
+	end if				
+	setMagazyn = true
+end function
+
+
+
+
+
+
+function make_zlecprod_on_dokhandl(eMode,byref pDokHandl , byref pPage) : make_zlecprod_on_dokhandl = false
+	#ifdef _DEBUG
+	trans_.message 1002 , 0 , "DEBUG: make_zlecprod_on_dokhandl"
+	#endif
+
+	dim idDokHandl : idDokHandl = pDokHandl.idObj
+	dim nTypeIdDokHandl:nTypeIdDokHandl = pDokHandl.type
+
+	'zmieniamy środowisko, ale tylko lokalnie
+	dim pSubTrans
+	set pSubTrans = trans_.createsubtran()
+
+
+		'szukam czy dla danego dokumentu handlowego mam już fakturę
+		dim idZlecProd:idZlecProd = 0
+		idZlecProd = choose_zlecprod_for_dokhandl(idDokHandl , nTypeIdDokHandl)
+
+		if idZlecProd < 0 then
+			exit function
+		end if
+
+
+		dim pOpenFormZlecProd	
+		dim pFormZlecProd
+		
+		
+		
+		trans_.var(APPVAR_REJESTR_TYP) = clng(N5REJESTRDOK__ZLECPROD)
+
+		set pOpenFormZlecProd = doc_.getmodule(60129).prepare_form_open_command(TYPEID_N5ZLECPROD,idZlecProd,0)
+		if pOpenFormZlecProd is nothing then
+			exit function
+		end if
+
+		set pFormZlecProd = doc_.getpagehli(pOpenFormZlecProd)
+		if pFormZlecProd is nothing then
+			exit function
+		end if
+		pFormZlecProd.enableedit = true
+
+		select case nTypeIdDokHandl 
+			case TYPEID_N5ZAMOWIENIE
+				if not pFormZlecProd.root.n5zlecprod_fill_from_dokhandl(idDokHandl , nTypeIdDokHandl) then
+					trans_.message 1002 , 0 , "Brak pozycji zamówienia które można zrealizować"
+					exit function
+				end if
+			case else
+				#ifdef _DEBUG
+				trans_.message 1002 , 0 , "DEBUG: make_zlecprod_on_dokhandl: nie znam funkcji wypełniającej"
+				#endif
+		end select
+
+		pFormZlecProd.domodalauto()
+		make_zlecprod_on_dokhandl = true	
+
+
+	set pSubTrans = nothing
+
+end function
+
+
+
+function choose_zlecprod_for_dokhandl(byval sourceDokHandlID  , byval SourceDokHandlType):choose_zlecprod_for_dokhandl = 0
+
+	dim strWhere
+	dim idZlecProd
+	
+	strWhere = doc_.afc.convert.formatter( _
+				" pZamowienie=%1 and " + vbNewLine + _
+				" pRejestrDok in (select idobj from n5rejestrdok where eTyp = N5REJESTRDOK__ZLECPROD) " + vbNewLine ) _
+				(sourceDokHandlID).Done()
+	idZlecProd = trans_.findobjid(TYPEID_N5ZLECPROD , strWhere )		
+
+	ask_and_choose idZlecProd , strWhere , TYPEID_N5ZLECPROD
+
+	choose_zlecprod_for_dokhandl = idZlecProd
+
+end function
+
+
+function get_typ_korekty_by_source(byval pSourceObj):get_typ_korekty_by_source = -1
+	select case pSourceObj.pRejestrDok.eTyp
+		case N5REJESTRDOK_FAKT_ZAK,N5REJESTRDOK_KOR_FAKT_ZAK
+			get_typ_korekty_by_source = N5REJESTRDOK_KOR_FAKT_ZAK
+		case N5REJESTRDOK_FAKT_SP,N5REJESTRDOK_KOR_FAKT_SP
+			get_typ_korekty_by_source = N5REJESTRDOK_KOR_FAKT_SP
+		case N5REJESTRDOK_RACH,N5REJESTRDOK_KOR_RACH 
+			get_typ_korekty_by_source = N5REJESTRDOK_KOR_RACH
+		case N5REJESTRDOK_WNT,N5REJESTRDOK_KOREKTA_WNT
+			get_typ_korekty_by_source = N5REJESTRDOK_KOREKTA_WNT
+		case N5REJESTRDOK_WDT,N5REJESTRDOK_KOREKTA_WDT
+			get_typ_korekty_by_source = N5REJESTRDOK_KOREKTA_WDT
+		case N5REJESTRDOK_FAKT_ZAK_RR,N5REJESTRDOK_KOR_FAKT_ZAK_RR
+			get_typ_korekty_by_source = N5REJESTRDOK_KOR_FAKT_ZAK_RR
+		case N5REJESTRDOK_FAKT_IMP,N5REJESTRDOK_KOR_FAKT_IMP
+			get_typ_korekty_by_source = N5REJESTRDOK_KOR_FAKT_IMP
+		case N5REJESTRDOK_FAKT_EXP,N5REJESTRDOK_KOR_FAKT_EXP
+			get_typ_korekty_by_source = N5REJESTRDOK_KOR_FAKT_EXP
+		case N5REJESTRDOK_FAKTURA_ZALICZKOWA
+			get_typ_korekty_by_source = N5REJESTRDOK_FAKTURA_ZALICZKOWA_KOR
+		case N5REJESTRDOK_DOSTAWA,N5REJESTRDOK_KOR_DOSTAWA
+			get_typ_korekty_by_source = N5REJESTRDOK_KOR_DOSTAWA     
+		case N5REJESTRDOK_IMPORT_USLUG,N5REJESTRDOK_KOR_IMPORT_USLUG
+			get_typ_korekty_by_source = N5REJESTRDOK_KOR_IMPORT_USLUG			
+		case else
+#ifdef _DEBUG
+			trans_.message 1002 , 0 , "DEBUG: get_typ_korekty_by_source - nie wiem co zwrocic"
+#endif
+	end select
+end function
+
+
+function create_korekta(byref pSourceObj , byval nTypKorekty):create_korekta = false
+  create_korekta = create_korekta_ext(pSourceObj, nTypKorekty, false)
+end function
+
+function create_korekta_ext(byref pSourceObj , byval nTypKorekty, byval bWart):create_korekta_ext = false
+	create_korekta_ext = create_korekta_ext_2(pSourceObj, nTypKorekty, bWart, 0)
+end function
+
+function create_korekta_ext_2(byref pSourceObj , byval nTypKorekty, byval bWart, byref nIdObj):create_korekta_ext_2 = false
+
+	'najpierw sprawdzmy czy nie ma juz korekty
+	if has_korekta(pSourceObj) then
+		trans_.message 1002 , 0 , "Ten dokument ma już korektę"
+		exit function
+	end if
+
+	if nTypKorekty = 0 then
+		nTypKorekty = get_typ_korekty_by_source(pSourceObj)
+	end if
+
+	if nTypKorekty < 0 then
+		exit function
+	end if
+
+	trans_.var(APPVAR_POP_DOKUMENT) = pSourceObj.idobj
+	trans_.var(APPVAR_REJESTR_TYP) = clng(nTypKorekty)
+	dim pOpenForm:set pOpenForm = doc_.getmodule(60129).prepare_form_open_command(pSourceObj.type,0,0)	
+
+	if pOpenForm is nothing then
+		exit function
+	end if
+				
+	dim pForm:set pForm = doc_.getpagehli(pOpenForm)
+	nIdObj = pForm.root.IdObj
+  if bWart then
+    pForm.std_fsave_external_with_saveobjects()
+  else  
+	  pForm.domodalauto()
+  end if  
+
+	create_korekta_ext_2 = true
+
+end function
+
+private function has_korekta(byval pDokument):has_korekta = true
+	dim id
+	select case pDokument.type
+		case TYPEID_N5SPRZEDAZ
+			has_korekta = trans_.findobjid(TYPEID_N5SPRZEDAZ , "pPopSprzed = " + cstr(pDokument.idobj) ) <> 0
+		case TYPEID_N5ZAKUP
+			has_korekta = trans_.findobjid(TYPEID_N5ZAKUP , "pPopZakup = " + cstr(pDokument.idobj) ) <> 0
+		case TYPEID_N5DOKMAG
+			has_korekta = trans_.findobjid(TYPEID_N5DOKMAG , "pDokMag = " + cstr(pDokument.idobj) ) <> 0
+	end select
+end function
+
+function create_WZ(byref pSourceObj): create_WZ = false
+
+	dim nIdZR: nIdZR = clng(0)
+	trans_.var(GVAR_REM_DOSTAWA) = clng(1)
+	if create_korekta_ext_2(pSourceObj, N5REJESTRDOK_ZAK_REZERWACJI, true, nIdZR) then
+		if nIdZR > clng(0) then
+			trans_.var(APPVAR_REJESTR_TYP) = clng(N5REJESTRDOK__WZ)
+			dim pOpenForm:set pOpenForm = doc_.getmodule(60129).prepare_form_open_command(pSourceObj.type,0,0)	
+
+			if pOpenForm is nothing then
+				exit function
+			end if
+				
+			dim pForm: set pForm = doc_.getpagehli(pOpenForm)
+			
+			dim pRez: set pRez = trans_.getobj(TYPEID_N5DOKMAG, nIdZR)
+			pForm.root.n5dokmag_copy_dost pRez, true
+			
+			pForm.domodalauto()
+		end if
+	
+	end if
+
+	trans_.var(GVAR_REM_DOSTAWA) = clng(0)
+	create_WZ = true
+
+end function
+
+sub ShowFatalError(byval errorstr)
+	MessageBox errorstr,"Błąd",vbOKOnly,vbExclamation
+end sub
+
+function from_kasa(byref pParagon , byref pPage)
+	from_kasa = false
+
+
+	dim pM60224 : set pM60224 = doc_.getmodule(60224)
+	dim pTransfer : set pTransfer = pM60224.new_CashReq_Optimus_Tango_Transfer()
+	dim pPP : set pPP = new CProgressPage
+	pPP.init "Odczyt paragonu z kasy"
+	pPP.update "Łączenie z kasą"
+
+	if not pTransfer.connect() then
+		ShowFatalError pTransfer.get_last_error()
+		exit function
+	end if
+
+	pPP.update "Odczyt stawek VAT"
+
+	if not pTransfer.load_stawki_vat() then
+		ShowFatalError pTransfer.get_last_error()
+		exit function
+	end if
+
+	pPP.update "Odczyt paragonu"
+	dim pReceiptItemArray
+	dim pReceiptSummary
+	set pReceiptSummary = pTransfer.read_receipt(pReceiptItemArray)
+	set pPP = nothing
+
+	if pReceiptSummary is nothing then
+		MessageBox "W kasie nie ma żadnego nowego paragonu","Brak paragonu",vbOKOnly,vbExclamation
+		set pTransfer = nothing
+		exit function
+	end if
+	
+	dim strErrorMsg : strErrorMsg = fill_paragon_from_receiptitems(pTransfer,pParagon,pReceiptItemArray)
+	
+	if strErrorMsg <> "" then
+		ShowFatalError strErrorMsg
+		set pTransfer = nothing
+		exit function
+	end if
+
+	set pTransfer = nothing
+	from_kasa = true
+end function
+
+'funkcja do wypełniania paragonu
+function fill_paragon_from_receiptitems(byref pTransfer,byref pParagon,byref pReceiptItemArray)
+	fill_paragon_from_receiptitems = ""
+
+	dim iter
+	for iter = 0 to pReceiptItemArray.Count - 1
+		dim strCode
+		dim curQty
+		dim curPrice
+		dim curVal
+		dim eVAT
+		if not pTransfer.convert_receipt_item(pReceiptItemArray.value(iter),strCode,curQty,curPrice,curVal,eVAT) then
+			fill_paragon_from_receiptitems = pTransfer.get_last_error()
+			exit function
+		end if
+		dim pProdukt : set pProdukt = nothing
+		dim idProdukt : idProdukt = trans_.findobjid(TYPEID_N5PRODUKT , "strIndeks='" +_
+			trans_.afc.convert.DoubleApostrophe(strCode) + "'")
+		'znalazł na podstawie indeksu
+		if idProdukt > 0 then
+			set pProdukt = trans_.getobj(TYPEID_N5PRODUKT,idProdukt)
+		else
+			fill_paragon_from_receiptitems = "Nieznany kod produktu " + strCode
+			exit function
+		end if
+		dim pPozParagon
+		set pPozParagon = pParagon.listPozycje.addnew()
+		set pPozParagon.pProdukt = pProdukt
+		pPozParagon.curIloscOpak = curQty
+		pPozParagon.curCenaBrutto = curPrice
+	next
+
+end function
+
+
+
+#comment NOWE
+
+
+'choose_typ_rejestru_restrict
+#include "50112"
+'choose_rejestr_dok
+#include "50517"
+'realize publication
+#include "50518"
+'wylicz rozbicie
+#include "50103"
+'BulidWZRow_Klient
+#include "50634"
+
+
+
+function paragon2sprzed(byval eMode , byref pSprzedPAGE):paragon2sprzed = false
+
+	if eMode = 0 then
+		paragon2sprzed = true
+		exit function
+	end if
+
+  if not trans_.saveobjects() then
+		trans_.message 1002 , 0 , "Nie udało się zachować faktury."
+		exit function
+  end if
+
+	if pSprzedPAGE.root.pSposobPlatnosci is nothing then
+		trans_.message 1002 , 0 , "Należy wskazać sposób płatności."
+		exit function
+	end if
+
+	'najpierw wybierzemy sobie klienta
+	dim idCustomer
+	dim idCustomerJO
+	if not suply_customer ( pSprzedPAGE.root , idCustomer , idCustomerJO ) then
+		exit function
+	end if
+
+	if pSprzedPAGE.root.pKlient is nothing then
+		trans_.message 1002 , 0 , "Nie wskazano klienta."
+		exit function
+	end if
+
+	dim strWhere:strWhere="((pFaktura=0) and (pKlient="+cstr(idCustomer)+") and (pKlient_JO="+cstr(idCustomerJO)+") and (pRejestrDok in (select idobj from n5rejestrdok where eTyp = N5REJESTRDOK_PARAGON))) "
+	dim choicelist:set choicelist = get_choicelist()
+	checked false
+	choicelist.prepare_choice_list TYPEID_N5SPRZEDAZ ,"Wybierz paragony","",strWhere,"","", getref("BulidWZRow_Klient")
+	choicelist.hide_buttons(true)
+	choicelist.multiple
+	choicelist.hide_buttons_ok_cancel
+	
+		dim pButton:set pButton = choicelist.get_custom_container().addnew(CTRL_TYPE_BUTTON, -1)
+		pButton.styleitem = STYLE_BUTTON
+		dim hli:set hli = doc_.createhlistr("varFunctionHLI=f_custom_result vn1='BTN_ZASTAP'")
+		set pButton.hli = hli
+		pButton.text = "Zastąp" 
+
+		set pButton = choicelist.get_custom_container().addnew(CTRL_TYPE_BUTTON, -1)
+		pButton.styleitem = STYLE_BUTTON		
+		set hli = doc_.createhlistr("varFunctionHLI=f_custom_result vn1='BTN_DOPISZ'")
+		set pButton.hli = hli
+		pButton.text = "Dopisz" 
+
+
+		set pButton = choicelist.get_custom_container().addnew(CTRL_TYPE_BUTTON, -1)
+		pButton.styleitem = STYLE_BUTTON
+		set hli = doc_.createhlistr("varFunctionHLI=f_custom_result vn1='BTN_ANULUJ'")
+		set pButton.hli = hli
+		pButton.text = "Anuluj"
+		 				
+	
+	dim result:result = choicelist.domodalauto()
+	if result = BTN_ANULUJ then
+		exit function
+	end if
+
+	if result = BTN_ZASTAP then
+		pSprzedPAGE.root.listPozycje.deleteall()
+	end if
+
+#ifdef APPCONFIG_FAKTURA_Z_PARAGONU_BILANS_TRANS
+  'obiekt fakury
+  dim faktura: set faktura = pSprzedPAGE.root
+  if faktura.pTransakcja is nothing then
+     trans_.var(GVAR_CURRENT_CUSTOMER) = clng(faktura.pKlient.idobj)
+     set faktura.pTransakcja = trans_.newobj(TYPEID_N5TRANSAKCJA)
+     trans_.var(GVAR_CURRENT_CUSTOMER) = clng(0)
+     with faktura.pTransakcja
+	     .strSymTrans = "SymTrans"
+	     .eTyp = clng(N5TRANSAKCJA_NALEZNOSC)
+	     .dDataWym = faktura.dDataPlat
+	     set .wrefPodmiot = faktura.pKlient			
+     end with
+  end if
+  
+  dim fMa:fMa = faktura.pTransakcja.curMa
+  dim fWn:fWn = faktura.pTransakcja.curWn
+  dim strSymTran:strSymTran = faktura.pTransakcja.strSymTrans
+  dim typTran:typTran = faktura.pTransakcja.eTyp
+  dim dDataTran:dDataTran = faktura.pTransakcja.dDataWym
+  dim podmiotTran:set podmiotTran  = faktura.pTransakcja.wrefPodmiot
+#endif  
+	
+
+	dim cDHMTransporter:set cDHMTransporter = new_dhm_transporter()
+
+	dim pParArray:set pParArray = get_choice()
+	dim iter
+  dim iOperMode : iOperMode = trans_.var(GVAR_OPERATION_MODE)
+  trans_.var(GVAR_OPERATION_MODE) = clng(OPERATION_MODE_IMPORT)
+  
+	dim pSubTrans
+	set pSubTrans = trans_.createsubtran()
+  dim idPar,paragon
+	for iter = 0 to pParArray.UpperIndex
+		if pParArray.value(iter).generate then
+			idPar = pParArray.value(iter).id
+			set paragon = trans_.getobj(TYPEID_N5SPRZEDAZ , idPar )
+			cDHMTransporter.from_dhm paragon , 0
+			set paragon.pFaktura = pSprzedPAGE.root
+#ifdef APPCONFIG_FAKTURA_Z_PARAGONU_BILANS_TRANS    
+      'Ma, Wn na fakturze
+		  fMa = fMa + paragon.pTransakcja.curMa
+      fWn = fWn + paragon.pTransakcja.curWn
+      'Ma na paragonie
+      paragon.pTransakcja.curMa = paragon.pTransakcja.curMa + (paragon.pTransakcja.curWn - paragon.pTransakcja.curMa)
+#endif      
+		  trans_.save
+		end if
+	next
+		trans_.autorollback false
+  set paragon = nothing
+	set pSubTrans = nothing
+  
+  trans_.var(GVAR_OPERATION_MODE) = iOperMode
+  
+#ifdef APPCONFIG_FAKTURA_Z_PARAGONU_BILANS_TRANS 
+  set faktura = nothing
+#endif  
+  
+
+	cDHMTransporter.to_dhm pSprzedPAGE.root
+	set pSprzedPAGE.root.pRozlVat = nothing
+  
+#ifdef APPCONFIG_FAKTURA_Z_PARAGONU_BILANS_TRANS
+  pSprzedPAGE.root.pTransakcja.curMa = fMa
+  pSprzedPAGE.root.pTransakcja.curWn = fWn
+  pSprzedPAGE.root.pTransakcja.eTyp = typTran
+  pSprzedPAGE.root.pTransakcja.dDataWym = dDataTran 
+  pSprzedPAGE.root.pTransakcja.wrefPodmiot = podmiotTran
+#endif  
+
+	paragon2sprzed = trans_.saveobjects()
+
+#ifdef APPCONFIG_FAKTURA_Z_PARAGONU_BILANS_TRANS
+  pSprzedPAGE.root.pTransakcja.strSymTrans = pSprzedPAGE.root.strNrDok
+  paragon2sprzed = trans_.saveobjects()
+#endif  
+
+	if paragon2sprzed then
+		pSprzedPAGE.enableedit = false	
+	end if
+
+end function
+
+
+
+function create_dh2dm(pPage,nDokType,pDictPos)
+  dim idDokMag
+  create_dh2dm = utworz_dokmag_z_dokhandl_automat_ex(pPage.root, nDokType, idDokMag, 0, 0, pDictPos)
+	if not create_dh2dm then
+    pPage.fundo()
+    pPage.fenableedit()
+    exit function
+	else
+		pPage.enableedit = false		
+	end if  
+  
+	if idDokMag = 0 then
+		exit function
+	end if  
+  
+  if idDokMag > 0 then
+	  doc_.postcommand doc_.afc.convert.formatter("OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5DOKMAG,%1,USAGE_VIEW) ").add(idDokMag).done()
+  end if  
+end function
+
+dim g_bSendToNAVO2002BIS : g_bSendToNAVO2002BIS = false
+
+sub set_send_to_navo2002_bis_mode(bRemote)
+  g_bSendToNAVO2002BIS = bRemote
+end sub
+
+'dokhandl 2 dokmag
+function dh2dm_exchange(byval eMode , byref pDHM_PAGE , byval nDokMagType)
+	
+	if eMode = 1 then
+		dh2dm_exchange = true
+		exit function
+	end if
+
+	dim idDokMag ' id stworzonego dokumentu magazynowego	
+	if nDokMagType = 0 then
+		nDokMagType = typ_dokmag_z_dokhandl(pDHM_PAGE.root,nDokMagType)
+	end if
+	dh2dm_exchange = utworz_dokmag_z_dokhandl(pDHM_PAGE.root , nDokMagType  , idDokMag)
+
+
+	if not dh2dm_exchange then
+		'TODO - cofanie faktur
+		if pDHM_PAGE.root.type <> TYPEID_N5SPRZEDAZ then
+			pDHM_PAGE.fundo()
+			pDHM_PAGE.fenableedit()
+		end if
+'		pDHM_PAGE.updateview()
+'		pDHM_PAGE.enableedit = true
+		exit function
+	else
+		pDHM_PAGE.enableedit = false		
+	end if
+
+
+	if idDokMag = 0 then
+		exit function
+	end if
+
+
+	if eMode = 2 then
+		'wyswietl
+		if idDokMag > 0 then
+			doc_.postcommand doc_.afc.convert.formatter(" OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5DOKMAG,%1,USAGE_VIEW) ") _
+						.add(idDokMag).done()
+		end if
+
+	end if
+
+	
+	if eMode = 4 then
+		'drukuj
+		dim idObjDPC
+		idObjDPC = fire_choice_list(TYPEID_N5DPC ,"Wybierz publikację","","ePubType in (" + typ_dokmagpub_z_dokhandl (pDHM_PAGE.root) + ")","","")
+		if idObjDPC > 0 then
+			realize_publication idObjDPC,trans_.getobj(TYPEID_N5DOKMAG,idDokMag),true,nothing
+		end if
+	end if
+
+end function
+
+
+function aktualizacja_cen_wiele_pz(byval pDokHandl, byref nTypDokMag): aktualizacja_cen_wiele_pz = false
+	dim idDokHandl: idDokHandl = suply_dhm_org(pDokHandl).idobj
+	
+	'wybieramy wiele PZ
+	dim pM43009 : set pM43009 = doc_.getmodule(43009)
+	dim strWhere:strWhere = doc_.afc.convert.formatter( _
+		" wrefDokHandl = %1 and wrefDokHandl_wrt=%2 and " + vbNewLine + _
+		" pRejestrDok in (select idobj from n5rejestrdok where eTyp = %3) " + vbNewLine ) _
+		(idDokHandl)(pDokHandl.type)(typ_dokmag_z_dokhandl(suply_dhm_org(pDokHandl),nTypDokMag)).Done()	
+	dim oNXArray: set oNXArray = nx_fire_multi_choice_list(TYPEID_N5DOKMAG, "Wybierz dokument magazynowy", strWhere)
+	
+	if not oNXArray is nothing then		
+		if oNXArray.upper_index = -1 then
+			exit function
+		end if
+		dim arrayId: arrayId = convert_nxarray_to_array(oNXArray)
+			
+		'if has_nxm_feature("recalc_purchase_prices") then
+			dim oTrans : set oTrans = trans_.get_this()
+			dim strResult: strResult = nx_.nxm_features.recalc_purchase_prices(oTrans, idDokHandl, arrayId, trans_.var(GVAR_PRICE_PREC))
+			if not strResult then
+				trans_.message 7000,0, "Błąd: " + nx_.nxm_features.last_error_code + " " + nx_.nxm_features.last_error_description
+			else
+				if not trans_.saveobjects() then
+					if pDokHandl.type <> TYPEID_N5SPRZEDAZ then		
+						trans_.discard
+					end if
+					trans_.message 1002, 0, "Nie udał się zapis dokumentów"
+				else
+					aktualizacja_cen_wiele_pz = true
+				end if
+			end if		
+		'end if			
+	end if
+end function
+
+function convert_nxarray_to_array(byref oNXArray)
+	dim arrayId
+	redim arrayId(oNXArray.upper_index)
+	dim iter
+	for iter = 0 to oNXArray.upper_index
+		arrayId(iter) = clng(oNXArray(iter))
+	next	
+	convert_nxarray_to_array = arrayId
+end function
+
+class cDokToZZ
+	public m_idWZ
+	public m_idProd
+	public m_idOpak
+	public m_curIlosc
+end class
+
+function utworz_zz_wiele_wz(byval oDokHandl, byref nTypDokMag): utworz_zz_wiele_wz = false
+	dim oDokHandlOrg: set oDokHandlOrg = suply_dhm_org(oDokHandl)
+	
+	'pobieramy pozycje zwracane
+	dim prodArr: prodArr = doc_.getmodule(60182).balance_by_product_with_original(oDokHandlOrg, oDokHandl)
+	if not poz_to_zwrot(prodArr) then
+		trans_.message 7000, 0, "Nie znaleziono pozycji do zwrotu."
+		exit function
+	end if
+	
+	'wybieramy wszystkie WZ
+	dim pM43009 : set pM43009 = doc_.getmodule(43009)
+	dim strWhere:strWhere = doc_.afc.convert.formatter( _
+		" wrefDokHandl = %1 and wrefDokHandl_wrt=%2 and " + vbNewLine + _
+		" pRejestrDok in (select idobj from n5rejestrdok where eTyp = %3) " + vbNewLine ) _
+		(oDokHandlOrg.IdObj)(oDokHandl.type)(typ_dokmag_z_dokhandl(oDokHandlOrg,nTypDokMag)).Done()
+
+	'wypełnij tablice zwracanymi produktami
+	dim oWZ, iter
+	dim cursor: set cursor = trans_.createrawcursor(TYPEID_N5DOKMAG, strWhere, "nNumOper", "")
+	dim oProdToZZArray: set oProdToZZArray = doc_.afc.new_navoarray()
+	dim oWZArray: set oWZArray = doc_.afc.new_navoarray()
+	for each oWZ in cursor		
+		if get_prod_to_zz(oWZ, prodArr, oProdToZZArray) then
+			oWZArray.add oWZ
+		end if
+	next
+	
+	'sprawdź czy skojarzono wszystkie pozycje
+	dim index: index = check_all_product(prodArr)
+	if index > -1 then
+		dim oProd: set oProd = trans_.getobj(TYPEID_N5PRODUKT, clng(prodArr(index).product_id))
+		if not oProd is nothing then
+			trans_.message 7000, 0, "Nie udało się skojarzyć produktu: " + oProd.strNazwa + " w ilości: " + cstr(prodArr(index).quantity) + " z powiązaną WZ"
+			exit function
+		end if		
+	end if
+		
+	if oProdToZZArray.count > 0 then
+		create_dok_ZZ oWZArray, oProdToZZArray, oDokHandl.IdObj
+	end if
+end function
+
+'--------------------------------
+'wypełnia tablicę z danymi dla ZZ
+'--------------------------------
+function get_prod_to_zz(byref oWZ, byref prodArr, byref oProdToZZArray): get_prod_to_zz = false
+	dim oPoz, curIlosc, dokToZZ
+	for each oPoz in oWZ.listPozycje
+		curIlosc = get_ilosc_to_zz(oPoz, prodArr)
+		if curIlosc > ccur(0) then
+			set dokToZZ = new cDokToZZ
+			dokToZZ.m_idWZ = oWZ.IdObj
+			dokToZZ.m_idProd = oPoz.pProdukt.IdObj
+			dokToZZ.m_idOpak = oPoz.pOpak.IdObj
+			dokToZZ.m_curIlosc = ccur(curIlosc)
+			oProdToZZArray.add dokToZZ
+			get_prod_to_zz = true
+		end if
+	next
+end function
+
+'-----------------------------------------------
+'sprawdza czy skojarzono wszystkie produkcy z WZ
+'-----------------------------------------------
+function check_all_product(byref prodArr)
+	dim iter
+	for iter = 0 to UBound(prodArr)
+		if ccur(prodArr(iter).quantity) > ccur(0) then
+			check_all_product = iter
+			exit function
+		end if
+	next
+	check_all_product = -1
+end function
+
+'-------------------------------------------------
+'wyszukuje produkt do zwrotu w odpowiedniej ilości
+'-------------------------------------------------
+function get_ilosc_to_zz(byref oPoz, byref prodArr)
+	dim iter, curIlosc: curIlosc = ccur(0)
+	for iter = 0 to UBound(prodArr)
+		if clng(prodArr(iter).product_id) = oPoz.pProdukt.Idobj and clng(prodArr(iter).sub_product_id) = oPoz.pOpak.Idobj and ccur(prodArr(iter).quantity) > ccur(0) then
+			curIlosc = ccur(prodArr(iter).quantity) - oPoz.curIloscOpak
+			if curIlosc <= 0 then
+				curIlosc = ccur(prodArr(iter).quantity)
+				prodArr(iter).quantity = ccur(0)
+			else
+				curIlosc = oPoz.curIloscOpak
+				prodArr(iter).quantity = ccur(prodArr(iter).quantity) - curIlosc
+			end if
+		end if
+	next	
+	get_ilosc_to_zz = curIlosc
+end function
+
+'-------------------------------
+'czy są jakies pozycje do zwrotu
+'-------------------------------
+function poz_to_zwrot(byref prodArr): poz_to_zwrot = false
+	dim iter
+	for iter = 0 to UBound(prodArr)
+		if ccur(prodArr(iter).quantity) > ccur(0) then
+			poz_to_zwrot = true
+			exit function
+		end if
+	next	
+end function
+
+'------------------------------------
+'tworzy dokumenty ZZ dla wybranych WZ
+'------------------------------------
+function create_dok_ZZ(byref oWZArray, byref oProdToZZArray, byval idDokHandl)
+	dim iter, count: count = 0
+	for iter = 0 to oWZArray.upperIndex
+		if not create_ZZ(oWZArray.value(iter), oProdToZZArray, N5REJESTRDOK__ZZ, idDokHandl) then
+			trans_.message 7000, 0, "Nie udało się utworzyć dokumentu ZZ do: " + oWZArray.value(iter).strNrDok
+			exit function
+		else
+			count = count + 1
+		end if
+	next
+	MessageBox "Wystawiono " + cstr(count) + " " + get_desk(count) + " ZZ." , "Lista wyboru", vbOKOnly, vbInformation
+end function
+
+'-----------------------------
+'tworzy pojedynczy dokument WZ
+'-----------------------------
+function create_ZZ(byref oDokMag, byref oProdToZZArray, byval nTypKorekty, byval idDokHandl)
+
+	'sprawdzamy czy WZ nie ma już korekty
+	if has_korekta(oDokMag) then
+		trans_.message 7000, 0, "Ten dokument " + oDokMag.strNrDok + " ma już korektę"
+		exit function
+	end if
+
+	if nTypKorekty = 0 then
+		nTypKorekty = get_typ_korekty_by_source(oDokMag)
+	end if
+
+	if nTypKorekty < 0 then
+		exit function
+	end if
+	
+	dim idWZ: idWZ = oDokMag.idobj
+	trans_.var(GVAR_CURSOR) = clng(CRSR_DEFAULT)
+	trans_.var(APPVAR_POP_DOKUMENT) = idWZ
+	trans_.var(APPVAR_REJESTR_TYP) = clng(nTypKorekty)
+	dim pForm: set pForm = doc_.getmodule(60129).prepare_form_open_command(oDokMag.type,0,0)	
+
+	if pForm is nothing then
+		exit function
+	end if
+				
+	dim pFormZZ: set pFormZZ = doc_.getpagehli(pForm)
+	dim oWZ: set oWZ = trans_.getobj(TYPEID_N5DOKMAG, idWZ)
+	set pFormZZ.root.wrefDokHandl = trans_.getobj(TYPEID_N5SPRZEDAZ, idDokHandl)
+	
+	'pozycje
+	pFormZZ.root.listPozycje.deleteall
+	dim iter, oPozZZ
+	for iter = 0 to oProdToZZArray.upperIndex
+		if oProdToZZArray.value(iter).m_idWZ = oWZ.IdObj then
+			set oPozZZ = pFormZZ.root.listPozycje.addnew()
+			set oPozZZ.pProdukt = trans_.getobj(TYPEID_N5PRODUKT,clng(oProdToZZArray.value(iter).m_idProd))
+			set oPozZZ.pOpak = oPozZZ.pProdukt.listOpakowania.get(oPozZZ.pProdukt.listOpakowania.findonid(clng(oProdToZZArray.value(iter).m_idOpak)))
+			oPozZZ.curIloscOpak = ccur(oProdToZZArray.value(iter).m_curIlosc)	
+			oPozZZ.nNumOpMagDost = oWZ.nNumOper
+			oPozZZ.nLpDost = clng(iter+1)
+		end if
+	next
+	
+	if not trans_.saveobjects() then
+		create_ZZ = false
+		exit function
+	end if
+
+	create_ZZ = true
+end function
+
+'-------------------------------
+'ustawia opis dla utworzonych ZZ
+'-------------------------------
+function get_desk(byval count): get_desk = "dokumentów"
+	if count = 1 then
+		get_desk = "dokument"
+	elseif count > 1 and count < 5 then
+		get_desk = "dokumenty"
+	end if
+end function
+
+
+function utworz_dokmag_z_dokhandl(byval pDokHandl , nTypDokMag , byref nDokMagID):utworz_dokmag_z_dokhandl = false
+   'parametr 0 oznacza żeby tylko raz spytał o wybór rejestru
+   utworz_dokmag_z_dokhandl = utworz_dokmag_z_dokhandl_automat(pDokHandl, nTypDokMag, nDokMagID, 0, 0) 
+end function
+
+function utworz_dokmag_z_dokhandl_automat(byval pDokHandl , nTypDokMag , byref nDokMagID, byref idRejestr, byref idMagazyn):utworz_dokmag_z_dokhandl_automat = false
+  utworz_dokmag_z_dokhandl_automat = utworz_dokmag_z_dokhandl_automat_ex(pDokHandl, nTypDokMag, nDokMagID, idRejestr, idMagazyn, nothing)
+end function
+
+function utworz_dokmag_z_dokhandl_automat_ex(byval pDokHandl , nTypDokMag , byref nDokMagID, byref idRejestr, byref idMagazyn, byref pDictPos):utworz_dokmag_z_dokhandl_automat_ex = false
+
+  'pDictPos - parametr będący słownikiem z wybranymi pozycjami => utworzenie dokmag z wybranymi pozycjami z dokhandl - Toral
+	'parametr idRejestr przekazany przez referencję jako 0 powoduje że uzytkownik tylko raz jest odpytywany o wybór rejestru dokumentów
+  
+  'wybieramy dokument magazynowy - nowy albo juz istniejacy -
+	'dodamy do niego pozycje z dokumentuy handlowego
+  
+  'zmienna decydująca o tym czy usuwać pozycje (iUsun = 1) z dokumentu magazynowego czy dopisać kolejne (iUsun = 0)
+  dim iUsun:iUsun = 1
+
+	'jesli mamy do czynienia ze zwrotem to bedzie to id dokumentu magazynowego oryginalnego dla d.handlowego - czyli np. wz do pierwszej faktury w ciagu korekt
+	'jesli jest zwrto to nie pytamy o to, czy tworzymy nowy tylko wybieramy dokument
+	if nDokMagId = 0 then
+     nDokMagID = choose_dokmag_for_dokhandl(suply_dhm_org(pDokHandl).idobj , pDokHandl.type , typ_dokmag_z_dokhandl(suply_dhm_org(pDokHandl),nTypDokMag) , false , (nTypDokMag = N5REJESTRDOK__ZZ or nTypDokMag = N5REJESTRDOK__ZD ) , "Wybór dokumentu magazynowego")
+	else
+     iUsun = 0 
+  end if
+	
+#ifdef APPCONFIG_AKTUALIZACJA_CEN_PZ
+	if nDokMagID = -2  then
+		utworz_dokmag_z_dokhandl_automat_ex = aktualizacja_cen_wiele_pz(pDokHandl, nTypDokMag)
+		exit function
+	end if
+#endif
+
+#ifdef APPCONFIG_UTWORZ_ZZ_WIELE_WZ
+	if nDokMagID = -3  then
+		utworz_dokmag_z_dokhandl_automat_ex = utworz_zz_wiele_wz(pDokHandl, nTypDokMag)
+		exit function
+	end if	
+#endif
+	
+  if nDokMagID < 0 then
+		exit function
+	end if
+
+	dim nRejTyp
+	dim pDokMag
+	dim cDHMTransporter
+
+
+	if nDokMagID = 0 and (nTypDokMag = N5REJESTRDOK__ZZ or nTypDokMag = N5REJESTRDOK__ZD) then
+		'tworzymy korekte do dokumentu ktory nie ma zadnego dokmag, zatem mozemy spytac co zrobic
+ 		if MessageBox("Próbujesz stworzyć dokument magazynowy dla korekty dokumentu, do ktorego nie wystawiono wydania/przyjęcia towaru. Czy mimo tego chcesz tę korektę zapisać?", "Brak WZ/PZ", vbYesNo, vbQuestion) = vbYes then
+			utworz_dokmag_z_dokhandl_automat_ex = trans_.saveobjects()
+		else
+			utworz_dokmag_z_dokhandl_automat_ex = false
+		end if
+		exit function
+	else
+		if nDokMagID = 0 then
+			'wypelniamy obiekt transportera z dokumentu handlowego
+			set cDHMTransporter = new_dhm_transporter()
+			if not cDHMTransporter.from_dhm_ex(suply_dhm_org(pDokHandl), nTypDokMag, pDictPos) then
+				exit function
+			end if		
+		end if
+	end if
+
+
+
+	if nDokMagID > 0 then ' czyli wybralismy cos do edycji
+		set pDokMag = trans_.getobj(TYPEID_N5DOKMAG , nDokMagID)
+
+		if pDokHandl.type = TYPEID_N5ZAMOWIENIE then
+			'trzeba zmodyfikowac ilosci zrealizowane o ilosci juz wystawione na wybranym dokmag
+			'a dokladniej - nalezy "wycofac" z zamowienia dokument magazynowy
+			if not wycofaj_realizacje(pDokHandl , pDokMag) then
+				exit function
+			end if			
+		end if
+
+
+		'wypelniamy obiekt transportera z dokumentu handlowego
+		set cDHMTransporter = new_dhm_transporter()
+		if not cDHMTransporter.from_dhm( suply_dhm_org(pDokHandl) , nTypDokMag) then
+			exit function
+		end if
+
+		if is_zwrot(nTypDokMag) then
+
+
+			if korekta_wartosciowa(pDokHandl) then
+
+
+				nDokMagID = choose_dokmag_for_dokhandl(suply_dhm_org(pDokHandl).idobj , pDokHandl.type , typ_dokmag_z_dokhandl(suply_dhm_org(pDokHandl),nTypDokMag) , false , (nTypDokMag = N5REJESTRDOK__ZZ or nTypDokMag = N5REJESTRDOK__ZD ) , "Wybór dokumentu magazynowego")
+				if nDokMagID > 0 then
+					set pDokMag = trans_.getobj(TYPEID_N5DOKMAG , nDokMagID)
+				end if
+				nTypDokMag = typ_dokmag_z_dokhandl(suply_dhm_org(pDokHandl),0)
+
+
+				set cDHMTransporter = new_dhm_transporter()
+				if not cDHMTransporter.from_dhm( pDokHandl , nTypDokMag) then
+					exit function
+				end if
+
+			else
+
+				'w przypadku zwrotu tworzymy dokmag z dokmag oryginalnego
+				set cDHMTransporter = new_dhm_transporter()	
+
+				if not cDHMTransporter.from_dhm (pDokMag , 0) then
+					exit function
+				end if
+
+
+				'trzeba tez odjac kolejne zwroty poprzedzajace dany dokument
+				if not cDHMTransporter.minus_dhm_zwroty(pDokHandl) then
+					exit function
+				end if	
+
+
+				'odejmuje od WZ/PZ to, co faktycznie powinno byc i wyjdzie mi ilosc zwracana
+				if not cDHMTransporter.minus_dhm(pDokHandl) then
+					exit function
+				end if
+
+
+
+				'i wymuszamy utworzenie nowego
+				trans_.var(APPVAR_POP_DOKUMENT) = clng(0)
+				nDokMagID = choose_dokmag_for_dokhandl(pDokHandl.idobj , pDokHandl.type , typ_dokmag_z_dokhandl(pDokHandl,0) , false , false , "Istnieje juz ZD/ZZ dla tworzonej korekty")
+				if nDokMagID > 0 then
+					set pDokMag = trans_.getobj(TYPEID_N5DOKMAG , nDokMagID)
+				end if
+
+			end if
+
+		
+		end if
+	end if
+
+	dim pSubTrans : set pSubTrans = nothing
+  
+  if nDokMagID = 0 then  ' tworzymy nowy
+    if is_zwrot(nTypDokMag) then
+      set pDokMag = nothing
+      set pSubTrans = trans_.createsubtran()
+    end if
+
+		'wypelniamy obiekt transportera z dokumentu handlowego
+		'set cDHMTransporter = new_dhm_transporter()
+		'if not cDHMTransporter.from_dhm( suply_dhm_org(pDokHandl) , nTypDokMag) then
+	'		exit function
+		'end if
+
+		'wybieramy i ustawiamy zmienne - rejestry
+		nRejTyp = choose_typ_rejestru_restrict(nTypDokMag, true)
+    if idRejestr = 0 then
+		  idRejestr = choose_rejestr_dok(cstr(nRejTyp), true , "Wybierz rejestr dokumentów")
+    end if  
+    if nRejTyp > 0 and idRejestr > 0 then
+			trans_.var(APPVAR_REJESTR_TYP) = nRejTyp
+			trans_.var(APPVAR_REJESTR_DOKUMENTOW) = idRejestr
+		else
+			exit function
+		end if
+		if not ensure_create_dm_rights(nRejTyp) then
+			exit function
+		end if
+    if is_zwrot(nTypDokMag) then
+      trans_.var(APPVAR_POP_DOKUMENT) = clng(cDHMTransporter.m_idobjSrcDok)
+    end if
+   set pDokMag = trans_.newobj(TYPEID_N5DOKMAG)
+#ifdef APPCONFIG_OZNACZENIE_PRODUCENTA		
+		set pDokMag.pKwalifikatorEX = pDokHandl.pKwalifikatorEX
+#endif
+
+#ifdef _IOW
+  if trans_.var(APPVAR_REJESTR_TYP) = N5REJESTRDOK__WZ then
+    pDokMag.strExtra2 = pDokHandl.strExtra2
+  end if
+#endif
+
+#ifdef _MILOMLYN
+  if trans_.var(APPVAR_REJESTR_TYP) = N5REJESTRDOK__WZ then
+    pDokMag.strExtra1 = pDokHandl.strExtra1  
+    pDokMag.strExtra2 = pDokHandl.strExtra2
+  end if
+#endif
+
+#ifdef _LABELMARKET
+	if trans_.var(APPVAR_REJESTR_TYP) = N5REJESTRDOK__WZ then
+		pDokMag.strUwagi = pDokHandl.strUwagi
+	end if
+#endif
+
+#ifdef ENABLE_DB14
+	if trans_.var(APPVAR_REJESTR_TYP) = N5REJESTRDOK__WZ then
+		if pDokHandl.type = TYPEID_N5SPRZEDAZ then
+			pDokMag.dm_strNazwa_dost = pDokHandl.sprzed_strNazwa_dost
+			pDokMag.dm_strUlica_dost = pDokHandl.sprzed_strUlica_dost
+			pDokMag.dm_strNrDomu_dost = pDokHandl.sprzed_strNrDomu_dost
+			pDokMag.dm_strNrLokalu_dost = pDokHandl.sprzed_strNrLokalu_dost
+			pDokMag.dm_strKod_dost = pDokHandl.sprzed_strKod_dost
+			pDokMag.dm_strPoczta_dost = pDokHandl.sprzed_strPoczta_dost
+			set pDokMag.dm_pMiejscowosc_dost = pDokHandl.sprzed_pMiejscowosc_dost
+			set pDokMag.dm_pKraj_dost = pDokHandl.sprzed_pKraj_dost
+			pDokMag.dm_curSzerGeogr_dost = pDokHandl.sprzed_curSzerGeogr_dost
+			pDokMag.dm_curDlugGeogr_dost = pDokHandl.sprzed_curDlugGeogr_dost
+		end if
+		if pDokHandl.type = TYPEID_N5ZAMOWIENIE then
+			pDokMag.dm_strNazwa_dost = pDokHandl.zam_strNazwa_dost
+			pDokMag.dm_strUlica_dost = pDokHandl.zam_strUlica_dost
+			pDokMag.dm_strNrDomu_dost = pDokHandl.zam_strNrDomu_dost
+			pDokMag.dm_strNrLokalu_dost = pDokHandl.zam_strNrLokalu_dost
+			pDokMag.dm_strKod_dost = pDokHandl.zam_strKod_dost
+			pDokMag.dm_strPoczta_dost = pDokHandl.zam_strPoczta_dost
+			set pDokMag.dm_pMiejscowosc_dost = pDokHandl.zam_pMiejscowosc_dost
+			set pDokMag.dm_pKraj_dost = pDokHandl.zam_pKraj_dost
+			pDokMag.dm_curSzerGeogr_dost = pDokHandl.zam_curSzerGeogr_dost
+			pDokMag.dm_curDlugGeogr_dost = pDokHandl.zam_curDlugGeogr_dost
+		end if		
+	end if
+#endif
+
+	end if
+
+  if iUsun <> 0 then
+     #ifdef _HADEX
+        'nie usuwaj pozycji gdy jest tworzony PZ poprzez edycję istniejącego
+        if nTypDokMag <> 18 then 
+          pDokMag.listPozycje.deleteall
+        else 
+        'zlicz ilość pozycji na dokumencie PZ
+        dim pozPZ, iLiczPoz : iLiczPoz = 0
+          for each pozPZ in pDokMag.listPozycje
+            iLiczPoz = iLiczPoz + 1
+          next
+        end if
+     #else
+        pDokMag.listPozycje.deleteall 
+     #endif
+  end if
+
+
+	
+#ifdef APPCONFIG_MAGAZYN_ZRODLOWY_Z_DOKHANDL
+	'ustaw magazyn domyślny dla WZ
+	if nTypDokMag = N5REJESTRDOK__WZ then
+		if not pDokHandl.pRejestrDok is nothing then
+			if not pDokHandl.pRejestrDok.wrefParam2 is nothing then
+				if pDokHandl.pRejestrDok.wrefParam2.type = TYPEID_N5MAGAZYN then
+					idMagazyn = pDokHandl.pRejestrDok.wrefParam2.Idobj
+				end if
+			end if
+		end if  
+	end if
+#endif  
+  
+	'wypelniamy ze struktury i sprawdzamy ile pozuycji skopiowalismy
+	dim nPos  
+	nPos = cDHMTransporter.to_dhm_auto(pDokMag, idMagazyn)
+  
+  'usuwanie zbędnych dokumentów PZ i pozostawienie skopiowanych (tylko HADEX)
+  if iUsun <> 0 then
+     #ifdef _HADEX
+        if nTypDokMag = 18 then
+           dim iLicz : iLicz = 0
+           for each pozPZ in pDokMag.listPozycje
+             iLicz = iLicz + 1
+             if iLicz > iLiczPoz then
+                dim prodPoz : prodPoz = pozPZ.pProdukt.strIndeks
+                dim pozPZ2, iter : iter = 0
+                for each pozPZ2 in pDokMag.listPozycje
+                   if pozPZ2.pProdukt.strIndeks = prodPoz then
+                      pozPZ2.curCenaMag = pozPZ.curCenaMag
+                      exit for
+                   else
+                     iter = iter + 1
+                   end if
+                   if iter = iLiczPoz then
+                      exit for
+                   end if
+                next
+             end if
+           next
+           'usuń duplikowane pozycje
+           for iter = 1 to iLicz - iLiczPoz
+              pDokMag.listPozycje.delete(pDokMag.listPozycje.count())
+           next  
+        end if
+     #endif
+  end if   
+  
+	
+	if nPos = 0 then
+		trans_.message 1002 , 0 , "Brak pozycji lub wszystkie pozycje pominięte (usługi)"
+		if pDokMag.isnew then
+			pDokMag.ignore = true
+		end if
+		nDokMagID = 0
+	else
+		'ustawiamy skojarzenie do dokumentu handlowego ale tylko jak nie bylo go
+		if pDokMag.wrefDokHAndl is nothing then
+			set pDokMag.wrefDokHAndl = pDokHandl
+		end if
+		nDokMagID = pDokmag.idobj
+    'gdy dodajemy do PZ pozycje z nowej faktury skojarz z nową
+    if iUsun = 0 then
+       set pDokMag.wrefDokHAndl = pDokHandl
+       nDokMagID = pDokmag.idobj
+    end if
+	end if
+	
+#ifdef _TANDEM_BAITS
+	if nTypDokMag = N5REJESTRDOK__PZ then
+		pDokMag.n5dokmag_GenerateNumDok()
+		pDokMag.strExtra1 = "Powiązanie: " + pDokHandl.strNrDok
+		pDokHandl.strExtra1 = "Powiązanie: " + pDokMag.strNrDok
+		if g_bSendToNAVO2002BIS then
+			pDokMag.strExtra2 = "Baza: " + "PRODUKCJA"
+			pDokHandl.strExtra2 = "Baza: " + "PRODUKCJA"
+		else
+			pDokMag.strExtra2 = "Baza: " + "HANDEL"
+			pDokHandl.strExtra2 = "Baza: " + "HANDEL"			
+		end if
+	end if
+#endif 	
+	
+  dim bResult
+  if g_bSendToNAVO2002BIS then
+      dim strRemoteRes : strRemoteRes = send_dokmag_to_navo2002bis(pDokMag)
+	    pDokMag.ignore = true
+      bResult = true
+  else
+	    'zapisujemy
+	
+      bResult = trans_.saveobjects()
+      set pSubTrans = nothing
+
+	    if not bResult then'jezeli sie udalo to: 
+		    nDokMagID = 0
+		    if pDokMag.isnew then
+			    'jak nowy to ignorujemy
+			    pDokMag.ignore = true
+		    else
+			    'a jak nie to tylko cofamy zmainy
+			    set pDokMag = nothing
+			    'trans_.discard
+		    end if
+		    'TODO - cofanie faktur
+		    if pDokHandl.type <> TYPEID_N5SPRZEDAZ then		
+			    trans_.discard
+		    end if
+		    trans_.message 1002 , 0 , "Nie udał się zapis dokumentów"
+	    end if
+  end if
+
+	'musimy ustawic rejestry na takie wartosci jak byly wczesniej
+	trans_.var(APPVAR_REJESTR_TYP) = cDHMTransporter.m_eRejestrDokType
+	trans_.var(APPVAR_REJESTR_DOKUMENTOW) = cDHMTransporter.m_idRejestrDok
+	trans_.var(APPVAR_POP_DOKUMENT) = clng(0)
+
+	set cDHMTransporter = nothing
+	utworz_dokmag_z_dokhandl_automat_ex = bResult
+
+end function
+
+function send_dokmag_to_navo2002bis(byref oDokMag)
+  send_dokmag_to_navo2002bis = "999: unknown error"
+  
+  dim oEBDocument : set oEBDocument = oDokMag.n5dokmag_create_ecws_eb_document()
+  dim pM60214 : set pM60214 = doc_.getmodule(60214)
+  
+  dim pRC : set pRC = pM60214.new_remote_client_ex("127.0.0.1", "EuroBusiness 5.0 BIS", "navo2002bis", false)
+  if pRC is nothing then
+    send_dokmag_to_navo2002bis = "998: cannot connect to EuroBusiness 5.0 BIS" 
+    exit function
+  end if
+  dim oRemoteECWS : set oRemoteECWS = pRC.document.getmodule(60332)
+  dim bSignedIn : bSignedIn = oRemoteECWS.ecws3_init("Administrator", "T@b#.123")
+  
+  if not bSignedIn then
+     send_dokmag_to_navo2002bis = "997: login to EuroBusiness 5.0 BIS failed" 
+    exit function
+  end if
+  
+  send_dokmag_to_navo2002bis = oRemoteECWS.ecws3_save_document(oEBDocument)
+end function
+
+#comment '****************************************************************
+#comment '----------------------------------------------------------
+#comment 'drobne funckje pomocnicze
+#comment '----------------------------------------------------------
+
+
+function ensure_create_dm_rights(byval nTypRejestru):ensure_create_dm_rights = true
+	select case nTypRejestru
+		case N5REJESTRDOK__PZ
+			ensure_create_dm_rights = HARUI(UAR_DOKMAG_PZ##STDR_INSERT)
+		case N5REJESTRDOK__WZ
+#ifdef _IOW
+			'sprawdzenie uprawnień specjalnych do tworzenia WZ z poziomu faktury
+			dim strWhere : strWhere = "select idobj from n5sod where strNazwa like 'Pozwól na tworzenie WZ z poziomu faktury'"
+			if doc_.getmodule(60106).FindFreeRight(strWhere) then
+				ensure_create_dm_rights = true
+				exit function
+			end if      
+#endif
+			ensure_create_dm_rights = HARUI(UAR_DOKMAG_WZ##STDR_INSERT)
+		case N5REJESTRDOK__ZZ
+			ensure_create_dm_rights = HARUI(UAR_DOKMAG_ZZ##STDR_INSERT)
+		case N5REJESTRDOK__ZD
+			ensure_create_dm_rights = HARUI(UAR_DOKMAG_ZD##STDR_INSERT)
+	end select
+	
+end function
+
+
+'pDH - dokument handlowy
+'nAlt - wybor alternatywny - np dla zamobcego mozemy stworzyc rezerwacje lub WZ
+function typ_dokmag_z_dokhandl(byval pDH,byval nAlt)
+	select case pDH.pRejestrDok.eTyp
+		case N5REJESTRDOK_FAKT_SP,N5REJESTRDOK_WDT,N5REJESTRDOK_FAKT_EXP,N5REJESTRDOK_PARAGON,N5REJESTRDOK_RACH,N5REJESTRDOK_FAKTURA_ZALICZKOWA,N5REJESTRDOK_DOSTAWA
+			typ_dokmag_z_dokhandl = N5REJESTRDOK__WZ
+		case N5REJESTRDOK_KOR_FAKT_SP,N5REJESTRDOK_KOREKTA_WDT,N5REJESTRDOK_KOR_FAKT_EXP,N5REJESTRDOK_KOR_PARAGON,N5REJESTRDOK_KOR_RACH,N5REJESTRDOK_KOR_DOSTAWA
+			typ_dokmag_z_dokhandl = N5REJESTRDOK__ZZ
+		case N5REJESTRDOK_FAKT_ZAK,N5REJESTRDOK__ZAM_WLASNE,N5REJESTRDOK_WNT,N5REJESTRDOK_FAKT_ZAK_RR,N5REJESTRDOK_FAKT_IMP
+			typ_dokmag_z_dokhandl = N5REJESTRDOK__PZ
+		case N5REJESTRDOK_KOR_FAKT_ZAK,N5REJESTRDOK_KOREKTA_WNT,N5REJESTRDOK_KOR_FAKT_ZAK_RR,N5REJESTRDOK_KOR_FAKT_IMP
+			typ_dokmag_z_dokhandl = N5REJESTRDOK__ZD		
+		case N5REJESTRDOK__ZAM_OBCE,14,N5REJESTRDOK_ZAP_OFERTOWE_OBCE
+			typ_dokmag_z_dokhandl = nAlt			
+		case else
+#ifdef _DEBUG
+			trans_.message 1002 , 0 , "typ_dokmag_z_dokhandl - brak"
+#endif
+	end select
+end function
+
+
+
+function typ_dokmagpub_z_dokhandl(byval pDH)
+	select case pDH.pRejestrDok.eTyp
+		case N5REJESTRDOK_FAKT_SP,N5REJESTRDOK_WDT,N5REJESTRDOK_FAKT_EXP,N5REJESTRDOK_PARAGON,N5REJESTRDOK_RACH,N5REJESTRDOK_FAKTURA_ZALICZKOWA,N5REJESTRDOK_DOSTAWA
+			typ_dokmagpub_z_dokhandl = cstr(N5DPC_PUBTYPE_WZ)
+		case N5REJESTRDOK_KOR_FAKT_SP,N5REJESTRDOK_KOREKTA_WDT,N5REJESTRDOK_KOR_FAKT_EXP,N5REJESTRDOK_KOR_PARAGON,N5REJESTRDOK_KOR_RACH,N5REJESTRDOK_KOR_DOSTAWA
+			typ_dokmagpub_z_dokhandl = cstr(N5DPC_PUBTYPE_ZZ)
+		case N5REJESTRDOK_FAKT_ZAK,N5REJESTRDOK__ZAM_WLASNE,N5REJESTRDOK_WNT,N5REJESTRDOK_FAKT_ZAK_RR,N5REJESTRDOK_FAKT_IMP
+			typ_dokmagpub_z_dokhandl = cstr(N5DPC_PUBTYPE_PZ)
+		case N5REJESTRDOK_KOR_FAKT_ZAK,N5REJESTRDOK_KOREKTA_WNT,N5REJESTRDOK_KOR_FAKT_ZAK_RR,N5REJESTRDOK_KOR_FAKT_IMP
+			typ_dokmagpub_z_dokhandl = cstr(N5DPC_PUBTYPE_ZD)
+	end select
+end function
+
+
+
+'funkcja wyszukuje skojarzony dokument magazynowy do dokumentu handlowego
+'zwraca idobj znalezionego dokumentu, 0 gdy nie ma, -1 gdy nalezy anulowac akcje
+'
+function choose_dokmag_for_dokhandl(byval idDokHandl  , byval nTypeDokHandl , byval nTypeDokMag , byval bSilent , byval bOnlyChoose , byval strTitle ):choose_dokmag_for_dokhandl = 0
+	dim strWhere:strWhere = doc_.afc.convert.formatter( _
+		" wrefDokHandl = %1 and wrefDokHandl_wrt=%2 and " + vbNewLine + _
+		" pRejestrDok in (select idobj from n5rejestrdok where eTyp = %3) " + vbNewLine ) _
+		(idDokHandl)(nTypeDokHandl)(nTypeDokMag).Done()		
+
+	dim idDokMag:idDokMag = trans_.findobjid(TYPEID_N5DOKMAG , strWhere )
+	'nie ma zadnych dokmag skojarzonych - zwracamy zero
+	if idDokMag = 0 then
+		exit function
+	end if
+	
+#ifdef APPCONFIG_UTWORZ_ZZ_WIELE_WZ
+	'gdy znalazł choć 1 WZ nie pytamy którą wybierać
+	if nTypeDokHandl = TYPEID_N5SPRZEDAZ and nTypeDokMag = N5REJESTRDOK__WZ and bOnlyChoose then
+		choose_dokmag_for_dokhandl = -3
+		exit function
+	end if
+#endif
+
+	dim nQuestionResult
+
+	'znalazl juz jakis skojatrzony dokmag
+	'pytamy co z tym robić
+	'albo tworzymy nowy albo robimy update starego
+	if idDokMag > 0 then
+
+#ifdef APPCONFIG_ALWAYS_UPDATE_DOKMAG
+		'jesli mamy ten przełącznik to gdy znaleziono jeden dokmag to go bez pytania update'jemy
+		choose_dokmag_for_dokhandl = idDokMag
+		exit function
+#endif
+		
+		if not bSilent then
+			if not bOnlyChoose then
+				nQuestionResult=MessageBoxCustom("Z dokumentem handlowym skojarzono już dokument magazynowy. Możesz mimo tego utworzyć nowy lub dodać pozycje do juz istniejącego. Co chcesz zrobić?", strTitle, vbYesNoCancel, vbQuestion, "Utwórz nowy;Edytuj;Anuluj")
+			else
+				nQuestionResult = vbNo
+			end if
+		else
+			nQuestionResult = vbNo
+		end if
+		
+		select case nQuestionResult
+			case vbYes ' Nowy
+				exit function 'zwróci funkcja 0 i utworzy się nowy
+			case vbNo
+				choose_dokmag_for_dokhandl = idDokMag
+			case vbCancel
+				choose_dokmag_for_dokhandl = -1
+		end select		
+							
+	end if
+
+
+	if idDokMag < 0 then
+		if not bOnlyChoose then
+			nQuestionResult=MessageBoxCustom("Z dokumentem handlowym skojarzono już kilka dokumentów magazynowych. Możesz mimo tego utworzyć nowy lub dodać pozycje do juz istniejącego. Co chcesz zrobić?",_
+      strTitle, vbYesNoCancel, vbQuestion, _
+      "Utwórz nowy;Wybierz do edycji;Anuluj")
+		else
+			nQuestionResult=MessageBox("Z dokumentem handlowym skojarzono kilka dokumentów magazynowych. Chcesz wybrac jeden z nich?", strTitle, vbOkCancel, vbQuestion)
+			if nQuestionResult = vbOk then
+				nQuestionResult = vbNo ' wymusamy wybor
+			end if
+		end if
+		select case nQuestionResult
+			case vbYes ' Nowy
+				exit function 'zwróci funkcja 0 i utworzy się nowy
+			case vbNo
+#ifdef APPCONFIG_AKTUALIZACJA_CEN_PZ
+				dim choice
+				if nTypeDokHandl = TYPEID_N5ZAKUP and nTypeDokMag = N5REJESTRDOK__PZ then
+					'wybieramy wiele
+					choose_dokmag_for_dokhandl = -2		
+				else
+					'wybieramy po staremu		
+					choice = fire_choice_list_disable_add( TYPEID_N5DOKMAG,"Wybierz dokument magazynowy","",strWhere,"strNrDok","")
+					if choice > 0 then
+						choose_dokmag_for_dokhandl = choice	
+					else
+						choose_dokmag_for_dokhandl = -1
+					end if				
+				end if
+#else
+				'wybieramy
+				dim choice				
+				choice = fire_choice_list_disable_add( TYPEID_N5DOKMAG,"Wybierz dokument magazynowy","",strWhere,"strNrDok","")
+				if choice > 0 then
+					choose_dokmag_for_dokhandl = choice	
+				else
+					choose_dokmag_for_dokhandl = -1
+				end if
+#endif				
+			case vbCancel
+				choose_dokmag_for_dokhandl = -1
+		end select		
+	end if
+
+end function
+
+
+
+
+
+function suply_customer (byref pDH , byref idCustomer , byref idCustomerJO): suply_customer = false
+
+	if pDH.pKlient is nothing then
+		idCustomer = fire_choice_list( TYPEID_N5KLIENT, "Wybór klienta", "strNazwa", "","","")
+		if idCustomer > 0 then
+			set pDH.pKlient	= trans_.getobj(TYPEID_N5KLIENT , idCustomer )
+		else
+			exit function
+		end if
+	else
+		idCustomer = pDH.pKlient.idobj
+	end if
+
+
+	if not pDH.pKlient_JO is nothing then
+		idCustomerJO = pDH.pKlient_JO.idobj
+	else		
+		'wybierzemy jednostke organizacyjną jezeli klinet jakies posiada...
+		idCustomerJO = trans_.findobjid(TYPEID_N5_KLIENT_JEDN_ORG, "pKlient=" + cstr(idCustomer) )
+		if idCustomerJO <> 0 then
+			idCustomerJO = fire_choice_list( TYPEID_N5_KLIENT_JEDN_ORG, "Wybór jednostki organizacyjnej klienta", "strNazwa", "pKlient=" + cstr(idCustomer) ,"","")	
+			if idCustomerJO > 0 then
+				set pDH.pKlient_JO	= trans_.getobj(TYPEID_N5_KLIENT_JEDN_ORG , idCustomerJO )
+			end if
+		end if
+	end if
+
+	suply_customer = true
+
+end function
+
+
+
+function suply_dhm_org(byval pDHM):set suply_dhm_org = pDHM
+
+	if pDHM.type = TYPEID_N5SPRZEDAZ then
+
+		if not pDHM.pPopSprzed is nothing then		
+			if pDHM.pPopSprzed.pPopSprzed is nothing then
+				set suply_dhm_org =  pDHM.pPopSprzed
+			else
+				set suply_dhm_org = suply_dhm_org(pDHM.pPopSprzed)
+			end if
+		end if
+
+	end if
+
+
+
+	if pDHM.type = TYPEID_N5ZAKUP then
+
+		if not pDHM.pPopZakup is nothing then		
+			if pDHM.pPopZakup.pPopZakup is nothing then
+				set suply_dhm_org =  pDHM.pPopZakup
+			else
+				set suply_dhm_org = suply_dhm_org(pDHM.pPopZakup)
+			end if
+		end if
+
+	end if
+
+end function
+
+
+public function is_zwrot(byval nTypRejestru)
+	is_zwrot = (nTypRejestru = N5REJESTRDOK__ZZ) or (nTypRejestru = N5REJESTRDOK__ZD)
+end function
+
+
+public function korekta_wartosciowa(byval pDokHandl):korekta_wartosciowa = false
+
+	dim iter
+	dim pos_org,pos_kor
+	select case pDokHandl.type
+		case TYPEID_N5ZAKUP
+			if pDokHandl.pPopZakup is nothing then
+				exit function
+			end if
+			if pDokHandl.listPozycje.count() <> pDokHandl.pPopZakup.listPozycje.count() then
+				exit function
+			end if
+			for iter = 1 to pDokHandl.listPozycje.count()
+				set pos_org = pDokHandl.listPozycje.get(iter)
+				set pos_kor = pDokHandl.pPopZakup.listPozycje.get(iter)
+				if	pos_org.pProdukt.idobj = pos_kor.pProdukt.idobj and _
+					pos_org.pOpak.idobj = pos_kor.pOpak.idobj and _
+					pos_org.curIloscOpak = pos_kor.curIloscOpak then					
+					korekta_wartosciowa = true
+				else
+					korekta_wartosciowa = false
+					exit function											
+				end if
+									
+			next
+	end select
+	
+end function
+
+
+
+
+function wycofaj_realizacje( byref pDokHandl , byval pDokMag):wycofaj_realizacje = true
+	dim poz_dm,poz_zam
+	dim nZnalazlem:nZnalazlem = 0
+	for each poz_dm in pDokMag.listPozycje
+		'szukaj odpowiadajacehj na zamowieniu
+		for each poz_zam in pDokHandl.listPozycje
+			if	poz_dm.pProdukt.idobj = poz_zam.pProdukt.idobj and _
+				poz_dm.pOpak.idobj = poz_zam.pOpak.idobj and _
+				poz_zam.pzam_curIloscOpakZreal - poz_dm.curIloscOpak >= 0 then
+				nZnalazlem = nZnalazlem + 1
+				exit for
+			end if			
+		next
+		'tutaj poz_zam to to, co musimy zmodyfikowac 
+		if not isEmpty(poz_zam) then
+			poz_zam.pzam_curIloscOpakZreal = poz_zam.pzam_curIloscOpakZreal - poz_dm.curIloscOpak
+		end if
+	next
+		
+	if not nZnalazlem = pDokMag.listPozycje.count() then
+		wycofaj_realizacje = false
+		trans_.message 1002 , 0 , "Nie udało się wycofać wybranej realizacji zamówienia (" + pDokMag.text + ") - nie znaleziono odpowiadających pozycji lub nie zgadzają się ilości zrealizowane. Spróbuj utworzyć nowy dokument magazynowy zamiast wybierac wczesniej utworzony."			
+	end if
+
+end function
+
+
+
+
+
+
+
+
+
+
+#comment '****************************************************************
+#comment '----------------------------------------------------------
+#comment 'transporter do dokumentów handl-mag produktów
+#comment '----------------------------------------------------------
+class CDHMTransItem
+	public m_idProd
+	public m_idOpak
+	public m_curIlosc
+
+	public m_curIloscDostepna
+
+	public m_dDataWazn
+	public m_strUwagi
+
+	'dostawy
+	public m_nNumOpMagDost
+	public m_nLpDost
+	public m_nLP
+
+	public m_nDestDHMType
+
+
+	'ceny do zakupów/sprzedaży
+	public m_curCenaBazNetto
+	public m_curCenaBazBrutto
+	public m_curRabat
+	public m_curCenaNetto
+	public m_curCenaBrutto	
+	public m_curWartNetto
+
+
+	public m_strExtra1
+	public m_strExtra2
+	public m_dExtra3
+	public m_curExtra4
+	public m_curExtra5
+	public m_pKEx
+
+	public m_pObiektKlienta
+
+
+
+	private sub class_initialize()
+		m_idProd = clng(0)
+		m_idOpak = clng(0)
+		m_curIlosc = ccur(0.0)
+		m_curIloscDostepna = ccur(-1)
+		m_dDataWazn = trans_.afc.globals.nulldate()
+		m_strUwagi = ""
+
+		m_nNumOpMagDost = clng(0)
+		m_nLpDost = clng(0)
+		m_nDestDHMType = clng(0)
+
+		set m_pObiektKlienta = nothing
+
+	end sub
+
+	'************************************************
+	'wypełnienie z pozycji dokumentu handloweg
+	public function from_position (byval dhm_position , byval iter , byval cDHMTransporter, byval iDestDMType):from_position = false
+		m_nDestDHMType = cDHMTransporter.m_nDestDHMType
+
+		if dhm_position.pProdukt is nothing or dhm_position.pOpak is nothing then
+			trans_.message 1002 , 0 , "Na pozycji nie wskazano produktu lub opakowania"
+			exit function
+		end if
+
+		m_idProd = dhm_position.pProdukt.idobj
+		m_idOpak = dhm_position.pOpak.idobj
+		m_curIlosc = dhm_position.curIloscOpak
+
+
+		'pola extra
+		m_strExtra1 = dhm_position.strExtra1
+		m_strExtra2 = dhm_position.strExtra2
+		m_dExtra3 = dhm_position.dExtra3
+		m_curExtra4 = dhm_position.curExtra4
+		m_curExtra5 = dhm_position.curExtra5
+		set m_pKEx = dhm_position.pKwalifikatorEx		
+#ifdef _ABAS
+		m_strUwagi = dhm_position.strUwagi
+#endif
+
+
+		select case dhm_position.type
+			case TYPEID_N5POZSPRZEDAZ
+				from_pozsprzed dhm_position , iter
+			case TYPEID_N5POZZAKUP
+				from_pozzakup dhm_position , iter
+			case TYPEID_N5POZDOKMAG
+				from_pozdokmag dhm_position , iter
+			case TYPEID_N5POZZAMOWIENIE				
+				if not from_pozzam ( dhm_position , iter , cDHMTransporter, iDestDMType) then					
+					exit function
+				end if
+		end select 
+		from_position = true
+	end function
+
+
+
+	'************************************************
+	'wypełnienie z pozycji dokmag
+	private function from_pozzam (byref pozzam , byval iter , byref pDHMTransporter, byval iDestDMType):from_pozzam = false
+		'tylko dla obcego sprawdzamy stany magazynowe
+#ifdef _ABAKOSTEEL
+		if pDHMTransporter.m_eRejestrDokType <> N5REJESTRDOK__ZAM_WLASNE then
+#else
+		if pDHMTransporter.m_eRejestrDokType <> N5REJESTRDOK__ZAM_WLASNE and iDestDMType <> N5REJESTRDOK_REZERWACJE then
+#endif		
+			if not get_stan_mag (pDHMTransporter) then
+				exit function
+			end if
+		end if
+
+		m_curIlosc = pozzam.curIloscOpakPoz
+    if not pDHMTransporter.m_pObiektKlienta is nothing then
+       set m_pObiektKlienta = pDHMTransporter.m_pObiektKlienta
+    end if
+
+		'tylko dla obcego sprawdzymy ilosc dostepna
+#ifdef _ABAKOSTEEL
+		if pDHMTransporter.m_eRejestrDokType <> N5REJESTRDOK__ZAM_WLASNE then
+#else
+		if pDHMTransporter.m_eRejestrDokType <> N5REJESTRDOK__ZAM_WLASNE and iDestDMType <> N5REJESTRDOK_REZERWACJE then
+#endif	
+
+			if (m_curIlosc > m_curIloscDostepna) then
+				'mozliwosc czesciowej realizacji
+				if  pDHMTransporter.m_zam_cKomplet = "1" then
+					trans_.message 1002 , 0 , pozzam.text + " - braki na magazynie - mozliwosc realizacji czesciowej - ustawiam ilosc na " + cstr(m_curIloscDostepna)
+					m_curIlosc = m_curIloscDostepna
+				else
+					trans_.message 1002 , 0 , pozzam.text + " - braki na magazynie - brak mozliwosci realizacji czesciowej - ustawiam ilosc na 0"
+					m_curIlosc = ccur(0)
+					exit function
+				end if
+			end if
+
+		end if			
+
+		if m_nDestDHMType = N5REJESTRDOK__WZ or m_nDestDHMType = N5REJESTRDOK__PZ then
+			pozzam.pzam_curIloscOpakZreal = pozzam.pzam_curIloscOpakZreal + m_curIlosc
+		end if
+		m_curCenaNetto = pozzam.curCenaNetto
+		m_curWartNetto = pozzam.curWartNetto
+
+		from_pozzam = true
+	end function
+
+
+	private function get_stan_mag (byval pDHMTransporter):get_stan_mag = false
+	
+		if pDHMTransporter.m_idMagazynZrod < 1 then
+			trans_.message 1002 , 0 , "Proba pobrania stanow magazynowych nieudana - nie okreslono magazynu"
+			exit function	
+		end if
+		dim rs
+		set rs = trans_.createadors( doc_.getmodule(60300).bqry_stan_mag_for_prod_opak( m_idProd , m_idOpak , pDHMTransporter.m_idMagazynZrod ))
+
+		if rs.eof then
+			m_curIloscDostepna = ccur(0)
+		else
+			m_curIloscDostepna = ccur(rs("c_ilosc_opak"))
+#ifdef _ABAKOSTEEL
+			m_curIloscDostepna = getStanDoSprzedazy(m_curIloscDostepna, pDHMTransporter.m_idobjSrcDok)
+#endif
+		end if
+
+		get_stan_mag = true
+		
+	end function
+	
+	'--------------------------------------
+	'wylicza stan do sprzedaży (Abakosteel)
+	'--------------------------------------
+	private function getStanDoSprzedazy(byval curIloscDostepna, byref zamObceId): getStanDoSprzedazy = ccur(curIloscDostepna)
+		dim idMagRezerw: idMagRezerw = trans_.findobjid(TYPEID_N5MAGAZYN, "eTyp = N5TYPMAG_REZERWACJE")
+		if idMagRezerw > 0 then
+			dim curIloscRez, iloscNiez
+			dim rs:	set rs = trans_.createadors(doc_.getmodule(60300).bqry_stan_mag_for_prod_opak(m_idProd, m_idOpak, idMagRezerw))
+			if rs.eof then
+				curIloscRez = ccur(0)
+			else
+				curIloscRez = ccur(rs("c_ilosc_opak"))
+			end if
+			iloscNiez = doc_.getmodule(60106).getIloscZamObceByProdukt(m_idProd,zamObceId,false)
+			getStanDoSprzedazy = getStanDoSprzedazy - iloscNiez + curIloscRez
+			if getStanDoSprzedazy < ccur(0) then
+				getStanDoSprzedazy = ccur(0)
+			end if
+		end if	
+	end function
+
+
+	'************************************************
+	'wypełnienie z pozycji dokmag
+	private function from_pozdokmag (byval pozdokmag , byval iter)	
+		m_nNumOpMagDost = pozdokmag.nNumOpMagDost
+		m_nLpDost = pozdokmag.nLpDost
+		m_nLP = iter
+	end function
+
+	'************************************************
+	'wypełnienie z pozycji sprzedazy
+	private function from_pozsprzed (byval pozsprzed, byval iter)		
+		m_curCenaBazNetto = pozsprzed.curCenaBazNetto
+		m_curCenaBazBrutto = pozsprzed.curCenaBazBrutto
+		m_curRabat = pozsprzed.curRabat
+		m_curCenaNetto = pozsprzed.curCenaNetto
+		m_curCenaBrutto = pozsprzed.curCenaBrutto
+		set m_pObiektKlienta = pozsprzed.psprzed_pKLOB
+	end function
+
+	'************************************************
+	'wypełnienie z pozycji sprzedazy
+	private function from_pozzakup (byval pozzakup, byval iter)		 
+'	if (pozzakup.parent.n5zakup_isImportNieUE() or pozzakup.parent.n5zakup_isImportUE()) then
+'		m_curWartNetto = pozzakup.curWartNetto
+'	else
+    DEBUG_MESSAGE("zawsze dodaje do PZ'tki tworzonej z WNT oplaty krajowe")
+		m_curWartNetto = pozzakup.curWartNetto + pozzakup.curOplatyKraj
+'	end if
+  end function
+
+	'************************************************
+	'wypelnienie na podstawie struktury pozycji dokumentu handlowego lub magazynowego
+	public function to_dhm_pos (byref poz_dhm , byval cDHMTransItemParent , byval iter):to_dhm_pos = true
+		set poz_dhm.pProdukt = trans_.getobj(TYPEID_N5PRODUKT,m_idProd)
+		set poz_dhm.pOpak = poz_dhm.pProdukt.listOpakowania.get(poz_dhm.pProdukt.listOpakowania.findonid(m_idOpak))		
+		select case poz_dhm.type
+			case TYPEID_N5POZDOKMAG
+				to_poz_dokmag poz_dhm , cDHMTransItemParent , iter
+			case TYPEID_N5POZSPRZEDAZ
+				to_poz_sprzed poz_dhm , cDHMTransItemParent , iter
+		end select
+		
+		poz_dhm.strExtra1 = m_strExtra1
+		poz_dhm.strExtra2 = m_strExtra2
+		poz_dhm.dExtra3 = m_dExtra3
+#ifdef _ALMA_TREND
+		if not (poz_dhm.parent.pRejestrDok.eTyp = N5REJESTRDOK__WZ or poz_dhm.parent.pRejestrDok.eTyp = N5REJESTRDOK__PZ) then
+			poz_dhm.curExtra4 = m_curExtra4      
+		end if
+#else
+#ifdef _ABAKUS
+    if poz_dhm.parent.pRejestrDok.eTyp =  N5REJESTRDOK__WZ then
+       poz_dhm.curExtra4 = trans_.afc.convert.roundn(poz_dhm.curIloscOpak * poz_dhm.pOpak.curWagaNetto / 1000, 4)
+    end if
+#else
+		poz_dhm.curExtra4 = m_curExtra4
+#endif
+#endif    
+		poz_dhm.curExtra5 = m_curExtra5
+		set poz_dhm.pKwalifikatorEx = m_pKEx
+    if poz_dhm.type = TYPEID_N5POZDOKMAG then
+		  set poz_dhm.pdm_pObiektKlienta = m_pObiektKlienta
+    end if 
+
+	end function
+
+	'************************************************
+	'wypelnienie na podstawie struktury pozycji dokumentu magazynowego
+	private function to_poz_sprzed (byref poz_sprzed , byval cDHMTransItemParent , byval iter)
+		poz_sprzed.curIloscOpak = m_curIlosc
+		if poz_sprzed.parent.eNettoBrutto = N5SPRZEDAZ_BRUTTO then
+			if not isEmpty(m_curCenaBazBrutto) then
+				poz_sprzed.curCenaBazowaBruttoWal = m_curCenaBazBrutto
+			end if
+			if not isEmpty(m_curRabat) then
+				poz_sprzed.curRabat	= m_curRabat
+			end if
+			if not isEmpty(m_curCenaBrutto) then
+				poz_sprzed.curCenaBruttoWal	= m_curCenaBrutto
+			end if
+		else
+			if not isEmpty(m_curCenaBazNetto) then
+				poz_sprzed.curCenaBazowaNettoWal = m_curCenaBazNetto
+			end if
+			if not isEmpty(m_curRabat) then
+				poz_sprzed.curRabat	= m_curRabat
+			end if
+			if not isEmpty(m_curCenaNetto) then
+				poz_sprzed.curCenaNettoWal	= m_curCenaNetto
+			end if
+		end if
+
+	end function
+
+	'************************************************
+	'wypelnienie na podstawie struktury pozycji dokumentu magazynowego
+	private function to_poz_dokmag (byref poz_dokmag , byval cDHMTransItemParent , byval iter)
+		if m_curIlosc < 0 then
+			trans_.message 1002 , 0 , "Proba wstawienia wartości ujemnej do pozycji dokumentu magazynowego"
+		end if
+		select case poz_dokmag.parent.pRejestrDok.eTyp
+			case N5REJESTRDOK__WZ
+				to_poz_wz poz_dokmag , cDHMTransItemParent , iter
+			case N5REJESTRDOK__PZ
+				to_poz_pz poz_dokmag , cDHMTransItemParent , iter
+			case N5REJESTRDOK__ZZ
+				to_poz_zz poz_dokmag , cDHMTransItemParent , iter
+			case N5REJESTRDOK__ZD
+				to_poz_zd poz_dokmag , cDHMTransItemParent , iter
+			case N5REJESTRDOK_REZERWACJE
+				to_poz_rezerw poz_dokmag , cDHMTransItemParent , iter
+			case N5REJESTRDOK__MM
+				to_poz_mm poz_dokmag, cDHMTransItemParent, iter        
+		end select
+#ifdef _ALMA_TREND
+		if poz_dokmag.parent.pRejestrDok.eTyp = N5REJESTRDOK__WZ or poz_dokmag.parent.pRejestrDok.eTyp = N5REJESTRDOK__PZ then
+			wylicz_wage poz_dokmag
+		end if
+#endif
+	end function
+  
+	'************************************************
+	'przelicz wagę na pozycji dokumentu magazynowego Alma Trend
+	private function wylicz_wage(byref poz)
+		if not poz.pProdukt is nothing and not poz.pOpak is nothing then
+			poz.curExtra4 = poz.curIloscOpak * poz.pOpak.curWagaNetto
+		end if
+	end function  
+
+	'************************************************
+	'wypelnienie na podstawie struktury pozycji dokumentu mm
+	private function to_poz_mm(byref poz_mm, byval cDHMTransItemParent, byval iter)
+		poz_mm.curIloscOpak = m_curIlosc
+	end function
+
+	'************************************************
+	'wypelnienie na podstawie struktury pozycji dokumentu zz
+	private function to_poz_zz (byref poz_zz , byval cDHMTransItemParent , byval iter)
+		poz_zz.curIloscOpak = m_curIlosc
+		'pozycja zwrotu zewnetrzengo ma jako numer dostawy numer operacji z dokuemntu zrodloweego
+		poz_zz.nNumOpMagDost = cDHMTransItemParent.m_nNumOper
+		poz_zz.nLpDost = iter
+	end function
+
+
+	'************************************************
+	'wypelnienie na podstawie struktury pozycji dokumentu zz
+	private function to_poz_zd (byref poz_zd , byval cDHMTransItemParent , byval iter)
+		poz_zd.curIloscOpak = m_curIlosc
+		'pozycja zwrotu zewnetrzengo ma jako numer dostawy numer operacji z dokuemntu zrodloweego
+		poz_zd.nNumOpMagDost = cDHMTransItemParent.m_nNumOper
+		poz_zd.nLpDost = iter
+	end function
+
+
+	'************************************************
+	'wypelnienie na podstawie struktury pozycji dokumentu wz
+	private function to_poz_wz (byref poz_wz , byval cDHMTransItemParent, byval iter)
+		poz_wz.curIloscOpak = m_curIlosc	
+		set poz_wz.pdm_pObiektKlienta = m_pObiektKlienta		
+#ifdef _ABAS
+		poz_wz.strUwagi = m_strUwagi
+#endif
+	end function
+
+	'************************************************
+	'wypelnienie na podstawie struktury pozycji dokumentu wz
+	private function to_poz_rezerw (byref poz_wz , byval cDHMTransItemParent, byval iter)
+		poz_wz.curIloscOpak = m_curIlosc		
+	end function
+
+
+	'************************************************
+	'wypelnienie na podstawie struktury pozycji dokumentu pz
+	private function to_poz_pz (byref poz_pz , byval cDHMTransItemParent, byval iter)		
+		'tu robimy rozbicie
+		'patrz funkcja wylicz_rozbicie z 50103
+		dim curOutputIlosc1,curOutputCena1,curOutputIlosc2,curOutputCena2
+
+		wylicz_rozbicie m_curIlosc , m_curWartNetto , _ 
+					curOutputIlosc1 , curOutputCena1 , curOutputIlosc2 , curOutputCena2 , _ 
+					poz_pz.pOpak.pJednOpak.nDokladnosc-1
+
+		poz_pz.curIloscOpak = curOutputIlosc1
+#ifdef _DEBUG
+		trans_.message 1002 , 0 , "DEBUG: to_poz_pz: rozbicie:  " + cstr(curOutputIlosc1)
+		if poz_pz.curIloscOpak = 0 then
+			trans_.message 1002 , 0 , "DEBUG: " + poz_pz.text + " - ilosc zerowa po rozbiciu!"
+		end if
+#endif
+		poz_pz.curCenaMag = curOutputCena1
+
+		dim poz_pz_ex
+		if curOutputIlosc2 <> 0  then
+			set poz_pz_ex = poz_pz.parent.listPozycje.AddNew()
+			set poz_pz_ex.pProdukt = poz_pz.pProdukt
+			set poz_pz_ex.pOpak = poz_pz.pOpak
+			poz_pz_ex.curIloscOpak = curOutputIlosc2
+#ifdef _DEBUG
+			trans_.message 1002 , 0 , "DEBUG: to_poz_pz: rozbicie 2 :  " + cstr(curOutputIlosc2)
+			if poz_pz_ex.curIloscOpak = 0 then
+				trans_.message 1002 , 0 , "DEBUG: " + poz_pz_ex.text + " - ilosc zerowa po rozbiciu!"
+			end if
+#endif
+			poz_pz_ex.curCenaMag = curOutputCena2			
+		end if
+				
+	end function
+
+end class
+
+class CDHMTransporter
+	public m_oItems
+
+	public m_idobjSrcDok
+	public m_typeidSrcDok
+	public m_idKlient
+	public m_idKlientJO
+
+	public m_idSposDostawy
+
+	public m_idMagazynDocel
+	public m_idMagazynZrod
+
+	public m_idRejestrDok
+	public m_eRejestrDokType
+
+	public m_nNumOper
+
+	public m_nDestDHMType
+
+	'liczenie vat'u na sprzedazy
+	public m_eSposVat ' pozycje lub suma
+	public m_eNettoBrutto
+
+	public m_strAdnotacje
+
+	public m_zam_cKomplet
+	public m_pObiektKlienta
+
+	'waluty
+	public m_pWaluta
+	public m_curKurs
+
+
+	private sub class_initialize()
+		set m_oItems = trans_.afc.new_navoarray()
+		m_idobjSrcDok = 0
+		m_typeidSrcDok = 0
+		m_idKlient = 0
+		m_idKlientJO  = 0
+		m_idMagazynDocel = 0
+		m_idMagazynZrod = 0
+		m_nNumOper = -1
+		m_nDestDHMType = clng(0)
+
+		m_eSposVat = clng(0)
+		m_eNettoBrutto = clng(0)
+
+		m_strAdnotacje = ""
+		set m_pWaluta = nothing
+		m_curKurs = ccur(1)
+		set m_pObiektKlienta = nothing    
+	end sub
+
+	private sub class_terminate()   'OK
+		set m_oItems = nothing
+	end sub
+
+
+
+	public sub load_stany_magazynowe()
+	end sub
+
+	'zwraca index w tablicy m_oItems pozycji zgodnej z podanym produktem/opakowaniem
+	'-1 gdy nie ma
+	public function find_on_prod(byval idProd,byval idOpak)
+		dim nInx:nInx = -1
+		dim iter
+		dim pos
+		for iter = 0 to m_oItems.UpperIndex
+			set pos = m_oItems.value(iter)
+			if pos.m_idProd = idProd and pos.m_idOpak = idOpak then
+				if nInx = -1 then
+					nInx = iter
+				else
+					nInx = -2
+				end if
+			end if
+		next
+		find_on_prod = nInx
+	end function
+
+
+	'szuka pierwszego pasującego produktu - z iloscią większą niż podana w parametrze
+	public function find_on_prod_by_quant(byval idProd,byval idOpak,byval curIlosc)
+
+		dim nInx:nInx = -1
+		dim iter
+		dim pos
+		for iter = 0 to m_oItems.UpperIndex
+			set pos = m_oItems.value(iter)
+			if pos.m_idProd = idProd and pos.m_idOpak = idOpak and  pos.m_curIlosc >= curIlosc  then
+				if nInx = -1 then
+					nInx = iter
+					find_on_prod_by_quant = nInx
+					exit function				
+				end if
+			end if
+		next
+		find_on_prod_by_quant = nInx
+	end function
+
+
+	'szuka pierwszego pasującego produktu - z iloscią większą niż podana w parametrze
+	public function find_on_prod_by_quant_and_dostawa(byval idProd,byval idOpak,byval curIlosc,byval nNumDost , byval nLpDost)
+		dim nInx:nInx = -1
+		dim iter
+		dim pos
+		for iter = 0 to m_oItems.UpperIndex
+			set pos = m_oItems.value(iter)
+			if pos.m_idProd = idProd and pos.m_idOpak = idOpak and  pos.m_curIlosc >= curIlosc and  pos.m_nLp = nLpDost and m_nNumOper=nNumDost then
+				if nInx = -1 then
+					nInx = iter
+					find_on_prod_by_quant_and_dostawa = nInx
+					exit function				
+				end if
+			end if
+		next
+		find_on_prod_by_quant_and_dostawa = nInx
+	end function
+	
+	'dodaje nową pozycję
+	public function addnew_pos()
+		m_oItems.Add(new CDHMTransItem)
+		set addnew_pos = m_oItems.Value(m_oItems.UpperIndex)
+	end function
+
+	'zwraca właściwą pozycję dla produktu, może dodać nową
+	public function get_on_prod(byval idProd,byval idOpak)
+		dim nInx : nInx = find_on_prod(idProd,idOpak)
+		if nInx >= 0 then
+			set get_on_prod = m_oItem.Value(nInx)
+		else
+			set get_on_prod =  addnew_pos()
+		end if
+	end function
+
+	'*******************************************
+	'wypełnienie struktury z dokumentu handlowego lub magaznowego
+	public function from_dhm(byval pDokHandl, byval nDestType):from_dhm = false
+    from_dhm = from_dhm_ex(pDokHandl, nDestType, nothing)
+  end function
+  
+	'wypełnienie struktury z dokumentu handlowego lub magaznowego (rozszerzona o słownik z wybranymi pozycjami)
+	public function from_dhm_ex(byval pDokHandl, byval nDestType, byref pDictPos):from_dhm_ex = false
+		m_idobjSrcDok = pDokHandl.idobj
+		m_typeidSrcDok = pDokHandl.type
+		m_idRejestrDok = pDokHandl.pRejestrDok.idobj
+		m_eRejestrDokType = pDokHandl.pRejestrDok.eTyp
+		m_nDestDHMType = nDestType
+		select case m_typeidSrcDok
+			case TYPEID_N5DOKMAG
+				from_dokmag pDokHandl
+			case TYPEID_N5SPRZEDAZ
+				from_sprzed pDokHandl
+			case TYPEID_N5ZAKUP
+				if nDestType = N5REJESTRDOK__PZ then
+					'to w razie gdybysmy mieli do czynienia z korekta wartosiowa
+					'wtedy wszystko odnosi sie do oryginalu, ale wypelniamy 
+					' zawartoscią korekty i nie kojarzymy PZ z korektą tylko z oryginalem
+					m_idobjSrcDok = suply_dhm_org(pDokHandl).idobj
+				end if
+				from_zakup pDokHandl
+			case TYPEID_N5ZAMOWIENIE				
+				if nDestType = N5REJESTRDOK__PZ then
+					from_zam_wlasne pDokHandl
+				else
+					if nDestType = N5REJESTRDOK__MM then
+						from_zam_2_mm pDokHandl
+					else
+						from_zam_obce pDokHandl, nDestType
+					end if
+				end if
+				
+		end select
+
+		dim dhm_position
+		dim iter:iter = 1
+		for each dhm_position in pDokHandl.listPozycje
+			if dhm_position.pProdukt is nothing or dhm_position.pOpak is nothing then
+				trans_.message 002 , 0 , "Na pozycji dokumentu handlowego nie podano produktu lub opakowania"
+				exit function
+			end if
+      if not pDictPos is nothing then
+        if pDictPos.Exists(iter) then
+			    if not addnew_pos().from_position (dhm_position , iter , me, nDestType) then
+				    exit function
+			    end if      
+        end if
+      else
+			  if not addnew_pos().from_position (dhm_position , iter , me, nDestType) then
+				  exit function
+			  end if
+      end if
+			iter = iter + 1
+		next
+		set dhm_position = nothing
+
+		from_dhm_ex = true
+
+	end function
+
+
+	'*******************************************
+	'wypełnienie struktury z dokumentu handlowego
+	'specjalizacja - z dokmag
+	private function from_dokmag(byval pDokMag )
+
+		if not pDokMag.pKlient is nothing then
+			m_idKlient = pDokMag.pKlient.idobj
+		end if
+
+		if not pDokMag.pKlient_JO is nothing then
+			m_idKlientJO = pDokMag.pKlient_JO.idobj
+		end if
+
+		m_nNumOper = pDokMag.nNumOper
+		if not pDokMag.pMagDocel is nothing then
+			m_idMagazynDocel = pDokMag.pMagDocel.idobj
+		end if
+		if not pDokMag.pMagZrod is nothing then
+			m_idMagazynZrod = pDokMag.pMagZrod.idobj
+		end if
+	end function
+
+
+	'*******************************************
+	'wypełnienie struktury z dokumentu handlowego 
+	'specjalizacja - z faktury sprzedazy
+	private function from_sprzed(byval pSprzedaz )
+
+		if not pSprzedaz.pKlient is nothing then
+			m_idKlient = pSprzedaz.pKlient.idobj
+		end if
+
+		if not pSprzedaz.pKlient_JO is nothing then
+			m_idKlientJO = pSprzedaz.pKlient_JO.idobj
+		end if
+
+		if not pSprzedaz.sprzed_pSposobDostawy is nothing then
+			m_idSposDostawy = pSprzedaz.sprzed_pSposobDostawy.idobj
+		end if
+		
+		m_eSposVat = pSprzedaz.eSposVAT
+		m_eNettoBrutto = pSprzedaz.eNettoBrutto
+		m_strAdnotacje = pSprzedaz.strUwagi
+		
+	end function
+
+
+	'*******************************************
+	'wypełnienie struktury z dokumentu handlowego
+	'specjalizacja - z zamowienia
+	private function from_zam_obce(byval pZamO, byval iDestDMType)
+		DEBUG_MESSAGE("THIS_FILE: from_zam_obce")
+
+		if not pZamO.pKlient is nothing then
+			m_idKlient = pZamO.pKlient.idobj
+		end if
+	
+		if not pZamO.pZadanie is nothing then
+      set m_pObiektKlienta = pZamO.pZadanie.zad_pKLOB
+	  end if
+
+		if not pZamO.pKlient_JO is nothing then
+			m_idKlientJO = pZamO.pKlient_JO.idobj
+		end if
+
+		if not pZamO.pRejestrDok.wrefParam2 is nothing then
+			if pZamO.pRejestrDok.wrefParam2.type = TYPEID_N5MAGAZYN then
+				m_idMagazynZrod = pZamO.pRejestrDok.wrefParam2.idobj
+			end if
+		end if
+
+		if m_idMagazynZrod = 0 and iDestDMType <> N5REJESTRDOK_REZERWACJE then
+			m_idMagazynZrod  = fire_choice_list_disable_add(TYPEID_N5MAGAZYN ,"Wybierz magazyn wydania","","eTyp=N5TYPMAG_PODSTAWOWY","","")
+		end if
+
+		m_zam_cKomplet = pZamO.zam_cKomplet
+		m_strAdnotacje = pZamO.strUwagi
+
+	end function
+
+
+
+	private function from_zam_wlasne(byval pZamO )
+		DEBUG_MESSAGE("THIS_FILE: from_zam_wlasne")
+
+		if not pZamO.pKlient is nothing then
+			m_idKlient = pZamO.pKlient.idobj
+		end if
+
+		if not pZamO.pKlient_JO is nothing then
+			m_idKlientJO = pZamO.pKlient_JO.idobj
+		end if		
+
+	end function
+
+
+
+
+
+	private function from_zam_2_mm(byval pZam )
+		DEBUG_MESSAGE("THIS_FILE: from_zam_2_mm")
+
+		if not pZam.pKlient is nothing then
+			m_idKlient = pZam.pKlient.idobj
+		end if
+
+		if not pZam.pKlient_JO is nothing then
+			m_idKlientJO = pZam.pKlient_JO.idobj
+		end if
+
+		if m_idMagazynZrod = 0 then
+			m_idMagazynZrod  = fire_choice_list_disable_add(TYPEID_N5MAGAZYN ,"Wybierz magazyn wydania","","eTyp=N5TYPMAG_PODSTAWOWY","","")
+		end if
+
+		if m_idMagazynDocel = 0 then
+			m_idMagazynDocel  = fire_choice_list_disable_add(TYPEID_N5MAGAZYN ,"Wybierz magazyn docelowy","","eTyp=N5TYPMAG_PODSTAWOWY","","")
+		end if
+
+		m_zam_cKomplet = pZam.zam_cKomplet
+
+	end function
+
+
+	'*******************************************
+	'wypełnienie struktury z dokumentu handlowego 
+	'specjalizacja - z faktury zakupy
+	private function from_zakup(byval pZakup )
+
+		if not pZakup.pDostawca is nothing then
+			m_idKlient = pZakup.pDostawca.idobj
+		end if
+
+		if not pZakup.pDostawca_JO is nothing then
+			m_idKlientJO = pZakup.pDostawca_JO.idobj
+		end if	
+		
+		m_strAdnotacje = pZakup.strUwagi	
+		
+	end function
+
+
+
+	'*******************************************
+	'parametr idMagazyn zapamiętuje pojedynczy wybór magazynu dla dok. magazynowych (kreator brakujących WZ)
+	public function to_dhm_auto(byref pDokHandl, byref idMagazyn):to_dhm_auto = clng(0)
+		select case pDokHandl.type
+			case TYPEID_N5DOKMAG
+				to_dhm_auto = to_dokmag_auto(pDokHandl,idMagazyn)
+			case TYPEID_N5SPRZEDAZ
+				to_dhm_auto = to_sprzed(pDokHandl)
+			case else
+#ifdef _DEBUG
+			trans_.message 1002 , 0 , "to_dhm_auto - cos nie tak"
+#endif
+		end select
+
+
+	end function
+  
+	'*******************************************
+	'wypełnienie ze struktury dokuemntu handlowego lub magazynowego
+	public function to_dhm(byref pDokHandl):to_dhm = clng(0)
+    to_dhm = to_dhm_auto(pDokHandl, 0)
+	end function  
+
+
+	'*******************************************
+	'wypełnienie ze struktury dokumentu sprzedaży
+	private function to_sprzed (byref pSprzed ) : to_sprzed = clng(0)
+
+		if m_idKlient > 0 then
+			set pSprzed.pKlient = trans_.getobj(TYPEID_N5KLIENT , m_idKlient)
+		end if
+
+		if m_idKlientJO > 0 then
+			set pSprzed.pKlient_JO = trans_.getobj(TYPEID_N5_KLIENT_JEDN_ORG , m_idKlientJO)
+		end if
+
+		if m_eSposVAT > 0 then
+			pSprzed.eSposVAT = m_eSposVAT
+		end if
+
+		if m_eNettoBrutto > 0 then
+			pSprzed.eNettoBrutto = m_eNettoBrutto
+		end if
+
+		dim iter,cDHMTransItem
+		for iter = 0 to m_oItems.UpperIndex()
+			set cDHMTransItem = m_oItems.value(iter)			
+			cDHMTransItem.to_dhm_pos pSprzed.listPozycje.addnew() , me , iter + 1
+			to_sprzed = to_sprzed + 1
+		next
+
+	end function
+
+	'*******************************************
+	'wypełnienie ze struktury dokuemntu magazynowego
+	private function to_dokmag (byref pDokMag) : to_dokmag = clng(0)
+      to_dokmag = to_dokmag_auto(pDokMag,0)
+	end function
+  
+
+	'*******************************************
+	'automatycznie zapamiętanie id magazynu (kreator brakujących WZ)
+	private function to_dokmag_auto (byref pDokMag, byref idMagazyn) : to_dokmag_auto = clng(0)
+
+		dim bAskIfBraki:bAskIfBraki = false
+		dim nQuestionResult
+		select case pDokMag.pRejestrDok.eTyp			
+			case N5REJESTRDOK_REZERWACJE
+				bAskIfBraki = true
+				
+				if idMagazyn <> 0 then
+					m_idMagazynZrod = clng(idMagazyn)
+				end if
+        
+				to_rezerw pDokMag
+				if not pDokMag.pMagZrod is nothing then
+					get_stany_magazynowe pDokMag.pMagZrod.idobj
+				else
+					exit function
+				end if
+		end select
+
+		if m_idKlient > 0 then
+			set pDokMag.pKlient = trans_.getobj(TYPEID_N5KLIENT , m_idKlient)
+		end if
+
+		if m_idKlientJO > 0 then
+			set pDokMag.pKlient_JO = trans_.getobj(TYPEID_N5_KLIENT_JEDN_ORG , m_idKlientJO)
+    else
+      dim idCustomerJO : idCustomerJO = trans_.findobjid(TYPEID_N5_KLIENT_JEDN_ORG, "pKlient=" + cstr(m_idKlient))
+      
+      if idCustomerJO <> 0 then
+			  idCustomerJO = fire_choice_list(TYPEID_N5_KLIENT_JEDN_ORG, "Wybór jednostki organizacyjnej klienta", "strNazwa", "pKlient=" + cstr(m_idKlient) ,"","")	
+        if idCustomerJO > 0 then
+          set pDokMag.pKlient_JO	= trans_.getobj(TYPEID_N5_KLIENT_JEDN_ORG , idCustomerJO )
+        end if
+		  end if
+    
+		end if
+
+		if m_idSposDostawy > 0 then
+			set pDokMag.dm_pSposobDostawy = trans_.getobj(TYPEID_N5SPOSDOST , m_idSposDostawy)
+		end if
+
+#ifdef APPCONFIG_KOPIUJ_ADNOTACJE_Z_FAKTUR
+		pDokMag.strUwagi = m_strAdnotacje
+#endif
+
+#ifdef _HJORT
+		'zapamiętuje kwoty netto w przypadku usług (tworzenie PZ)
+		dim curSumWartUslugi: curSumWartUslugi = ccur(0)
+		dim curSumWartTowary: curSumWartTowary = ccur(0)
+#endif
+
+		pDokMag.cInternalAllowChanges = "1"
+		dim iter,cDHMTransItem
+
+#ifdef _IOW
+  nQuestionResult = vbYes
+#else
+  nQuestionResult = -1
+#endif
+
+		for iter = 0 to m_oItems.UpperIndex()
+			set cDHMTransItem = m_oItems.value(iter)
+			' w dokumencie magazyowym pomijamy uslugi
+      dim oProdukt : set oProdukt = trans_.getobj(TYPEID_N5PRODUKT,cDHMTransItem.m_idProd)
+			if oProdukt.eRodzaj = N5PRODUKT_TOWAR then
+				if cDHMTransItem.m_curIlosc > 0 then
+					if bAskIfBraki then ' jezeli pytamy to:
+						if cDHMTransItem.m_curIlosc > cDHMTransItem.m_curIloscDostepna then
+							if nQuestionResult = -1 then ' pytamy raz
+								nQuestionResult=MessageBoxCustom("Na magazynie " + pDokMag.pMagZrod.strNazwa + " znajduje się " +_
+                trans_.afc.display.quantity( cDHMTransItem.m_curIloscDostepna, oProdukt.pJednostkaEwid.strSkrot, oProdukt.pJednostkaEwid.nDokladnosc - 1) +_
+                " (mniej) towaru [" + oProdukt.text + "] niż chcesz zarezerwować (" +_
+                trans_.afc.display.quantity( cDHMTransItem.m_curIlosc, oProdukt.pJednostkaEwid.strSkrot, oProdukt.pJednostkaEwid.nDokladnosc - 1) +"). Możesz dopasować ilość do tej, jaka znajduje się na magazynie, pominąć pozycje w całości lub anulować rezerwację. Co chcesz zrobić?", "Rezerwacja towaru", vbYesNoCancel, vbQuestion, "Zmniejsz ilość;Pomiń pozycję;Anuluj rezerwację")
+							end if
+							if nQuestionResult = vbYes then
+								cDHMTransItem.m_curIlosc = cDHMTransItem.m_curIloscDostepna
+							end if
+							if nQuestionResult = vbNo then
+								cDHMTransItem.m_curIlosc = ccur(0)	
+							end if								
+						end if					
+					end if
+					
+					if cDHMTransItem.m_curIlosc > 0 then
+						cDHMTransItem.to_dhm_pos pDokMag.listPozycje.addnew() , me , iter + 1
+						to_dokmag_auto = to_dokmag_auto + 1
+					end if
+
+				end if
+#ifdef _HJORT
+				curSumWartTowary = curSumWartTowary + cDHMTransItem.m_curWartNetto
+			else
+				if pDokMag.pRejestrDok.eTyp = N5REJESTRDOK__PZ then
+					if cDHMTransItem.m_curIlosc > 0 then
+						curSumWartUslugi = curSumWartUslugi + cDHMTransItem.m_curWartNetto
+					end if
+				end if
+#endif
+			end if
+		next
+
+#ifdef _HJORT
+		if curSumWartUslugi > ccur(0) and curSumWartTowary > ccur(0) then
+			dim pPoz, curWartProp
+			dim curSumaBuf: curSumaBuf = curSumWartUslugi    
+			for each pPoz in pDokMag.listPozycje
+				curWartProp = trans_.afc.convert.round2(pPoz.curCenaMag/curSumWartTowary * curSumWartUslugi)
+				pPoz.curCenaMag = pPoz.curCenaMag + curWartProp
+				curSumaBuf = curSumaBuf - curWartProp
+			next
+			'wartość pozostała do ostatniej pozycji PZ
+			if curSumaBuf > ccur(0) then
+				pPoz.curCenaMag = pPoz.curCenaMag + curSumaBuf
+			end if
+		end if
+#endif
+
+		'po pozycjach, bo wtedy wiemy czy mamy jakiekolwiek i czy jest sie po co pytac np o magazyny
+		select case pDokMag.pRejestrDok.eTyp
+			case N5REJESTRDOK__WZ
+				to_wz pDokMag, idMagazyn
+			case N5REJESTRDOK__PZ
+				to_pz pDokMag
+			case N5REJESTRDOK__MM
+				to_mm pDokMag
+			case N5REJESTRDOK__ZZ
+				to_zz pDokMag
+			case N5REJESTRDOK__ZD
+				to_zd pDokMag
+			case N5REJESTRDOK_REZERWACJE
+				'to_rezerw pDokMag
+		end select
+
+		pDokMag.cInternalAllowChanges = "0"
+		
+	end function
+
+
+	'*******************************************
+	'wypełnienie ze struktury dokuemntu ZD - specyficzne pola
+	private function to_zd (byref pZD)
+		dim pPZ:set pPZ = trans_.getobj(TYPEID_N5DOKMAG,m_idobjSrcDok)
+		set pZD.pDokMag = pPZ
+		set pZD.pMagZrod = pPZ.pMagDocel		
+	end function
+
+
+	'*******************************************
+	'wypełnienie ze struktury dokuemntu ZZ - specyficzne pola
+	private function to_zz (byref pZZ)
+		dim pWZ:set pWZ = trans_.getobj(TYPEID_N5DOKMAG,m_idobjSrcDok)
+		set pZZ.pDokMag = pWZ
+		set pZZ.pMagDocel = pWZ.pMagZrod
+
+		dim pMagZwroty
+		dim id_magZwroty:id_magZwroty = trans_.findobjid(TYPEID_N5MAGAZYN , "eTyp = N5TYPMAG_ZWROTY")
+		
+		set pMagZwroty = trans_.getobj(TYPEID_N5MAGAZYN , id_magZwroty)
+		set pZZ.pMagZrod = pMagZwroty		
+				
+		set pWZ.pMagDocel = pMagZwroty
+
+	end function
+
+
+	'*******************************************
+	'wypełnienie ze struktury dokuemntu WZ - specyficzne pola
+	private function to_wz (byref pWZ, byref idMagazynZrod)
+  
+    if idMagazynZrod = 0 then
+      if pWZ.listPozycje.count() > 0 and m_idMagazynZrod = 0 then
+#ifdef _TORAL
+        if trans_.isvar(GVAR_REJESTR_PREFIX) then
+          dim strWhere: strWhere = "eTyp=N5TYPMAG_PODSTAWOWY and strNazwa like '" + Left(trans_.var(GVAR_REJESTR_PREFIX),2) + "%'"
+		  m_idMagazynZrod = trans_.findobjid(TYPEID_N5MAGAZYN, strWhere)
+        end if
+		if m_idMagazynZrod <= 0 then
+		  m_idMagazynZrod  = fire_choice_list_disable_add(TYPEID_N5MAGAZYN ,"Wybierz magazyn wydania","","eTyp=N5TYPMAG_PODSTAWOWY","","")
+		end if
+#else	  
+        m_idMagazynZrod  = fire_choice_list_disable_add(TYPEID_N5MAGAZYN ,"Wybierz magazyn wydania","","eTyp=N5TYPMAG_PODSTAWOWY","","")
+#endif		
+      end if
+      if m_idMagazynZrod > 0 then
+		    set pWZ.pMagZrod = trans_.getobj(TYPEID_N5MAGAZYN , m_idMagazynZrod)
+		  end if
+#ifdef _GRAJEWSCY
+      idMagazynZrod = m_idMagazynZrod
+#endif
+    else
+      set pWZ.pMagZrod = trans_.getobj(TYPEID_N5MAGAZYN , idMagazynZrod)
+    end if
+ 
+	end function
+
+
+	'*******************************************
+	'wypełnienie ze struktury dokuemntu WZ - specyficzne pola
+	private function to_rezerw (byref pRezerw)
+
+#ifdef _ALMA_TREND
+		if pRezerw.pMagZrod is nothing then
+#else
+		if pRezerw.pMagZrod is nothing and m_idMagazynZrod = 0  then
+#endif    
+			m_idMagazynZrod  = fire_choice_list_disable_add(TYPEID_N5MAGAZYN ,"Wybierz magazyn wydania","","eTyp=N5TYPMAG_PODSTAWOWY","","")
+		end if
+
+		if m_idMagazynZrod > 0 then
+			pRezerw.pMagZrod = trans_.getobj(TYPEID_N5MAGAZYN , m_idMagazynZrod)
+		end if
+
+	end function
+
+
+
+
+	'*******************************************
+	'wypełnienie ze struktury dokuemntu PZ - specyficzne pola
+	private function to_pz (byref pPZ)
+
+		if pPZ.pMagDocel is nothing and pPZ.listPozycje.count() > 0 and m_idMagazynDocel = 0 then
+			m_idMagazynDocel  = fire_choice_list_disable_add(TYPEID_N5MAGAZYN ,"Wybierz magazyn przyjęcia","","eTyp=N5TYPMAG_PODSTAWOWY","","")
+		end if
+
+		if m_idMagazynDocel > 0 then
+			pPZ.pMagDocel = trans_.getobj(TYPEID_N5MAGAZYN , m_idMagazynDocel)
+		end if
+
+	end function
+
+
+	'*******************************************
+	'wypełnienie ze struktury dokuemntu PZ - specyficzne pola
+	private function to_mm (byref pMM)
+
+
+		if pMM.pMagDocel is nothing and pMM.listPozycje.count() > 0 and m_idMagazynDocel = 0 then
+			m_idMagazynDocel  = fire_choice_list_disable_add(TYPEID_N5MAGAZYN ,"Wybierz magazyn przyjęcia","","eTyp=N5TYPMAG_PODSTAWOWY","","")
+		end if
+
+		if m_idMagazynDocel > 0 then
+			pMM.pMagDocel = trans_.getobj(TYPEID_N5MAGAZYN , m_idMagazynDocel)
+		end if
+
+
+		if pMM.pMagZrod is nothing and pMM.listPozycje.count() > 0 and m_idMagazynZrod = 0 then
+			m_idMagazynZrod  = fire_choice_list_disable_add(TYPEID_N5MAGAZYN ,"Wybierz magazyn przyjęcia","","eTyp=N5TYPMAG_PODSTAWOWY","","")
+		end if
+
+		if m_idMagazynZrod > 0 then
+			pMM.pMagZrod = trans_.getobj(TYPEID_N5MAGAZYN , m_idMagazynZrod)
+		end if
+
+
+	end function
+
+
+
+
+	public function get_stany_magazynowe (byval idMagazyn)
+		#ifdef _DEBUG
+			trans_.message 1002 , 0 , "DEBUG: get_stany_magazynowe"
+		#endif
+		dim iter,cDHMTransItem,crsr
+		for iter = 0 to m_oItems.UpperIndex()
+			set cDHMTransItem = m_oItems.value(iter)
+			set crsr = trans_.createadors( doc_.getmodule(60300).bqry_stan_mag_for_prod_opak( cDHMTransItem.m_idProd , cDHMTransItem.m_idOpak , idMagazyn ))
+			if crsr.eof then
+				cDHMTransItem.m_curIloscDostepna = ccur(0)
+			else
+				cDHMTransItem.m_curIloscDostepna = ccur(crsr.fields("c_ilosc_opak").value)
+			end if			
+		next		
+	end function
+
+
+
+
+	public function minus_dhm (byval pDokHandl):minus_dhm = false
+		dim pos_dhm
+		dim pos_dhm_trans
+		dim inx
+
+		for each pos_dhm in pDokHandl.listPozycje		
+			if not pos_dhm.pProdukt.eRodzaj = N5PRODUKT_USLUGA then
+				if pos_dhm.type = TYPEID_N5POZDOKMAG then
+					'jezeli odejmujemy dokument magazynowy to szukamy tez po dostawach
+					inx = find_on_prod_by_quant_and_dostawa(pos_dhm.pProdukt.idobj,pos_dhm.pOpak.idobj,pos_dhm.curIloscOpak,pos_dhm.nNumOpMagDost,pos_dhm.nLpDost)
+					if inx < 0 then
+						trans_.message 1002, 0 , "Brak pozycji na dokumencie oryginalnym odpowiadającej pozycji " + pos_dhm.text + " tworzonego dokumentu"
+						exit function
+					end if
+				else
+					inx = find_on_prod_by_quant(pos_dhm.pProdukt.idobj,pos_dhm.pOpak.idobj , pos_dhm.curIloscOpak )
+					if inx < 0 then					
+						trans_.message 1002 , 0 , "Nie moge znalezc pasującej pozycji"
+						exit function
+					end if
+				end if
+				
+				set pos_dhm_trans = m_oItems.value(inx)
+				pos_dhm_trans.m_curIlosc = pos_dhm_trans.m_curIlosc - pos_dhm.curIloscOpak
+			end if
+		next
+		minus_dhm = true
+	end function
+
+
+
+	public function minus_dhm_zwroty(byval pDokHandl):minus_dhm_zwroty = true
+
+		dim pDokOrg
+		dim nTypDM
+		select case pDokHandl.type
+			case TYPEID_N5ZAKUP
+				set pDokOrg = pDokHandl.pPopZakup
+				nTypDM = N5REJESTRDOK__ZD
+			case TYPEID_N5SPRZEDAZ
+				set pDokOrg = pDokHandl.pPopSprzed
+				nTypDM = N5REJESTRDOK__ZZ
+			case else
+				exit function
+		end select 
+
+		if pDokOrg is nothing then
+			exit function
+		end if
+
+		dim idDM:idDM = choose_dokmag_for_dokhandl(pDokOrg.idobj  , pDokOrg.type , nTypDM , false , true , "")
+		if idDM = 0 then
+			minus_dhm_zwroty = minus_dhm_zwroty(pDokOrg)
+			exit function	
+		end if
+		dim pDM:set pDM = trans_.getobj(TYPEID_N5DOKMAG,idDM)
+		minus_dhm_zwroty = minus_dhm(pDM) and minus_dhm_zwroty(pDokOrg)
+		
+		
+	end function
+
+
+	'funkcja usuwa elementy, w ktorych ilość <= 0
+	public function compact()
+		dim iter
+		for iter = m_oItems.UpperIndex() to 0 step -1
+			if m_oItems.value(iter).m_curIlosc <= 0 then
+				m_oItems.remove(iter)
+			end if			
+		next
+	end function
+
+
+
+
+
+
+
+end class
+
+
+function new_dhm_transporter()
+	set new_dhm_transporter = new CDHMTransporter
+end function
+
+
+
+function zamowienie_2_zamowienie (byref pSourceZam , byval nDestZamRejType , byval nMode , byref idNewZam ) : zamowienie_2_zamowienie = false
+
+	dim nDestZamRejID
+	if nDestZamRejType = 0 then
+		nDestZamRejType = choose_typ_rejestru_restrict("N5REJESTRDOK__ZAM_OBCE;N5REJESTRDOK__ZAM_WLASNE;N5REJESTRDOK_ZAP_OFERTOWE_OBCE;N5REJESTRDOK_OFERTY_WLASNE;N5REJESTRDOK_ZAP_OFERTOWE_WLASNE;N5REJESTRDOK_OFERTY_OBCE",true)
+	end if
+	if nDestZamRejType > 0 then
+		nDestZamRejID   = choose_rejestr_dok(cstr(nDestZamRejType), true , "Wybierz rejestr zamówień")
+	else
+		exit function
+	end if
+		
+
+	if nDestZamRejID > 0 then
+		trans_.var(APPVAR_REJESTR_TYP)			= nDestZamRejType
+		trans_.var(APPVAR_REJESTR_DOKUMENTOW)	= nDestZamRejID
+	else
+		exit function
+	end if
+
+	'a teraz działamy
+	dim pDest:set pDest = trans_.newobj(TYPEID_N5ZAMOWIENIE)
+	pSourceZam.n5zamowienie_copy_to pDest , nMode
+	set pDest.pZamowienie = pSourceZam
+	idNewZam = pDest.idobj
+
+
+	
+	zamowienie_2_zamowienie = trans_.saveobjects()
+
+end function
+
+
+
+]]>
+</script>
+</config>
+<body />
+</page>

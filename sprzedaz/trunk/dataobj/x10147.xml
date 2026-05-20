@@ -1,0 +1,402 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+REV:KB:20030124
+
+#include "h1000.h" 
+#include "h1200.h" 
+#include "h1203.h"
+#include "h1231.h" 
+-->
+<class>
+	<identifier>TYPEID_N5DEKRET</identifier>
+	<table>n5dekret</table>
+	<humanname>Dekret</humanname>
+	<child/>
+	<idobj/>
+	<ref>
+		<name>pKonto</name>
+		<humanname>Konto</humanname>
+		<typeid>TYPEID_N5KONTO</typeid>
+	</ref>
+	<embedded>
+		<name>curWn</name>
+		<sqltype>SQLcurrency</sqltype>
+		<humanname>Kwota Winien</humanname>
+	</embedded>
+	<embedded>
+		<name>curMa</name>
+		<sqltype>SQLcurrency</sqltype>
+		<humanname>Kwota Ma</humanname>
+	</embedded>
+	<embedded>
+		<name>dDataKsieg</name>
+		<sqltype>SQLdate</sqltype>
+		<humanname>Data księgowania</humanname>
+		<nonempty/>
+	</embedded>
+	<embedded>
+		<name>strOpis</name>
+		<sqltype>SQLvc128</sqltype>
+		<humanname>Opis</humanname>
+	</embedded>
+	<enum>
+		<name>eTyp</name>
+		<humanname>Typ dekretu</humanname>
+		<default>N5_DEKRET_TYP_NORMALNY</default>
+		<item>bilans otwarcia</item>
+		<item>normalny</item>
+		<item>wstępny bilans zamknięcia</item>
+		<item>końcowy bilans zamknięcia</item>
+	</enum>
+	<enum>
+		<name>eStatus</name>
+		<humanname>Status dekretu</humanname>
+		<default>N5_DEKRET_STATUS_BUFOR</default>
+		<item>bufor</item>
+		<item>zaksięgowany</item>
+	</enum>
+	<ref>
+		<name>pTransakcja</name>
+		<humanname>Transakcja</humanname>
+		<typeid>TYPEID_N5TRANSAKCJA</typeid>
+		<optional/>
+	</ref>
+	<ref>
+		<name>pKwalifikator</name>
+		<humanname>Kwalifikator</humanname>
+		<typeid>TYPEID_N5KWALIFIKATOR</typeid>
+		<optional/>
+	</ref>
+
+	<embedded>
+		<name>cAuto</name>
+		<sqltype>SQLc1</sqltype>
+		<humanname>Sposób utworzenia</humanname>
+		<default>0</default>
+	</embedded>
+
+#ifdef ENABLE_DB14
+  <embedded>
+    <name>dek_strExtras</name>
+    <sqltype>SQLc128</sqltype>
+    <humanname>Informacje dodatkowe</humanname>
+  </embedded>
+#endif
+  
+  <script>
+<![CDATA[
+
+'operacja transakcji
+#include "50525"
+
+function checkDekret(): checkDekret = false
+	if this_.pKonto is nothing then
+		nx_.trace.fatal "FFK002", "Wymagane jest podanie konta "
+		exit function
+	end if
+	if (this_.pKonto.eAnalit<>N5KONTO_ANALITYCZNE) then
+		nx_.trace.fatal "FFK003", "Dekretować można tylko na konta analityczne, a konto " + this_.pKonto.text() + " jest syntetyczne."
+		exit function
+	end if
+	if (this_.pKonto.eAktywne<>N5KONTO_AKTYWNE) then
+		nx_.trace.fatal "FFK004", "Dekretować można tylko na konta aktywne, a konto " + this_.pKonto.text() + " jest nieaktywne."
+		exit function
+	end if
+
+	if this_.curMa = CCur(0.0) and this_.curWn = CCur(0.0) then
+		nx_.trace.error "EFK001", "Kwota dekretu musi być różna od 0,00"
+		exit function
+	end if
+
+	if this_.curMa <> CCur(0.0) and this_.curWn <> CCur(0.0) then
+		nx_.trace.error "EFK002", "Kwota dekretu może być różna od 0,00 tylko po jednej stronie"
+		exit function
+	end if
+
+	checkDekret = true
+end function
+
+function n5dekret_initnew()
+   	dim pParent
+	set pParent = this_.parent
+	if not pParent is nothing then
+		this_.dDataKsieg = pParent.dDataKsieg
+		this_.eTyp = pParent.eTyp
+		this_.eStatus = pParent.eStatus
+	end if	
+
+#ifdef ENABLE_DB14
+  this_.dek_strExtras = "0"
+#endif
+
+	n5dekret_initnew=true
+end function
+
+function n5dekret_befins()
+   n5dekret_befins = checkDekret()
+  if not n5dekret_rebuild_trop(false) then
+    exit function
+  end if
+   
+end function
+
+function n5dekret_rebuild_trop(byval bMode) : n5dekret_rebuild_trop = false
+#ifdef APPCONFIG_DEKRETY_RECZNE
+  dim oTransOper
+  'utwórz transakcje operacji tylko dla ręcznych dekretów
+  if this_.cAuto = N5_DEKRET_RECZ and this_.eTyp = N5_DEKRET_TYP_NORMALNY then
+    if not this_.pTransakcja is nothing then
+      initialize_transaction_oper this_, oTransOper         
+
+#ifdef ENABLE_DB14
+
+    if left(this_.dek_strExtras, 1) = "1" then
+        update_transaction_oper this_, oTransOper, this_.curWn, this_.curMa, ccur(0.0), ccur(0.0), this_.curWn, this_.curMa
+      else
+        update_transaction_oper this_, oTransOper, this_.curWn, this_.curMa, this_.curWn, this_.curMa, ccur(0.0), ccur(0.0)
+    end if
+    
+#else
+      update_transaction_oper this_, oTransOper, this_.curWn, this_.curMa, this_.curWn, this_.curMa
+#endif
+
+
+      if not oTransOper is nothing then
+        set oTransOper.trop_pTransakcja = this_.pTransakcja
+        oTransOper.trop_curKursOp = oTransOper.trop_pTransakcja.trn_curKurs
+      end if  
+    end if
+  end if
+#endif  
+  n5dekret_rebuild_trop = true
+end function
+
+function n5dekret_befupd()
+    n5dekret_befupd = checkDekret()
+#ifdef APPCONFIG_DEKRETY_RECZNE
+      dim oTransOper
+      'jeśli nastąpiła zmiana jednej transakcji na drugą -> usuń starą -> utwórz nową
+      if this_.cAuto = N5_DEKRET_RECZ and this_.eTyp = N5_DEKRET_TYP_NORMALNY then    
+        if (not this_.pTransakcja is nothing) and (not this_.old_pTransakcja is nothing) then
+          if this_.pTransakcja.idobj <> this_.old_pTransakcja.idobj then
+             'znajdź starą transakcję             
+             set oTransOper = find_transaction_oper(this_,this_.old_pTransakcja)
+             if not oTransOper is nothing then
+                try_delete_transaction_oper oTransOper.IdObj
+             end if
+             'utwórz nową transakcję
+             initialize_transaction_oper this_, oTransOper             
+
+#ifdef ENABLE_DB14
+      if left(this_.dek_strExtras, 1) = "1" then
+        update_transaction_oper this_, oTransOper, this_.curWn, this_.curMa, ccur(0.0), ccur(0.0), this_.curWn, this_.curMa
+      else
+        update_transaction_oper this_, oTransOper, this_.curWn, this_.curMa, this_.curWn, this_.curMa, ccur(0.0), ccur(0.0)
+      end if
+#else
+        update_transaction_oper this_, oTransOper, this_.curWn, this_.curMa, this_.curWn, this_.curMa
+#endif
+
+
+            if not oTransOper is nothing then  
+               set oTransOper.trop_pTransakcja = this_.pTransakcja
+               oTransOper.trop_curKursOp = oTransOper.trop_pTransakcja.trn_curKurs
+             end if  
+             exit function
+          end if
+        end if  
+      end if
+      'update obiektu n5transakcja_operacja
+      if not this_.pTransakcja is nothing then
+        'pobierz obiekt        
+        set oTransOper = find_transaction_oper(this_,this_.pTransakcja)
+
+#ifdef ENABLE_DB14
+  if left(this_.dek_strExtras, 1) = "1" then
+        update_transaction_oper this_, oTransOper, this_.curWn, this_.curMa, ccur(0.0), ccur(0.0), this_.curWn, this_.curMa
+  else
+        update_transaction_oper this_, oTransOper, this_.curWn, this_.curMa, this_.curWn, this_.curMa, ccur(0.0), ccur(0.0)
+  end if
+#else
+        update_transaction_oper this_, oTransOper, this_.curWn, this_.curMa, this_.curWn, this_.curMa
+#endif
+        
+
+    end if
+#endif
+end function
+
+function n5dekret_as_text()
+	dim strText
+	if not this_.parent is nothing then
+		strText = this_.parent.strNrDok
+	end if
+	strText = strText + " " + Left(this_.strOpis,20)
+	if not this_.pKonto is nothing then
+		strText = " (" + this_.pKonto.strSymbol + ")"
+	end if    
+	n5dekret_as_text= strText
+end function
+
+function n5dekret_curMa_change(oldval)
+	if this_.parent.n5dowodksieg_is_sumator() then
+		dim idUnit : idUnit = 0
+		dim bBilans : bBilans = false
+		if not this_.pKonto is nothing then
+			idUnit = this_.pKonto.pJednostka.idObj
+			bBilans = (this_.pKonto.eBilans = N5KONTO_BILANSOWE)
+		end if
+		this_.parent.n5dowodksieg_update_sumator idUnit, ccur(0.0), this_.curMa - oldval,0,bBilans
+	end if
+	if this_.curMa <> ccur(0.0) then
+		this_.curWn = ccur(0.0)
+	end if
+#ifdef APPCONFIG_DEKRETY_RECZNE
+	if this_.cAuto = N5_DEKRET_RECZ and this_.eTyp = N5_DEKRET_TYP_NORMALNY then
+    if not this_.pTransakcja is nothing then
+#ifndef ENABLE_DB11_TROP
+      this_.pTransakcja.curMa = this_.pTransakcja.curMa + (this_.curMa - oldval)
+#endif  
+    end if
+  end if
+#endif
+	n5dekret_curMa_change = true
+end function
+
+#ifdef APPCONFIG_DEKRETY_RECZNE
+function n5dekret_pTransakcja_change(oldval)
+  if this_.cAuto = N5_DEKRET_RECZ and this_.eTyp = N5_DEKRET_TYP_NORMALNY then
+    if not oldval is nothing then
+#ifndef ENABLE_DB11_TROP    
+      oldval.curWn = oldval.curWn - this_.curWn
+      oldval.curMa = oldval.curMa - this_.curMa
+#endif      
+    end if
+    if not this_.pTransakcja is nothing then
+#ifndef ENABLE_DB11_TROP      
+      this_.pTransakcja.curWn = this_.pTransakcja.curWn + this_.curWn
+      this_.pTransakcja.curMa = this_.pTransakcja.curMa + this_.curMa
+#endif    
+    end if
+  end if
+  n5dekret_pTransakcja_change = true
+end function
+#endif
+
+function n5dekret_curWn_change(oldval)
+	if this_.parent.n5dowodksieg_is_sumator() then
+		dim idUnit : idUnit = 0
+		dim bBilans : bBilans = false
+		if not this_.pKonto is nothing then
+			idUnit = this_.pKonto.pJednostka.idObj
+			bBilans = (this_.pKonto.eBilans = N5KONTO_BILANSOWE)
+		end if
+		this_.parent.n5dowodksieg_update_sumator idUnit, this_.curWn - oldval, ccur(0.0),0,bBilans
+	end if
+	if this_.curWn <> ccur(0.0) then
+		this_.curMa = ccur(0.0)
+	end if
+#ifdef APPCONFIG_DEKRETY_RECZNE
+  if this_.cAuto = N5_DEKRET_RECZ and this_.eTyp = N5_DEKRET_TYP_NORMALNY then
+    if not this_.pTransakcja is nothing then
+#ifndef ENABLE_DB11_TROP    
+      this_.pTransakcja.curWn = this_.pTransakcja.curWn + (this_.curWn - oldval)
+#endif    
+    end if
+  end if 
+#endif
+	n5dekret_curWn_change = true
+end function
+
+function n5dekret_pKonto_change(old_pKonto)
+	if this_.parent.n5dowodksieg_is_sumator() then
+		dim idOldUnit : idOldUnit = 0
+		dim idNewUnit : idNewUnit = 0
+
+		dim bOldBilans : bOldBilans = false
+		dim bNewBilans : bNewBilans = false
+
+		if not old_pKonto is nothing then
+			idOldUnit = old_pKonto.pJednostka.idObj
+			bOldBilans = (old_pKonto.eBilans = N5KONTO_BILANSOWE)
+		end if
+
+		if not this_.pKonto is nothing then
+			idNewUnit = this_.pKonto.pJednostka.idObj
+			bNewBilans = (this_.pKonto.eBilans = N5KONTO_BILANSOWE)
+		end if
+
+		if idNewUnit <> idOldUnit then
+			this_.parent.n5dowodksieg_update_sumator idOldUnit,-this_.curWn,-this_.curMa,-1,bOldBilans
+			this_.parent.n5dowodksieg_update_sumator idNewUnit, this_.curWn, this_.curMa,+1,bNewBilans
+		end if
+
+	end if
+	n5dekret_pKonto_change = true
+end function
+
+#ifdef APPCONFIG_DEKRETY_RECZNE
+function n5dekret_befdel()
+
+  dim oTransOper
+  if this_.cAuto = N5_DEKRET_RECZ and this_.eTyp = N5_DEKRET_TYP_NORMALNY then
+     if not this_.pTransakcja is nothing then       
+       set oTransOper = find_transaction_oper(this_,this_.pTransakcja)
+       if not oTransOper is nothing then
+          try_delete_transaction_oper oTransOper.IdObj
+       end if
+     end if  
+  end if
+
+  if this_.cAuto = N5_DEKRET_RECZ and this_.eTyp = N5_DEKRET_TYP_NORMALNY then
+    if not this_.pTransakcja is nothing then
+#ifndef ENABLE_DB11_TROP    
+      this_.pTransakcja.curWn = this_.pTransakcja.curWn - this_.curWn
+      this_.pTransakcja.curMa = this_.pTransakcja.curMa - this_.curMa
+#endif      
+    end if
+  end if  
+  n5dekret_befdel = true
+end function
+#endif
+
+function n5dekret_listop(byval nInx)	
+	if nInx < 0 then	'usuwanie
+		if this_.parent.n5dowodksieg_is_sumator() then
+			dim idUnit : idUnit = 0
+			dim bBilans : bBilans = false
+			if not this_.pKonto is nothing then
+				idUnit = this_.pKonto.pJednostka.idObj
+				bBilans = (this_.pKonto.eBilans = N5KONTO_BILANSOWE)
+			end if
+			this_.parent.n5dowodksieg_update_sumator idUnit, -this_.curWn, -this_.curMa,-1,bBilans
+		end if
+	end if
+	n5dekret_listop = true
+end function
+
+function n5dekret_copy_from_org(byref oPopDekret,byval curFactor)
+	'wylaczamy recalki, kopiujemy wszystkie pola po kolei
+	this_.recalcenabled = false
+	
+	set this_.pKonto = oPopDekret.pKonto
+	this_.curWn = oPopDekret.curWn * curFactor
+	this_.curMa = oPopDekret.curMa * curFactor
+	this_.dDataKsieg = oPopDekret.dDataKsieg
+	this_.strOpis = oPopDekret.strOpis
+	this_.eTyp = oPopDekret.eTyp
+	this_.eStatus = oPopDekret.eStatus
+	set this_.pTransakcja = oPopDekret.pTransakcja
+	set this_.pKwalifikator = oPopDekret.pKwalifikator
+
+	this_.recalcenabled = true
+end function
+
+
+]]>
+</script>
+	
+	
+	
+	
+</class>

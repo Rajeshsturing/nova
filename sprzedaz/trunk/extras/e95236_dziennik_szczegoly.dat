@@ -1,0 +1,729 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1200.h"
+#include "h1220.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1250.h"
+#define RAPORT_TITLE Dziennik (szczegóły)
+
+#define CTRLID_MAINTABLE				101
+
+#define UNIT_COUNT      10
+
+#define COL_DOW_WN      3
+#define COL_DOW_MA      4
+#define COL_RUNNING_WN   5
+#define COL_RUNNING_MA   6
+#define COL_SUMA_WN     7
+#define COL_SUMA_MA     8
+
+#define COUNTERS_COUNT	2
+
+#macro MONEY(_value_)					doc_.afc.display.money(_value_,"")
+
+-->
+<page style='36'>
+<config>
+<title>RAPORT_TITLE</title>
+<script>
+<![CDATA[
+
+VB_PRINT_PORTRAIT_COMMON
+VB_PRINTPREV_PORTRAIT_COMMON
+
+function c##CTRLID_MAINTABLE##_on_table_split(byref pClonedTable,byval xAreaX,byval yAreaY,byval xCount,byval yCount)
+	if yAreaY <> yCount then
+	dim oTB : set oTB = doc_.afc.new_tb(page_).attach(pClonedTable).section_foot
+		oTB.removeall
+		dim curArr(COUNTERS_COUNT)
+		dim iter
+		
+		for iter = 1 to COUNTERS_COUNT
+			curArr(iter) = ccur(0.0)
+		next
+    
+		dim pRow 
+		dim curSumaWartoscNaStronie : curSumaWartoscNaStronie = ccur(0.0)
+		dim i:i = 1
+		for each pRow in pClonedTable.body
+		if not pRow.userprop is nothing then
+			for iter = 1 to COUNTERS_COUNT
+				if pRow.userprop.exists(iter) then
+					curArr(iter) = curArr(iter) + ccur(pRow.userprop(iter)) 
+				end if
+			next
+			i = i + 1
+		end if
+		next
+    
+    exit function
+
+		'podsumowanie na stronie
+		with oTB.newrow.row
+			.border = 0
+			.bold = true
+		end with
+		oTB.newcell
+		oTB.cell.colspan = 2
+		oTB.newcell.addtext "Na stronie"
+		oTB.cell.colspan = 2
+		
+  
+		dim pLastRowUserProp : set pLastRowUserProp = pClonedTable.body.row(pClonedTable.body.count).userprop
+		dim licznik: licznik = pClonedTable.body.count
+		do while licznik > 0
+			if not pLastRowUserProp is nothing then
+				if not pLastRowUserProp.exists(100) then
+					exit do
+				end if  
+			end if
+			licznik = licznik - 1    
+			set pLastRowUserProp = pClonedTable.body.row(licznik).userprop
+		loop    
+		
+		for iter = 1 to COUNTERS_COUNT
+			oTB.newcell.addtext(MONEY(curArr(iter))).cell.align=ALIGN_RIGHT
+		next
+		oTB.newcell.addtext("")
+    
+		'posumowanie narastajaco
+		with oTB.newrow.row
+			.border = 0
+			.bold = true
+		end with
+		oTB.newcell
+		oTB.cell.colspan = 2
+		oTB.newcell.addtext "Całość Narastająco"
+		oTB.cell.colspan = 2
+	
+		for iter = 1 to COUNTERS_COUNT
+			oTB.newcell.addtext(MONEY(ccur(pLastRowUserProp.prop(iter + 2)))).cell.align=ALIGN_RIGHT
+		next
+    oTB.newcell.addtext("")
+	end if
+end function
+
+function on_page_split(byref pClonedPage,byval xAreaX,byval yAreaY,byval xCount,byval yCount)
+	pClonedPage.footer.removeall
+	dim strText
+	if yCount > 1 then
+		strText = page_.topelement.title + " - strona " + cstr(yAreaY) + " z " + cstr(yCount) 
+	end if
+	pClonedPage.footer.addnew(0,-1).text = strText
+end function
+
+<%
+'pobiera IdObj roku księgowego
+function getCurrentRKSId()
+	if trans_.isvar(GVAR_ROKKSIEG) then
+		getCurrentRKSId = trans_.var(GVAR_ROKKSIEG)
+	else
+		getCurrentRKSId = 0
+	end if
+end function
+
+'pobiera aktualny rok księgowy
+function getCurrentRKS()
+	set getCurrentRKS = nothing
+	dim id:id = getCurrentRKSId
+	if id > 0 then
+		set getCurrentRKS = trans_.getobj(TYPEID_N5ROKKSIEG,id)
+	end if
+end function
+
+dim arrValues(UNIT_COUNT, 10)
+
+sub init_array
+  dim iIter
+  for iIter = 1 to UNIT_COUNT
+    arrValues(iIter, 1) = clng(0)
+  next
+end sub
+
+sub reset_value_column(iColumn)
+  dim iIter
+  for iIter = 1 to UNIT_COUNT
+    arrValues(iIter, iColumn) = ccur(0.0)
+  next
+end sub
+
+sub update_column(iUnit, iColumn, curValue)
+  dim iIter
+  for iIter = 1 to UNIT_COUNT
+    if arrValues(iIter, 1) = iUnit then
+      arrValues(iIter, iColumn) = arrValues(iIter, iColumn) + ccur(curValue)
+      exit sub
+    end if
+    if arrValues(iIter, 1) = 0 then
+      arrValues(iIter, 1) = iUnit
+      arrValues(iIter, iColumn) = ccur(curValue)
+      exit sub
+    end if
+  next  
+end sub
+
+dim pParamArray
+
+function query(pParamArray)
+query = "select 'c_rej_nazwa'=t_rejdok.strNazwa,'c_nrdow'=t_dowod.nNumDow,'c_idDowod'=t_dowod.IdObj " +_
+"from n5dowodksieg as t_dowod inner join n5rejestrdok as t_rejdok on t_dowod.pRejestrDok = t_rejdok.IdObj " +_
+"where  %1  and  %2  and  %3  and  %4  " +_
+"order by c_rej_nazwa,c_nrdow"
+query = rapeng_.query_apply_actual_param(query, pParamArray)
+end function
+%>
+<%
+'================================================================================================================== 
+
+function default_param()
+	set pParamArray = doc_.afc.new_navoarray()
+	pParamArray.add doc_.afc.rap.param.new_date_range("Data księgowania").bindexpr("t_dowod.dDataKsieg")
+
+	dim pParamFactory4: set pParamFactory4= doc_.afc.rap.param
+	dim pParam4: Set pParam4= pParamFactory4.new_choice("Dziennik").bindexpr("t_rejdok.idobj")
+	doc_.afc.rap.param.init_on_query pParam4, trans_ ,_
+		"select strNazwa , idobj from n5rejestrdok where eTyp in (N5REJESTRDOK_DZIENNIK_NORM,N5REJESTRDOK_DZIENNIK_BO, " +_
+		"N5REJESTRDOK_DZIENNIK_BZ,N5REJESTRDOK_DZIENNIK_BZ_OSTAT) and pRokKsieg=" + cstr(trans_.var(8011)) + "  order by strNazwa "
+	pParamArray.add pParam4
+
+	dim pParamFactory2: set pParamFactory2= doc_.afc.rap.param
+	dim pParam2: Set pParam2= pParamFactory2.new_choice("Typ zapisu").bindexpr("t_dowod.eTyp")
+	pParamFactory2.init_on_enum pParam2, TYPEID_N5DEKRET,"eTyp"
+	pParamArray.add pParam2
+	dim pParamFactory3: set pParamFactory3= doc_.afc.rap.param
+	dim pParam3: Set pParam3= pParamFactory3.new_choice("Status").bindexpr("t_dowod.eStatus")
+	pParamFactory3.init_on_enum pParam3, TYPEID_N5DEKRET,"eStatus"
+	pParamArray.add pParam3
+
+	set default_param = pParamArray
+end function
+%>
+<%
+'================================================================================================================== 
+
+dim g_bWasSomethingInRej
+
+function rejestr_section_header(byref pSection,byref pRec)
+
+  reset_value_column COL_RUNNING_WN
+  reset_value_column COL_RUNNING_MA  
+  reset_value_column COL_SUMA_WN
+  reset_value_column COL_SUMA_MA
+  g_bWasSomethingInRej = false
+%>
+<tr userprop='propc_section_start="1" propc_section_hidden="0" propc_section_req="0"' fontsize='5'>
+	<td style='27' colspan='8'>
+		<picture name='<%so.write cstr(nSectionPicCounter)%>' tip='Zwiń' ignoresysdisable='true' image='PICTURE_SMALL_MINUS' width='SIZE_FOR_PLUS' height='SIZE_FOR_PLUS' href='vs1022="section_hideshow_hli" vn100="<%so.write cstr(nSectionPicCounter)%>"'/>
+	RXE_AUTO_TEXT(c_rej_nazwa)
+</td>
+</tr>
+<%
+  nSectionPicCounter = nSectionPicCounter + 1
+end function
+%>
+<%
+function rejestr_section_footer(byref pSection)
+dim iIter
+%>
+<tr>
+	<td style='27' colspan='2' />
+  <td style='27' colspan='2'>
+    <text>Razem dziennik:</text>
+  </td>
+	<td style='27' colspan='4' />
+</tr>
+<%
+for iIter = 1 to UNIT_COUNT
+  if arrValues(iIter, 1) <> 0 then
+%>
+  <tr>
+	<td style='27' colspan='3' />
+  <td style='27' align='right'>
+		RXE_MONEY_VAR(arrValues(iIter, COL_SUMA_WN))
+	</td>
+	<td style='27' align='right'>
+		RXE_MONEY_VAR(arrValues(iIter, COL_SUMA_MA))
+	</td>
+  <td style='27'>
+		<t><![CDATA[<% if arrValues(iIter,1)<> 0 then so.write trans_.getobj(TYPEID_N5JEDNOSTKA,arrValues(iIter,1)).strSkrot %>]]></t>
+  </td>
+  <td style='27' colspan='2' />
+</tr>
+<%
+end if
+next
+%>
+<tr>
+	<td style='27' colspan='2' />
+  <td style='27' colspan='2'>
+    <text>Narastająco dziennik:</text>
+  </td>
+	<td style='27' colspan='3' />
+</tr>
+<%
+for iIter = 1 to UNIT_COUNT
+  if arrValues(iIter, 1) <> 0 then
+%>
+<tr>
+	<td style='27' colspan='3' />
+  <td style='27' align='right'>
+    RXE_MONEY_VAR(arrValues(iIter, COL_RUNNING_WN))
+  </td>
+	<td style='27' align='right'>
+    RXE_MONEY_VAR(arrValues(iIter, COL_RUNNING_MA))
+  </td>	
+  <td style='27'>
+		<t><![CDATA[<% if arrValues(iIter,1)<> 0 then so.write trans_.getobj(TYPEID_N5JEDNOSTKA,arrValues(iIter,1)).strSkrot %>]]></t>
+  </td>
+	<td style='27' colspan='2' />
+</tr>
+<%
+end if
+next
+%>
+<tr border='0'><td colspan='8' /></tr>
+<tr hide='true' userprop='propc_section_end="1"'><td colspan='8' /></tr>
+<%
+end function
+%>
+<%
+'================================================================================================================== 
+
+dim pDowodKsiegowy : set pDowodKsiegowy = nothing
+
+function dowod_section_header()
+  
+  %>
+  <tr userprop='propc_section_start="2" propc_section_hidden="0" propc_section_req="0"' fontsize='4'>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+	<td style='27' keepline='true' colspan='2'>
+		<picture name='<%so.write cstr(nSectionPicCounter)%>' tip='Zwiń' ignoresysdisable='true' image='PICTURE_SMALL_MINUS' width='SIZE_FOR_PLUS' height='SIZE_FOR_PLUS' href='vs1022="section_hideshow_hli" vn100="<%so.write cstr(nSectionPicCounter)%>"'/>
+		<%
+		%>
+		<t><%so.write pDowodKsiegowy.pRejestrDok.rejdok_strSkrot + "/" + cstr(pDowodKsiegowy.nNumDow)%></t>
+	</td>
+	<td style='27'>
+		<t><%so.write doc_.afc.display.fulldate(pDowodKsiegowy.dDataKsieg)%></t>
+	</td>
+	<td style='27' colspan='4'>
+		<text href='<%so.write rapeng_.href_open_form_proxy(TYPEID_N5DOWODKSIEG,pDowodKsiegowy.idobj)%>'><![CDATA[<%so.write pDowodKsiegowy.strNrDok%>]]></text>
+	</td>
+</tr>
+<%
+if pDowodKsiegowy.strOpis <> "" then
+%>
+  <tr>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+	<td style='27' colspan='7'>
+		<text href='<%so.write rapeng_.href_open_form_proxy(TYPEID_N5DOWODKSIEG,pDowodKsiegowy.idobj)%>'><![CDATA[<%so.write pDowodKsiegowy.strOpis%>]]></text>
+	</td>
+</tr>
+<%
+end if
+nSectionPicCounter=nSectionPicCounter+1
+end function
+%>
+<%
+'================================================================================================================== 
+
+function dowod_section_footer()
+  dim iIter
+  iIter = 1
+  %>
+<tr>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+  <td style='27'/>
+  <td style='27' colspan='1'>
+    <text>Razem dowód:</text>
+  </td>  
+	<td style='27' align='right'>
+    RXE_MONEY_VAR(arrValues(1,COL_DOW_WN))
+  </td>
+	<td style='27' align='right'>
+    RXE_MONEY_VAR(arrValues(1,COL_DOW_MA))
+  </td>
+	<td style='27'>
+		<t><![CDATA[<% if arrValues(1,1)<> 0 then so.write trans_.getobj(TYPEID_N5JEDNOSTKA,arrValues(1,1)).strSkrot %>]]></t>
+	</td>
+  <td style='27' colspan='2'>
+    <%
+    if arrValues(1,COL_DOW_WN) <> arrValues(1,COL_DOW_MA) then
+    %> 
+    <t bold='true' forecolor='red'>&nbsp; Dowód nie bilansuje się !</t>
+    <% 
+      end if
+    %>
+  </td>
+</tr>
+<%
+  iIter = iIter + 1
+  do while arrValues(iIter,COL_DOW_WN) <> 0 or arrValues(iIter,COL_DOW_MA) <> 0
+%>
+<tr>
+    <td bordercolor='transparent' width='min'>
+      <t>&nbsp;</t>
+    </td>
+    <td style='27' colspan='2' />
+      <td style='27' align='right'>
+        RXE_MONEY_VAR(arrValues(iIter, COL_DOW_WN))
+      </td>
+      <td style='27' align='right'>
+        RXE_MONEY_VAR(arrValues(iIter, COL_DOW_MA))
+      </td>
+      <td style='27'>
+        <t><![CDATA[<% if arrValues(iIter,1)<> 0 then so.write trans_.getobj(TYPEID_N5JEDNOSTKA,arrValues(iIter,1)).strSkrot %>]]></t>
+      </td>
+      <td style='27' colspan='2' />
+      </tr>      
+<%
+    iIter = iIter + 1
+  loop
+   iIter = 1
+%>
+<tr>
+  <td bordercolor='transparent' width='min'>
+    <t>&nbsp;</t>
+  </td>
+  <td style='27'/>
+  <td style='27' colspan='1'>
+    <text>Narastająco:</text>
+  </td>
+  <td style='27' align='right'>
+    RXE_MONEY_VAR(arrValues(1,COL_RUNNING_WN))
+  </td>
+  <td style='27' align='right'>
+    RXE_MONEY_VAR(arrValues(1,COL_RUNNING_MA))
+  </td>
+  <td style='27'>
+    <t><![CDATA[<% if arrValues(1,1)<> 0 then so.write trans_.getobj(TYPEID_N5JEDNOSTKA,arrValues(1,1)).strSkrot %>]]></t>
+  </td>
+  <td style='27' colspan='2'>
+    <%
+    if arrValues(1,COL_RUNNING_WN) <> arrValues(1,COL_RUNNING_MA) then
+      %>
+      <t bold='true' forecolor='red'>&nbsp; Dziennik nie bilansuje się !</t>
+    <% 
+      end if
+    %>
+  </td>
+</tr> 
+<%
+  iIter = iIter + 1
+  do while arrValues(iIter,COL_RUNNING_WN) <> 0 or arrValues(iIter,COL_RUNNING_MA) <> 0
+%>
+<tr>
+    <td bordercolor='transparent' width='min'>
+      <t>&nbsp;</t>
+    </td>
+    <td style='27' colspan='2' />
+      <td style='27' align='right'>
+        RXE_MONEY_VAR(arrValues(iIter, COL_RUNNING_WN))
+      </td>
+      <td style='27' align='right'>
+        RXE_MONEY_VAR(arrValues(iIter, COL_RUNNING_MA))
+      </td>
+      <td style='27'>
+        <t><![CDATA[<% if arrValues(iIter,1)<> 0 then so.write trans_.getobj(TYPEID_N5JEDNOSTKA,arrValues(iIter,1)).strSkrot %>]]></t>
+      </td>
+      <td style='27' colspan='2' />
+    </tr>      
+<%
+    iIter = iIter + 1
+  loop
+   iIter = 1
+%>  
+<tr border='0'>
+<td colspan='8'>
+</td></tr>
+<tr hide='true' userprop='propc_section_end="2"'><td colspan='8' /></tr>
+<%
+end function
+%>
+<%
+'================================================================================================================== 
+
+dim g_dtStart
+function body_row(byref pSection, byref pRec)
+  dim iIter
+  set pDowodKsiegowy = trans_.getobj(TYPEID_N5DOWODKSIEG,clng(pRec("c_idDowod")))
+  dim bBefore : bBefore = pDowodKsiegowy.dDataKsieg < g_dtStart
+  dim bAfter : bAfter = pDowodKsiegowy.dDataKsieg > pParamArray.value(0).last_value
+  
+  reset_value_column COL_DOW_WN
+  reset_value_column COL_DOW_MA
+
+  if (not bBefore and not bAfter) then
+    if not g_bWasSomethingInRej then
+      %>
+      <tr>
+  <td bordercolor='transparent' width='min'>
+    <t>&nbsp;</t>
+  </td>
+  <td style='27'/>
+  <td style='27' colspan='1'>
+    <text>Przed okresem:</text>
+  </td>
+  <td style='27' align='right'>
+    RXE_MONEY_VAR(arrValues(1,COL_RUNNING_WN))
+  </td>
+  <td style='27' align='right'>
+    RXE_MONEY_VAR(arrValues(1,COL_RUNNING_MA))
+  </td>
+  <td style='27'>
+    <t><![CDATA[<% if arrValues(1,1)<> 0 then so.write trans_.getobj(TYPEID_N5JEDNOSTKA,arrValues(1,1)).strSkrot %>]]></t>
+  </td>
+  <td style='27' colspan='2'>
+    <%
+    if arrValues(1,COL_RUNNING_WN) <> arrValues(1,COL_RUNNING_MA) then
+      %>
+      <t bold='true' forecolor='red'>&nbsp; Dziennik nie bilansuje się !</t>
+    <% 
+      end if
+    %>
+  </td>
+</tr> 
+<%
+  iIter = iIter + 1
+  do while arrValues(iIter,COL_RUNNING_WN) <> 0 or arrValues(iIter,COL_RUNNING_MA) <> 0
+%>
+<tr>
+    <td bordercolor='transparent' width='min'>
+      <t>&nbsp;</t>
+    </td>
+    <td style='27' colspan='2' />
+      <td style='27' align='right'>
+        RXE_MONEY_VAR(arrValues(iIter, COL_RUNNING_WN))
+      </td>
+      <td style='27' align='right'>
+        RXE_MONEY_VAR(arrValues(iIter, COL_RUNNING_MA))
+      </td>
+      <td style='27'>
+        <t><![CDATA[<% if arrValues(iIter,1)<> 0 then so.write trans_.getobj(TYPEID_N5JEDNOSTKA,arrValues(iIter,1)).strSkrot %>]]></t>
+      </td>
+      <td style='27' colspan='2' />
+    </tr>      
+<%
+    iIter = iIter + 1
+  loop
+   iIter = 1
+%>  
+      <%
+      g_bWasSomethingInRej = true
+    end if
+    dowod_section_header 
+  end if
+  dim oDekret
+  dim iLP
+  iLP =clng(1)
+  for each oDekret in pDowodKsiegowy.listDekret
+        
+  if (not bBefore and not bAfter) then
+  %>
+  <tr bordercolor='transparent'
+  >
+  <td bordercolor='transparent' width='min'>
+    <t>&nbsp;</t>
+  </td>
+  <td align='right' width='min'>
+    <t><%so.write cstr(iLP)%></t></td>
+  <td>
+    <t><%so.write oDekret.pKonto.strSymbol%></t>
+  </td>
+  <td align='right'>
+    RXE_MONEY_VAR(oDekret.curWn)
+  </td>
+  <td align='right'>
+    RXE_MONEY_VAR(oDekret.curMa)
+  </td>
+  <td>
+    <text><![CDATA[<%so.write oDekret.pKonto.pJednostka.strSkrot%>]]></text>
+  </td>
+  <td>
+    <text><![CDATA[<%so.write oDekret.strOpis%>]]></text>
+  </td>
+  <td>
+    <text><![CDATA[<%if not oDekret.pTransakcja is nothing then so.write oDekret.pTransakcja.strSymTrans%>]]></text>
+  </td>
+</tr>
+<%
+  end if
+
+  iLP = iLP + 1
+
+    update_column oDekret.pKonto.pJednostka.IdObj, COL_RUNNING_WN, oDekret.curWn
+    update_column oDekret.pKonto.pJednostka.IdObj, COL_RUNNING_MA, oDekret.curMa
+  
+  if (not bBefore and not bAfter) then
+      update_column oDekret.pKonto.pJednostka.IdObj, COL_DOW_WN, oDekret.curWn
+      update_column oDekret.pKonto.pJednostka.IdObj, COL_DOW_MA, oDekret.curMa
+      update_column oDekret.pKonto.pJednostka.IdObj, COL_SUMA_WN, oDekret.curWn
+      update_column oDekret.pKonto.pJednostka.IdObj, COL_SUMA_MA, oDekret.curMa
+  end if
+
+  next
+  if (not bBefore and not bAfter) then
+    dowod_section_footer
+  end if
+exit function
+%>
+
+  <tr userprop='
+	vc1=<%so.write doc_.afc.convert.cur2sql(ArrCurBodyVal(0))%>
+	vc2=<%so.write doc_.afc.convert.cur2sql(ArrCurBodyVal(1))%>
+	vc3=<%so.write doc_.afc.convert.cur2sql(ArrCurGlobSum(0))%>
+	vc4=<%so.write doc_.afc.convert.cur2sql(ArrCurGlobSum(1))%>
+	%>'  
+	<% if pRapExec.RecNr mod 2 = 0 then %>
+    bordercolor='white'
+	<% else %>
+    bordercolor='white' style='37'
+  <% end if %>
+  >
+  
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+	<td align='right'>RXE_LP</td>
+	<td align='right'>
+		RXE_T(c_4)
+	</td>
+	<td>
+		RXE_AUTO_TEXT(c_5)
+	</td>
+	<td align='right'>
+		RXE_MONEY_VAR(ArrCurBodyVal(0))
+	</td>
+	<td align='right'>
+		RXE_MONEY_VAR(ArrCurBodyVal(1))
+	</td>
+	<td>
+		RXE_AUTO_TEXT(c_8)
+	</td>
+</tr><%
+end function
+%>
+<%
+function body_header(byref pSection,byref pRec)
+%>
+<table border='1' name='CTRLID_MAINTABLE'>
+<thead>
+<tr style='21'>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+	<td width='min'><t>LP</t></td>
+	<td width='min'>
+		<text><![CDATA[Pozycja / Data księgowania]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Konto / Nr dok.]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Winien]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Ma]]></text>
+	</td>
+	<td width='max'>
+		<text><![CDATA[Opis]]></text>
+	</td>
+  <td width='max'>
+    <text><![CDATA[Transakcja]]></text>
+  </td>
+</tr>
+</thead>
+<tbody>
+<%
+end function
+%>
+<%
+function body_footer(byref pSection)
+%>
+</tbody>
+<tfoot>
+  
+</tfoot>
+<tprevfoot>
+<!-- rezerwuj 2 wiersze na dynamiczną stopkę -->
+<tr style='27'><td><t>&nbsp;</t></td></tr>
+<tr style='27'><td><t>&nbsp;</t></td></tr>
+<tr style='27'><td><t>&nbsp;</t></td></tr>
+<tr style='27'><td><t>&nbsp;</t></td></tr>
+<tr style='27'><td><t>&nbsp;</t></td></tr>
+<tr style='27'><td><t>&nbsp;</t></td></tr>  
+</tprevfoot>
+</table>
+<%
+end function
+%>
+<%dim nSectionPicCounter : nSectionPicCounter = 10000000%>
+function section_hideshow_hli(byref pHLI)
+doc_.afc.formsection.section_hideshow page_, pHLI.prop(100)
+end function
+
+]]>
+</script>
+</config>
+<header>
+</header>
+<body>
+<p>
+RAPORT_HEADER(3,1)
+</p>
+
+<p>
+<t size='2'/>
+</p>
+
+<p><br/><br/><br/><text fontsize='7'><![CDATA[RAPORT_TITLE]]></text></p><br/><br/>
+<t fontsize='5' bold='true'>Kryteria selekcji:</t><br/>
+<%
+init_array
+
+dim strSubQuery: strSubQuery ="%3 and %4"
+
+dim pRapExec : set pRapExec = rapeng_.new_engine()
+with pRapExec
+	.add_body_ex getref("body_header"),getref("body_footer"),getref("body_row")
+	.add_group_section 0,getref("rejestr_section_header"),getref("rejestr_section_footer")
+	
+	set pParamArray = default_param()
+	rapeng_.merge_params pParamArray, rapeng_.get_raport_param()
+	pRapExec.title = "RAPORT_TITLE"  
+  
+  if rapeng_.show_raport_param_dialog(pParamArray,"RAPORT_TITLE") <> 0 then
+    'ograniczenie do biezacego roku ksiegowego
+    pParamArray.value(0).get_where_part trans_
+
+    if pParamArray.value(0).first_value = trans_.afc.globals.nulldate() then
+    pParamArray.value(0).first_value = getCurrentRKS().dDataRozp
+    end if
+    if pParamArray.value(0).last_value = trans_.afc.globals.nulldate() then
+    pParamArray.value(0).last_value = getCurrentRKS().dDataZakon
+    end if
+
+    g_dtStart = pParamArray.value(0).first_value
+    pParamArray.value(0).mode = 7
+    pParamArray.value(0).first_value = getCurrentRKS().dDataRozp
+
+    .put_final_query query(pParamArray)
+    rapeng_.set_raport_param pParamArray
+    strSubQuery = rapeng_.query_apply_actual_param(strSubQuery, pParamArray)
+    %>
+    <%
+
+ ' trans_.message 0,0, cstr(pParamArray.value(0).first_value) + "/"+cstr(pParamArray.value(0).last_value)
+
+  pParamArray.value(0).first_value = g_dtStart
+  rapeng_.write_actual_param so, rapeng_.get_raport_param()
+  
+  if not .perform then
+  so.write "<p style='21'><t>Brak danych spełniających podane kryteria</t></p>"
+	    end if
+%>
+<%
+end if
+end with
+%>
+</body>
+<footer>
+</footer>
+</page>

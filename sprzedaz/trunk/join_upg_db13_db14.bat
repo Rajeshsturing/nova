@@ -1,0 +1,1 @@
+copy ".\library\L50473_drop.nxb" + ".\upg13_14.sql" + ".\custom_upg_13_14.sql" + ".\library\L50454_create_obj.nxb" + ".\custom_upg_13_14_finish.sql" ".\upgrade_db13_to_db14.sql"

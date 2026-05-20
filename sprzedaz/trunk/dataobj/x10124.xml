@@ -1,0 +1,363 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+REV:KB:20030122
+
+#include "h1000.h" 
+#include "h1200.h" 
+#include "h1232.h" 
+#include "h1231.h" 
+#include "h1240.h" 
+-->
+<class>
+	<identifier>TYPEID_CHOICELIST</identifier>
+	<table>choicelist</table>
+	<humanname>Lista wyboru</humanname>	
+	<hidden/>
+	<idobj/>
+	<embedded>
+		<name>strNazwa</name>
+		<sqltype>SQLvc128</sqltype>
+		<humanname>Nazwa Listy</humanname>
+		<nonempty/>
+	</embedded>
+	<!--
+	Nazwa listy* - unikalna w ramach typu
+	-->
+	<embedded>
+		<name>nTypeId</name>
+		<sqltype>SQLlong</sqltype>
+		<humanname>Typ elementow</humanname>
+		<nonempty/>
+	</embedded>
+	<enum>
+		<name>edynamic</name>
+		<humanname>Uporządkowanie</humanname>
+		<default>1</default>
+		<item>brak</item>
+		<item>zachowuj</item>
+	</enum>
+	<list>
+		<name>listElement</name>
+		<humanname>lista elementow</humanname>
+		<typeid>TYPEID_CHOICELISTITEM</typeid>
+	</list>
+	<embedded>
+		<name>nIsSecurity</name>
+		<sqltype>SQLlong</sqltype>
+		<humanname>Ochrona danych</humanname>
+		<default>0</default>
+	</embedded>
+
+<cursors>
+	DEFAULT_CURSOR(wg nazwy,strNazwa)
+	<cursor>
+		<identifier>CRSR_CHOICELIST_WG_TYPU_OBIEKTOW</identifier>
+		<humanname>wg typu obiektow</humanname>
+		<join></join>
+		<where>nTypeId=appvarChoicelistTypeId</where>
+		<orderby>strNazwa</orderby>
+	</cursor>
+	<cursor>
+		<identifier>CRSR_CHOICELIST_WYKONAWCY</identifier>
+		<humanname>wykonawcy</humanname>
+		<join></join>
+		<where>nTypeId=TYPEID_N5PRACOWNIK or nTypeId=TYPEID_N5KLIENT_PRACOWNIK or nTypeId=TYPEID_N5KLIENT</where>
+		<orderby>strNazwa</orderby>
+	</cursor>
+	<cursor>
+		<!-- REV:KB:TODO: kosztowny kursor: uprościć -->
+		<identifier>CRSR_CHOICELIST_WG_TYPU_OBIEKTOW_I_USERA</identifier>
+		<humanname>wg typu obiektow i uzytkownika</humanname>
+		<join></join>
+		<where>
+			(nTypeId=appvarChoicelistTypeId)
+		</where>
+		<!--
+		<where>(nTypeId=appvarChoicelistTypeId) 
+				AND (nIsSecurity=0 
+						OR (nIsSecurity>0 AND ( (IdObj IN (SELECT choicelist.IdObj 
+														   FROM choicelist	
+														   JOIN n5sod ON n5sod.nIdent=choicelist.IdObj 
+														   JOIN n5securityobj ON n5sod.idObj=n5securityobj.pSOD 
+														   WHERE n5sod.nSecId=UAR_CHOICELIST_READ AND gvar_user=n5securityobj.pUser
+														   )
+												 )
+											    OR (gvar_user = (select idobj 
+												                 from n5uzytkownik 
+																 where strLogin = Replace('ADMIN_LOGIN','"',''))
+									               )
+											   )
+							)
+					)
+		</where>
+		-->
+		<orderby>strNazwa</orderby>
+	</cursor>
+</cursors>
+
+<script>
+<![CDATA[
+
+'getCurrentUser
+#include "50203"
+
+'remove_SecurityObject_save
+#include "50626"
+
+function choicelist_load_choicelist(byref pHS )', byval bWithCheck , byref pOrderElems)
+
+	pHS.empty
+	dim elem
+	dim crs
+'	if not bWithCheck then ' bez sprawdzania 
+		for each elem in this_.listElement				
+			pHS.add this_.nTypeId, elem.idElement
+'			pOrderElems.add elem.idElement
+		next	
+'	else ' sprawdzamy czy obiekt docelowy istnieje
+'		dim strTableName:strTableName = stdobjdef_.getobjdef(this_.nTypeId).tablename
+'		dim strQuery:strQuery = trans_.afc.convert.formatter ( _
+'		"select " + _
+'		"%1.idobj as id " + _
+'		"from  " + _
+'		"vlist_choicelist_listElement as list " + _
+'		"join %1 on list.c_idelement = %1.idobj " + _
+'		"where  " + _
+'		"p_idobj = %2 " + _
+'		"order by coll_lp") _
+'		.add(strTableName) _
+'		.add(cstr(this_.idobj)) _
+'		.done
+'
+'		dim rs:set rs = trans_.createadors(strQuery)
+'		while not rs.eof			
+'			pHS.add this_.nTypeId, clng(rs.fields("id").value)
+'			if not pOrderElems is nothing then'this_.eDynamic = N5CHOICELIST_DYNAMIC_ZACHOWAJ then
+'				pOrderElems.add clng(rs.fields("id").value)
+'			end if
+'			rs.movenext
+'		wend
+'	end if
+
+end function
+
+
+
+function choicelist_add_replace_element_to_list(byref pos , byval elem)
+
+
+	if not this_.listElement.exists(pos) then
+		this_.listElement.addnew
+    end if
+
+	dim oElem:set oElem = this_.listElement.get(pos)
+	if not oElem is nothing then
+		oElem.idElement = elem
+		pos = pos + 1
+	end if
+
+end function
+
+
+function choicelist_save_choicelist(byref pHS , byref pOrderElems)	
+
+    dim s,lo,hi
+    dim iter : iter = 1
+
+	if this_.eDynamic = N5CHOICELIST_DYNAMIC_ZACHOWAJ then
+
+		dim pHS_added : set pHS_added = createobject("navocomutil.hyperset")
+
+		dim iter2
+		for iter2=0 to pOrderElems.UpperIndex()
+
+			if pHS.exists(this_.nTypeId , clng(pOrderElems.value(iter2)) ) and not pHS_added.exists(this_.nTypeId , clng(pOrderElems.value(iter2)) ) then
+				pHS_added.add this_.nTypeId,clng(pOrderElems.value(iter2))
+				this_.choicelist_add_replace_element_to_list iter , clng(pOrderElems.value(iter2))
+			end if
+		next
+
+
+	else
+
+		for each s in pHS
+			pHS.extract s,hi,lo
+			this_.choicelist_add_replace_element_to_list iter , lo
+		next
+
+	end if
+
+    'usuń nadmiarowe elementy listy
+    while this_.listElement.exists(iter)
+        this_.listElement.delete(iter)
+    wend
+end function
+
+function choicelist_initnew()
+	if trans_.var(GVAR_OPERATION_MODE) <> clng(OPERATION_MODE_IMPORT) then
+		this_.nTypeId = trans_.var(APPVAR_CHOICELIST_TYPEID)
+	end if
+	choicelist_initnew = true
+end function
+
+function choicelist_as_text()
+	choicelist_as_text=this_.strNazwa
+end function
+
+function checkChoiceList():checkChoiceList=false
+	dim nChoiceList
+	nChoiceList=trans_.findobjid(TYPEID_CHOICELIST, "nTypeId=" + CStr(this_.nTypeId) + _
+	" and IdObj <>" + CStr(this_.idobj) + " and strNazwa='" + trans_.afc.convert.DoubleApostrophe(this_.strNazwa) + "'")
+
+	if (nChoiceList<>0) then
+		trans_.message 65014, 0, "Istnieje już lista wyboru o podanej nazwie dla podanego obiektu."
+		exit function
+	end if
+
+	checkChoiceList=true
+end function
+
+
+'----------------------------------------------------------------------------
+' BEFORE INSERT
+'----------------------------------------------------------------------------
+function choicelist_befins(): choicelist_befins = false
+	
+	'Sprawdzamy czy obiekt ma być chroniony
+	if (this_.nIsSecurity = 1) then
+		
+		'Dodajemy obiekty uprawnien
+		if (not choicelist_InsertSOD()) then
+			exit function
+		end if
+
+	end if
+
+	if (not checkChoiceList()) then
+		exit function
+	end if
+
+	choicelist_befins = true
+end function
+
+
+'----------------------------------------------------------------------------
+' BEFORE UPDATE
+'----------------------------------------------------------------------------
+function choicelist_befupd(): choicelist_befupd = false
+
+	if (this_.old_nIsSecurity = 0 and this_.nIsSecurity = 1) then
+		
+		'Zmiana z 'nie' na 'tak'. Obiekt staje sie chroniony a
+		'wczesniej nie byl
+
+		if (not choicelist_InsertSOD()) then
+			exit function
+		end if
+
+	end if
+
+	if (this_.old_nIsSecurity = 1 and this_.nIsSecurity = 0) then
+	
+		'Jeżeli zmienił się z 'tak' na 'nie'
+		'Usuwamy obiekty security skojarzone z naszym obiekten
+		
+		if (not remove_SecurityObject_save(THIS_FILE, this_.IdObj)) then
+			exit function
+		end if
+
+	end if
+
+	if (not checkChoiceList()) then
+		exit function
+	end if
+	
+	choicelist_befupd = true
+end function
+
+
+'----------------------------------------------------------------------------
+' BEFORE DELETE
+'----------------------------------------------------------------------------
+function choicelist_befdel(): choicelist_befdel = false
+
+	'Usuwamy obiekty security skojarzone z naszym obiekten
+	if (not remove_SecurityObject_save(THIS_FILE, this_.IdObj)) then
+		exit function
+	end if
+
+	choicelist_befdel = true
+end function
+
+
+'----------------------------------------------------------------------------
+' Wstawiamy obiekty security (nasz obiekt jest chroniony)
+'----------------------------------------------------------------------------
+function choicelist_InsertSOD()
+	choicelist_InsertSOD = insert_SecurityObject_save("Lista wyboru", _
+		this_.strNazwa, this_.IdObj, THIS_FILE, "IdObj = " + CStr(getCurrentUserID()))
+end function
+
+
+'dodawać nowe elementy należy tą funkcja - sprawdza ona, czy juz przypadkiem
+'taki element na liscie sie nie znajduje
+function choicelist_addnew(byval idElement)
+	choicelist_addnew = false
+	if choicelist_exists(idElement) then
+		trans_.message 7000,0,"Nie można dodać elementu gdyż istnieje już on na wybranej liście"
+		exit function
+	end if
+	dim pNew:set pNew = this_.listElement.addnew
+	pNew.idElement = idElement
+	choicelist_addnew = true
+end function
+
+
+'sprawdzanie, czy dany element juz w liscie nie istnieje
+function choicelist_exists(byval idElement)
+	choicelist_exists = true
+	dim rs:set rs = trans_.createadors(trans_.afc.convert.Formatter("select * from vlist_choicelist_listelement where p_idobj = %1 and c_idelement = %2").add(cstr(this_.idobj)).add(cstr(idElement)).done())
+	if not rs.eof then
+		exit function
+	end if
+	choicelist_exists = false
+end function
+
+#comment '--------------------------------------------------------------
+function choicelist_append_array(byref oNXArray,byval iStartPos)
+	dim iter 
+	for iter = 0 to oNXArray.upper_index
+		if this_.listElement.exists(iter + iStartPos) then
+			this_.listElement.get(iter + iStartPos).idElement = oNXArray(iter)
+		else
+			this_.listElement.addnew().idElement = oNXArray(iter)
+		end if
+	next
+    while this_.listElement.exists(iter + iStartPos)
+        this_.listElement.delete(iter + iStartPos)
+    wend	
+end function
+
+#comment '--------------------------------------------------------------
+#comment ' converts choice list elements to nx array
+#comment '--------------------------------------------------------------
+function choicelist_to_array()
+	dim oNXArray : set oNXArray = nx_.new_array()
+	dim oElement
+	for each oElement in this_.listElement
+		oNXArray.add clng(oElement.idElement)
+	next
+	set choicelist_to_array = oNXArray
+end function
+
+#comment '--------------------------------------------------------------
+#comment ' set choice list elements from nx array
+#comment '--------------------------------------------------------------
+function choicelist_from_unique_array(byref oNXArray)
+	choicelist_append_array oNXArray,1
+end function
+#comment '--------------------------------------------------------------
+
+]]>
+</script>
+</class>

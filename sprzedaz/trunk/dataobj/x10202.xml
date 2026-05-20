@@ -1,0 +1,198 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+REV:KB:20030227
+
+#include "h1000.h" 
+#include "h1200.h" 
+#include "h1203.h"
+#include "h1229.h" 
+#include "h1231.h" 
+-->
+<class>
+	<identifier>TYPEID_N5PLNIEOB</identifier>
+	<table>n5plnieob</table>
+	<humanname>Nieobecności</humanname>
+	<idobj/>
+
+	XDF_PLACE_DOKUMENT
+
+	<ref>
+		<name>pUmowa</name>
+		<humanname>Umowa</humanname>
+		<typeid>TYPEID_N5PLUMOWA</typeid>
+	</ref>
+
+	<list>
+		<name>listSkladnik</name>
+		<humanname>Składniki wynagrodzeń</humanname>
+		<typeid>TYPEID_N5PLSKLWYN</typeid>
+	</list>
+
+	<enum>
+		<name>eTyp</name>
+		<humanname>Typ nieobecności</humanname>
+		<default>N5PL_NIEOB_NIEUSP</default>
+		<item>Nieobecność nieusprawiedliwiona</item>
+		<item>Urlop wypoczynkowy</item>
+		<item>Urlop na żądanie</item>
+		<item>Urlop okolicznościowy</item>
+		<item>Urlop wychowawczy</item>
+		<item>Urlop szkoleniowy</item>
+		<item>Urlop bezpłatny</item>
+		<item>Urlop profilaktyczny</item>
+		<item>Urlop opiekuńczy</item>
+		<item>Urlop bezpłatny z powodów pracodawcy</item>
+		<item>Nieobecność usprawiedliwiona płatna</item>
+#ifdef ENABLE_DB11_F    
+		<item>Urlop macierzyński</item>
+		<item>Urlop ojcowski</item>  
+#endif  
+#ifdef ENABLE_DB15
+		<item>Urlop rodzicielski</item>		
+#endif
+	</enum>
+	<file>
+		<name>plni_fDokument1</name>
+		<humanname>Dokument elektroniczny 1</humanname>
+	</file>
+	<file>
+		<name>plni_fDokument2</name>
+		<humanname>Dokument elektroniczny 2</humanname>
+	</file>
+
+
+	<embedded>
+		<name>plni_strKodNieobecnosci</name>
+		<sqltype>SQLc4</sqltype>
+		<humanname>Kod świadczenia (Płatnik)</humanname>
+	</embedded>
+
+	<!-- db8 -->
+	<embedded>
+		<name>plni_strUwagi</name>
+		<sqltype>SQLvc256</sqltype>
+		<humanname>Uwagi</humanname>
+	</embedded>
+
+
+<cursors>
+	<cursor>
+		<identifier>CRSR_DEFAULT</identifier>
+		<humanname>wg pracowników chronologicznie</humanname>
+		<join>n5pracownik on pPracownik=n5pracownik.IdObj</join>
+		<where></where>
+		<orderby>n5pracownik.strNazwisko,n5pracownik.strImie,n5plnieob.dDataOd</orderby>
+	</cursor>
+</cursors>
+
+<script>
+<![CDATA[
+
+'enum2str
+#include "50100"
+
+'GetCurrentUser
+#include "L50203.NXB"
+
+'place_aktywna_umowa
+#include "l50133.nxb"
+
+function n5plnieob_initnew():n5plnieob_initnew = true
+	set this_.pUzytRej = GetCurrentUser()
+	set this_.pUzytModyf = this_.pUzytRej
+
+	if trans_.isvar(GVAR_CURRENT_EMPLOYEE) then
+		if trans_.var(GVAR_CURRENT_EMPLOYEE) <> 0 then
+			set this_.pPracownik = trans_.getobj(TYPEID_N5PRACOWNIK,clng(trans_.var(GVAR_CURRENT_EMPLOYEE)))
+		end if
+	end if
+#ifdef _IOW
+  this_.eTyp = clng(2)
+#endif
+end function
+
+
+function n5plnieob_befupd(): n5plnieob_befupd = true
+	set this_.pUzytModyf = GetCurrentUser()
+
+	n5plnieob_befupd = n5plnieob_checkDate()
+end function
+
+function n5plnieob_befins(): n5plnieob_befins = true
+	n5plnieob_befins = n5plnieob_checkDate
+end function
+
+function n5plnieob_pUmowa_change(oldval):n5plnieob_pUmowa_change = true
+	if not this_.pUmowa is nothing then
+		set this_.pPracownik = this_.pUmowa.pPracownik
+	end if
+end function
+
+
+function n5plnieob_as_text()
+	dim strText
+	if not this_.pPracownik is nothing then
+		strText = this_.pPracownik.text
+	else
+		strText = "<nieokreślony pracownik>"
+	end if
+
+	strText = strText + "," + enum2str(this_.type, this_.getobjdef.getfieldindex("eTyp"), this_.eTyp) +_
+		" " + trans_.afc.display.fulldate(this_.dDataOd) + _
+			"-" + trans_.afc.display.fulldate(this_.dDataDo)
+
+	n5plnieob_as_text=strText
+end function
+
+
+
+function n5plnieob_checkDate()
+	n5plnieob_checkDate = this_.dDataOd <= this_.dDataDo
+
+	if not this_.pUmowa is nothing then
+		n5plnieob_checkDate = n5plnieob_checkDate and this_.pUmowa.n5plumowa_checkDateEX(this_.dDataOd) and this_.pUmowa.n5plumowa_checkDateEX(this_.dDataDo) and this_.n5plnieob_check_if_collision ()
+	end if
+
+	if not n5plnieob_checkDate then
+		trans_.message 1002 , 0 , "nieprawidłowe daty"
+	end if
+end function
+
+function n5plnieob_get_skladnik_2(byval nLP,byref pSklNalInstance)
+	if nLP < 1 or nLP > this_.listSkladnik.count() then
+		set n5plnieob_get_skladnik_2 = nothing
+		exit function
+	else
+		with this_.listSkladnik.get(nLP)
+			if not pSklNalInstance is nothing then
+				set pSklNalInstance.m_pSchemat = .pSchemat
+				pSklNalInstance.m_curParam1 =  .curParam1
+				pSklNalInstance.m_curParam2 =  .curParam2
+				pSklNalInstance.m_bPotwierdzaj1 = (.cConfParam1 = "1")
+				pSklNalInstance.m_bPotwierdzaj2 = (.cConfParam2 = "1")
+			end if
+			set n5plnieob_get_skladnik_2 = this_.listSkladnik.get(nLP)
+		end with
+	end if
+end function
+
+
+function n5plnieob_pPracownik_change(oldval)
+	n5plnieob_pPracownik_change = true
+	set this_.pUmowa = place_aktywna_umowa(this_.pPracownik,this_.dDataOd)
+#ifdef _KOMPOZYTY
+	if this_.pUmowa is nothing then
+		set this_.pUmowa = place_umowa_ostatnia(this_.pPracownik,this_.dDataOd)
+	end if
+#endif
+end function
+
+
+function n5plnieob_check_if_collision()
+	n5plnieob_check_if_collision = place_check_if_collision(this_,"NIEOBECNOŚĆ")
+end function
+
+
+]]>
+</script>
+</class>

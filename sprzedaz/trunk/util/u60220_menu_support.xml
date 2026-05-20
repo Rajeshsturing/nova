@@ -1,0 +1,223 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+	
+menu support
+
+#include "h1000.h"
+#include "h1001.h"
+
+#define PICTURE_RIGHT		80931
+-->
+<page>
+<config>
+<script>
+<![CDATA[
+class CMenuItem
+	private m_pHLI		'final hyperlink
+	private m_strName	'displayed text
+	private m_idPicture 'optional picture
+	private m_idBeforeCtrl 'idctrl "poprzedzającej" to submenu (za nią zaczepiamy subpage)
+	private m_idTopBeforeCtrl	'before-ctrl toplevel menu (dziedziczona we wszystkich itemach)
+	private m_strTip	'tool tip
+
+	private m_oArrSubItems
+
+	private sub class_initialize()
+		set m_oArrSubItems = nothing
+		set m_pHLI = nothing
+		m_idPicture = 0
+		m_strName = ""
+		m_idBeforeCtrl = 0
+		m_idTopBeforeCtrl = 0
+		m_strTip = ""
+	end sub
+
+	private sub class_terminate()   'OK
+		set m_oArrSubItems = nothing 
+	end sub
+	
+	public function has_subitems()
+		has_subitems = not (m_oArrSubItems is nothing)
+	end function
+
+	public function addnew_subitem(byval pParentMenuItem)
+		if m_oArrSubItems is nothing then
+			set m_oArrSubItems = trans_.afc.new_navoarray()
+		end if
+		dim pNewSubItem : set pNewSubItem = new CMenuItem
+		pNewSubItem.toprelatedctrl = pParentMenuItem.toprelatedctrl
+		m_oArrSubItems.Add pNewSubItem
+		set addnew_subitem = pNewSubItem
+	end function
+
+	public function get_subitem(byval nIndex)
+		set get_subitem = nothing
+		if has_subitems() then
+			if nIndex < m_oArrSubItems.Count() then
+				set get_subitem = m_oArrSubItems.Value(nIndex)
+			end if
+		end if
+	end function
+
+	public property get hli
+		set hli = m_pHLI
+	end property
+	public property get name
+		name = m_strName
+	end property
+	public property get idpic
+		idpic = m_idPicture
+	end property
+	public property get relatedctrl
+		relatedctrl = m_idBeforeCtrl
+	end property
+	public property get tip
+		tip = m_strTip
+	end property
+	public property get toprelatedctrl
+		toprelatedctrl = m_idTopBeforeCtrl
+	end property
+
+	public property set hli(byref pHLI)
+		set m_pHLI = pHLI
+	end property
+	public property let name(byref strName)
+		m_strName = strName
+	end property
+	public property let idpic(byval idPicture)
+		m_idPicture = idPicture
+	end property
+	public property let relatedctrl(byval idCtrl)
+		m_idBeforeCtrl = idCtrl
+	end property
+	public property let toprelatedctrl(byval idCtrl)
+		m_idTopBeforeCtrl = idCtrl
+	end property
+	public property let tip(byref strTip)
+		m_strTip = strTip
+	end property
+
+	'---------- application interface ------
+	public sub add_item(byref strName,byref pHLI)
+		add_item_pic strName,pHLI,0
+	end sub
+	
+	public sub add_item_pic(byref strName,byref pHLI,byval idPicture)
+		dim pNewSubItem : set pNewSubItem = addnew_subitem(Me)
+		if (isObject(pHLI)) then
+			set pNewSubItem.hli = pHLI
+		else
+			set pNewSubItem.hli = doc_.createhlistr(pHLI)
+		end if
+		pNewSubItem.name = strName
+		pNewSubItem.idpic = idPicture
+	end sub
+
+	public function add_submenu(byref strName)
+		dim pNewSubItem : set pNewSubItem = addnew_subitem(Me)
+		pNewSubItem.name = strName
+		set add_submenu = pNewSubItem
+	end function
+end class
+
+function new_menu(byval strName,byval idRelatedCtrl)
+	dim pMenuItem : set pMenuItem = new CMenuItem
+	pMenuItem.relatedctrl = idRelatedCtrl
+	pMenuItem.toprelatedctrl = idRelatedCtrl
+	pMenuItem.name = strName
+	set new_menu = pMenuItem
+end function
+
+sub render_menu(byref pDestPage,byref pMenuItem)
+	dim pContainerCtrl : set pContainerCtrl = pDestPage.ctrl(pMenuItem.relatedctrl).parent
+	'--- create subpage
+	dim pSubPage : set pSubPage = pContainerCtrl.insertnew(CTRL_TYPE_PAGEMAN,pMenuItem.relatedctrl,-1)
+	with pSubPage
+		.width = MINIMIZE_SIZE 
+		.title = pMenuItem.name
+	
+		'--- override close picture (menu_kill_popup resides in LIB)
+		set .widgets.closepicture.hli = doc_.createhlistr("varFunctionHLI='mm_kill_popup'")
+		.widgets.closepicture.hli.prop(1) = pSubPage.ident
+	end with
+	'--- create hosting table
+	dim pTable : set pTable = pSubPage.addnew(CTRL_TYPE_TABLE,-1)
+	dim oTB : set oTB = doc_.afc.new_tb(pDestPage).attach(pTable)
+
+	if pMenuItem.has_subitems() then	
+		dim iter : iter = 0
+		dim pSubMenuItem : set pSubMenuItem = pMenuItem.get_subitem(iter)
+		do while (not pSubMenuItem is nothing)
+			oTB.newrow.row.styleitem = STYLE_MENUTITLE
+			with oTB.newcell.cell
+				.styleitem = STYLE_BUTTON
+				.width = 400
+				
+				if pSubMenuItem.idpic <> 0 then
+					oTB.addctrl(CTRL_TYPE_PICTURE,-1).element.image = pSubMenuItem.idpic
+				end if
+			end with
+			with oTB.newcell.addctrl(CTRL_TYPE_STATIC,-1).element
+				.text = "  " + pSubMenuItem.name + "  "
+				if not pSubMenuItem.hli is nothing then
+					set .hli = doc_.createhli()
+					.hli.prop(GVAR_FUNCTIONHLI) = "mm_fire_cmd"
+					'--- propertiary protocol ---
+					.hli.prop(1) = pSubPage.ident
+					set .hli.prop(2) = pSubMenuItem
+				else
+					if pSubMenuItem.has_subitems() then
+					set .hli = doc_.createhli()
+						.hli.prop(GVAR_FUNCTIONHLI) = "mm_open_sub_menu"
+						'--- propertiary protocol ---
+						.hli.prop(1) = pSubPage.ident
+						set .hli.prop(2) = pSubMenuItem
+					end if
+				end if
+				pSubMenuItem.relatedctrl = .ident
+			end with
+
+			iter = iter + 1
+			set pSubMenuItem = pMenuItem.get_subitem(iter)
+		loop
+	end if
+end sub
+
+sub on_mm_fire_cmd(byref pHLI)
+	'--- propertiary protocol ---
+	doc_.postcommand pHLI.prop(2).hli.getstring()
+end sub
+
+sub on_mm_kill_popup(byref pPage,byref pHLI)
+	'--- propertiary protocol ---
+	pPage.ctrl(pHLI.prop(1)).parent.remove pHLI.prop(1)
+end sub
+
+sub on_mm_kill_popup_recursive(byref pPage,byref pHLI)
+	'-- for now only 1 level
+	dim idTopRelCtrl : idTopRelCtrl = pHLI.prop(2).toprelatedctrl
+	dim pRelatedCtrl : set pRelatedCtrl = pPage.ctrl(idTopRelCtrl).nextelement
+	if not pRelatedCtrl is nothing then
+		if pRelatedCtrl.type = CTRL_TYPE_PAGEMAN then
+			pRelatedCtrl.parent.remove pRelatedCtrl
+			exit sub
+		end if
+	end if
+end sub
+
+sub on_mm_show_hide(byref pPage,byref pMenu)
+	dim pRelatedCtrl : set pRelatedCtrl = pPage.ctrl(pMenu.relatedctrl).nextelement
+	if not pRelatedCtrl is nothing then
+		if pRelatedCtrl.type = CTRL_TYPE_PAGEMAN then
+			pRelatedCtrl.parent.remove pRelatedCtrl
+			exit sub
+		end if
+	end if
+	render_menu pPage,pMenu
+end sub
+]]>
+</script>
+</config>
+	<body>
+	</body>
+</page>

@@ -1,0 +1,258 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+PAGE_FORM_WIZZARD_O_CONTACTS
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1004.h"
+#include "h1200.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1240.h"
+#include "h1201.h"
+
+#define PAGE_FORM_WIZZARD_O_CONTACTS_STEP1		20336
+
+-->
+
+
+<page>
+<config>
+<title>Kreator importu kontaktów</title>
+<script>
+
+<![CDATA[
+#include "50209"
+#include "50122"
+#include "50126"
+
+'fire_choice_list
+#include "50200"
+
+
+'harui
+#include "50101"
+
+
+class CImportContacts
+	public ignoreAll_AddNew
+	public ignoreAll_Update
+	public ignoreAll_Choose
+end class
+
+dim pParamClass
+
+function fopen()
+	if HARUI(UAR_CMDID(CMDID_WIZZARD_IMPORT_CON)) then
+		run_this
+	end if
+	fopen=false
+end function
+
+function run_this()
+	dim pWizzard
+	set pParamClass = new CImportContacts
+
+	pParamClass.ignoreAll_AddNew = false
+	pParamClass.ignoreAll_Update = false
+	pParamClass.ignoreAll_Choose = false
+
+	set pWizzard=CWizzard(false)
+	pWizzard.add_container pParamClass
+	pWizzard.add_step PAGE_FORM_WIZZARD_O_CONTACTS_STEP1
+
+
+
+	pWizzard.run
+end function
+
+function onPageEnter(pWizzardPage)
+	select case ( pWizzardPage.m_nPage )
+		case PAGE_FORM_WIZZARD_O_CONTACTS_STEP1:
+	end select
+end function
+
+function onPageExit(pWizzardPage)
+	onPageExit=PAGE_DEFAULT
+	select case ( pWizzardPage.m_nPage )
+		case PAGE_FORM_WIZZARD_O_CONTACTS_STEP1:
+	end select
+end function
+
+function onPageInit(pWizzardPage)
+	select case ( pWizzardPage.m_nPage )
+		case PAGE_FORM_WIZZARD_O_CONTACTS_STEP1:
+	end select
+end function
+
+function onWizzardComplete(pWizzardPage)
+	onWizzardComplete=true	
+	const olFolderContacts = 10
+	const olDistributionList = 69
+	const olContact = 40
+	dim oa,olns,objContacts,i,res,close
+	res = true	
+	set oa = doc_.system.activex("outlook.application")
+	if oa is nothing then
+		onWizzardComplete=false
+		MessageBox "Problem z podłączeniem do Outlook'a.", "Kreator importu kontaktów", vbOkOnly, vbInformation
+	end if
+    set olns = oa.GetNamespace("MAPI") 
+	Set objContacts = olns.GetDefaultFolder(olFolderContacts) 	
+	for i = 1 to objContacts.items.count
+		if objContacts.items.item(i).Class = olContact then
+			if not ProcessContact(objContacts.items.item(i)) then
+				MessageBox "Przerwano działanie kreatora.", "Kreator importu kontaktów", vbOkOnly, vbInformation
+				exit function
+			end if
+		end if
+	next
+	
+	pWizzardPage.m_pPage.activate
+	MessageBox "Działanie kreatora zakończyło się powodzeniem.", "Kreator importu kontaktów", vbOkOnly, vbInformation
+end function
+
+
+function ProcessContact(byval con)
+
+	ProcessContact = true
+	dim res
+'	msgbox contact.firstname + " " + contact.lastname
+	dim id:id = trans_.findobjid(TYPEID_N5KLIENT_PRACOWNIK , "strImie='" + trans_.afc.convert.DoubleApostrophe(con.firstName) + "' and strNazwisko='" + trans_.afc.convert.DoubleApostrophe(con.lastName) + "'")
+	if id = 0 then
+		if not pParamClass.ignoreAll_AddNew then
+			do 
+				res = messageBoxEx ("Kreator importu kontaktów" ,"Brak danych", "1;3;4;5" , "Dodaj;Pomiń;Pomiń wszystkie;Przerwij" , 0 ,"", "plain_text" , nothing , "W bazie nie ma danych odpowiadających następującemu kontaktowi:" + con.FullName + ". Co chcesz zrobić?" )
+			loop until res <> 2
+		else
+			exit function
+		end if
+		select case res
+			case 1:
+				AddNewObject con
+			case 3:
+				exit function
+			case 4:
+				pParamClass.ignoreAll_AddNew = true
+				exit function
+			case 5:
+				ProcessContact = false
+				exit function
+		end select
+
+	elseif id < 0 then 'znaleziono kilku
+		if not pParamClass.ignoreAll_Choose then
+			do 
+				res = messageBoxEx ("Kreator importu kontaktów" ,"Kilka rekordów", "1;6;3;4;5" , "Wybierz do aktualizacji;Dodaj;Pomiń;Pomiń wszystkie;Przerwij" , 0 ,"", "plain_text" , nothing , "W bazie znajduje się klika rekordów odpowiadających kontatkowi " + con.FullName + ", " + con.CompanyName + ". Co chcesz zrobić?" )
+			loop until res <> 2
+		else
+			exit function
+		end if
+		select case res
+			case 1:				
+				id = fire_choice_list( TYPEID_N5KLIENT_PRACOWNIK,"Wybierz pracownika klienta do aktualizacji","strNazwisko","strImie='" + con.firstName + "' and strNazwisko='" + con.lastName + "'","",""		)
+				if id > 0 then
+					Update con , id
+				end if
+			case 3:
+				exit function
+			case 4:
+				pParamClass.ignoreAll_Choose = true
+				exit function
+			case 5:
+				ProcessContact = false
+				exit function
+			case 6:
+				AddNewObject con
+		end select
+
+		
+	else ' znaleziono dokladnie jednego
+		if not pParamClass.ignoreAll_Update then
+			do 
+				res = messageBoxEx ("Kreator importu kontaktów" ,"Brak danych", "1;6;3;4;5" , "Aktualizuj;Dodaj;Pomiń;Pomiń wszystkie;Przerwij" , 0 , "", "plain_text" , nothing , "W bazie znajduje się ju ż rekord odpowiadający kontaktowi " + con.FullName + ". Co chcesz zrobić?" )
+			loop until res <> 2
+		else
+			exit function
+		end if
+		select case res
+			case 1:
+				Update con , id
+			case 3:
+				exit function
+			case 4:
+				pParamClass.ignoreAll_Update = true
+				exit function
+			case 5:
+				ProcessContact = false
+				exit function
+			case 6:
+				AddNewObject con
+		end select
+
+	end if
+
+end function
+
+function Update(byval con , byval id)
+
+	dim page:set page=doc_.getpagehli(doc_.createhlistr  ("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=20337") )
+	if not page is nothing then
+		dim res
+		page.set_con(con)
+		page.set_obj(id)
+		page.display()
+		res = page.domodalauto()
+	end if
+	set page=nothing
+
+end function
+
+function AddNewObject(con)
+
+	dim obj:set obj = trans_.newobj(TYPEID_N5KLIENT_PRACOWNIK)
+
+	dim klientid:klientid = trans_.findobjid(TYPEID_N5KLIENT,"strNazwa like '%" + con.CompanyName +"%'")
+	if klientid < 0 then
+		klientid = fire_choice_list( TYPEID_N5KLIENT,"","","strNazwa like '%" + con.CompanyName +"%'","",""		)
+	end if
+
+	
+
+	dim page:set page=doc_.getpagehli(doc_.createhlistr  ("varCmd=CMD_OPEN_RECORD_PAGE varDestPage=PAGE_FORM_PRACOWNIK_KLIENTA varObject=0") )
+	if not page is nothing then
+		if klientid > 0 then
+			set page.root.pKlient = trans_.getobj(TYPEID_N5KLIENT , klientid)
+		end if
+		page.root.strImie = con.FirstName
+		page.root.strNazwisko = con.LastName
+		page.root.strImie2 = con.MiddleName
+
+		page.root.strStanowisko = con.JobTitle
+		page.root.strTytul = con.Title
+		page.root.strEmail = con.Email1Address
+		page.root.strEmail2 = con.Email2Address
+		page.root.strWWW = con.WebPage
+		page.root.ePlec = clng(trans_.afc.business.imie2plec(con.FirstName))
+
+		page.root.strTel1 = con.BusinessTelephoneNumber
+		page.root.strTel2 = con.MobileTelephoneNumber
+		page.root.strTel3 = con.HomeTelephoneNumber 
+
+		page.root.strFax = con.BusinessFaxNumber 
+
+		page.domodalauto()
+	end if
+	set page=nothing
+
+end function
+
+
+
+]]>
+</script>
+</config>
+<body></body>
+</page>

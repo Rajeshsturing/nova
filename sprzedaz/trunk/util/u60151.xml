@@ -1,0 +1,1177 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1001.h"
+#include "h1004.h"
+#include "h1200.h"
+#include "h1222.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1240.h"
+#include "h1201.h"
+
+#define CTRLID_RESULT_TABLE		1001
+#define CTRLID_SEL_DESC			1002
+#define CTRLID_REDIRECT_CHKBOX	1003
+
+#define PRIV_PROP_INX_IN_SET	1
+
+#define PREVIEW_IS_PREVIEW		false
+#define NUMER_EKRANOWY_PRZYCISKU_DLA_DRUKUJ 1
+
+-->
+<page style='STYLE_PAGE'>
+<config>
+<title>Kreator faktur abonamentowych</title>
+<startpos>center</startpos>
+<script>
+<!--
+-->
+<![CDATA[
+'nx_trace
+#include "50519"
+'nx_rtm
+#include "50560"
+
+#include "50209"
+#include "50122"
+#include "50203"
+#include "50200"
+#include "50226"
+
+'harui
+#include "50101"
+#include "50517"
+
+#include "50518"
+
+#include "50126"
+
+
+class cfaktura_edit_info
+	public m_bSelected
+	public m_bPrinted
+	public m_bSendMail
+end class
+
+dim g_oFakturaSet : set g_oFakturaSet = nothing
+dim g_oParamArray : set g_oParamArray = nothing
+'---- unikalny klucz odpowiadający generowanemu zbiorowi
+dim g_strGenerationKey : g_strGenerationKey = ""
+
+function fopen()
+  if trans_.isvar(3223) then
+    fopen = true
+  else
+  	fopen = facquireparam()
+  end if
+end function
+
+function facquireparam : facquireparam = false
+
+	dim pModRapEngine : set pModRapEngine = doc_.getmodule(60108)
+	dim oParamArray : set oParamArray = get_default_param()
+
+	if pModRapEngine.show_raport_param_dialog(oParamArray,"Parametry generatora") = 0 then
+		exit function
+	else
+		set g_oParamArray = oParamArray
+	end if
+
+	'--- force generation of where parts in parameters
+	g_oParamArray.Value(0).get_where_part trans_
+	g_oParamArray.Value(1).get_where_part trans_
+	g_oParamArray.Value(2).get_where_part trans_
+	g_oParamArray.Value(3).get_where_part trans_
+
+	g_strGenerationKey = composet_gen_key(g_oParamArray.Value(0).first_value,g_oParamArray.Value(1).first_value)
+	
+	dim strInfo : strInfo = _
+		vbLf + g_oParamArray.Value(0).get_desc() + _
+		vbLf + g_oParamArray.Value(1).get_desc() + _
+		vbLf + g_oParamArray.Value(2).get_desc() + _
+		vbLf + g_oParamArray.Value(3).get_desc()  
+
+	page_.ctrl(CTRLID_SEL_DESC).text = strInfo
+	
+	set g_oFakturaSet = nx_.new_array()
+	fload
+
+	facquireparam = true
+end function
+
+function fgenerate
+	set g_oFakturaSet = nx_.new_array()
+	generate_faktury g_oFakturaSet,g_oParamArray
+	fill_fset g_oFakturaSet
+	rebuild_ui g_oFakturaSet
+end function
+
+function fload
+	trans_.discard
+	set g_oFakturaSet = nx_.new_array()
+	fill_fset g_oFakturaSet
+	rebuild_ui g_oFakturaSet
+end function
+
+function fill_fset(byref oFakturaSet)
+	dim oCursorFry : set oCursorFry = trans_.createrawcursor(TYPEID_N5SPRZEDAZ,"strExtra2 like '"+g_strGenerationKey+"%' and pRejestrDok not in (select IdObj from n5rejestrdok where eTyp in (N5REJESTRDOK_DOSTAWA,N5REJESTRDOK_KOR_DOSTAWA)) ","strNrDok","")
+	
+	dim oSprzedaz : set oSprzedaz = nothing
+	for each oSprzedaz in oCursorFry
+		dim oFSI : set oFSI = new cfaktura_edit_info
+		oFSI.m_bSelected = true
+		oFSI.m_bPrinted = (right(oSprzedaz.strExtra2,1)="D")
+		oFSI.m_bSendMail = (oSprzedaz.dExtra3 <> trans_.afc.globals.nulldate())
+		dim oBOWI : set oBOWI = nx_.new_bowi(TYPEID_N5SPRZEDAZ,oSprzedaz.idobj,oSprzedaz.pKlient.text,oFSI)
+		oFakturaSet.add oBOWI
+	next
+end function
+
+function get_default_param()
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+
+	dim oTerminFaktParam : set oTerminFaktParam = doc_.afc.rap.param.new_date("Termin fakturowania").bindexpr("")
+	dim oDataKoncNalParam : set oDataKoncNalParam = doc_.afc.rap.param.new_date("Data ostatniego naliczenia").bindexpr("")
+	dim oNazwaKlientParam : set oNazwaKlientParam = doc_.afc.rap.param.new_text("Nazwa klienta").bindexpr("n5klient.strNazwa")
+	dim oIndeksKlientParam : set oIndeksKlientParam = doc_.afc.rap.param.new_text("Indeks klienta").bindexpr("n5klient.strIndeks")
+
+	pParamArray.add oTerminFaktParam
+	pParamArray.add oDataKoncNalParam
+	pParamArray.add oNazwaKlientParam
+	pParamArray.add oIndeksKlientParam
+
+	set get_default_param = pParamArray
+end function
+
+function fsavefry_internal
+
+	dim iter
+	for iter = 0 to g_oFakturaSet.upper_index
+		dim oObject : set oObject = trans_.getobj(TYPEID_N5SPRZEDAZ,g_oFakturaSet(iter).m_iIdObj)
+		if not g_oFakturaSet(iter).m_oExtraInfo.m_bSelected then
+			if oObject.isnew then
+				oObject.ignore = true
+				nx_.trace.info "WKF001","Odrzucam niewybraną fakturę dla " + oObject.pKlient.text
+			end if
+		end if
+	next
+
+end function
+
+function fsavefry
+	NX_TRACE_START_STREAM("Zachowywanie faktur",nothing)
+	dim pPerf : set pPerf = doc_.performing("Zachowywanie faktur..")
+
+	fsavefry_internal
+
+	if trans_.saveobjects() then
+    'utwórz dostawy
+    'wybór rejestrdu dokumentów
+    dim idRejestrDok : idRejestrDok = choose_rejestr_dok("N5REJESTRDOK_DOSTAWA",true,"Wybierz rejestr dokumentów dla dostawy")
+    if idRejestrDok > clng(0) then
+      trans_.var(APPVAR_REJESTR_DOKUMENTOW) = clng(idRejestrDok)
+      dim pM60153 : set pM60153 = doc_.getmodule(60153)
+		  dim iter
+		  for iter = 0 to g_oFakturaSet.upper_index
+			  dim oObject : set oObject = trans_.getobj(TYPEID_N5SPRZEDAZ,g_oFakturaSet(iter).m_iIdObj)
+			  if g_oFakturaSet(iter).m_oExtraInfo.m_bSelected then
+			    if not pM60153.create_dok_handl_ex("1",g_oFakturaSet(iter).m_iIdObj,nothing,true,false) then
+				    trans_.message 7000, 0, "Nie udało się utworzyć dokumentu dostawy."
+				    exit function
+			    end if        
+        end if
+      next
+    end if
+  end if
+  
+  
+	fload
+	set pPerf = nothing
+
+	NX_TRACE_SHOW_LOG(1)
+end function
+
+function fback()
+	page_.goback
+end function
+
+function fdrukuj
+	dim bPreview : bPreview = PREVIEW_IS_PREVIEW
+
+	NX_TRACE_START_STREAM("Drukowanie faktur",nothing)
+
+	dim pPerf
+	if not bPreview then
+		set pPerf = doc_.performing("Drukowanie faktur..")
+	end if
+
+	fsavefry_internal
+
+	if trans_.saveobjects() then
+		dim iter
+		for iter = 0 to g_oFakturaSet.upper_index
+			dim oObject : set oObject = trans_.getobj(TYPEID_N5SPRZEDAZ,g_oFakturaSet(iter).m_iIdObj)
+			if g_oFakturaSet(iter).m_oExtraInfo.m_bSelected then
+				if not g_oFakturaSet(iter).m_oExtraInfo.m_bPrinted then
+
+					dim pConfigObject : set pConfigObject = nothing
+					dim pConfigModule : set pConfigModule = nothing	
+					doc_.getmodule(60142).create_config_object_for_rejestr oObject.pRejestrDok,pConfigObject,pConfigModule
+					if (not pConfigObject is nothing) then
+						pConfigObject.load_from_string oObject.pRejestrDok.strKonfiguracja
+
+						dim idDPC : idDPC = pConfigObject.m_aOperations(NUMER_EKRANOWY_PRZYCISKU_DLA_DRUKUJ + 1).m_idObjDPC_1
+						if idDPC <> 0 then
+							if idDPC < 0 then
+								idDPC = -idDPC
+							end if
+							realize_publication idDPC,oObject,bPreview,nothing
+						
+							oObject.strExtra2 = oObject.strExtra2 + "/D"
+							g_oFakturaSet(iter).m_oExtraInfo.m_bPrinted = true
+						end if
+					end if
+		
+				end if
+			end if
+		next
+		
+		trans_.saveobjects
+
+	end if
+	
+	set oObject = nothing
+	set pPerf = nothing
+
+	trans_.discard
+	fload
+
+	NX_TRACE_SHOW_LOG(0)
+end function
+
+function fmail
+	dim bPreview : bPreview = PREVIEW_IS_PREVIEW
+
+	NX_TRACE_START_STREAM("Wysyłanie maili",nothing)
+
+	dim pPerf
+	if not bPreview then
+		set pPerf = doc_.performing("Wysyłanie maili..")
+	end if
+
+	fsavefry_internal
+
+	if trans_.saveobjects() then
+		dim iter
+		for iter = 0 to g_oFakturaSet.upper_index
+			dim oObject : set oObject = trans_.getobj(TYPEID_N5SPRZEDAZ,g_oFakturaSet(iter).m_iIdObj)
+			if g_oFakturaSet(iter).m_oExtraInfo.m_bSelected then
+				if not g_oFakturaSet(iter).m_oExtraInfo.m_bSendMail then
+
+					dim pConfigObject : set pConfigObject = nothing
+					dim pConfigModule : set pConfigModule = nothing	
+					doc_.getmodule(60142).create_config_object_for_rejestr oObject.pRejestrDok,pConfigObject,pConfigModule
+					if (not pConfigObject is nothing) then
+						pConfigObject.load_from_string oObject.pRejestrDok.strKonfiguracja
+
+						dim idDPC : idDPC = pConfigObject.m_aOperations(NUMER_EKRANOWY_PRZYCISKU_DLA_DRUKUJ + 2).m_idObjDPC_1
+						if idDPC <> 0 then
+							if not oObject.pKlient is nothing then
+								if oObject.pKlient.strEmail <> "" then
+									dim nResult
+									nResult = realize_email_publication(abs(idDPC),oObject,oObject.pKlient.strEmail,oObject.text,nothing)
+									if nResult = 0 then
+										oObject.dExtra3 = trans_.var(GVAR_TODAY)
+										g_oFakturaSet(iter).m_oExtraInfo.m_bSendMail = true
+									end if
+								else
+									trans_.message 7000, 0, "Brak adresu email dla klienta: " +  oObject.pKlient.strNazwa
+								end if
+							end if
+						end if
+					end if
+				end if
+			end if
+		next
+		
+		trans_.saveobjects
+
+	end if
+	
+	set oObject = nothing
+	set pPerf = nothing
+
+	trans_.discard
+	fload
+
+	NX_TRACE_SHOW_LOG(0)
+end function
+
+function fmail_pdf
+
+	dim iter, oObject
+	for iter = 0 to g_oFakturaSet.upper_index
+		set oObject = trans_.getobj(TYPEID_N5SPRZEDAZ,g_oFakturaSet(iter).m_iIdObj)
+		if g_oFakturaSet(iter).m_oExtraInfo.m_bSelected then
+			if oObject.isnew then
+				trans_.message 7000, 0, "Wysyłka faktur niemożliwa. Nie wszystkie wybrane faktury zostały zapisane."
+				exit function
+			end if
+		end if
+	next
+
+	dim bPreview : bPreview = PREVIEW_IS_PREVIEW
+
+	NX_TRACE_START_STREAM("Wysyłanie maili z załącznikiem pdf",nothing)
+
+	dim pPerf
+	if not bPreview then
+		set pPerf = doc_.performing("Trwa tworzenie dostaw...")
+	end if
+
+	fsavefry_internal
+
+	if trans_.saveobjects() then
+    'utwórz dostawy
+    'wybór rejestrdu dokumentów
+    dim idRejestrDok : idRejestrDok = choose_rejestr_dok("N5REJESTRDOK_DOSTAWA",true,"Wybierz rejestr dokumentów dla dostawy")
+    if idRejestrDok > clng(0) then
+      trans_.var(APPVAR_REJESTR_DOKUMENTOW) = clng(idRejestrDok)
+      dim pM60153 : set pM60153 = doc_.getmodule(60153)
+		  for iter = 0 to g_oFakturaSet.upper_index
+			  set oObject = trans_.getobj(TYPEID_N5SPRZEDAZ,g_oFakturaSet(iter).m_iIdObj)
+			  if g_oFakturaSet(iter).m_oExtraInfo.m_bSelected then
+			    if not pM60153.create_dok_handl_ex("1",g_oFakturaSet(iter).m_iIdObj,nothing,true,false) then
+				    trans_.message 7000, 0, "Nie udało się utworzyć dokumentu dostawy."
+				    exit function
+			    end if        
+        end if
+      next
+    end if  
+  
+    set pPerf = doc_.performing("Trwa wysyłanie maili z załącznikiem pdf..")
+		'wybór publikacji
+		dim idObjDPC: idObjDPC = fire_choice_list(TYPEID_N5DPC, "Wybierz publikację","","ePubType in (N5DPC_PUBTYPE_FAKTURAVAT)","","")
+		if idObjDPC = clng(0) then
+			trans_.message 7000, 0, "Należy wybrać publikację, która będzie drukowana do pdf"
+			exit function
+		end if     
+  
+
+		for iter = 0 to g_oFakturaSet.upper_index
+			set oObject = trans_.getobj(TYPEID_N5SPRZEDAZ,g_oFakturaSet(iter).m_iIdObj)
+			if g_oFakturaSet(iter).m_oExtraInfo.m_bSelected then
+				if not g_oFakturaSet(iter).m_oExtraInfo.m_bSendMail then
+        
+					if not oObject.pKlient is nothing then
+						if oObject.pKlient.strEmail <> "" then
+							dim nResult
+							'utwórz pdf i wyślij e-mailem
+							if (not send_email(oObject,idObjDPC)) then
+								if MessageBox("Nie udało się wysłać dokumentu " + oObject.strNrDok + ". Zobacz okno komunikatów. Czy mimo to kontynuować wysyłanie wiadomości e-mail?", "Wysłanie wiadomości nieudane", vbYesNo, vbQuestion ) <> vbYes then
+									exit function
+								end if
+							else
+								oObject.dExtra3 = trans_.var(GVAR_TODAY)
+								g_oFakturaSet(iter).m_oExtraInfo.m_bSendMail = true
+							end if
+						else
+							trans_.message 7000, 0, "Brak adresu email dla klienta: " +  oObject.pKlient.strNazwa
+						end if
+					end if
+				end if
+			end if
+		next
+		
+		trans_.saveobjects
+	end if
+	
+	set oObject = nothing
+	set pPerf = nothing
+
+	trans_.discard
+	fload
+
+	NX_TRACE_SHOW_LOG(0)
+end function
+
+function create_pdf(byref pSprzedaz, byref idObjDPC, byref strFileName, bCopyToUserDir) : create_pdf = ""
+  
+  'utwórz plik pdf o nazwie zdefiniowanej w sekcji <title></title> wydruku
+  if not (realize_publication(idObjDPC,pSprzedaz,false,nothing) = 0) then
+    trans_.message 7000, 0, "Nie udało się utworzyć załącznika w postaci pdf"
+		exit function    
+  end if
+   
+  
+  'pobierz ścieżkę z utworzonego dokumentu pdf (katalog TempFiles)
+  dim strTempFilePath: strTempFilePath = pdf_file_path(pSprzedaz, bCopyToUserDir)
+  if strTempFilePath = "" then
+    exit function
+  end if
+  
+  if bCopyToUserDir then
+    'utwórz i zwróć ścieżkę docelową w katalogu usera: UserDirectory\PDF\rok_miesiac\
+    dim strUserFilePath: strUserFilePath = user_path(pSprzedaz)
+    if strUserFilePath = "" then
+      exit function
+    end if
+
+    dim pFD, bOK
+    set pFD = CFileDrive(bOK)
+    if (not bOK) then
+	    view_message 6186, 0
+	    exit function
+    end if  
+  
+    'kopiuj plik załącznika z TempFiles do katalogu user'a
+    strFileName = pFD.GetFileName(strTempFilePath)
+    if (not pFD.CopyFile(strTempFilePath, strUserFilePath + "\" + strFileName)) then
+      trans_.message 7000, 0, "Nie udało się skopiować pliku do katalogu użytkownika."
+		  exit function      
+    end if
+  
+    'usuń plik z katalogu TempFiles
+    if (not pFD.DeleteFile(strTempFilePath)) then  
+    end if  
+  
+    create_pdf = strUserFilePath + "\" + strFileName
+  else
+    create_pdf = strTempFilePath
+  end if
+  
+end function
+
+'-------------------------------------------------------------------------
+'tworzy plik pdf z podpiętej publikacji, generuje załącznik i wysyła maila
+'-------------------------------------------------------------------------
+function send_email(byref pSprzedaz, byref idObjDPC): send_email = false
+  dim strFileName : strFileName = "" 
+  dim strUserFilePath : strUserFilePath = create_pdf(pSprzedaz, idObjDPC, strFileName, true)
+  if strUserFilePath = "" then 
+		exit function     
+  end if 
+  
+  'wyslij e-mail
+  if (pFD.isFile(strUserFilePath + "\" + strFileName)) then
+    if (not send_email_attach(pSprzedaz,strUserFilePath + "\" + strFileName, strFileName)) then
+      trans_.message 7000, 0, "Wystąpił błąd podczas wysyłania wiadomości e-mail."
+		  exit function      
+    end if
+  else
+    trans_.message 7000, 0, "Wysłanie wiadomości e-mail niemożliwe. Brak pliku załącznika pdf."
+		exit function     
+  end if
+  
+  send_email = true
+end function
+
+'------------------------------------------------------------------------------
+'sprawdza czy plik pdf został utworzony, jeśli tak zwraca sciężkę do tego pliku
+'------------------------------------------------------------------------------
+function pdf_file_path(byref pSprzedaz, bRename): pdf_file_path = ""
+  'sprawdzanie czy istnieje plik
+  dim pFD, bOK
+  set pFD = CFileDrive(bOK)
+
+  if (not bOK) then
+	  view_message 6186, 0
+	  exit function
+  end if
+
+  dim strFileName: strFileName = "Wydruk dokumentu " + FormatStringToFileName_Custom(pSprzedaz.text,"_") + ".pdf"
+  dim strFilePath: strFilePath = pFD.GetTempPath() + "\" + strFileName
+		
+  'Szukanie pliku w określonej lokalizacji
+  dim iter
+  for iter = 1 to 10
+    if (not pFD.isFile(strFilePath)) then  
+      doc_.system.sleep 1000
+    else
+      exit for
+    end if    
+  next
+  
+  if (not pFD.isFile(strFilePath)) then  
+    trans_.message 7000, 0, "Nie udało się pobrać załącznika w postaci pdf"
+		exit function     
+  end if
+  
+  if bRename then
+    dim strNewFileName: strNewFileName = FormatStringToFileName_Custom(pSprzedaz.pKlient.strIndeks,"_") + "_" + Replace(strFileName,"Wydruk dokumentu ","")
+    for iter = 1 to 10
+      if (not pFD.RenameFile(strFilePath, strNewFileName)) then  
+        doc_.system.sleep 1000
+      else
+        strFileName = strNewFileName
+        exit for
+      end if    
+    next
+  end if
+  
+  pdf_file_path = pFD.GetTempPath() + "\" + strFileName
+end function
+
+'---------------------------------------------------
+'zwraca pełną ścieżkę to pliku pdf w katalogu user'a
+'---------------------------------------------------
+function user_path(byref pSprzedaz): user_path = ""
+	'tworzymy katalog user'a jezeli go nie ma
+	if (not checkUserDirectory()) then
+		view_message1 6078, 0, getUserDirectory()
+		exit function
+	end if
+
+	dim strPDFFolder
+	strPDFFolder = getUserDirectory() + "\" + "PDF"
+
+	if (not pFD.IsFolder(strPDFFolder)) then
+		if (not pFD.CreatePath( strPDFFolder )) then
+			view_message1 6079, 0, strPDFFolder
+			exit function
+		end if
+	end if
+  
+  strPDFFolder = strPDFFolder + "\" + CStr(Year(pSprzedaz.dDataWyst)) + "_" + Right(CStr(100 + Month(pSprzedaz.dDataWyst)),2)
+	if (not pFD.IsFolder(strPDFFolder)) then
+		if (not pFD.CreatePath( strPDFFolder )) then
+			view_message1 6079, 0, strPDFFolder
+			exit function
+		end if
+	end if  
+  
+  user_path = strPDFFolder
+end function
+
+'-----------------------------
+'wysyła e-maila z załącznikiem
+'-----------------------------
+function send_email_attach(byref pSprzedaz, byref strAttachment, byref strFileName): send_email_attach = false
+
+  'pobierz plik załącznika
+  dim pSO: set pSO = doc_.createstreamobj()
+  pSO.attach strAttachment 
+  
+  'utwórz załącznik z utorzonego pliku pdf
+	dim pAttachment
+	set pAttachment = new CMailAttachment
+	set pAttachment.pSO = pSO				
+	
+  'nazwa pliku załącznika
+	pAttachment.strName = strFileName
+  
+  'tytuł wiadomości
+	dim strSub  
+	strSub = "Faktura VAT nr " + pSprzedaz.text
+
+	dim arrZalaczniki
+	set arrZalaczniki=trans_.afc.new_navoarray()
+	arrZalaczniki.Add pAttachment
+
+	dim pEmailModule
+	set pEmailModule=doc_.getmodule(PAGE_FORM_EMAIL)
+
+	dim pNavoMapi
+	set pNavoMapi=new CNavoMAPI
+
+	if (not pNavoMapi.connect()) then
+		exit function
+	end if
+
+	dim pMail: set pMail = pNavoMapi.getMAIL()
+
+	send_email_attach = pEmailModule.send_email(pMail, pSprzedaz.pKlient.strEmail, strSub, "", arrZalaczniki)
+end function
+
+function on_button_all
+	dim iter 
+	for iter = 0 to g_oFakturaSet.upper_index
+		g_oFakturaSet(iter).m_oExtraInfo.m_bSelected = true
+	next
+
+	rebuild_ui g_oFakturaSet
+end function
+
+function on_button_nothing
+	dim iter 
+	for iter = 0 to g_oFakturaSet.upper_index
+		g_oFakturaSet(iter).m_oExtraInfo.m_bSelected = false
+	next
+
+	rebuild_ui g_oFakturaSet
+end function
+
+function on_button_reverse
+	dim iter 
+	for iter = 0 to g_oFakturaSet.upper_index
+		g_oFakturaSet(iter).m_oExtraInfo.m_bSelected = not g_oFakturaSet(iter).m_oExtraInfo.m_bSelected
+	next
+
+	rebuild_ui g_oFakturaSet
+end function
+
+
+#comment '-----------------------------------------------------------------------
+#comment '-----------------------------------------------------------------------
+
+function rebuild_ui(byref oFakturaSet)
+	dim oTB : set oTB = doc_.afc.new_tb(page_).attach( page_.ctrl(CTRLID_RESULT_TABLE) ).removeall
+	dim iter 
+	for iter = 0 to oFakturaSet.upper_index
+		dim oObject : set oObject = trans_.getobj(TYPEID_N5SPRZEDAZ,oFakturaSet(iter).m_iIdObj)
+		dim strNrDokText 
+		if oObject.strNrDok = "" then
+			strNrDokText = "<AUTONUMERACJA>"
+		else
+			strNrDokText = oObject.strNrDok
+		end if
+		oTB.newrow
+		
+		oTB.newcell.addctrl CTRL_TYPE_CHECKBOX,-1
+		oTB.cell.keepline = true
+		dim pCheckBox : set pCheckBox = oTB.element
+		with pCheckBox
+			.customredirect = clng(CTRLID_REDIRECT_CHKBOX)
+			.transfer = page_.createtransfer("custom")
+			.border = 0
+		end with
+		set pCheckBox.userprop = doc_.createhli()
+		pCheckBox.userprop.prop(PRIV_PROP_INX_IN_SET) = clng(iter)
+
+		oTB.element.addnew CTRL_TYPE_STATIC,-1	'pusty tekst ("do zaznaczania")
+		pCheckBox.value = "1"
+		oTB.newcell.addtext strNrDokText
+
+		dim oHLI_Fra:set oHLI_Fra = doc_.createhlistr("varFunctionHLI='open_fra'")		
+		with oHLI_Fra
+			.prop(PRIV_PROP_INX_IN_SET) = clng(iter)
+		end with
+
+		set oTB.element.hli = oHLI_Fra
+		oTB.newcell.addtext oObject.pKlient.text
+		oTB.newcell.cell.align=ALIGN_RIGHT
+		oTB.addtext doc_.afc.display.money(oObject.curSumaBrutto,"")
+		if oFakturaSet(iter).m_oExtraInfo.m_bPrinted then
+			oTB.newcell.addtext "TAK"
+		end if
+		if oFakturaSet(iter).m_oExtraInfo.m_bSendMail then
+			oTB.newcell.addtext trans_.afc.display.fulldate(oObject.dExtra3)
+		end if    
+	next
+end function
+
+function c##CTRLID_REDIRECT_CHKBOX##_ongetdata(byref oCtrl)
+	dim iInx : iInx = oCtrl.userprop.prop(PRIV_PROP_INX_IN_SET)
+	if g_oFakturaSet(iInx).m_oExtraInfo.m_bSelected then
+		oCtrl.value = "1"
+	else
+		oCtrl.value = "0"
+	end if
+	c##CTRLID_REDIRECT_CHKBOX##_ongetdata = true
+end function
+
+function c##CTRLID_REDIRECT_CHKBOX##_ondataentered(byref oCtrl, byval newValue)
+	c##CTRLID_REDIRECT_CHKBOX##_ondataentered = true
+	dim iInx : iInx = oCtrl.userprop.prop(PRIV_PROP_INX_IN_SET)
+	g_oFakturaSet(iInx).m_oExtraInfo.m_bSelected = (newValue = "1")
+end function
+
+function open_fra(byref oHLI)
+	dim iInx : iInx = oHLI.prop(PRIV_PROP_INX_IN_SET)
+'	dim pSubTrans:set pSubTrans = trans_.createsubtran()
+		dim pOpenFormCmdHLI
+		
+		set pOpenFormCmdHLI = _
+			doc_.getmodule(60129).prepare_form_open_command(TYPEID_N5SPRZEDAZ, _
+				g_oFakturaSet(iInx).m_iIdObj , USAGE_EDIT)
+
+		pOpenFormCmdHLI.prop(GVAR_CMD) = clng(CMD_OPEN_WIZARD_PAGE)
+		
+		trans_.var(APPVAR_POP_DOKUMENT) = pOpenFormCmdHLI.prop(APPVAR_POP_DOKUMENT)
+		trans_.var(GVAR_FORMUSAGE) = pOpenFormCmdHLI.prop(GVAR_FORMUSAGE)
+		
+		trans_.var(APPVAR_REJESTR_TYP) = pOpenFormCmdHLI.prop(APPVAR_REJESTR_TYP)
+		trans_.var(APPVAR_DOKHANDLFORM_SHOW_OPAK) = pOpenFormCmdHLI.prop(APPVAR_DOKHANDLFORM_SHOW_OPAK) 
+		trans_.var(APPVAR_DOKHANDLFORM_SHOW_RABAT) = pOpenFormCmdHLI.prop(APPVAR_DOKHANDLFORM_SHOW_RABAT)
+		trans_.var(APPVAR_DOKHANDLFORM_QUANTITY_MODE) = pOpenFormCmdHLI.prop(APPVAR_DOKHANDLFORM_QUANTITY_MODE)
+		trans_.var(APPVAR_DOKHANDLFORM_KOLEJNOSC_NAZWA_INDEKS) = pOpenFormCmdHLI.prop(APPVAR_DOKHANDLFORM_KOLEJNOSC_NAZWA_INDEKS)
+		trans_.var(APPVAR_DOKHANDLFORM_SHOW_ILOSC_DOSTEPNA) = pOpenFormCmdHLI.prop(APPVAR_DOKHANDLFORM_SHOW_ILOSC_DOSTEPNA)
+		trans_.var(APPVAR_ZAMOWIENIA_BLOKUJ_WARTOSCI) = pOpenFormCmdHLI.prop(APPVAR_ZAMOWIENIA_BLOKUJ_WARTOSCI)
+		trans_.var(APPVAR_DOKHANDLFORM_SHOW_ILOSC_ZAREZERW) = pOpenFormCmdHLI.prop(APPVAR_DOKHANDLFORM_SHOW_ILOSC_ZAREZERW)
+
+		dim pModalForm : set pModalForm = doc_.getpagehli(pOpenFormCmdHLI)
+	
+		pModalForm.domodalauto
+
+		FORCE_REALOAD_OBJECT(trans_.getobj(TYPEID_N5SPRZEDAZ, g_oFakturaSet(iInx).m_iIdObj))
+'	set pSubTrans=nothing
+
+	rebuild_ui g_oFakturaSet
+end function
+
+#comment '-----------------------------------------------------------------------
+#comment '
+#comment '	oUmowa - umowa ktora analizujemy
+#comment '	oSprzedaz - fra ktora wypelniamy
+#comment '	dEndDate - podana data koncowa
+#comment '	
+#comment '-----------------------------------------------------------------------
+
+function fra_do_umowy(byref oUmowa,byref oSprzedaz,byval dEndDate)
+	fra_do_umowy = false
+
+	'-- dane podstawowe - g_strGenerationKey - do identyfikacji paczki faktury stworzonych
+	'-- tym narzedziem
+
+	set oSprzedaz.pKlient = oUmowa.wpAdresat
+	if not oUmowa.dok_pSposobPlatnosci is nothing then
+		set oSprzedaz.pSposobPlatnosci = oUmowa.dok_pSposobPlatnosci 
+	end if
+	oSprzedaz.strExtra2 = g_strGenerationKey
+
+	'--pomijanie niedziel i sobot--
+	dim dDataWyst : dDataWyst = oUmowa.dok_dDataWystNastFry
+	
+  'stary uproszczony algorytm
+  'do while weekday(dDataWyst,vbMonday) >= 6
+	'	dDataWyst = dDataWyst - 1
+	'loop
+  
+  dim idKalCP : idKalCP = trans_.findobjid(TYPEID_N5PLKALCP, "strNazwa='Generator faktur'")
+  if idKalCP <= 0 then
+		nx_.trace.fatal "FKF003", "Brak rejestru wymaganego kalendarza czasu pracy o nazwie 'Generator faktur'"
+	  exit function
+  end if
+  dim oKalCP : set oKalCP = trans_.getobj(TYPEID_N5PLKALCP, idKalCP)
+  
+  dim oKalendarz : set oKalendarz = doc_.system.activex("navopl.KalCP") 
+  dim dtMinKalDay : dtMinKalDay = dateserial(year(dDataWyst), 1, 1)
+  oKalendarz.init trans_.afc, oKalCP, dtMinKalDay, dDataWyst
+  
+  do while not oKalendarz.get_day_info(dDataWyst).is_dzien_rob_plan()
+		dDataWyst = dDataWyst - 1
+    
+    if dDataWyst < dtMinKalDay then
+		  nx_.trace.fatal "FKF003", "Nie znaleziono żadnego dnia roboczego od " + trans_.afc.display.fulldate(dtMinKalDay) + " do " + trans_.afc.display.fulldate(oUmowa.dok_dDataWystNastFry)
+	    exit function
+    end if
+    
+	loop
+
+ 
+	oSprzedaz.dDataWyst = dDataWyst
+	oSprzedaz.dDataSprzed = dDataWyst
+  
+	'--------------------
+	'wstawianie kwalifikatora
+	'----------------------------------------
+	dim idKwalifikator : idKwalifikator = clng(0)
+  if oUmowa.strCecha3 <> "" then
+    idKwalifikator = trans_.findobjid(TYPEID_N5KWALIFIKATOR,"strNazwa='" + oUmowa.strCecha3 +"'")
+	  if idKwalifikator <= 0 then
+		  nx_.trace.error "FKF031","Na umowie " + oUmowa.strNumDok +" podano nieistniejący kwalifikator: " + oUmowa.strCecha3
+	  else
+		  set oSprzedaz.pKwalifikatorEx = trans_.getobj(TYPEID_N5KWALIFIKATOR,idKwalifikator)
+	  end if
+  end if
+	'----------------------------------------
+	dim oPozDokProd
+	dim oPozycja
+	dim dMinDate : dMinDate = dEndDate
+	dim strPozOpis
+	dim strTemp
+	dim curTemp
+
+	for each oPozDokProd in oUmowa.dok_listPozDokProd
+		'jesli juz jest zakonczona pozycja, to zmniejszamy dEffectiveEndDate
+		dim dEffectiveEndDate : dEffectiveEndDate = dEndDate
+		if oPozDokProd.pdp_dDataZakon <> trans_.afc.globals.nulldate() then
+			if oPozDokProd.pdp_dDataZakon  < dEndDate then
+				dEffectiveEndDate = oPozDokProd.pdp_dDataZakon
+			end if 
+		end if
+
+		if oPozDokProd.dDataOstNal <> trans_.afc.globals.nulldate() then
+			dim strOpisKalkulacji : strOpisKalkulacji = ""
+			strPozOpis = ""
+			select case oPozDokProd.pdp_eRegulaNaliczania
+			case PDP_RN_CENAX1
+				' niezakonczone - wiec przestawiamy w przod
+				if (oPozDokProd.pdp_dDataZakon = trans_.afc.globals.nulldate()) or _
+           ((month(oUmowa.dok_ddataGenNastFry) <= month(oPozDokProd.pdp_dDataZakon) and _
+             year(oUmowa.dok_ddataGenNastFry) = year(oPozDokProd.pdp_dDataZakon)) _
+            or _
+            (year(oUmowa.dok_ddataGenNastFry) < year(oPozDokProd.pdp_dDataZakon))) then
+					if dEndDate  = dateserial(year(dEndDate),month(dEndDate)+1,0) then
+						dEffectiveEndDate = dateserial(year(dEndDate),month(dEndDate)+oUmowa.dok_iCzestotliwosc+1,0)
+					else
+						dEffectiveEndDate = dateadd("m",oUmowa.dok_iCzestotliwosc,dEndDate)
+					end if				
+				end if
+        'ponownie obcinamy zakonczone
+        if (oPozDokProd.pdp_dDataZakon <> trans_.afc.globals.nulldate()) then
+          if oPozDokProd.pdp_dDataZakon < dEffectiveEndDate then
+            dEffectiveEndDate = oPozDokProd.pdp_dDataZakon 
+          end if
+        end if
+				if oPozDokProd.dDataOstNal < dEffectiveEndDate  then
+				if oUmowa.dok_iCzestotliwosc > 0 then
+					dim dtFirstDay
+					dtFirstDay = oPozDokProd.dDataOstNal + 1
+					dim curWartosc : curWartosc = ccur(0.0)
+
+					if oUmowa.dok_iCzestotliwosc = 1 then
+						strOpisKalkulacji = "Częst. 1 m-c:"
+						dim dtLastDayOfSameMonth : dtLastDayOfSameMonth = dateserial(year(dtFirstDay),month(dtFirstDay)+1,0)
+						dim iMonthDays : iMonthDays = day(dtLastDayOfSameMonth)
+						if dtLastDayOfSameMonth > dEffectiveEndDate then
+							dtLastDayOfSameMonth = dEffectiveEndDate
+						end if
+						'--- poczatek (moze byc niepelny miesiac)
+						if dtLastDayOfSameMonth <> oPozDokProd.dDataOstNal then
+							curTemp = trans_.afc.convert.round2(ccur(oPozDokProd.pdp_curCenaWal * _
+								cdbl(dtLastDayOfSameMonth - oPozDokProd.dDataOstNal) / iMonthDays))
+							
+							'strTemp = "Kwota za okres od " + doc_.afc.display.fulldate(oPozDokProd.dDataOstNal) + " do " +_
+							'	doc_.afc.display.fulldate(dtLastDayOfSameMonth) + " " + cstr(dtLastDayOfSameMonth - oPozDokProd.dDataOstNal) + " dni " +_
+							'	doc_.afc.display.money(curTemp,"") + ","
+
+							curWartosc = curWartosc + curTemp
+							'strPozOpis = strPozOpis + strTemp
+
+							if curTemp <> ccur(0.0) then
+								strOpisKalkulacji = strOpisKalkulacji + " kwota " + doc_.afc.display.money(curTemp,"") + " do dnia " + doc_.afc.display.fulldate(dtLastDayOfSameMonth) + ";"
+							end if
+						end if
+						'---- kolejne m-ce
+						dtLastDayOfSameMonth = dateserial(year(dtLastDayOfSameMonth),month(dtLastDayOfSameMonth)+2,0)
+						do while dtLastDayOfSameMonth <= dEffectiveEndDate
+							curTemp = ccur(oPozDokProd.pdp_curCenaWal)
+							curWartosc = curWartosc + curTemp
+							
+							if curTemp <> ccur(0.0) then
+								strOpisKalkulacji = strOpisKalkulacji + " kwota " + doc_.afc.display.money(curTemp,"") + " do dnia " + doc_.afc.display.fulldate(dtLastDayOfSameMonth) + ";"
+							end if
+
+							dtLastDayOfSameMonth = dateserial(year(dtLastDayOfSameMonth),month(dtLastDayOfSameMonth)+2,0)
+						loop
+						'--- koncowka ost. niepelnego m-ca
+						iMonthDays = day(dateserial(year(dtLastDayOfSameMonth),month(dtLastDayOfSameMonth)+1,0))
+						dtLastDayOfSameMonth = dateserial(year(dtLastDayOfSameMonth),month(dtLastDayOfSameMonth),0)
+						if dtLastDayOfSameMonth > dEffectiveEndDate then
+							dtLastDayOfSameMonth = dEffectiveEndDate
+						end if
+						curTemp = trans_.afc.convert.round2(ccur(oPozDokProd.pdp_curCenaWal * cdbl(dEffectiveEndDate - dtLastDayOfSameMonth) / iMonthDays))
+						curWartosc = curWartosc + curTemp
+						if curTemp <> ccur(0.0) then
+							strOpisKalkulacji = strOpisKalkulacji + " kwota " + doc_.afc.display.money(curTemp,"") + " do dnia " + doc_.afc.display.fulldate(dEffectiveEndDate)
+						end if
+					else
+						dim dNMcyOdNaliczenia : dNMcyOdNaliczenia = dateadd("m",oUmowa.dok_iCzestotliwosc,(oPozDokProd.dDataOstNal+1))
+						dim dOstDzienOkresu : dOstDzienOkresu = dNMcyOdNaliczenia - 1
+						
+						strOpisKalkulacji = "Częst. " + cstr(oUmowa.dok_iCzestotliwosc) +_
+						" m-cy: ostatni dzień:" + doc_.afc.display.fulldate(dOstDzienOkresu) + ";"
+
+						if dOstDzienOkresu = dEffectiveEndDate then
+							curWartosc = curWartosc + oPozDokProd.pdp_curCenaWal
+							strOpisKalkulacji = strOpisKalkulacji + " kwota " + doc_.afc.display.money(oPozDokProd.pdp_curCenaWal,"") + " za cały okres;"
+						else
+							dim iCountedDays : iCountedDays = clng(dEffectiveEndDate - oPozDokProd.dDataOstNal)
+							dim iPeriodDays : iPeriodDays = clng(dOstDzienOkresu - oPozDokProd.dDataOstNal)
+                            'umowa konczy sie szybciej niz wynika to z daty koncowej okresu
+                            if dEffectiveEndDate > oPozDokProd.pdp_ddatazakon then
+                                iCountedDays = clng(oPozDokProd.pdp_ddatazakon - oPozDokProd.dDataOstNal)
+                            end if
+							curTemp = trans_.afc.convert.round2(ccur(oPozDokProd.pdp_curCenaWal * _
+								cdbl(iCountedDays) / iPeriodDays))
+							curWartosc = curWartosc + curTemp
+							strOpisKalkulacji = strOpisKalkulacji + " kwota " + doc_.afc.display.money(curTemp,"") +_
+							" za " + cstr(iCountedDays) + "/" + cstr(iPeriodDays) + " dni;"
+						end if
+					end if
+                    'umowa konczy się szybciej niz wynika to z daty koncowej okresu
+                    if ((dEffectiveEndDate > oPozDokProd.pdp_ddatazakon) and (oPozDokProd.pdp_ddatazakon <> trans_.afc.globals.nulldate())) then
+                          strPozOpis = "za okres od " + nx_.display.fulldate(oPozDokProd.dDataOstNal + 1) + " do " + nx_.display.fulldate(oPozDokProd.pdp_ddatazakon)
+                    else
+                          strPozOpis = "za okres od " + nx_.display.fulldate(oPozDokProd.dDataOstNal + 1) + " do " + nx_.display.fulldate(dEffectiveEndDate)
+                    end if
+
+					set oPozycja = oSprzedaz.listPozycje.addnew()
+					with oPozycja
+						set .pProdukt = oPozDokProd.pdp_pProdukt
+						.curIloscOpak = ccur(1)
+						.curCenaBazowaNettoWal = curWartosc
+						set .psprzed_pKLOB = oPozDokProd.pdp_pKLOB
+						.strUwagi = left(strPozOpis,510)
+            set .pKwalifikatorEx = oSprzedaz.pKwalifikatorEx
+					end with
+				else
+					nx_.trace.info "IKF004", "Pomijam " + oPozDokProd.pdp_pProdukt.strNazwa + " ze względu na częstotliwość 0"
+				end if
+				end if
+			case PDP_RN_LICZBA
+				if oPozDokProd.dDataOstNal < dEffectiveEndDate  then
+				dim strQryLiczba : strQryLiczba = "select idobj from n5zadanie where pTypDzialania=" + cstr(oPozDokProd.pdp_pTypDzial.idobj) +_
+				" and zad_pKLOB=" + cstr(oPozDokProd.pdp_pKLOB.idobj) + " and dDataRozp > " + trans_.afc.convert.date2SQL(oPozDokProd.dDataOstNal) +_
+				" and dDataZakon <= " + trans_.afc.convert.date2SQL(dEffectiveEndDate)
+				dim oRS : set oRS = trans_.createadors(strQryLiczba)
+				
+				if not oRS.EOF then
+					dim curLiczbaZd : curLiczbaZd = ccur(0.0)
+          dim bLF : bLF = false
+					do while not oRS.EOF 
+					dim oZadanie0 : set oZadanie0 = trans_.getobj(TYPEID_N5ZADANIE,clng(oRS(0)))
+						curLiczbaZd = curLiczbaZd + ccur(1.0)
+					
+            if strPozOpis = "" then
+              strPozOpis = oPozDokProd.pdp_pKLOB.klob_strNazwa + " " + oPozDokProd.pdp_pTypDzial.strNazwa + ": "
+            end if						
+						strPozOpis = strPozOpis + nx_.display.fulldate(oZadanie0.dDataRozp) + " " + nx_.display.fulltime(oZadanie0.tCzasRozp) + ","
+            if bLF then
+              strPozOpis = strPozOpis + vbLF
+            end if
+						oRS.MoveNext
+            bLF = not bLF
+					loop 
+					
+					if oPozDokProd.pdp_iGratis <> 0 then
+						strPozOpis = strPozOpis + vbLF + "Uwzględniono gratisy w liczbie: " + cstr(oPozDokProd.pdp_iGratis)
+						curLiczbaZd = curLiczbaZd - oPozDokProd.pdp_iGratis
+					end if
+					
+					if curLiczbaZd > 0.0 then
+						set oPozycja = oSprzedaz.listPozycje.addnew()
+						with oPozycja
+							set .pProdukt = oPozDokProd.pdp_pProdukt
+							.curIloscOpak = curLiczbaZd
+							.curCenaBazowaNettoWal = oPozDokProd.pdp_curCenaWal
+							set .psprzed_pKLOB = oPozDokProd.pdp_pKLOB
+							.strUwagi = left(strPozOpis,510)
+	            set .pKwalifikatorEx = oSprzedaz.pKwalifikatorEx
+					end with
+					else
+						nx_.trace.info "IKF002", "Pomijam " + oPozDokProd.pdp_pProdukt.strNazwa + " ze względu na brak płatnych zdarzeń"
+					end if
+				end if
+				end if
+
+			case PDP_RN_SUMA
+				if oPozDokProd.dDataOstNal < dEffectiveEndDate  then
+				dim strQrySuma : strQrySuma = "select idobj from n5zadanie where pTypDzialania=" + cstr(oPozDokProd.pdp_pTypDzial.idobj) +_
+				" and zad_pKLOB=" + cstr(oPozDokProd.pdp_pKLOB.idobj) + " and dDataRozp > " + trans_.afc.convert.date2SQL(oPozDokProd.dDataOstNal) +_
+				" and dDataZakon <= " + trans_.afc.convert.date2SQL(dEffectiveEndDate) +_
+				" and curExtra4 <> 0.0 " +_
+				" order by dDataRozp,idobj"
+				dim oRS2 : set oRS2 = trans_.createadors(strQrySuma)
+				do while not oRS2.EOF
+					dim oZadanie : set oZadanie = trans_.getobj(TYPEID_N5ZADANIE,clng(oRS2(0)))
+					if oZadanie.curExtra4 > 0.0 then
+						set oPozycja = oSprzedaz.listPozycje.addnew()
+						with oPozycja
+							set .pProdukt = oPozDokProd.pdp_pProdukt
+							.curIloscOpak = ccur(1)
+							if oPozDokProd.pdp_curCenaWal <> 0.0 then
+								.curCenaBazowaNettoWal = ccur(oPozDokProd.pdp_curCenaWal * oZadanie.curExtra4)
+							else
+								.curCenaBazowaNettoWal = oZadanie.curExtra4
+							end if
+							set .psprzed_pZadanie = oZadanie
+							set .psprzed_pKLOB = oPozDokProd.pdp_pKLOB
+
+							strPozOpis = oPozDokProd.pdp_pKLOB.klob_strNazwa + " " +_
+							oPozDokProd.pdp_pTypDzial.strNazwa + " " +_
+							nx_.display.fulldate(oZadanie.dDataRozp) + " " + nx_.display.fulltime(oZadanie.tCzasRozp) + " " +_
+							oZadanie.strTemat +  vbLf
+							.strUwagi = left(strPozOpis,510)
+		          set .pKwalifikatorEx = oSprzedaz.pKwalifikatorEx
+				   end with
+					 else
+						nx_.trace.info "IKF005", "Pomijam " + oPozDokProd.pdp_pProdukt.strNazwa +_
+						" dla zadania " + oZadanie.text + " ze względu na brak kwoty na zdarzeniu"
+					end if
+					oRS2.MoveNext
+				loop
+				end if
+			end select
+			if oPozDokProd.dDataOstNal < dMinDate then
+				dMinDate = oPozDokProd.dDataOstNal + 1
+			end if
+		end if
+		oPozDokProd.dDataOstNal = dEffectiveEndDate
+		if strOpisKalkulacji <> "" then
+			nx_.trace.info "IKF003", strOpisKalkulacji
+		end if
+	next
+	
+	'-- specjalny przypadek na ostatni dzien miesiaca
+	if oUmowa.dok_dDataGenNastFry  = dateserial(year(oUmowa.dok_dDataGenNastFry),month(oUmowa.dok_dDataGenNastFry)+1,0) then
+		oUmowa.dok_dDataGenNastFry = dateserial(year(oUmowa.dok_dDataGenNastFry),month(oUmowa.dok_dDataGenNastFry)+oUmowa.dok_iCzestotliwosc+1,0)
+	else
+		oUmowa.dok_dDataGenNastFry = dateadd("m",oUmowa.dok_iCzestotliwosc,oUmowa.dok_dDataGenNastFry)
+	end if
+
+	if oUmowa.dok_dDataWystNastFry  = dateserial(year(oUmowa.dok_dDataWystNastFry),month(oUmowa.dok_dDataWystNastFry)+1,0) then
+		oUmowa.dok_dDataWystNastFry = dateserial(year(oUmowa.dok_dDataWystNastFry),month(oUmowa.dok_dDataWystNastFry)+oUmowa.dok_iCzestotliwosc+1,0)
+	else
+		oUmowa.dok_dDataWystNastFry = dateadd("m",oUmowa.dok_iCzestotliwosc,oUmowa.dok_dDataWystNastFry)
+	end if
+
+	oSprzedaz.strUwagi = oUmowa.dok_strUwagiFra
+
+	fra_do_umowy = true
+end function
+
+function finish_sprzedaz(byref oSprzedaz,byref oSprzedazBOWIArray)
+	if oSprzedaz.listPozycje.count = 0 then
+		oSprzedaz.ignore = true
+		nx_.trace.warning "WKF001","Pomijam pustą fakturę dla " + oSprzedaz.pKlient.text
+	else
+		dim oBOWI : set oBOWI = nx_.new_bowi(TYPEID_N5SPRZEDAZ,oSprzedaz.idobj,oSprzedaz.pKlient.text,nothing)
+		oSprzedazBOWIArray.add oBOWI
+	end if
+end function
+
+#comment '-----------------------------------------------------------------------
+#comment '----- kursor po umowach ktore wymagaja zafakturowania 
+#comment '-----------------------------------------------------------------------
+
+function generate_faktury(byref oFakturaSet,byref oParamArray) : generate_faktury = false
+	NX_TRACE_START_STREAM("Generowanie faktur",nothing)
+
+	generate_faktury = generate_faktury_internal(oFakturaSet,oParamArray)
+
+	NX_TRACE_SHOW_LOG(0)
+end function
+
+function composet_gen_key(dtTerminFakt,dtDataKoncowa)
+	composet_gen_key = trans_.afc.display.fulldate(dtTerminFakt) +_
+		"/" + trans_.afc.display.fulldate(dtDataKoncowa)
+end function
+
+function generate_faktury_internal(byref oFakturaSet,byref oParamArray) : generate_faktury_internal = false
+	dim dtTerminFakt : dtTerminFakt = oParamArray.Value(0).first_value
+	dim dtDataKoncowa : dtDataKoncowa = oParamArray.Value(1).first_value
+	#comment '-----------------------------------------------------------------------
+	dim idRejFaktur : idRejFaktur = doc_.getmodule(60306).nx_choose_rejestr(true,"N5REJESTRDOK_FAKT_SP")
+	if idRejFaktur <= 0 then
+		nx_.trace.fatal "FKF002","Brak rejestru faktur sprzedaży"
+		exit function
+	end if
+	
+	trans_.var(APPVAR_REJESTR_DOKUMENTOW) = clng(idRejFaktur)
+	#comment '-----------------------------------------------------------------------
+	dim idTypDokUmowy : idTypDokUmowy = trans_.findobjid(TYPEID_N5TYPDOKUMENTU,"strNazwa='Umowy'")
+	if idTypDokUmowy <= 0 then
+		nx_.trace.fatal "FKF001","Brak typu dokumentu 'Umowy'"
+		exit function
+	end if
+
+	#comment '-----------------------------------------------------------------------
+	#comment 'kursor po umowach (n5dokument)
+	#comment '-----------------------------------------------------------------------
+	dim pPerf : set pPerf = doc_.performing("Tworzenie faktur..")
+	dim strQryUmowyWhere
+	with trans_.afc.convert
+	strQryUmowyWhere =  .formatter("dok_dDataGenNastFry=%1" + _
+		 " and pTypDokumentu in (select idobj from n5typdokumentu where pTypNadrzedny=%2)" + _
+		 " and wpAdresat in (select idobj from n5klient where %3 and %4) and wpAdresat_wrt=TYPEID_N5KLIENT") _
+		.add(.date2SQL(dtTerminFakt)) _
+		.add(idTypDokUmowy) _
+		.add(oParamArray.Value(2).get_where_part(trans_))_
+		.add(oParamArray.Value(3).get_where_part(trans_))_
+		.done()
+	end with
+
+	dim strSQL: 
+	strSQL = "select n5dokument.IdObj from n5dokument " + vbNewLine +_
+			"inner join n5klient k on n5dokument.wpAdresat = k.idobj " + vbNewLine +_
+			"where " + strQryUmowyWhere + vbNewLine +_
+			"order by k.strIndeks"
+	dim oRS : set oRS = trans_.createadors(strSQL)
+	
+	dim oUmowa
+	dim oSprzedaz : set oSprzedaz = nothing
+	do while not oRS.EOF
+		set oUmowa = trans_.getobj(TYPEID_N5DOKUMENT,clng(oRS(0).value))
+    
+		set oSprzedaz = trans_.newobj(TYPEID_N5SPRZEDAZ)
+
+		dim strOpis : strOpis = "Tworzenie faktury do umowy " + oUmowa.strTematDokum
+		nx_.trace.info "IKF001", strOpis
+		pPerf.text = strOpis
+
+		if not fra_do_umowy(oUmowa,oSprzedaz,dtDataKoncowa) then
+			exit function
+		end if
+		if oSprzedaz.listPozycje.count = 0 then
+			oSprzedaz.ignore = true
+			nx_.trace.warning "WKF001","Pomijam pustą fakturę dla " + oSprzedaz.pKlient.text
+		else
+			dim oFSI : set oFSI = new cfaktura_edit_info
+			oFSI.m_bSelected = true
+			oFSI.m_bPrinted = false
+			dim oBOWI : set oBOWI = nx_.new_bowi(TYPEID_N5SPRZEDAZ,oSprzedaz.idobj,oSprzedaz.pKlient.text,oFSI)
+			oFakturaSet.add oBOWI
+		end if
+    
+		oRS.movenext
+	loop
+
+	generate_faktury_internal = true
+end function
+
+
+]]>
+</script>
+</config>
+<body>
+<table>
+	<tbody>
+		<tr>
+			<td>
+				<picture image='80139' tip='Zmiana parametrów' width='1000' height='1000' href='varFunction="facquireparam"' />
+				<picture image='80105' tip='Cofnij' width='1000' height='1000' href='varFunction="fload"' />
+				<picture image='PICTURE_CHOICE_N5SPRZEDAZ' tip='Przygotuj faktury' width='1000' height='1000' href='varFunction="fgenerate"' />
+				<picture image='80103' tip='Zachowaj' width='1000' height='1000' href='varFunction="fsavefry"' />
+				<picture image='80106' tip='Drukuj' width='1000' height='1000' href='varFunction="fdrukuj"' />
+				<picture image='80937' tip='Mail' width='1000' height='1000' href='varFunction="fmail"' />
+				<picture image='80128' tip='Mail + PDF' width='1000' height='1000' href='varFunction="fmail_pdf"' />        
+			</td>
+		</tr>
+		<tr>
+			<td style='STYLE_TABLE_INFO'><t>Wybrane parametry:</t><text name='CTRLID_SEL_DESC' /></td>
+		</tr>
+		<tr>
+			<td keepline='true'>
+				<button style='STYLE_BUTTON' size='16' href='vs1017="on_button_all"'>Zaznacz</button><t size='1' />
+				<button style='STYLE_BUTTON' size='16' href='vs1017="on_button_nothing"'>Odznacz</button><t size='1' />
+				<button style='STYLE_BUTTON' size='16' href='vs1017="on_button_reverse"'>Odwróć</button>
+			</td>
+		</tr>
+		<tr>
+			<td>
+				<table border='1' name='CTRLID_RESULT_TABLE'>
+					<thead style='STYLE_TABLE_HEADER'>
+						<tr>
+							<td></td>
+							<td><text>Numer dokumentu</text></td>
+							<td><t>Klient</t></td>
+							<td><t>Wartość</t></td>
+							<td><t>Drukowana</t></td>
+							<td><t>Wysłana</t></td>
+						</tr>
+					</thead>
+					<tbody backcolor='white' border='0'>
+					</tbody>
+				</table>
+			</td>
+		</tr>
+	</tbody>
+</table>
+</body>
+</page>

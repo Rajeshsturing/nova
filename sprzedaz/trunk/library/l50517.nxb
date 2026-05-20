@@ -1,0 +1,174 @@
+#ifndef l50517
+#define l50517
+
+#include "h1230"
+'-------------------------------------------------------------------
+'		Znajduje id rejestru dokumentu na podstawie typu
+'		- zwraca ID rejestru lub 0
+
+'	strTypeList - lista poszukiwanych typów rozdzielona przecinkami
+'-------------------------------------------------------------------
+
+#include "50122"
+#include "50100"
+
+'getCurrentRKSId
+#include "50120"
+
+#define FILTER_FROM_TYPE_LIST		1
+#define FILTER_EXCLUDE_TYPE_LIST	2
+
+#ifndef NX_BROWSER
+#define NX_BROWSER
+#endif
+
+private function eTypRejestru2Str(eTyp):eTypRejestru2Str = ""
+	eTypRejestru2Str = enum2str (TYPEID_N5REJESTRDOK, ENUMFLDNR_N5REJESTRDOK_ETYP, eTyp)
+end function
+
+function ChoiceList_CreateRowTyp(byref pTableBuilder, byref pHli, byref pObj, byval strName)
+
+	if (pHli is nothing) then
+		'Budowanie nag³ówka
+
+		pTableBuilder.addtext "Nazwa"
+		pTableBuilder.newcell.addtext "Typ"
+
+	else
+
+		if (not pObj is nothing) then
+			
+			'Budowanie elementu
+			pTableBuilder.addtexthli strName, pHli
+			pTableBuilder.newcell.addtext eTypRejestru2Str(pObj.eTyp)
+
+		else
+			
+			'Budowanie grupy
+			pTableBuilder.addtexthli strName, pHli
+			pTableBuilder.newcell
+
+		end if
+
+	end if
+
+	ChoiceList_CreateRowTyp = true
+
+end function
+
+'wybor rejestru - z wy³¹czeniem wymienionych w liœcie
+private function choose_rejestr_dok_exclude_types(byval strTypeList, byval bDisableDodaj , strTitle):choose_rejestr_dok_exclude_types = clng(0)
+	 choose_rejestr_dok_exclude_types = choose_rejestr_dok_filter_types(strTypeList,FILTER_EXCLUDE_TYPE_LIST,bDisableDodaj,strTitle)
+end function
+
+'wybor rejestru - spoœód lub pomijaj¹c wylistowane typy
+private function choose_rejestr_dok_filter_types(byval strTypeList, byval nFilterType ,byval bDisableDodaj , strTitle):choose_rejestr_dok_filter_types = clng(0)
+	'----- NX -----
+	if nFilterType = FILTER_FROM_TYPE_LIST then
+		choose_rejestr_dok_filter_types = doc_.getmodule(60306).nx_choose_rejestr(true,strTypeList)
+		exit function
+	end if
+	'----- NX -----
+
+	strTypeList = replace(strTypeList,";",",")
+
+	dim strWherePart
+	select case nFilterType
+		case FILTER_FROM_TYPE_LIST
+			strWherePart = " eTyp in "
+		case FILTER_EXCLUDE_TYPE_LIST
+			strWherePart = " eTyp not in "
+	end select
+
+
+	dim strRKSWhere
+	'jest wieloletni lub zawiera siê w bie¿¹cym roku ksiêgowym
+	strRKSWhere = "(pRokKsieg=0 or pRokKsieg=" + cstr(getCurrentRKSId()) + ")"
+
+
+	dim strWhere
+	if strTypeList ="" then
+		strWhere = "(eAktywny=1) and ("+strRKSWhere+")"
+	else
+		strWhere = strWherePart + " (" + cstr(strTypeList) + ") and (eAktywny=1) and ("+strRKSWhere+")"
+	end if
+
+		
+	dim IdRejestr
+	IdRejestr = trans_.findobjid(TYPEID_N5REJESTRDOK, strWhere )
+
+	'Je¿eli znalaz³ tylko jeden - zwraca jego ID 
+	' ale tylko jesli aktualny user ma do niego prawa
+	if IdRejestr > clng(0) then
+		dim pRej:set pRej = trans_.getobj(TYPEID_N5REJESTRDOK , IdRejestr)
+		if not pRej.n5rejestrdok_hasUserRights() then
+			MessageBox "Nie posiadasz uprawnieñ do wykorzystywania rejestru " + pRej.text,_
+				"Kontrola uprawnieñ", vbOKOnly, vbInformation
+			choose_rejestr_dok_filter_types = clng(0)
+			exit function
+		else
+			choose_rejestr_dok_filter_types = IdRejestr
+			exit function
+		end if
+	end if
+
+	if bDisableDodaj then
+		if IdRejestr = clng(0) then
+
+			dim arr:arr = split(strTypeList , "," , -1 , 1)
+			dim iter,strNazwy,n
+			for iter=0 to ubound(arr)
+				if iter=0 then
+					n = clng(arr(iter))
+					strNazwy = eTypRejestru2Str(clng(arr(iter)))
+				else
+					strNazwy = strNazwy + ", " + eTypRejestru2Str(clng(arr(iter)))
+				end if
+			next
+			do
+				
+				dim ret
+				ret = MessageBoxCustom("Nie zdefiniowano jeszcze rejestru " + strNazwy + ".","Brak rejestru", vbYesNo, vbInformation , "Anuluj;Dodaj")
+
+				if ret = vbNo then
+
+					trans_.var(APPVAR_REJESTR_TYP) = clng(n)
+					doc_.getmodule(60129).form_domodal TYPEID_N5REJESTRDOK , 0 , USAGE_EDIT
+
+				end if
+
+				IdRejestr = trans_.findobjid(TYPEID_N5REJESTRDOK, "eTyp in (" + cstr(strTypeList) + ")")
+
+			loop until ret <> vbNo or idRejestr <> 0
+
+			choose_rejestr_dok_filter_types = IdRejestr
+			exit function
+		end if
+	else
+
+	end if
+#ifdef NX_BROWSER
+	dim pM43009 : set pM43009 = doc_.getmodule(43009)
+	pM43009.prepare_single_selection TYPEID_N5REJESTRDOK,strTitle, strWhere,""
+	choose_rejestr_dok_filter_types = pM43009.run_browser()
+#else
+	'Znalaz³ wiêcej rejestrów lub mo¿na dodaæ
+	dim pPageSuggest: set pPageSuggest=doc_.getmodule(43001)
+	
+	pPageSuggest.prepare_choice_list TYPEID_N5REJESTRDOK,strTitle,"strNazwa", strWhere,"strNazwa","", GetRef("ChoiceList_CreateRowTyp")
+
+	'Nie pokazuj przycisków
+	pPageSuggest.hide_buttons(bDisableDodaj)
+
+	choose_rejestr_dok_filter_types = pPageSuggest.domodalauto()
+	set pPageSuggest = nothing
+#endif
+end function
+
+'wybor rejestru z wylistowanych typów
+private function choose_rejestr_dok(byval strTypeList, byval bDisableDodaj , strTitle):choose_rejestr_dok = clng(0)
+	choose_rejestr_dok = choose_rejestr_dok_filter_types(strTypeList,FILTER_FROM_TYPE_LIST,bDisableDodaj,strTitle)
+end function
+
+
+#endif

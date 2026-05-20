@@ -1,0 +1,588 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#comment NX_READY
+raport executor for aspator RapExec
+
+#include "h1000.h"
+#include "h1203.h"
+#include "h1230.h"
+#include "h1240.h"
+-->
+<page>
+<config>
+<script>
+
+<![CDATA[
+#include "50122"
+
+dim g_pRaportParam : set g_pRaportParam = nothing
+
+'--------------------------------------------------------------------------
+'sumator dla raport executor section
+'--------------------------------------------------------------------------
+class CRESumator
+	private m_curSum
+	private m_strCol
+
+	public sub init(byval strCol)
+		m_strCol = strCol
+		reset
+	end sub
+	public sub reset()
+		m_curSum = ccur(0.0)
+	end sub
+	public sub update(byref pRec)
+		m_curSum = m_curSum + ccur(pRec(m_strCol))
+	end sub
+	public function result
+		result  = m_curSum
+	end function
+	
+	public sub add(curValue)
+		m_curSum = m_curSum + curValue
+	end sub
+end class
+'--------------------------------------------------------------------------
+'sumator dla raport executor section
+'--------------------------------------------------------------------------
+class CRECounter
+	private m_nCount
+
+	public sub reset()
+		m_nCount = clng(0)
+	end sub
+	public sub update(byref pRec)
+		m_nCount = m_nCount + 1
+	end sub
+	public function result
+		result  = m_nCount
+	end function
+end class
+'--------------------------------------------------------------------------
+'sekcja dla raport executor engine
+'--------------------------------------------------------------------------
+class CRaportExecutorSection
+	private m_WDValue		'watchdog value
+	private m_WDFieldInx	'watchdog field
+	private m_Counters()
+	private m_CounterUB		'm_Counters upper bound
+
+	public m_pBeginProc		'begin section procedure
+	public m_pEndProc		'end section procedure
+	public m_pRowProc		'row notification procedure
+	public m_iRowNr			'section row counter
+
+	public sub init(byval WDFieldInx,byref pBeginProc,byref pEndProc,byref pRowProc)
+		m_WDValue = 0	'good for idobj
+		m_WDFieldInx = WDFieldInx
+		set m_pBeginProc = pBeginProc
+		set m_pEndProc = pEndProc
+		set m_pRowProc = pRowProc
+		m_CounterUB = -1
+	end sub
+
+	private sub add_counter(byref pCounter)
+		m_CounterUB = m_CounterUB + 1
+		redim preserve m_Counters(m_CounterUB+1)
+		set m_Counters(m_CounterUB) = pCounter
+	end sub
+
+	'watchdog runtime management
+	public function getwdfield()
+		getwdfield = m_WDFieldInx 
+	end function
+	public property get wdval()
+		wdval = m_WDValue
+	end property
+	public property let wdval(newval)
+		m_WDValue = newval
+	end property
+
+	'runtime procedure forwarders
+	public sub begin_section(byref pCurrRec)
+		m_iRowNr = 1
+		'reset counters
+		dim iter
+		for iter = 0 to m_CounterUB
+			m_Counters(iter).reset
+		next
+
+		if not m_pBeginProc is nothing then
+			m_pBeginProc me, pCurrRec
+		end if
+	end sub
+	public sub end_section()
+		if not m_pEndProc is nothing then
+			m_pEndProc me
+		end if
+	end sub
+	public sub process_row(byref pCurrRec)
+		if not m_pRowProc is nothing then
+			m_pRowProc me,pCurrRec
+		end if
+		'update counters
+		dim iter
+		for iter = 0 to m_CounterUB
+			m_Counters(iter).update pCurrRec
+		next
+		m_iRowNr = m_iRowNr + 1
+	end sub
+
+	public property get lp()
+		lp = m_iRowNr
+	end property 
+	public property get even()
+		even = (m_iRowNr mod 2 = 0)
+	end property 
+	'-------- counters -----------
+	public function add_sumator(byval strCol)
+		dim pSumator : set pSumator = new CRESumator
+		pSumator.init strCol
+		add_counter pSumator
+		set add_sumator = me
+	end function
+
+	public property get counter(byval nCounter)
+		set counter = m_Counters(nCounter)
+	end property
+end class
+'--------------------------------------------------------------------------
+'engine wykonujący raport
+'--------------------------------------------------------------------------
+
+class CRaportExecutorEngine
+	private m_Sections()
+	private m_SectionUB		'm_Sections upper bound
+	private m_pBodySection
+
+	private m_strTitle
+	private m_strADOQuery
+
+	private m_pCurrRec
+
+	private m_nRecNr		'numer aktualnego rekordu
+	private m_nRecCount		'liczba rekordów
+
+
+	private sub finish_section(byval nLevel)
+		m_Sections(nLevel).end_section
+	end sub
+
+	private sub begin_section(byval nLevel)
+		m_Sections(nLevel).begin_section m_pCurrRec
+	end sub
+
+	private sub setwd_value(byval nLevel)
+		dim wdfield : wdfield = m_Sections(nLevel).getwdfield()
+		if wdfield <> -1 then
+			m_Sections(nLevel).wdval = m_pCurrRec.fields(wdfield)
+		end if
+	end sub
+
+	private sub write_row()
+		dim iter
+		for iter = 0 to m_SectionUB
+			m_Sections(iter).process_row m_pCurrRec
+		next
+	end sub
+
+	private function isend()
+		isend = m_pCurrRec.EOF
+	end function
+	
+	private sub next_row()
+		m_pCurrRec.MoveNext
+	end sub
+
+	private function open() : open = false
+		'jeśli nie był dostarczony, to otwórz
+		if m_pCurrRec is nothing then
+			on error resume next
+			set m_pCurrRec = trans_.createadors(m_strADOQuery)
+			on error goto 0
+		end if
+				
+		if m_pCurrRec is nothing then
+			exit function
+		end if
+		
+		open = not isend()
+
+		if not isend() then
+			m_nRecNr = clng(0)
+		end if
+
+		' wyznacz liczbę wyników w raporcie
+		m_nRecCount = m_pCurrRec.RecordCount
+	end function
+
+	private sub begin_raport_data()
+		dim iter
+		for iter = 0 to m_SectionUB
+			setwd_value iter
+			begin_section iter
+		next
+	end sub
+
+	private sub finish_raport_data()
+		dim iter
+		for iter = m_SectionUB to 0 step -1
+			finish_section iter
+		next
+	end sub
+
+	private sub process_row()
+		dim iter
+		for iter = 0 to m_SectionUB
+			dim wdfield : wdfield = m_Sections(iter).getwdfield()
+			if wdfield <> -1 then
+				dim strCurrRecVal: strCurrRecVal = m_pCurrRec.fields(wdfield).value
+				if (not isNull(strCurrRecVal)) then
+					strCurrRecVal=cstr(strCurrRecVal)
+				end if
+
+				dim strSectionsVal: strSectionsVal=m_Sections(iter).wdval
+
+				if (not isNull(strSectionsVal)) then
+					strSectionsVal=cstr(strSectionsVal)
+				end if
+
+				if (strCurrRecVal <> strSectionsVal) then	'detected change
+					'finish all from iter to m_watchdogUB
+					dim iter2
+					for iter2 = m_SectionUB to iter step -1
+						finish_section iter2
+						setwd_value iter2
+					next
+					'begin new sections
+					for iter2 = iter to m_SectionUB
+						begin_section iter2
+					next
+				end if
+			end if
+		next
+		write_row
+	end sub
+
+	private sub addsection(byref pNewSection)
+		m_SectionUB = m_SectionUB + 1
+		redim preserve m_Sections(m_SectionUB+1)
+		set m_Sections(m_SectionUB) = pNewSection
+	end sub
+
+	public sub Class_Initialize()
+		m_SectionUB = -1
+		set m_pBodySection = nothing
+		set m_pCurrRec = nothing
+	end sub
+	'-------------------- public ---------------------------------
+	public function prepare(byval strTitle,byref pDefaultParamArray,byref pCallParamArray,byval strSQLQuery)
+		merge_params pDefaultParamArray,pCallParamArray
+
+		m_strTitle = strTitle
+		if show_raport_param_dialog(pDefaultParamArray,m_strTitle) = 0 then
+			prepare = false
+			exit function
+		end if
+
+		m_strADOQuery = query_apply_actual_param(strSQLQuery,pDefaultParamArray)
+		set_raport_param pDefaultParamArray
+		prepare = true
+	end function
+	
+	'-------------------- NXM begin --------------------
+	public function prepare4nxm(byval strTitle, byref oDefaultParamArray, byref oActualParamArray, byval strHostQueryCode)
+		merge_params oDefaultParamArray, oActualParamArray
+
+		m_strTitle = strTitle
+		if show_raport_param_dialog(oDefaultParamArray, m_strTitle) = 0 then
+			prepare4nxm = false
+			exit function
+		end if
+		
+		query_apply_actual_param "", oDefaultParamArray
+		
+		set_raport_param oDefaultParamArray
+
+		Dim oTrans : Set oTrans = trans_.get_this()
+		dim oNXMRS: set oNXMRS = doc_.nxm_net_.execute_host_query_rpa(strHostQueryCode, oTrans, oDefaultParamArray)
+		supply_recordset oNXMRS
+
+		prepare4nxm = true
+	end function
+	'-------------------- NXM end --------------------
+	
+	public function add_group_section(byval WDFieldInx,byref pBeginProc,byref pEndProc)
+		dim pNewSection : set pNewSection = new CRaportExecutorSection
+		pNewSection.init WDFieldInx,pBeginProc,pEndProc,nothing
+		addsection pNewSection
+		set add_group_section = pNewSection
+	end function
+	
+	public function add_body_ex(byref pBeginProc,byref pEndProc,byref pRowProc)
+		dim pNewSection : set pNewSection = new CRaportExecutorSection
+		pNewSection.init -1,pBeginProc,pEndProc,pRowProc
+		addsection pNewSection
+		set add_body_ex = pNewSection
+		set m_pBodySection = pNewSection
+	end function
+
+	public function add_body(byref pRowProc)
+		set add_body = add_body_ex(nothing,nothing,pRowProc)
+	end function
+	
+	'-------------------- NX Part --------------------------------------
+	public function nx_prepare(byref oNXAspator,byval strTitle,byref oNXParamArray,byval strSQLQuery)
+		'nx_merge_params oNXParamArray, get_raport_param()
+		'todo
+		'set_raport_param oNXParamArray
+	end function
+	'-------------------- NX Part --------------------------------------
+
+
+	' Do ręcznego przerabiana query tuż przez otwarciem
+	' Używane przy zmianie daty na nr_op_mag bez pisania
+	' specjalnej klasy CRapParam do tego
+	public sub ReplaceQueryParam(byval oldvalue, byval newvalue)
+		dim result_str : result_str = Replace(m_strADOQuery,oldvalue,newvalue)
+		put_final_query result_str
+	end sub 
+
+
+	public function perform()
+		dim oPerf: set oPerf = doc_.performing(m_strTitle + " - trwa generowanie raportu ")
+
+		'open cursor
+		if open() then
+			begin_raport_data
+	
+			dim nGroupInterval: nGroupInterval = clng(100)
+			dim nGroupInterval2: nGroupInterval2 = clng(2000)
+			dim strMsg
+
+			do while not isend()
+				m_nRecNr = m_nRecNr + 1
+				'sprawdzanie warunków przerwania
+				if m_nRecNr = nGroupInterval then
+					strMsg = "Raport zawiera już " + cstr(m_nRecNr)
+					if m_nRecCount>0 then
+						strMsg = strMsg + " z " + cstr(m_nRecCount)
+					end if
+					strMsg = strMsg + " pozycji. Czy kontynuować generowanie?"
+
+					' ukryj na chwilę splasha
+					set oPerf = nothing
+
+					if MessageBoxAndForget(strMsg, "Generowanie raportu", vbYesNo, vbQuestion , USERPROF_REPORT_MOREDATA)<>vbYes then
+						exit do
+					else
+						' wyświetl ponownie splasha
+						set oPerf = doc_.performing(m_strTitle + " - trwa generowanie raportu ")
+					end if
+				else
+					if m_nRecNr = nGroupInterval2 then
+						strMsg = "Raport zawiera już " + cstr(m_nRecNr)
+						if m_nRecCount>0 then
+							strMsg = strMsg + " z " + cstr(m_nRecCount)
+						end if
+						strMsg = strMsg + " pozycji. Czy kontynuować generowanie?"
+
+						' ukryj na chwilę splasha
+						set oPerf = nothing
+
+						if MessageBoxAndForget(strMsg, "Generowanie raportu", vbYesNo, vbQuestion , USERPROF_REPORT_MOREDATA_LEVEL2)<>vbYes then
+							exit do
+						else
+							' wyświetl ponownie splasha
+							set oPerf = doc_.performing(m_strTitle + " - trwa generowanie raportu ")
+						end if
+					end if
+				end if
+
+				process_row
+				next_row
+			loop
+			finish_raport_data
+			perform = true
+		else
+			perform = false
+		end if
+	end function
+
+	public sub supply_recordset(byref pRecordset)
+		set m_pCurrRec = pRecordset
+	end sub
+
+	public property get RecNr
+		RecNr = m_nRecNr
+	end property
+
+	public property get body
+		set body = m_pBodySection
+	end property
+
+#ifdef _DEBUG
+	public function get_final_query()
+		get_final_query = m_strADOQuery
+	end function
+#endif
+
+	public sub put_final_query(strADOQuery)
+		m_strADOQuery = strADOQuery
+	end sub
+
+	public property get title
+		title = m_strTitle
+	end property
+	public property let title(strTitle)
+		m_strTitle = strTitle
+	end property
+end class
+
+function merge_params(byref pDefaultParamArray,byref pCallParamArray)
+	if pDefaultParamArray is nothing then
+		exit function
+	end if
+	if pCallParamArray is nothing then
+		exit function
+	end if
+	dim iter 
+	for iter = 0 to pDefaultParamArray.upperIndex
+		if iter > pCallParamArray.upperIndex then
+			exit function
+		end if
+		if not pCallParamArray.value(iter) is nothing then
+			set pDefaultParamArray.value(iter) = pCallParamArray.value(iter)
+		end if
+	next
+end function
+
+'zastąp parametry formalne w query parametrami aktualnymi uzyskanymi z dialogu
+function query_apply_actual_param(byval strQueryTemplate,byref pParamArray)
+	dim pFormatter : set pFormatter = trans_.afc.convert.Formatter(strQueryTemplate)
+
+	if not pParamArray is nothing then
+		dim strCondition
+		dim iter
+		for iter = 0 to pParamArray.upperIndex
+			pFormatter.add pParamArray.value(iter).get_where_part(trans_)
+		next 
+	end if
+
+	query_apply_actual_param = pFormatter.ToString()
+end function
+'--------------- API -----------------------------
+function show_raport_param_dialog(byref pRaportParams, byval strTitle)
+  
+	if pRaportParams is nothing then
+		show_raport_param_dialog = 1
+	else
+		dim iter
+		dim bAllComplete : bAllComplete = true
+		for iter = 0 to pRaportParams.upperIndex
+			bAllComplete = bAllComplete and pRaportParams.value(iter).is_complete()
+		next
+
+		if bAllComplete then
+			show_raport_param_dialog = 1
+		else
+			'wygeneruj okno dialogu na podstawie parametrów
+			dim pDialogBuilder : set pDialogBuilder = doc_.afc.rap.new_param_dlg(pRaportParams , trans_ , strTitle)
+
+			dim pSO : set pSO = doc_.createstreamobj
+      dim strXML : strXML = pDialogBuilder.get_all()
+
+#ifdef APPCONFIG_SHOW_EXCEL_FRIENDLY_RAPORTS
+      strXML = replace(strXML,"function generate","function g2xls:trans_.var(8027)=clng(1):generate:end function:function generate")
+      strXML = replace(strXML,">Generuj</button>",">Generuj</button> <button style='34' href='vs1017=""g2xls""'>Generuj dla Excel</button>")
+#endif
+
+			pSO.write strXML      
+#ifdef _DEBUG
+			pSO.save "c:\temp\raport_param_dialog.xml"
+			pSO.rewind
+#endif
+		
+			'wyświetl stronę
+			dim hli : set hli = doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE")
+			set hli.prop(GVAR_DESTPAGE) = pSO.getstream
+			set pSO = nothing
+			dim pDialogPage : set pDialogPage = doc_.getpagehli(hli)
+      
+      'reset
+      trans_.var(GVAR_RAPORT_GEN_MODE)=clng(0)
+
+			dim nResult : nResult= pDialogPage.domodalauto()
+			if nResult <> 0 then
+				pDialogBuilder.update_params(pDialogPage)
+			end if
+			show_raport_param_dialog = nResult
+		end if
+	end if
+end function
+
+function new_engine()
+	set new_engine = new CRaportExecutorEngine
+end function
+
+function set_raport_param(byref pRaportParam)	'parametry raportu (te co są w dialogu)
+	set g_pRaportParam = pRaportParam
+end function
+
+function get_raport_param
+	set get_raport_param = g_pRaportParam
+end function
+'--------------- helpers -------------------------
+function href_open_form_proxy(byval nTypeId,byval idObj)
+	href_open_form_proxy=href_open_form_proxy_extra(nTypeId,idObj,"")	
+end function
+
+
+function href_open_form_proxy_extra(byval nTypeId,byval idObj,byval strExtra)
+	href_open_form_proxy_extra="varCmd=CMD_OPEN_STATIC_PAGE varDestPage=PAGE_OPEN_FORM_PROXY varNewThread=1 varTypeId=" +_
+	cstr(nTypeId) + " varObject=" + cstr(idObj) + " " + cstr(strExtra)
+end function
+
+dim pPicModule : set pPicModule = doc_.getmodule(60301)
+
+function process_number(byval strNumber)
+  if trans_.var(GVAR_RAPORT_GEN_MODE)=clng(1) then
+    process_number = replace(strNumber," ","")
+  else
+    process_number = strNumber
+  end if
+end function
+
+function raport_picture(byval nTypeId,byval idObj)
+	raport_picture = cstr(pPicModule.get_obj_pic_id(nTypeId,idObj, PICUSE_LISTELEM))
+end function
+
+function enum_field_value(byval nTypeId,byval strFldName,byval eVal)
+	Dim pObjDef : Set pObjDef = doc_.stdobjdef.getobjdef(nTypeId)
+	enum_field_value = pObjDef.field(pObjDef.GetFieldIndex(strFldName)).enumvalue(eVal-1)
+end function
+
+function write_actual_param(byref so,byref pActualParam)
+	dim iter
+	dim bAnyWritten : bAnyWritten = false
+	if not pActualParam is nothing then
+		for iter = 0 to pActualParam.upperIndex
+			if pActualParam.value(iter).get_desc() <> "" then 
+				bAnyWritten = true
+				so.write "<t size='5' /><text fontsize='4'><![CD"+"ATA[" + pActualParam.value(iter).get_desc() + "]"+"]></text><br/>"
+			end if
+		next
+	end if
+
+	if not bAnyWritten then 
+		so.write "<t fontsize='4'>brak</t><br/>"
+	end if
+	so.write "<br/>"
+end function
+
+]]>
+</script>
+</config>
+	<body>
+	</body>
+</page>

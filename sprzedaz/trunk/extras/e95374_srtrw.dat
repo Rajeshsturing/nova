@@ -1,0 +1,429 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+RAPTEMPLATE_SRODKI_TRWALE
+
+#comment 2024-10-01
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1250.h"
+
+#define RAPORT_TITLE Środki trwałe
+
+#macro RXE_AUTO_TEXT_HREF_LEN(_val_col_,_href_,_len_)		\
+<% if len(CStr(pRec("_val_col_"))) > _len_ then \
+		so.write "<text href='"%> \
+_href_ \
+<%so.write "'><![CD"+"ATA["+ cstr(pRec("_val_col_")) + "]"+"]></text>" \
+		else \
+		so.write "<t href='"%> \
+_href_ \
+<%so.write "'><![CDA"+"TA["+ cstr(pRec("_val_col_")) + "]"+"]></t>"		\
+	end if \
+%>
+#macro RXE_AUTOTEXT_LINK_FORM_VCC_LEN(_type_val_,_idobj_col_,_val_col_,_len_)	RXE_AUTO_TEXT_HREF_LEN(_val_col_, RXF_LINK_FORM_VC(_type_val_,_idobj_col_),_len_)
+
+#define SMALL_FONT 3
+
+-->
+<page style='36' border='0'>
+  <config>
+    <title>RAPORT_TITLE</title>
+    <script>
+      <![CDATA[
+VB_PRINT_LANDSCAPE_COMMON
+VB_PRINTPREV_LANDSCAPE_COMMON
+
+<%
+'rok księgowy
+dim nRokKsieg
+
+'rodzaj amortyzacji
+dim strTypAmor
+
+'wybrany miesiąc
+dim dDataOper
+
+'podsumowanie całego raportu
+dim curWartBZSum : curWartBZSum = ccur(0)
+dim curUmorzZwSum : curUmorzZwSum = ccur(0)
+dim curUmorzZmSum: curUmorzZmSum = ccur(0)
+dim curUmorzBZSum: curUmorzBZSum = ccur(0)
+dim curPozostSum: curPozostSum = ccur(0)
+
+function query(byref pParamArray)
+End Function
+
+'--------------------------
+'zwraca pierwszy dzień roku
+'--------------------------
+Function firstDay(ByVal nYear)
+    firstDay = DateSerial(nYear, 1, 1)
+End Function
+
+'-------------------------
+'zwraca ostatni dzień roku
+'-------------------------
+Function lastDay(ByVal nYear)
+    lastDay = DateSerial(nYear, 12, 31)
+End Function
+
+'------------------
+'stawki amortyzacji
+'------------------
+Function strStawka(ByVal strField)
+    Dim dData : dData = trans_.afc.convert.date2SQL(dDataOper)
+    strStawka = "'" + strField + "' = case (select t_op." + strField + " from n5opsrtrw t_op where t_op.pSRTRW = #tabela_amort_pom.idSr and " + vbNewLine +_
+              "t_op.nNumOpst = isnull((select max(t_op1.nNumOpst) from n5opsrtrw t_op1 where t_op1.pSRTRW = #tabela_amort_pom.idSr and " + vbNewLine +_
+              "t_op1.dDataOper <= " + dData + "),0)) " + vbNewLine +_
+              "when 0.0 then 100.0 else " + vbNewLine +_
+              "isnull((select t_op." + strField + " from n5opsrtrw t_op where t_op.pSRTRW = #tabela_amort_pom.idSr and " + vbNewLine +_
+              "t_op.nNumOpst = isnull((select max(t_op1.nNumOpst) from n5opsrtrw t_op1 where t_op1.pSRTRW = #tabela_amort_pom.idSr and " + vbNewLine +_
+              "t_op1.dDataOper <= " + dData + "),0)),0) end"
+End Function
+%>
+
+<%
+'------------------------------------------------------
+'pobiera wartość z zapytania na podstawie nazwy kolumny
+'------------------------------------------------------
+Function getValue(pRec, ByVal strField) : getValue = ccur(0.0)
+    getValue = ccur(pRec(strField).value)
+End Function
+%>
+
+<%
+Function default_param()
+    Dim pParamArray :     set pParamArray = doc_.afc.new_navoarray()
+  
+  'nazwa grupy i środka trwałego
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwa grupy środków").bindexpr("t_gr.strNazwa")
+    pParamArray.add doc_.afc.rap.param.new_text("Nazwa środka").bindexpr("t_sr.strNazwa")
+
+  'rodzaj amortyzacji
+    Dim pParamTyp :     set pParamTyp = doc_.afc.rap.param.new_choice("Rodzaj amortyzacji")
+  With pParamTyp
+        .multiple = False
+        .names.add "Podatkowa"
+    .values.add 1
+    .selected.add True
+    .names.add "Bilansowa"
+    .values.add 2
+    .selected.add False   
+  End With
+    pParamArray.add pParamTyp
+
+  'data operacji
+    pParamArray.add doc_.afc.rap.param.new_date("Data operacji").bindexpr("")
+  pParamArray.add doc_.afc.rap.param.new_text("Numer ewidencyjny ŚT").bindexpr("t_sr.strNumEwid")
+
+	set default_param = pParamArray
+End Function
+%>
+
+<%
+Function write_actual_param(ByRef so, ByRef pActualParam)
+    Dim iter
+    Dim bAnyWritten : bAnyWritten = False
+    If Not pActualParam Is Nothing Then
+        For iter = 0 To pActualParam.upperIndex
+            If pActualParam.value(iter).get_desc() <> "" Then
+                bAnyWritten = True
+                so.write "<t size='5' /><text fontsize='4'><![CD" + "ATA[" + pActualParam.value(iter).get_desc() + "]" + "]></text><br/>"
+      End If
+        Next
+    End If
+
+    If Not bAnyWritten Then
+        so.write "<t fontsize='4'>brak</t><br/>"
+  End If
+    so.write "<br/>"
+End Function
+%>
+<%
+Function group_header(ByRef pSection, ByRef pRec)
+%>
+<tr userprop ='propc_section_start="1" propc_section_hidden="0" propc_section_req="0"' fontsize='5'>
+    <td style='27' colspan='14'>
+        <picture name='<%so.write cstr(nSectionPicCounter)%>' tip='Zwiń' ignoresysdisable='true' image='PICTURE_SMALL_MINUS' width='SIZE_FOR_PLUS' height='SIZE_FOR_PLUS' href='vs1022="section_hideshow_hli" vn100="<%so.write cstr(nSectionPicCounter)%>"'/>
+	<t><% so.write pRec("strNazwaGr")%></t>
+</td>
+                    </tr>
+<%
+nSectionPicCounter = nSectionPicCounter + 1
+End Function
+%>
+<%
+Function group_footer(ByRef pSection)
+%>
+
+<tr border ='0'><td colspan='14' /></tr>
+<tr hide='true' userprop='propc_section_end="1"'><td colspan='14'/></tr>
+<%
+End Function
+%>
+<%
+Function body_row(ByRef pSection, ByRef pRec)
+
+    If pRapExec.RecNr Mod 2 = 0 Then
+%>
+    <tr bordercolor ='white' fontsize='SMALL_FONT'>
+<%
+    else
+%>
+    <tr bordercolor='white' style='37' fontsize='SMALL_FONT'>
+        <%
+End If
+%>
+    <td align ='right'>RXE_LP</td>
+    <td align='right'>
+        <t>
+            <% if pRec("dDataOper") <> "1900-01-01" then
+        so.write nx_.display.fulldate(pRec("dDataOper").value)
+    else
+        so.write ""
+    end if
+      %>
+    </t>
+    </td>
+  <td>
+    RXE_AUTO_TEXT(strNumEwid)
+  </td>  
+  <td>
+    RXE_AUTOTEXT_LINK_FORM_VCC_LEN(TYPEID_N5SRTRW, idSr, strNazwaSr, 16)
+  </td>
+  <td align ='right'>
+    <% rxeQuantityCVV pRec,"curWartBO",2 %>
+    </td>  
+  <td align ='right'>
+    <% rxeQuantityCVV pRec,"curWartZw",2 %>
+    </td>
+  <td align ='right'>
+    <% rxeQuantityCVV pRec,"curWartZm",2 %>
+    </td>  
+  <td align ='right'>
+    <%
+        rxeQuantityCVV pRec,"curWartBZ",2 
+    %>
+    </td>  
+	<td align ='right'>
+    <% rxeText pRec,"curStawka" %>
+        <text>%</text>
+    </td>
+<%
+  'umorzenie
+  Dim curUmorzBO, curUmorzZw, curUmorzZm, curUmorzBZ, curPozost
+
+    'umorzenie BO z zapytania
+    curUmorzBO = getValue(pRec, "curUmorzBO")
+    curUmorzZw = getValue(pRec, "curUmorzZw")
+    curUmorzZm = getValue(pRec, "curUmorzZm")
+    curUmorzBZ = getValue(pRec, "curUmorzBZ")
+    curPozost = getValue(pRec, "curPozost")
+%>
+  <td align ='right'>
+    <% rxeQuantityVVV curUmorzBO, 2 %>
+    </td>
+  <td align ='right'>
+    <% rxeQuantityVVV curUmorzZw, 2 %>
+    </td> 
+  <td align ='right'>
+    <% rxeQuantityVVV curUmorzZm, 2 %>
+    </td>  
+  <td align ='right'>
+    <% rxeQuantityVVV curUmorzBZ, 2 %>
+    </td>
+  <td align ='right'>
+    <% rxeQuantityVVV curPozost, 2 %>
+    </td>  
+<%
+  'podsumowanie roczne
+    curUmorzZwSum = curUmorzZwSum + curUmorzZw
+    curUmorzZmSum = curUmorzZmSum + curUmorzZm
+    curUmorzBZSum = curUmorzBZSum + curUmorzBZ
+    curPozostSum = curPozostSum + curPozost
+%>
+</tr>
+<%
+End Function
+'-----------------------------------------------
+'wypisuje tekst na podstawie kolumny z zapytania
+'-----------------------------------------------
+Function rxeText(ByRef pRec, ByVal strField)
+    Dim strRec : strRec = strField
+%>
+  <text><![CDATA[<% so.write CStr(pRec(strRec).value) %>]]></text>
+      <%
+End Function
+'------------------------------------------------------------------------
+'wypisuje kwotę do n miejsc po przecinku na podstawie kolumny z zapytania
+'------------------------------------------------------------------------
+Function rxeQuantityCVV(ByRef pRec, ByVal strField, ByVal ileMiejsc)
+    Dim strRec : strRec = strField
+      %>
+      <t><![CDATA[<% so.write rapeng_.process_number(nx_.display.quantity(pRec(strRec).value, "", ileMiejsc)) %>]]></t>
+      <%
+End Function
+
+'-------------------------------------------------------------
+'wypisuje kwotę do n miejsc po przecinku na podstawie wartości
+'-------------------------------------------------------------
+Function rxeQuantityVVV(ByVal curValue, ByVal ileMiejsc)
+      %>
+      <t><![CDATA[<% so.write rapeng_.process_number(nx_.display.quantity(curValue, "", ileMiejsc)) %>]]></t>
+      <%
+End Function
+
+Function body_header(ByRef pSection, ByRef pRec)
+      %>
+      <table border ='1' width='max' fontsize='3'>
+        <thead>
+            <tr style='21'>
+                <td width='min'>
+                    <t>LP</t>
+                </td>
+                <td width='min'>
+                    <text><![CDATA[Data przyjęcia ŚT]]></text>
+                </td>
+                <td width='min'>
+                    <text><![CDATA[Numer ewidencyjny ŚT]]></text>
+                </td>
+                <td width='5000'>
+                    <text><![CDATA[Nazwa środka trwałego]]></text>
+                </td>
+                <td width='2000'>
+                    <text><![CDATA[BO]]></text>
+                </td>
+                <td width='2000'>
+                    <text><![CDATA[Przychód (Zwiększenie)]]></text>
+                </td>
+                <td width='2000'>
+                    <text><![CDATA[Rozchód (Zmniejszenie)]]></text>
+                </td>
+                <td width='2000'>
+                    <text><![CDATA[BZ]]></text>
+                </td>
+                <td width='min'>
+                    <text><![CDATA[Stawka]]></text>
+                </td>
+                <td width='2000'>
+                    <text><![CDATA[Umorzenie BO]]></text>
+                </td>
+                <td width='2000'>
+                    <text><![CDATA[Przychod (amortyzacja)]]></text>
+                </td>
+                <td width='2000'>
+                    <text><![CDATA[Rozchod (likwidacja)]]></text>
+                </td>
+                <td width='2000'>
+                    <text><![CDATA[Stan na dzień (BZ)]]></text>
+                </td>
+                <td width='2000'>
+                    <text><![CDATA[Netto (wartość śr. trwałych)]]></text>
+                </td>
+            </tr>
+        </thead>
+        <tbody>
+          <%
+End Function
+
+Function body_footer(ByRef pSection)
+          %>
+          <tr style ='21'>
+            <td style='27' align='right' colspan='4'>
+                <t bold='true'>Razem :</t>
+            </td>
+            <td style ='27' align='right'>RXE_MONEY_VAR(pSection.counter(0).result)</td>
+            <td style='27' align='right'>RXE_MONEY_VAR(pSection.counter(1).result)</td>
+            <td style ='27' align='right'>RXE_MONEY_VAR(pSection.counter(2).result)</td>
+            <td style='27' align='right'>RXE_MONEY_VAR(pSection.counter(3).result)</td>
+            <td style ='27' align='right'></td>
+            <td style='27' align='right'>RXE_MONEY_VAR(pSection.counter(4).result)</td>
+            <td style ='27' align='right'>RXE_MONEY_VAR(curUmorzZwSum)</td>
+            <td style='27' align='right'>RXE_MONEY_VAR(curUmorzZmSum)</td>
+            <td style ='27' align='right'>RXE_MONEY_VAR(curUmorzBZSum)</td>
+            <td style='27' align='right'>RXE_MONEY_VAR(curPozostSum)</td>
+                          </tr>
+        </tbody>
+      </table>
+      <%
+End Function
+      %>
+      <%dim nSectionPicCounter : nSectionPicCounter = 10000000 %>
+
+Function section_hideshow_hli(ByRef pHLI)
+    doc_.afc.formsection.section_hideshow page_, pHLI.prop(100)
+End Function
+        ]]>
+    </script>
+  </config>
+  <header>
+  </header>
+  <body fontsize ='1'>
+    <p>
+      RAPORT_HEADER(3,1)
+    </p>
+<p>
+<t size ='2'/>
+    </p>
+<p>
+<text fontsize ='7'><![CDATA[RAPORT_TITLE]]></text>
+    </p>
+<br></br><br/>
+<t fontsize ='5' bold='true'>Kryteria selekcji:</t> <br />
+                    <%
+    Dim pRapExec : Set pRapExec = rapeng_.new_engine()
+
+    With pRapExec
+
+Dim pParamArray : Set pParamArray = default_param()
+    rapeng_.merge_params pParamArray, rapeng_.get_raport_param()
+    pRapExec.title = "RAPORT_TITLE"
+
+If rapeng_.show_raport_param_dialog(pParamArray, "RAPORT_TITLE") <> 0 Then
+
+'wybrany rok księgowy
+nRokKsieg = Year(pParamArray.Value(3).first_value)
+'rodzaj amortyzacji
+If pParamArray.value(2).selected.value(0) Then
+strTypAmor = "Pod"
+Else
+strTypAmor = "Bil"
+End If
+'data operacji
+dDataOper = pParamArray.Value(3).first_value
+
+rapeng_.set_raport_param pParamArray
+
+    .add_body_ex(getref("body_header"), getref("body_footer"), getref("body_row")) _
+    .add_sumator("curWartBO").add_sumator("curWartZw") _
+    .add_sumator("curWartZm").add_sumator("curWartBZ") _
+    .add_sumator("curUmorzBO")
+
+.add_group_section 3, getref("group_header"), getref("group_footer")
+
+    'required to update some internal values in raport parameters
+rapeng_.query_apply_actual_param "", rapeng_.get_raport_param()
+		
+    write_actual_param so, rapeng_.get_raport_param()
+
+    Dim oTrans : Set oTrans = trans_.get_this()
+    Dim oNXMRS : Set oNXMRS = doc_.nxm_net_.execute_host_query_rpa("e95374_srodki_trwale",oTrans, pParamArray)
+    pRapExec.supply_recordset oNXMRS
+
+    If Not .perform Then
+so.write "<p style='21'><t>Brak danych spełniających podane kryteria</t></p>"
+    End If
+End If
+
+End With
+    %>
+
+  </body>
+  <footer>
+  </footer>
+</page>

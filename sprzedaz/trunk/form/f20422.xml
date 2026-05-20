@@ -1,0 +1,1071 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1201.h"
+#include "h1203.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1234.h"
+#include "h1240.h"
+#include "h1200.h"
+#include "h1220.h"
+#include "h1222.h"
+#include "h1226.h"
+
+#include "h1004.h"
+#include "h1232.h"
+
+
+#define ITEM_INFO					4000
+
+#define CTRL_SRODKI_DESC			921
+#define CTRL_SPRZED_DESC			923
+#define CTRL_MAGAZYN_DESC			926
+#define CTRL_ZAMOW_DESC				928
+#define CTRL_ZADANIA_DESC			930
+#define CTRL_ZOBOW_DESC				932
+#define CTRL_NALEZ_DESC				934
+#define CTRL_SO_DESC				935
+
+
+#define CTRL_SRODKI_TABLE			800
+#define CTRL_SPRZED_TABLE			801
+#define CTRL_MAGAZYN_TABLE			802
+#define CTRL_ZAMOW_TABLE			803
+#define CTRL_ZADANIA_TABLE			804
+#define CTRL_ZOBOW_TABLE			805
+#define CTRL_NALEZ_TABLE			806
+#define CTRL_SO_TABLE				807
+
+-->
+<page>
+<config>
+	<title>
+Twoja firma dzisiaj
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+
+<secidread>UAR_CMDID(CMDID_RAPORT_FORMA_DZISIAJ)</secidread>
+
+<script>
+    <![CDATA[
+
+
+function transfer_onrecord_change()
+	fill_srodki()
+	fill_sprzed()
+#ifndef _SISCO
+	fill_magazyn()
+#endif
+	fill_zamow()
+	fill_zadania()
+	fill_zobow()
+	fill_nalez()
+#ifdef APPCONFIG_NEW_TWOJA_FIRMA_DZISIAJ
+	'fill_srodki_obrotowe()
+#else
+	fill_srodki_obrotowe()
+#endif
+	'update_infobar()
+end function
+
+
+function fclose
+	section_fclose THIS_FILE
+end function
+
+#include "50222"
+#include "50126"
+
+'getCurrentFirma
+#include "50203"
+
+function fopen()
+	
+	fopen = std_fopen()
+
+	if not fopen then
+		exit function
+	end if
+
+	section_fopen THIS_FILE
+
+	'e_infobar()
+	
+
+	page_.topelement.backcolor=RGB(255,255,255)
+
+	page_.enableedit = true
+
+	page_.cmdenabled CMD_NEWFORM, false
+	page_.cmdenabled CMD_SAVEFORM, false
+	page_.cmdenabled CMD_DELETEFORM, false
+	page_.cmdenabled CMD_ENABLEEDIT, false
+	page_.cmdenabled CMD_UNDO, false
+
+	page_.cmdenabled CMD_FIRSTINCURSOR, false
+	page_.cmdenabled CMD_PREVINCURSOR, false
+	page_.cmdenabled CMD_NEXTINCURSOR, false
+	page_.cmdenabled CMD_LASTINCURSOR, false
+	page_.cmdenabled CMD_SEARCH, false
+	
+	transfer_onrecord_change	
+
+end function
+
+
+
+
+function update_infobar()
+	page_.ctrl(ITEM_INFO).text = " Karta prezentuje informacje na temat stanu Twojej firmy"	
+end function
+
+
+function make_infobar()
+	VBCARDTOOLSANDINFOBAR_MAKE
+	pCell.addnew CTRL_TYPE_STATICEX, ITEM_INFO
+end function
+
+
+'varCmd=CMD_OPEN_STATIC_PAGE varDestPage=43016 appvar_raport_type=RAPORT_ILOSC
+
+
+function fill_srodki	
+	dim tab : set tab = doc_.afc.new_tb(page_).attach(page_.ctrl(CTRL_SRODKI_TABLE)).removeall
+
+	dim rs:set rs=trans_.createadors(doc_.getmodule(60300).bqry_stan_kasybanku_rejestrami("(select n5rejestrdok.idobj from n5rejestrdok where n5rejestrdok.eTyp in (N5REJESTRDOK_BANKOWY,N5REJESTRDOK_KASOWY) and n5rejestrdok.eAktywny=1)"))
+	dim curSrodkiEwid : curSrodkiEwid = ccur(0.0)
+	dim hli
+	while not rs.eof
+    dim strRejestr: strRejestr = cstr(rs("c_idrej").value)
+		set hli = doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=PAGE_RAPORT_TRANSAKCJE appvar_raport_type=RAPTEMPLATE_PLATNOSCI_LISTA appvar_rejestr_dokumentow="+cstr(rs("c_idrej").value)+" vs4100='"+cstr(strRejestr)+"'")
+    
+    dim g_curKurs
+    dim oRejestr : set oRejestr = trans_.getobj(TYPEID_N5REJESTRDOK, clng(strRejestr))
+    dim bRes : bRes = doc_.getmodule(60182).kantor_external(100.0, oRejestr.wrefParam1, getCurrentFirma().pWaluta, trans_.var(GVAR_TODAY), N5KURSWALUT_SPRZEDAZY, g_curKurs)
+
+    dim curRejestrSrodki : curRejestrSrodki = ccur(rs("c_stan").value)
+ 	
+    'dim curRejestrSrodkiEwid : curRejestrSrodkiEwid = ccur(rs("c_stanewid").value)
+    dim curRejestrSrodkiEwid : curRejestrSrodkiEwid = ccur(curRejestrSrodki * g_curKurs / ccur(100.0))
+ 		
+    tab.newrow
+		tab.newcell.addtexthli cstr(rs("c_nazwarej").value),hli
+		tab.newcell.addtext doc_.afc.display.money(curRejestrSrodki,cstr(rs("c_waluta").value))
+		tab.cell.align = clng(1)
+		tab.newcell.addtext doc_.afc.display.money(curRejestrSrodkiEwid,getCurrentFirma().pWaluta.strSkrot)
+		tab.cell.align = clng(1)
+		curSrodkiEwid = curSrodkiEwid + curRejestrSrodkiEwid
+		rs.movenext
+	wend
+	page_.ctrl(CTRL_SRODKI_DESC).text = _
+		"Dostępne środki : " + doc_.afc.display.money (curSrodkiEwid,getCurrentFirma().pWaluta.strSkrot)
+
+	g_dostepne = curSrodkiEwid
+end function
+
+
+function get_sprzedaz_for_time_range(byval dDateOd,byval dDateDo)
+	dim strQuery : strQuery = "select isnull(sum(isnull(t_sprz.curSumaNetto,0)) - sum(isnull(t_orgsprz.curSumaNetto,0)),0) " +_
+		"from n5sprzedaz t_sprz left outer join n5sprzedaz t_orgsprz on t_sprz.ppopsprzed = t_orgsprz.idobj " +_
+		"where t_sprz.pRozlVAT<>0 and (t_sprz.dDataWyst between %1 and %2) and " +_
+    "t_sprz.pRejestrDok not in (select idobj from n5rejestrdok where eTyp in (N5REJESTRDOK_DOSTAWA, N5REJESTRDOK_KOR_DOSTAWA)) " 
+	dim oRS : set oRS = trans_.createadors( _
+			trans_.afc.convert.Formatter(strQuery) _
+				.add(trans_.afc.convert.date2SQL(dDateOd)) _
+				.add(trans_.afc.convert.date2SQL(dDateDo)).done() _
+				)
+	get_sprzedaz_for_time_range = ccur(oRS(0).value)
+end function
+
+#ifdef APPCONFIG_NEW_TWOJA_FIRMA_DZISIAJ
+function fill_sprzed	
+	dim tab : set tab = doc_.afc.new_tb(page_).attach(page_.ctrl(CTRL_SPRZED_TABLE)).removeall
+	dim cur_kwota
+	dim dDateOd
+	dim dDateDo
+	dDateOd = trans_.var(GVAR_TODAY)
+	dDateDo = trans_.var(GVAR_TODAY)
+	cur_kwota = get_sprzedaz_for_time_range(dDateOd,dDateDo)
+	page_.ctrl(CTRL_SPRZED_DESC).text = "Sprzedaż dzisiaj : " + doc_.afc.display.money ( ccur(cur_kwota) ,getCurrentFirma().pWaluta.strSkrot)
+	dim hli:set hli = doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=43026 appvar_raport_type=RAPTEMPLATE_SPRZEDAZ_ZESTAWIENIE_SZCZEGOLOWE appvar_date_range=PARAM_DATE_MODE_TODAY vs4100="+cstr(0)+"")
+	tab.newrow
+	tab.newcell.addtexthli("Dzisiaj",hli).element.bold = true
+	tab.newcell.addtext doc_.afc.display.money ( ccur(cur_kwota) ,getCurrentFirma().pWaluta.strSkrot)
+	tab.cell.align = clng(1)				
+
+dim iter
+for iter = 1 to month(trans_.var(GVAR_TODAY))
+	dDateOd = trans_.var(GVAR_TODAY) : dDateOd = DateSerial(year(dDateOd),iter,1)
+	if iter = 12 then
+		dDateDo = trans_.var(GVAR_TODAY) : dDateDo = DateSerial(year(dDateDo),12,31)
+	else
+		dDateDo = trans_.var(GVAR_TODAY) : dDateDo = DateSerial(year(dDateDo),iter+1,0)
+	end if
+	cur_kwota = get_sprzedaz_for_time_range(dDateOd,dDateDo)
+	dim strMonth
+	strMonth = month(dDateDo)
+	set hli = doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=43026 appvar_raport_type=RAPTEMPLATE_SPRZEDAZ_ZESTAWIENIE_SZCZEGOLOWE appvar_date_range=7 vs4100="+cstr(strMonth)+"")
+	tab.newrow
+	tab.newcell.addtexthli monthname(iter),hli
+	tab.newcell.addtext doc_.afc.display.money ( ccur(cur_kwota) ,getCurrentFirma().pWaluta.strSkrot)
+	tab.cell.align = clng(1)				
+next
+
+	dDateOd = trans_.var(GVAR_TODAY) : dDateOd = DateSerial(year(dDateOd),1,1)
+	dDateDo = trans_.var(GVAR_TODAY) : dDateDo = DateSerial(year(dDateDo),12,31)
+	cur_kwota = get_sprzedaz_for_time_range(dDateOd,dDateDo)
+	set hli = doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=PAGE_RAPORT_DOKHANDL appvar_raport_type=RAPTEMPLATE_SPRZEDAZ_PODSUMOWANIE_MIESIACAMI appvar_date_range=PARAM_DATE_MODE_CURRENT_YEAR")
+	tab.newrow
+	tab.newcell.addtexthli("Rok " + cstr(year(trans_.var(GVAR_TODAY))),hli).element.bold = true
+	tab.newcell.addtext doc_.afc.display.money ( ccur(cur_kwota) ,getCurrentFirma().pWaluta.strSkrot)
+	tab.cell.align = clng(1)				
+end function
+#else
+function fill_sprzed	
+	dim tab : set tab = doc_.afc.new_tb(page_).attach(page_.ctrl(CTRL_SPRZED_TABLE)).removeall
+	dim cur_kwota
+	dim dDateOd
+	dim dDateDo
+	dDateOd = trans_.var(GVAR_TODAY)
+	dDateDo = trans_.var(GVAR_TODAY)
+	cur_kwota = get_sprzedaz_for_time_range(dDateOd,dDateDo)
+	page_.ctrl(CTRL_SPRZED_DESC).text = "Sprzedaż dzisiaj : " + doc_.afc.display.money ( ccur(cur_kwota) ,"")
+	dim hli:set hli = doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=43017 appvar_raport_type=RAPTEMPLATE_VAT_SPRZEDAZ_PODSUMOWANIE appvar_date_range=PARAM_DATE_MODE_TODAY")
+	tab.newrow
+	tab.newcell.addtexthli "dzisiaj",hli
+	tab.newcell.addtext doc_.afc.display.money ( ccur(cur_kwota) ,"")
+	tab.cell.align = clng(1)				
+
+	dDateOd = trans_.var(GVAR_TODAY) : dDateOd = DateSerial(year(dDateOd),month(dDateOd),1)
+	dDateDo = trans_.var(GVAR_TODAY) : dDateDo = DateSerial(year(dDateDo),month(dDateDo)+1,0)
+	cur_kwota = get_sprzedaz_for_time_range(dDateOd,dDateDo)
+	set hli = doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=43017 appvar_raport_type=RAPTEMPLATE_VAT_SPRZEDAZ_PODSUMOWANIE appvar_date_range=PARAM_DATE_MODE_CURRENT_MONTH")
+	tab.newrow
+	tab.newcell.addtexthli monthname(month(trans_.var(GVAR_TODAY))),hli
+	tab.newcell.addtext doc_.afc.display.money ( ccur(cur_kwota) ,"")
+	tab.cell.align = clng(1)				
+
+	dDateOd = trans_.var(GVAR_TODAY) : dDateOd = DateSerial(year(dDateOd),1,1)
+	dDateDo = trans_.var(GVAR_TODAY) : dDateDo = DateSerial(year(dDateDo),12,31)
+	cur_kwota = get_sprzedaz_for_time_range(dDateOd,dDateDo)
+	set hli = doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=PAGE_RAPORT_DOKHANDL appvar_raport_type=RAPTEMPLATE_SPRZEDAZ_PODSUMOWANIE_MIESIACAMI appvar_date_range=PARAM_DATE_MODE_CURRENT_YEAR")
+	tab.newrow
+	tab.newcell.addtexthli "rok " + cstr(year(trans_.var(GVAR_TODAY))),hli
+	tab.newcell.addtext doc_.afc.display.money ( ccur(cur_kwota) ,"")
+	tab.cell.align = clng(1)				
+end function
+#endif
+
+
+
+
+function fill_magazyn
+	if doc_.getmodule(60253).gm_ensure_accuracy_ui(true) then
+
+		dim tab : set tab = doc_.afc.new_tb(page_).attach(page_.ctrl(CTRL_MAGAZYN_TABLE)).removeall
+		dim rs:set rs=trans_.createadors(query_for_mag())
+		dim hli
+		dim wart_mag,wart_all,mag,wal
+		wart_all = ccur(0)
+
+		do while not rs.eof
+			mag = cstr(rs.fields("mag").value)
+			wart_mag = ccur(rs.fields("suma").value)
+			wal = cstr(rs.fields("wal").value)
+			wart_all = wart_all + wart_mag
+			tab.newrow
+			set hli = doc_.createhlistr("varFunctionHLI=raport_magazyn vs1=" + cstr(rs.fields("mag_id").value))
+			tab.newcell.addtexthli mag , hli
+			tab.newcell.addtext doc_.afc.display.money ( ccur(wart_mag) , wal )		
+			tab.cell.align = clng(1)
+
+			rs.movenext
+		loop
+
+		page_.ctrl(CTRL_MAGAZYN_DESC).text = "Wartość magazynów : " + doc_.afc.display.money ( ccur(wart_all) , wal )		
+		g_magazyn = wart_all
+	else
+		page_.ctrl(CTRL_MAGAZYN_DESC).text = "Wartość magazynów nie może być ustalona"
+		g_magazyn = ccur(-1)
+	end if
+
+end function
+
+#ifdef APPCONFIG_NEW_TWOJA_FIRMA_DZISIAJ
+function fill_zamow
+	dim tab : set tab = doc_.afc.new_tb(page_).attach(page_.ctrl(CTRL_ZAMOW_TABLE)).removeall
+  dim rsDzis:set rsDzis=trans_.createadors("select 1 as row, sum(c_curiloscopakpoz*c_curcenanetto) as kwota from vlist_n5zamowienie_listpozycje where (p_pRejestrDok in (select idobj from n5rejestrdok where eTyp=N5REJESTRDOK__ZAM_OBCE)) and  vlist_n5zamowienie_listpozycje.c_curIloscOpakPoz <> 0 and day(c_pzam_dDataReal)="+cstr(day(trans_.var(GVAR_TODAY)))+_
+  " and month(c_pzam_dDataReal)="+cstr(month(trans_.var(GVAR_TODAY)))+" and year(c_pzam_dDataReal)="+cstr(year(trans_.var(GVAR_TODAY))))
+	dim rsMies
+  set rsMies=trans_.createadors("select 2 as row, sum(c_curiloscopakpoz*c_curcenanetto) as kwota,max(c_pzam_dDataReal) as datareal "+_
+  " from vlist_n5zamowienie_listpozycje where (p_pRejestrDok in (select idobj from n5rejestrdok where eTyp=N5REJESTRDOK__ZAM_OBCE)) "+_
+  " and vlist_n5zamowienie_listpozycje.c_curIloscOpakPoz <> 0 and year(c_pzam_dDataReal) >= "+cstr(year(trans_.var(GVAR_TODAY))) +_
+  " group by year(c_pzam_dDataReal), month(c_pzam_dDataReal) order by year(c_pzam_dDataReal), month(c_pzam_dDataReal) ")
+  
+	dim rsRok :set rsRok =trans_.createadors("select 3 as row, sum(c_curiloscopakpoz*c_curcenanetto) as kwota from vlist_n5zamowienie_listpozycje where (p_pRejestrDok in (select idobj from n5rejestrdok where eTyp=N5REJESTRDOK__ZAM_OBCE)) and 	vlist_n5zamowienie_listpozycje.c_curIloscOpakPoz <> 0 and year(c_pzam_dDataReal)=" + cstr(year(trans_.var(GVAR_TODAY))))
+	dim hli
+		tab.newrow
+		dim cur_kwota
+		if isnull(cur_kwota) then
+			cur_kwota = 0
+		end if
+				
+				cur_kwota = rsDzis.fields("kwota").value
+					if isnull(cur_kwota) then
+							cur_kwota = 0
+					end if
+				page_.ctrl(CTRL_ZAMOW_DESC).text = "Zamówienia na dziś : " + doc_.afc.display.money ( ccur(cur_kwota) ,getCurrentFirma().pWaluta.strSkrot)
+				set hli = doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=PAGE_RAPORT_PROD appvar_raport_type=RAPTEMPLATE_ZAMOWIENIA_DO_REAL_WG_PRODUKT appvar_date_range=PARAM_DATE_MODE_TODAY")
+				tab.newcell.addtexthli("Dzisiaj",hli).element.bold = true
+				tab.newcell.addtext doc_.afc.display.money ( ccur(cur_kwota) ,getCurrentFirma().pWaluta.strSkrot)
+				tab.cell.align = clng(1)	
+			
+			tab.newrow
+  
+      dim iMc, curKwota
+      for iMc = 1 to 12 'month(trans_.var(GVAR_TODAY)) 
+        tab.newrow
+        curKwota = ccur(0)
+        set hli = nothing
+        if not rsMies.eof then
+          dim dDataReal : dDataReal = cdate(rsMies.fields("datareal").value)
+          if month(dDataReal) = iMc and year(dDataReal) = year(trans_.var(GVAR_TODAY)) then
+            curKwota = ccur(rsMies.fields("kwota").value)
+            set hli = doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=PAGE_RAPORT_PROD appvar_raport_type=" +_
+            "RAPTEMPLATE_ZAMOWIENIA_DO_REAL_WG_PRODUKT appvar_date_range=PARAM_DATE_MODE_RANGE vs4100=" +_
+            cstr(dateserial(year(dDataReal),month(dDataReal),1)))
+            rsMies.movenext
+          end if
+        end if
+
+        tab.newcell.addtexthli monthname(iMc),hli          
+        tab.newcell.addtext doc_.afc.display.money ( curKwota ,"PLN")
+        tab.cell.align = clng(1)	
+      next
+
+
+			tab.newrow
+				cur_kwota = rsRok.fields("kwota").value
+						if isnull(cur_kwota) then
+							cur_kwota = 0
+						end if
+				set hli = doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=PAGE_RAPORT_PROD appvar_raport_type=RAPTEMPLATE_ZAMOWIENIA_DO_REAL_WG_PRODUKT appvar_date_range=PARAM_DATE_MODE_CURRENT_YEAR")
+				tab.newcell.addtexthli("Rok " + cstr(year(trans_.var(GVAR_TODAY))),hli).element.bold = true
+				tab.newcell.addtext doc_.afc.display.money ( ccur(cur_kwota) ,getCurrentFirma().pWaluta.strSkrot)
+				tab.cell.align = clng(1)	
+        
+      do while not rsMies.eof
+        curKwota = ccur(rsMies.fields("kwota").value)
+        dDataReal = cdate(rsMies.fields("datareal").value)
+        set hli = doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=PAGE_RAPORT_PROD appvar_raport_type=" +_
+        "RAPTEMPLATE_ZAMOWIENIA_DO_REAL_WG_PRODUKT appvar_date_range=PARAM_DATE_MODE_RANGE vs4100=" +_
+        cstr(dateserial(year(dDataReal),month(dDataReal),1)))
+
+        tab.newrow
+        tab.newcell.addtexthli monthname(month(dDataReal)) + " " + cstr(year(dDataReal)),hli          
+        tab.newcell.addtext doc_.afc.display.money ( curKwota ,"PLN")
+        tab.cell.align = clng(1)	
+
+        rsMies.movenext
+      loop
+
+end function
+#else
+function fill_zamow
+	dim tab : set tab = doc_.afc.new_tb(page_).attach(page_.ctrl(CTRL_ZAMOW_TABLE)).removeall
+	dim rs:set rs=trans_.createadors("select 1 as row, sum(curSumaNetto) as kwota from n5zamowienie where (pRejestrDok in (select idobj from n5rejestrdok where eTyp=N5REJESTRDOK__ZAM_OBCE)) and  day(dDataReal)="+cstr(day(trans_.var(GVAR_TODAY)))+" and month(dDataReal)="+cstr(month(trans_.var(GVAR_TODAY)))+" and year(dDataReal)="+cstr(year(trans_.var(GVAR_TODAY)))+" union select 2 as row , sum(curSumaNetto) as kwota from n5zamowienie where (pRejestrDok in (select idobj from n5rejestrdok where eTyp=N5REJESTRDOK__ZAM_OBCE)) and month(dDataReal)="+cstr(month(trans_.var(GVAR_TODAY)))+" and year(dDataReal)="+cstr(year(trans_.var(GVAR_TODAY)))+" union  select 3 as row, sum(curSumaNetto) as kwota from n5zamowienie where (pRejestrDok in (select idobj from n5rejestrdok where eTyp=N5REJESTRDOK__ZAM_OBCE)) and year(dDataReal)=" + cstr(year(trans_.var(GVAR_TODAY))))
+	dim hli
+	while not rs.eof		
+		tab.newrow
+		dim cur_kwota:cur_kwota = rs.fields("kwota").value
+		if isnull(cur_kwota) then
+			cur_kwota = 0
+		end if
+		select case clng(rs.fields("row").value)
+			case 1				
+				page_.ctrl(CTRL_ZAMOW_DESC).text = "Zamówienia na dziś : " + doc_.afc.display.money ( ccur(cur_kwota) ,"")
+				set hli = doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=PAGE_RAPORT_PROD appvar_raport_type=RAPTEMPLATE_ZAMOWIENIA_DO_REAL_WG_PRODUKT appvar_date_range=PARAM_DATE_MODE_TODAY")
+				tab.newcell.addtexthli "Dzisiaj",hli
+			case 2
+				set hli = doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=PAGE_RAPORT_PROD appvar_raport_type=RAPTEMPLATE_ZAMOWIENIA_DO_REAL_WG_PRODUKT appvar_date_range=PARAM_DATE_MODE_CURRENT_MONTH")
+				tab.newcell.addtexthli monthname(month(trans_.var(GVAR_TODAY))),hli
+			case 3
+				set hli = doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=PAGE_RAPORT_PROD appvar_raport_type=RAPTEMPLATE_ZAMOWIENIA_DO_REAL_WG_PRODUKT appvar_date_range=PARAM_DATE_MODE_CURRENT_YEAR")
+				tab.newcell.addtexthli "Rok " + cstr(year(trans_.var(GVAR_TODAY))),hli
+		end select 		
+		tab.newcell.addtext doc_.afc.display.money ( ccur(cur_kwota) ,"")
+		tab.cell.align = clng(1)				
+		rs.movenext
+	wend
+end function
+#endif
+
+
+function fill_zadania
+	page_.ctrl(CTRL_ZADANIA_DESC).text = "Zadania do wykonania : 12212"
+	dim tab : set tab = doc_.afc.new_tb(page_).attach(page_.ctrl(CTRL_ZADANIA_TABLE)).removeall
+  
+	dim rs
+	set rs=trans_.createadors("select 0 as type, max(n5wykonawca.strIndeks) as nazwa , count(n5zadanie.idobj) as ilosc," +_
+		" max(n5wykonawca.idobj) as id from n5wykonawca left outer join n5zadanie on n5zadanie.pWykonawca = n5wykonawca.idobj" +_
+		" group by n5wykonawca.idobj having n5wykonawca.idobj in (select idobj from n5wykonawca where eAktywny=N5WYKONAWCA_AKTYWNY) and count(n5zadanie.idobj) > 0 " +_
+		" union select 1,max(n5wykonawca.strIndeks) , count(n5zadanie.idobj), max(n5wykonawca.idobj)" +_
+		" from n5wykonawca left outer join n5zadanie on n5zadanie.pWykonawca = n5wykonawca.idobj" +_
+		" where(n5zadanie.nStatus<040 AND n5zadanie.eTypterminZak IN (3,4) AND (n5zadanie.dDataTerminZak < "+_
+		doc_.afc.convert.Date2Sql(trans_.var(GVAR_TODAY))+" OR (n5zadanie.dDataTerminZak = "+_
+		doc_.afc.convert.Date2Sql(trans_.var(GVAR_TODAY))+" AND n5zadanie.tCzasTerminZak<"+_
+		cstr(trans_.var(GVAR_SYSTIME))+"))) group by n5wykonawca.idobj having n5wykonawca.idobj in (select idobj from n5wykonawca where eAktywny=N5WYKONAWCA_AKTYWNY) and count(n5zadanie.idobj) > 0 order by 2,1")
+	
+	dim hli
+	dim typ,prev
+	dim all,przet
+	all   = 0
+	przet = 0
+	prev = clng(-1)
+	while not rs.eof		
+		if clng(rs.fields("type").value) = 0 then
+			set hli = doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=PAGE_RAPORT_ZADANIA varNewThread=1 " +_
+				"appvar_raport_type=RAPTEMPLATE_ZADANIA_DO_WYK_WG_WYKON vs2='" + cstr(rs.fields("nazwa").value) + "'")
+			tab.newrow
+			tab.newcell.addtexthli cstr(rs.fields("nazwa").value),hli
+			tab.newcell.addtext cstr(rs.fields("ilosc").value)
+			all = all + cint(rs.fields("ilosc").value)
+			tab.cell.align = clng(2)
+			rs.movenext
+			if not rs.eof then				
+				if clng(rs.fields("type").value) = 0 then
+					tab.newcell.addtext cstr(0)
+					tab.cell.align = clng(2)
+					tab.element.forecolor=rgb(255,0,0)
+				else
+					tab.newcell.addtext cstr(rs.fields("ilosc").value)
+					przet = przet + cint(rs.fields("ilosc").value)
+					tab.cell.align = clng(2)
+					tab.element.forecolor=rgb(255,0,0)
+				end if
+			else
+				tab.newcell.addtext cstr(0)
+				tab.cell.align = clng(2)
+				tab.element.forecolor = rgb(255,0,0)
+			end if
+		else
+			rs.movenext
+		end if		
+	wend
+	page_.ctrl(CTRL_ZADANIA_DESC).text = "Zadania do wykonania : " + cstr(all) + " ("+cstr(przet)+")"
+end function
+
+
+function make_trans_row(byref tab , byval rs , byval hli)
+	tab.newrow
+	tab.newcell.addtexthli cstr(rs.fields("podmiot").value),hli
+	tab.newcell.addtext doc_.afc.display.money ( ccur(rs.fields("il1").value) ,getCurrentFirma().pWaluta.strSkrot)
+	tab.cell.align = clng(1)
+	tab.newcell.addtext doc_.afc.display.money ( ccur(rs.fields("il2").value) ,getCurrentFirma().pWaluta.strSkrot)
+	tab.cell.align = clng(1)
+	tab.element.forecolor=rgb(255,0,0)
+end function
+
+
+function fill_zobow
+	dim tab : set tab = doc_.afc.new_tb(page_).attach(page_.ctrl(CTRL_ZOBOW_TABLE)).removeall
+	dim rs:set rs=trans_.createadors(query_for_transakcja(N5TRANSAKCJA_ZOBOWIAZANIE))
+	dim hli
+	dim iter:iter = 1
+	dim wszystko,przet
+	dim sum_wszystko,sum_przet
+	sum_wszystko = ccur(0)
+	sum_przet	 = ccur(0)
+	while not rs.eof
+		set hli = doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=PAGE_RAPORT_TRANSAKCJE appvar_raport_type=ZOBOWIAZANIA_NIEROZLICZONE gvar_current_customer='"+cstr(rs.fields("id").value)+"' appvarParamTypeid="+ cstr(rs.fields("typ").value) +" appvarParamIdobj=" + cstr(rs.fields("id").value))
+		wszystko = ccur(rs.fields("il1").value)
+		przet = ccur(rs.fields("il2").value)
+		sum_wszystko = sum_wszystko + wszystko
+		sum_przet = sum_przet + przet
+		if iter < 11 then ' 10 największych
+			make_trans_row tab , rs , hli			
+		end if
+		iter = iter + 1
+		rs.movenext
+	wend
+	page_.ctrl(CTRL_ZOBOW_DESC).text = "Zobowiązania - kwota : "+ doc_.afc.display.money ( sum_wszystko ,getCurrentFirma().pWaluta.strSkrot) +" ("+ doc_.afc.display.money ( sum_przet ,getCurrentFirma().pWaluta.strSkrot) +")"			
+	g_zobowiazania = sum_wszystko
+end function
+
+function query_for_transakcja(byval nTyp)
+	dim order:order = " "
+	if nTyp = N5TRANSAKCJA_NALEZNOSC then
+		order = " desc "	
+	end if
+
+	query_for_transakcja = "select typ,id,podmiot,sum(wszystko) as il1, " +_
+	"sum(przet) as il2 from (select wrefPodmiot_wrt as typ ,wrefPodmiot as id, " +_
+	"case wrefPodmiot_wrt when TYPEID_N5KLIENT then n5klient.strNazwa when TYPEID_N5PRACOWNIK then  " +_
+	"n5pracownik.strNazwisko+' '+n5pracownik.strImie+' '+n5pracownik.strImie2 " +_
+	"when TYPEID_N5INSTYTUCJA then n5instytucja.strNazwa " +_
+	"when TYPEID_N5FIRMA then n5firma.strnazwa " +_
+	"when TYPEID_N5BANK then n5bank.strNazwa " +_
+	"end as podmiot,  sum(trop_curWnEwid-trop_curMaEwid) as wszystko, " +_
+	"case when dDataWym < "+doc_.afc.convert.Date2Sql(trans_.var(GVAR_TODAY))+" then sum(trop_curWnEwid-trop_curMaEwid) " +_
+	" else 0 end as przet from vw_n5transakcja_trop left outer join n5klient  " +_
+	"on n5klient.idobj=vw_n5transakcja_trop.wrefpodmiot and wrefPodmiot_wrt=TYPEID_N5KLIENT  " +_
+	"left outer join n5pracownik on n5pracownik.idobj=vw_n5transakcja_trop.wrefpodmiot and wrefPodmiot_wrt=TYPEID_N5PRACOWNIK  " +_
+	"left outer join n5instytucja on n5instytucja.idobj=vw_n5transakcja_trop.wrefpodmiot and wrefPodmiot_wrt=TYPEID_N5INSTYTUCJA  " +_
+	"left outer join n5firma on n5firma.idobj=vw_n5transakcja_trop.wrefpodmiot and wrefPodmiot_wrt=TYPEID_N5FIRMA " +_
+	"left outer join n5bank on n5bank.idobj=vw_n5transakcja_trop.wrefpodmiot and wrefPodmiot_wrt=TYPEID_N5BANK " +_
+	"where (wrefPodmiot_wrt = TYPEID_N5KLIENT) and (trop_curWn <> trop_curMa) AND (eTyp="+cstr(nTyp)+")  " +_
+#ifdef _IOW
+	"and n5klient.ePrywat <> N5KLIENT_OSOBAPRYWATNA " +_
+#endif  
+	"group by case vw_n5transakcja_trop.wrefPodmiot_wrt when TYPEID_N5KLIENT then n5klient.strNazwa  " +_
+	"when TYPEID_N5PRACOWNIK then n5pracownik.strNazwisko+' '+n5pracownik.strImie+' '+n5pracownik.strImie2  " +_
+	"when TYPEID_N5INSTYTUCJA then n5instytucja.strNazwa " +_
+	"when TYPEID_N5FIRMA then n5firma.strnazwa " +_
+	"when TYPEID_N5BANK then n5bank.strNazwa " +_
+	"end,wrefPodmiot_wrt ,wrefPodmiot , dDataWym) as v1  " +_
+	"group by podmiot,typ,id order by 4 " + order 
+end function
+
+dim g_dostepne
+dim g_naleznosci
+dim g_zobowiazania
+dim g_magazyn
+
+function fill_srodki_obrotowe
+	dim tab : set tab = doc_.afc.new_tb(page_).attach(page_.ctrl(CTRL_SO_TABLE)).removeall
+	dim bMagFailed:bMagFailed = false
+	if g_magazyn = -1 then
+		bMagFailed = true
+		g_magazyn = ccur(0)
+	end if
+	page_.ctrl(CTRL_SO_DESC).text = "Srodki obrotowe - kwota : "+ doc_.afc.display.money ( g_dostepne + g_naleznosci + g_zobowiazania + g_magazyn  ,getCurrentFirma().pWaluta.strSkrot)
+
+	tab.newrow.newcell.addtext("Środki dostepne").element.bold = false
+	'tab.newcell.addtext "+"
+	tab.newcell.cell.align = ALIGN_RIGHT
+	tab.addtext doc_.afc.display.money(g_dostepne , getCurrentFirma().pWaluta.strSkrot)
+
+	tab.newrow.newcell.addtext("Należności").element.bold = false
+	'tab.newcell.addtext "+"
+	tab.newcell.cell.align = ALIGN_RIGHT
+	tab.addtext doc_.afc.display.money(g_naleznosci , getCurrentFirma().pWaluta.strSkrot)
+
+	tab.newrow.newcell.addtext("Zobowiązania").element.bold = false
+	'tab.newcell.addtext "-"
+	tab.newcell.cell.align = ALIGN_RIGHT
+	tab.addtext doc_.afc.display.money(g_zobowiazania , getCurrentFirma().pWaluta.strSkrot)
+
+	tab.newrow.newcell.addtext("Wartość magazynu").element.bold = false
+	'tab.newcell.addtext "+"
+	tab.newcell.cell.align = ALIGN_RIGHT
+	if not bMagFailed then
+		tab.addtext doc_.afc.display.money(g_magazyn , getCurrentFirma().pWaluta.strSkrot)
+	else
+		tab.addtext "<nie mozna okreslić>"
+		tab.element.forecolor = RGB(255,0,0)
+	end if
+
+	tab.newrow.newcell.addtext("Środki obrotowe").element.bold = true
+	'tab.newcell.addtext "="
+	tab.newcell.cell.align = ALIGN_RIGHT
+	tab.addtext doc_.afc.display.money ( g_dostepne + g_naleznosci + g_zobowiazania + g_magazyn  ,getCurrentFirma().pWaluta.strSkrot)
+
+end function
+
+
+function fill_nalez	
+	dim tab : set tab = doc_.afc.new_tb(page_).attach(page_.ctrl(CTRL_NALEZ_TABLE)).removeall
+	dim rs:set rs=trans_.createadors(query_for_transakcja(N5TRANSAKCJA_NALEZNOSC))
+	dim hli
+	dim iter:iter = 1
+	dim wszystko,przet
+	dim sum_wszystko,sum_przet
+	sum_wszystko = ccur(0)
+	sum_przet	 = ccur(0)
+	while not rs.eof
+		set hli = doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=PAGE_RAPORT_TRANSAKCJE appvar_raport_type=NALEZNOSCI_NIEROZLICZONE gvar_current_customer='"+cstr(rs.fields("id").value)+"' appvarParamTypeid="+ cstr(rs.fields("typ").value) +" appvarParamIdobj=" + cstr(rs.fields("id").value))
+		wszystko = ccur(rs.fields("il1").value)
+		przet = ccur(rs.fields("il2").value)
+		sum_wszystko = sum_wszystko + wszystko
+		sum_przet = sum_przet + przet
+		if iter < 11 then ' 10 największych
+			make_trans_row tab , rs , hli			
+		end if
+		iter = iter + 1
+		rs.movenext
+	wend
+	page_.ctrl(CTRL_NALEZ_DESC).text = "Należności - kwota : "+ doc_.afc.display.money ( sum_wszystko ,getCurrentFirma().pWaluta.strSkrot) +" ("+ doc_.afc.display.money ( sum_przet ,getCurrentFirma().pWaluta.strSkrot) +")"		
+	g_naleznosci = sum_wszystko
+end function
+
+
+
+function query_for_mag()
+query_for_mag = "select " + _
+" n5magazyn.strNazwa as mag, " + _
+" n5magazyn.idobj as mag_id, " + _
+" isnull(sum(gmo_curWartosc),0) as suma, " + _
+" max(n5jednostka.strSkrot) as wal " + _
+" from n5magazyn " + _
+" join n5jednostka on n5jednostka.idobj = n5magazyn.pWaluta " + _
+" left outer join n5gmop on n5magazyn.idobj = n5gmop.gmo_pMag " + _
+" join n5produkt on n5gmop.gmo_pProd = n5produkt.idobj " + _
+" where n5magazyn.eTyp in (N5TYPMAG_PODSTAWOWY,N5TYPMAG_PRODUKCJAWTOKU,N5TYPMAG_REZERWACJE) and n5magazyn.mag_eAktywny=N5PRODUKT_AKTYWNY and n5produkt.eRodzaj = N5PRODUKT_TOWAR " + _
+" group by n5magazyn.strNazwa,n5magazyn.idobj order by n5magazyn.strNazwa"
+end function
+
+
+function raport_magazyn(hli)
+
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+
+	dim pExtraParam : set pExtraParam = doc_.afc.rap.param.new_filter("Typ")
+	pExtraParam.set_where_part "(t_1.idobj="+cstr(hli.prop(1))+")"
+	pParamArray.add pExtraParam
+
+
+	dim pRaportMomentParam:set pRaportMomentParam = doc_.afc.rap.param.new_date("Analizowany moment").bindexpr("")
+	pRaportMomentParam.first_value = trans_.var(GVAR_TODAY)
+	pRaportMomentParam.mode = clng(1)
+	pParamArray.add pRaportMomentParam
+	'wolamy raport z zewnatrz
+	trans_.var(APPVAR_RAPORT_FROM_OUTSIDE) = clng(1)
+	
+	
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwa produktu").bindexpr("t_2.strNazwa")
+	pParamArray.add doc_.afc.rap.param.new_text("Indeks produktu").bindexpr("t_2.strIndeks")
+	pParamArray.add nothing
+
+	dim pParamFactory2: set pParamFactory2= doc_.afc.rap.param
+	dim pParam2: Set pParam2= pParamFactory2.new_choice("Status produktu").bindexpr("t_2.eAktywny")
+	pParamFactory2.init_on_enum pParam2, TYPEID_N5PRODUKT,"eAktywny"
+	pParamArray.add pParam2	
+
+	doc_.getmodule(PAGE_MODULE_RAPORT_CALLER).make_raport_stanmag_wartosc_param pParamArray
+
+end function
+
+]]></script>
+</config>
+<header>
+</header>
+<body>
+
+#ifdef APPCONFIG_NEW_TWOJA_FIRMA_DZISIAJ
+XCARDBEGIN
+
+	<!-- naglowek strony - nazwa - as text obiektu -->
+	
+	<!-- Tabelki z kolejnymi sekcjami -->
+	
+<table border='1'>
+<thead>
+		<tr align='left' backcolor='#71ABEC'>
+				<td  colspan='3'>
+					<text name='e##ITEM_NAME' style='STYLE_TWOJA_FIRMA_DZISIAJ_NAGLOWEK' width='max'>						
+						Twoja firma dzisiaj
+					</text>
+				</td>
+			</tr>
+	</thead>
+<tbody style='STYLE_TABLE_BODY' border ='0'>
+<tr>
+	<td>
+		<table>
+			<tbody>
+				
+				XCARDSECBEG(Zamówienia,927,CTRL_ZAMOW_DESC,C1D576)
+					<!--sekcja wypełniana funkcją fill_zamow-->
+					<table name='CTRL_ZAMOW_TABLE'>
+							<thead style='STYLE_TABLE_HEADER'>
+								<tr>
+									<td>
+										<t>Okres</t>		
+									</td>
+									<td align='right'>
+										<t>Zamówienia netto</t>		
+									</td>				
+								</tr>
+							</thead>
+							<tbody style='STYLE_TW_FIRMA_DZIS_ZAMOW'>		
+							</tbody>
+						</table>
+					XCARDSECEND
+					
+			</tbody>
+		</table>
+	</td>
+	<td width='200'></td>
+	<td>
+		<table>
+			<tbody>
+				
+						XCARDSECBEG(Sprzedaz,922,CTRL_SPRZED_DESC,E7A376)
+						<!--sekcja wypełniana funkcją fill_sprzed-->
+									<table name='CTRL_SPRZED_TABLE' border ='1'>
+										<thead style='STYLE_TABLE_HEADER'>
+											<tr>
+												<td>
+													<t>Okres</t>		
+												</td>
+												<td align='right'>
+													<t>Sprzedaż netto</t>		
+												</td>				
+											</tr>
+										</thead>
+										<tbody style='STYLE_TW_FIRMA_DZIS_SPRZED'>	
+										</tbody>
+									</table>
+						XCARDSECEND
+						
+			</tbody>
+		</table>
+	</td>
+</tr>
+<tr height='150'><td></td></tr>
+<tr>
+	<td>
+		<table>
+			<tbody>
+				XCARDSECBEG(Środki,920,CTRL_SRODKI_DESC,FFD24F)
+					<!--sekcja wypełniana funkcją fill_srodki-->
+						<table name='CTRL_SRODKI_TABLE'>
+							<thead style='STYLE_TABLE_HEADER'>
+								<tr>
+									<td>
+										<t>Kasa / bank</t>		
+									</td>
+									<td align='right'>
+										<t>Stan</t>		
+									</td>				
+									<td align='right'>
+										<text>Wartość księgowa</text>
+									</td>				
+								</tr>
+							</thead>
+							<tbody style='STYLE_TW_FIRMA_DZIS_DOSTSROD'>
+							</tbody>
+						</table>
+					XCARDSECEND
+										
+			</tbody>
+		</table>
+	</td>
+	<td width='200'></td>
+	<td>
+    <table>
+      <tbody>
+
+        #ifndef _SISCO
+        XCARDSECBEG(Magazyn,925,CTRL_MAGAZYN_DESC,83F101)
+        <!--sekcja wypełniana funkcją fill_magazyn-->
+        <table name='CTRL_MAGAZYN_TABLE'>
+          <thead style='STYLE_TABLE_HEADER'>
+            <tr>
+              <td>
+                <t>Magazyn</t>
+              </td>
+              <td align='right'>
+                <t>Wartość</t>
+              </td>
+            </tr>
+          </thead>
+          <tbody style='STYLE_TW_FIRMA_DZIS_WARTMAG'>
+          </tbody>
+        </table>
+        XCARDSECEND
+        #endif
+
+      </tbody>
+    </table>
+	</td>
+</tr>
+<tr height='150'><td></td></tr>
+<tr>
+	<td>
+		<table>
+			<tbody>
+				
+						XCARDSECBEG(Zobowiązania,931,CTRL_ZOBOW_DESC,CC9BF8)
+						<!--sekcja wypełniana funkcją fill_zobow-->
+						<table name='CTRL_ZOBOW_TABLE'>
+								<thead style='STYLE_TABLE_HEADER'>
+									<tr>
+										<td>
+											<t width='min'>Podmiot</t>		
+										</td>
+										<td align='center'>
+											<t>Wszystkie</t>		
+										</td>				
+										<td align='center'>
+											<t>Przeterminowane</t>		
+										</td>				
+									</tr>
+								</thead>
+								<tbody style='STYLE_TW_FIRMA_DZIS_ZOBOW'>		
+								</tbody>
+							</table>
+						XCARDSECEND
+
+			</tbody>
+		</table>
+	</td>
+	<td width='200'></td>
+	<td>
+		<table>
+			<tbody>
+				
+						XCARDSECBEG(Nalezności,933,CTRL_NALEZ_DESC,D794B7)
+						<!--sekcja wypełniana funkcją fill_nalez-->
+							<table name='CTRL_NALEZ_TABLE'>
+								<thead style='STYLE_TABLE_HEADER'>
+									<tr>
+										<td>
+											<t width='min'>Podmiot</t>		
+										</td>
+										<td align='center'>
+											<t>Wszystkie</t>		
+										</td>				
+										<td align='center'>
+											<t>Przeterminowane</t>		
+										</td>				
+									</tr>
+								</thead>
+								<tbody style='STYLE_TW_FIRMA_DZIS_NALEZ'>	
+								</tbody>
+							</table>
+						XCARDSECEND
+
+			</tbody>
+		</table>
+	</td>
+</tr>
+	<tr height='150'><td></td></tr>
+<tr>	
+	<td>
+    <table>
+      <tbody>
+
+        XCARDSECBEG(Zadania,929,CTRL_ZADANIA_DESC,36ADAD)
+        <!--sekcja wypełniana funkcją fill_zadania-->
+        <table name='CTRL_ZADANIA_TABLE'>
+          <thead style='STYLE_TABLE_HEADER'>
+            <tr>
+              <td>
+                <t>Wykonawca</t>
+              </td>
+              <td align='center'>
+                <t>Wszystkie</t>
+              </td>
+              <td align='center'>
+                <t>Przeterminowane</t>
+              </td>
+            </tr>
+          </thead>
+          <tbody style='STYLE_TW_FIRMA_DZIS_ZADANIA'>
+          </tbody>
+        </table>
+        XCARDSECEND
+
+      </tbody>
+    </table>
+	</td>
+	<td width='200'></td>
+	<td>
+
+	</td>
+</tr>
+XCARDEND
+#else
+XCARDBEGIN
+
+	<!-- naglowek strony - nazwa - as text obiektu -->
+	<table backcolor='transparent'>
+		<tbody>
+			<tr>
+				<td>
+					<text name='e##ITEM_NAME' style='STYLE_FORMTITLE' width='max'>						
+						Twoja firma dzisiaj
+					</text>
+				</td>
+			</tr>
+		</tbody>
+	</table>
+	<!-- Tabelki z kolejnymi sekcjami -->
+	<table>
+	<tbody style='STYLE_TABLE_BODY'>
+
+			
+XCARDSECBEG_OLD(Środki,920,CTRL_SRODKI_DESC)
+<!--sekcja wypełniana funkcją fill_srodki-->
+	<table name='CTRL_SRODKI_TABLE'>
+		<thead style='STYLE_TABLE_HEADER'>
+			<tr>
+				<td>
+					<t>Kasa / bank</t>		
+				</td>
+				<td align='right'>
+					<t>Stan</t>		
+				</td>				
+				<td align='right'>
+					<text>Wartość księgowa</text>
+				</td>				
+			</tr>
+		</thead>
+		<tbody>		
+		</tbody>
+	</table>
+XCARDSECEND
+
+XCARDSECBEG_OLD(Sprzedaz,922,CTRL_SPRZED_DESC)
+<!--sekcja wypełniana funkcją fill_sprzed-->
+	<table name='CTRL_SPRZED_TABLE'>
+		<thead style='STYLE_TABLE_HEADER'>
+			<tr>
+				<td>
+					<t>Okres</t>		
+				</td>
+				<td align='right'>
+					<t>Sprzedaż netto</t>		
+				</td>				
+			</tr>
+		</thead>
+		<tbody>		
+		</tbody>
+	</table>
+XCARDSECEND
+
+
+#ifndef _SISCO
+XCARDSECBEG_OLD(Magazyn,925,CTRL_MAGAZYN_DESC)
+<!--sekcja wypełniana funkcją fill_magazyn-->
+<table name='CTRL_MAGAZYN_TABLE'>
+	<thead style='STYLE_TABLE_HEADER'>
+		<tr>
+				<td>
+					<t>Magazyn</t>		
+				</td>
+				<td align='right'>
+					<t>Wartość</t>		
+				</td>				
+			</tr>
+		</thead>
+	<tbody>		
+	</tbody>
+</table>
+XCARDSECEND
+#endif
+
+XCARDSECBEG_OLD(Zamówienia,927,CTRL_ZAMOW_DESC)
+<!--sekcja wypełniana funkcją fill_zamow-->
+<table name='CTRL_ZAMOW_TABLE'>
+		<thead style='STYLE_TABLE_HEADER'>
+			<tr>
+				<td>
+					<t>Okres</t>		
+				</td>
+				<td align='right'>
+					<t>Zamówienia netto</t>		
+				</td>				
+			</tr>
+		</thead>
+		<tbody>		
+		</tbody>
+	</table>
+XCARDSECEND
+
+XCARDSECBEG_OLD(Zadania,929,CTRL_ZADANIA_DESC)
+<!--sekcja wypełniana funkcją fill_zadania-->
+	<table name='CTRL_ZADANIA_TABLE'>
+		<thead style='STYLE_TABLE_HEADER'>
+			<tr>
+				<td>
+					<t>Wykonawca</t>		
+				</td>
+				<td align='center'>
+					<t>Wszystkie</t>		
+				</td>				
+				<td align='center'>
+					<t>Przeterminowane</t>		
+				</td>				
+			</tr>
+		</thead>
+		<tbody>		
+		</tbody>
+	</table>
+XCARDSECEND
+
+XCARDSECBEG_OLD(Zobowiązania,931,CTRL_ZOBOW_DESC)
+<!--sekcja wypełniana funkcją fill_zobow-->
+<table name='CTRL_ZOBOW_TABLE'>
+		<thead style='STYLE_TABLE_HEADER'>
+			<tr>
+				<td>
+					<t width='min'>Podmiot</t>		
+				</td>
+				<td align='center'>
+					<t>Wszystkie</t>		
+				</td>				
+				<td align='center'>
+					<t>Przeterminowane</t>		
+				</td>				
+			</tr>
+		</thead>
+		<tbody>		
+		</tbody>
+	</table>
+XCARDSECEND
+
+
+
+
+
+XCARDSECBEG_OLD(Nalezności,933,CTRL_NALEZ_DESC)
+<!--sekcja wypełniana funkcją fill_nalez-->
+	<table name='CTRL_NALEZ_TABLE'>
+		<thead style='STYLE_TABLE_HEADER'>
+			<tr>
+				<td>
+					<t width='min'>Podmiot</t>		
+				</td>
+				<td align='center'>
+					<t>Wszystkie</t>		
+				</td>				
+				<td align='center'>
+					<t>Przeterminowane</t>		
+				</td>				
+			</tr>
+		</thead>
+		<tbody>		
+		</tbody>
+	</table>
+XCARDSECEND
+
+
+
+XCARDSECBEG_OLD(Środki obrotowe,936,CTRL_SO_DESC)
+<!--sekcja wypełniana funkcją fill_srodki_obrotowe-->
+	<table name='CTRL_SO_TABLE'>
+		<thead style='STYLE_TABLE_HEADER'>
+			
+		</thead>
+		<tbody>		
+		</tbody>
+	</table>
+XCARDSECEND
+
+
+
+XCARDEND
+#endif
+
+</body>
+<footer>
+</footer>
+</page>
+

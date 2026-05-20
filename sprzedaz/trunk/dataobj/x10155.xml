@@ -1,0 +1,219 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+REV:KB:20030123
+
+#include "h1000.h" 
+#include "h1200.h" 
+#include "h1203_appconfig.h" 
+#include "h1231.h" 
+#include "h1240.h" 
+-->
+<class>
+	<identifier>TYPEID_N5SCHEMATDEKR</identifier>
+	<table>n5schematdekr</table>
+	<humanname>Schemat dekretacji</humanname>
+	<idobj/>
+	<embedded>
+		<name>strNazwa</name>
+		<sqltype>SQLvc64</sqltype>
+		<humanname>Nazwa</humanname>
+		<nonempty/>
+	</embedded>
+	<ref>
+		<name>pRejestrDok</name>
+		<humanname>Rejestr dokumentów</humanname>
+		<typeid>TYPEID_N5REJESTRDOK</typeid>
+	</ref>
+	<ref>
+		<name>pDziennik</name>
+		<humanname>Dziennik dowodów księgowych</humanname>
+		<typeid>TYPEID_N5REJESTRDOK</typeid>
+		<!-- 
+			musi być typu "Dziennik dowodów księgowych"
+		-->
+	</ref>
+	<embedded>
+		<name>strOpis</name>
+		<sqltype>SQLvc256</sqltype>
+		<humanname>Opis schematu dekretacji</humanname>
+	</embedded>
+	<embedded>
+		<name>strVBcode</name>
+		<sqltype>SQLvc7900</sqltype>
+		<humanname>Kod schematu</humanname>
+	</embedded>
+
+	<enum>
+		<name>eAktywny</name>
+		<humanname>Status</humanname>
+		<default>N5SCHEMATDEKR_AKTYWNY</default>
+		<item>Aktywny</item>
+		<item>Nieaktywny</item>
+	</enum>
+	<file>
+		<name>fXMLDefinition</name>
+		<humanname>Definicja XML</humanname>
+	</file>
+<cursors>
+	<cursor>
+		<identifier>CRSR_DEFAULT</identifier>
+		<humanname>wg nazw</humanname>
+		<join></join>
+		<where></where>
+		<orderby>strNazwa</orderby>
+	</cursor>
+
+	<cursor>
+		<identifier>CRSR_PO_REJESTRZE_DOKUMENTOW</identifier>
+		<humanname>w rejestrze wg nazw</humanname>
+		<join></join>
+		<where>pRejestrDok=appvar_rejestr_dokumentow</where>
+		<orderby>strNazwa</orderby>
+	</cursor>
+
+	<cursor>
+		<identifier>CRSR_SCHEMAT_AKTYWNY_PO_REJESTRACH</identifier>
+		<humanname>aktywne w rejestrze wg nazw</humanname>
+		<join></join>
+		<where>pRejestrDok=appvar_rejestr_dokumentow and eAktywny=N5SCHEMATDEKR_AKTYWNY</where>
+		<orderby>strNazwa</orderby>
+	</cursor>
+
+</cursors>
+
+<script>
+<![CDATA[
+'class CAutoDekret
+#include "L50213"
+
+function prepare_err_msg(byval strName,byval strCode)
+	prepare_err_msg = "Wystąpił błąd skryptu " + cstr(err.Number) + ", opis:" + err.Description + _
+	" dla schematu " + strName + ". Kod schematu [ " + strCode + "]"
+end function
+
+'------------------------------------------------------------------------
+function n5schematdekr_prepare(byref pDokument,byref pDK)
+	dim pAD : set pAD = new CAutoDekret
+
+	pAD.init pDK,pDokument,this_.pDziennik
+
+	set n5schematdekr_prepare = pAD
+end function
+
+function n5schematdekr_run_intrnl(byref pContext)
+
+	dim strCode
+	strCode = "sub wykonaj_schemat_dekretacji(byref pKontekst)" + vbCrLf + _
+	" with pKontekst"+ vbCrLf + _
+		this_.strVBCode + vbCrLf + _
+	" end with" + vbCrLf + _
+	"end sub" + vbCrLf
+	
+	on error resume next
+		execute strCode
+		if err.Number <> 0 then
+			pContext.blad_ex "FFK003", "Przygotowanie schematu do wykonania nieudane." + _
+				prepare_err_msg(this_.strNazwa,strCode)
+			exit function
+		end if
+		wykonaj_schemat_dekretacji pContext
+		if err.Number <> 0 then
+			pContext.blad_ex "FFK004", "Wykonanie schematu nieudane." + _
+				prepare_err_msg(this_.strNazwa,strCode)
+			exit function
+		end if
+	on error goto 0
+	
+end function
+
+function n5schematdekr_run(byref pDokument,byref pDK,byref bOK) : set n5schematdekr_run = nothing
+	dim oNXSubTrace
+	if pDokument is nothing then
+		set oNXSubTrace = nx_.trace.start("Automat przeksięgowań " + this_.strNazwa,nothing)
+	else
+		set oNXSubTrace = nx_.trace.start("Schemat " + this_.strNazwa + " dla " + pDokument.text,nothing)
+	end if
+
+	bOK = false
+
+	dim pAD : set pAD = this_.n5schematdekr_prepare(pDokument,pDK)
+
+	n5schematdekr_run_intrnl pAD
+	
+	set n5schematdekr_run = pAD.dow()
+	bOK = pAD.is_ok()
+
+	oNXSubTrace.stop
+end function
+'------------------------------------------------------------------------
+
+function n5schematdekr_as_text()
+	dim strText : strText = this_.strNazwa
+	if not this_.pRejestrDok is nothing then
+		strText = strText + " (" + this_.pRejestrDok.text() + ")"
+	end if
+    n5schematdekr_as_text = strText
+end function
+
+function n5schematdekr_initnew(): n5schematdekr_initnew=true	
+	set this_.pRejestrDok =  trans_.getobj(TYPEID_N5REJESTRDOK,trans_.var(APPVAR_REJESTR_DOKUMENTOW) )	
+	
+	if this_.pRejestrDok.eTyp = N5REJESTRDOK_DZIENNIK_NORM or _
+	   this_.pRejestrDok.eTyp = N5REJESTRDOK_DZIENNIK_BO or _
+	   this_.pRejestrDok.eTyp = N5REJESTRDOK_DZIENNIK_BZ or _
+	   this_.pRejestrDok.eTyp = N5REJESTRDOK_DZIENNIK_BZ_OSTAT then
+	   set this_.pDziennik = this_.pRejestrDok
+	end if
+end function
+
+'-----------------------------------------------------------------------
+' Sprawdza czy para Nazwa i Rejestr jest unikalna
+'-----------------------------------------------------------------------
+function n5schematdekr_check_name()
+	'musi być rejestr
+	if this_.pRejestrDok is nothing then
+		trans_.message 1002, 1,  "Brak rejestru dokumentów"
+		n5schematdekr_check_name = false
+		exit function
+	end if
+
+	dim idSchemat : idSchemat = trans_.findobjid(TYPEID_N5SCHEMATDEKR, _
+			"IdObj <>" + CStr( this_.IdObj ) + " and strNazwa='" + _
+			trans_.afc.convert.DoubleApostrophe(this_.strNazwa) + "'" + _
+			" and pRejestrDok=" + CStr( this_.pRejestrDok.IdObj ))
+
+	n5schematdekr_check_name = (idSchemat=0)
+
+	if (not n5schematdekr_check_name) then
+		trans_.message 1002, 1,  "Nazwa schematu dekretacji dla wybranego rejestru dokumentów nie może się powtarzać."
+	end if
+end function
+
+function n5schematdekr_befins()
+	n5schematdekr_befins = n5schematdekr_check_name()
+end function
+
+function n5schematdekr_befupd()
+	n5schematdekr_befupd = n5schematdekr_check_name()
+end function
+
+
+
+
+function n5schematdekr_copy_to(byref dest)
+	with dest 
+		.strNazwa = this_.strNazwa
+		set .pDziennik = this_.pDziennik
+		.strOpis = this_.strOpis
+		.strVBcode = this_.strVBcode
+		.eAktywny = this_.eAktywny
+	end with
+end function
+
+]]>
+</script>
+	
+	
+	
+	
+</class>

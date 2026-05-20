@@ -1,0 +1,216 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#comment NX_READY
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1222.h"
+
+#define CTRLID_RESULTS	100
+#define RESULT_SPAN		3
+-->
+<page style='STYLE_PAGE'>
+	<title>Kreator pobierania towaru</title>
+	<config>
+		<script>
+<![CDATA[
+'nx_section
+#include "50560"
+
+#comment '-------------------------------------------------------------------
+#comment 'g_oCurrentPRS - przetwarzane zadanie
+#comment 'g_oNXArrayMagPRS - tablica przydzielonych 'wydan' z danego magazynu
+#comment '-------------------------------------------------------------------
+
+dim g_oCurrentPRS : set g_oCurrentPRS = nothing
+dim g_oNXArrayMagPRS : set g_oNXArrayMagPRS = nx_.new_array()
+
+#comment '-------------------------------------------------------------------
+#comment '1. initializuj dla dokumentu
+#comment '-------------------------------------------------------------------
+
+function initialize_from_dok(byval iSrcDokType,byval iSrcDokIdObj)
+	dim pM60227 : set pM60227 = doc_.getmodule(60227)
+
+	select case iSrcDokType
+	case TYPEID_N5ZAMOWIENIE
+		dim oZamowienie : set oZamowienie = trans_.getobj(TYPEID_N5ZAMOWIENIE,iSrcDokIdObj)
+		set g_oCurrentPRS = pM60227.nx_zamowienie_2_prod_request(oZamowienie)
+	end select
+
+end function
+
+#comment '-------------------------------------------------------------------
+#comment '2. sprobuj wydac z podanego magazynu - zwraca true gdy wszystko sie udalo
+#comment '-------------------------------------------------------------------
+
+function apply_initial_mag(byval idMag)
+	dim oMagPRS : set oMagPRS = prepare_for_mag(g_oCurrentPRS,idMag)
+	g_oNXArrayMagPRS.add oMagPRS
+	apply_initial_mag = (g_oCurrentPRS.count = 0)
+end function
+
+#comment '-------------------------------------------------------------------
+#comment ' 3. wyniki
+#comment '-------------------------------------------------------------------
+function get_request_prs()
+	set get_request_prs = g_oCurrentPRS
+end function
+
+function get_mag_prss()
+	set get_mag_prss = g_oNXArrayMagPRS
+end function
+#comment '-------------------------------------------------------------------
+#comment ' 
+#comment '-------------------------------------------------------------------
+function fopen() : fopen = true
+	frefresh
+end function
+
+function frefresh()
+	page_.ctrl(CTRLID_RESULTS).removeall
+	if not g_oCurrentPRS is nothing then
+		page_.addxml CTRLID_RESULTS, nx_build_ui()
+	end if
+end function
+
+function prepare_for_mag(byref oInputPRS,byval idMag)
+	dim pM60227 : set pM60227 = doc_.getmodule(60227)
+	set prepare_for_mag = pM60227.nx_prod_request_realize(oInputPRS,idMag)
+end function
+
+function nx_build_ui_PRE(byref oPRE,byref oNXAspator,byval strRowAttrib)
+	with oNXAspator
+		.newrowex strRowAttrib
+		dim oProdukt : set oProdukt = trans_.getobj(TYPEID_N5PRODUKT,oPRE.id_produkt)
+#ifdef APPCONFIG_RAPORT_BY_PROD_INX
+		.newcell.e_label_link_open_obj oProdukt.strIndeks,TYPEID_N5PRODUKT,oPRE.id_produkt
+		.c_longlabel oProdukt.strNazwa
+#else
+		.newcell.e_label_link_open_obj oProdukt.strNazwa,TYPEID_N5PRODUKT,oPRE.id_produkt
+		.c_longlabel oProdukt.strIndeks
+#endif
+		.c_label_currency oPRE.quantity, oProdukt.pJednostkaEwid.strSkrot, _
+			oProdukt.pJednostkaEwid.nDokladnosc - 1
+	end with
+end function
+
+function nx_build_ui_PRS(byref oPRS,byref oNXAspator,byval iIndex)
+	with oNXAspator
+		.newrowex "style='STYLE_TABLE_HEADER'"
+#ifdef APPCONFIG_RAPORT_BY_PROD_INX
+		.c_label "Indeks"
+		.c_label "Nazwa"
+#else
+		.c_label "Nazwa"
+		.c_label "Indeks"
+#endif
+		.c_label "Ilość"
+		dim iter 
+		for iter = 0 to oPRS.count - 1
+			dim oPRE : set oPRE = oPRS.get_entry(iter)
+		
+			dim strRowAttrib
+			if iter mod 2 = 0 then
+				strRowAttrib = "backcolor='#E6E6FA' bordercolor='#006697' border='1'"
+			else
+				strRowAttrib = "style='STYLE_TABLE_BODY'"
+			end if
+			nx_build_ui_PRE oPRE,oNXAspator,strRowAttrib
+		next
+		
+		if iIndex >= 0 then
+			.newrowex "style='STYLE_ROW_BTN'"
+			.newcellex RESULT_SPAN,"align='right'"
+			.e_button "Usuń","","varFunctionHLI=""on_remove_mag_by_inx"" vn1=""" + cstr(iIndex) + """",""
+		end if
+	end with
+
+end function
+
+function nx_build_ui()
+	dim pStream : set pStream = doc_.createstreamobj()
+	dim pNXAspator : set pNXAspator = nx_.new_aspator()
+	with pNXAspator
+		.init pStream
+			.newtableex ""
+			.newsection "thead",RESULT_SPAN
+				.newgroup 1,""
+			.newsectionex "tbody",RESULT_SPAN, ""
+				'--------- co pozostalo
+				.newgroup 2,"Pozostałe zapotrzebowanie"
+				'--------- dla kazdego magazynu co przydzielone
+				nx_build_ui_PRS g_oCurrentPRS,pNXAspator,-1
+				dim iter
+				for iter = 0 to g_oNXArrayMagPRS.upper_index
+					dim oItemPRS : set oItemPRS = g_oNXArrayMagPRS(iter)
+					dim oMagazyn : set oMagazyn = trans_.getobj(TYPEID_N5MAGAZYN,oItemPRS.id_magazyn)
+					.newgroup 2,oMagazyn.strNazwa
+					nx_build_ui_PRS oItemPRS,pNXAspator,iter
+				next
+		.flush
+	end with
+#ifdef _DEBUG
+	pStream.save "c:\temp\60305_nx_build_ui.txt"
+#endif
+	pStream.rewind
+	set nx_build_ui = pStream
+end function
+
+
+function on_add_magazyn()
+	dim strExludeList : strExludeList = "n5magazyn.idobj not in (0"
+	dim iter
+	for iter = 0 to g_oNXArrayMagPRS.upper_index
+		strExludeList = strExludeList + "," + cstr(g_oNXArrayMagPRS(iter).id_magazyn)
+	next
+	strExludeList = strExludeList + ")"
+
+	dim idMag : idMag = nx_fire_choice_list(TYPEID_N5MAGAZYN,"",strExludeList,"")
+	if idMag <> 0 then
+		dim oMagPRS : set oMagPRS = prepare_for_mag(g_oCurrentPRS,idMag)
+		g_oNXArrayMagPRS.add oMagPRS
+		frefresh
+	end if
+end function
+
+function on_remove_mag_by_inx(byref oHLI)
+	dim iIndex : iIndex = clng(oHLI(1))
+	g_oCurrentPRS.merge_back g_oNXArrayMagPRS(iIndex)
+	g_oNXArrayMagPRS.remove iIndex
+	frefresh
+end function
+
+function on_accept()
+	page_.result = 1
+	page_.goback
+end function
+function on_cancel()
+	page_.result = 0
+	page_.goback
+end function
+]]>
+</script>
+	</config>
+	<body>
+		<table>
+			<tbody>
+				<tr>
+					<td colspan='RESULT_SPAN' name='CTRLID_RESULTS' />
+				</tr>
+				QXR_SEPARATOR(RESULT_SPAN)
+
+				<tr style='STYLE_ROW_BTN'>
+					<td>
+						QXE_BUTTON(-1,0,Dodaj inny magazyn,varFunction="on_add_magazyn")
+					</td>	
+					<td align='right' colspan='2' keepline='true'>
+						QXE_BUTTON(-1,0,Wykonaj,varFunction="on_accept")
+						QXE_BUTTON(-1,0,Anuluj,varFunction="on_cancel")
+					</td>	
+				</tr>
+			</tbody>
+		</table>
+	</body>
+</page>

@@ -1,0 +1,415 @@
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200.h"
+#include "h1201.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1240.h"
+
+#define ID_TABLE_RESULT			100
+#define ID_CONTAINER_BREAK		101
+#define ID_BUTTON_BREAK			102
+#define ID_STATIC_PROGRESS		103
+
+<?xml version="1.0" encoding="windows-1250" ?>
+<page style='STYLE_PAGE'>
+<config>
+<title>Sprawdzanie reguł</title>
+<script>
+<![CDATA[
+
+#include "50623"
+#include "50625"
+
+'-----------------------------------------------------------------------
+' (c) 2002 NAVO Ltd.
+' Spikowski Piotr
+'-----------------------------------------------------------------------
+
+dim g_nErrors	 'Liczba błędów jakie wystąpiły podczas sprawdzania
+dim g_nWarnings	 'Liczba warningów jakie wystąpiły podczas sprawdzania
+dim g_bExitOnErr 'Czy przerywać sprawdzanie grupy zasad po pierwszym błędzie
+
+dim g_bAllowExit	 'True jeżeli można wyjść z tej strony
+dim g_bBreakProcess	 'Przerwij sprawdzanie poprawności reguł
+
+dim g_pRulesStack	 'Stos zawierający id zawołanych reguł
+
+function fopen()
+	'Wypełniamy informacje o dostępnych rules
+	'do zmiennej globalnej g_pRules (50623)
+	Rules_CreateConst
+
+	g_nErrors = CLng(0)
+	g_nWarnings = CLng(0)
+
+	g_bExitOnErr = false
+	g_bAllowExit = true
+
+	g_bBreakProcess = false
+
+	set g_pRulesStack = doc_.afc.new_navoarray()
+
+	fopen = true
+end function
+
+function fback()
+	'Kontrolujemy wyjście z naszej strony
+	if (g_bAllowExit) then
+		page_.goback
+	end if
+	fback = true
+end function
+
+'-----------------------------------------------------------------------
+' Przerywa sprawdzanie reguł
+'-----------------------------------------------------------------------
+function BreakProcess()
+	g_bBreakProcess = true
+end function
+
+'-----------------------------------------------------------------------
+' Zwraca czy przerwano działanie sprawdzania reguł
+'-----------------------------------------------------------------------
+function isProcessBroken()
+	isProcessBroken = g_bBreakProcess
+end function
+
+'-----------------------------------------------------------------------
+' Pokazuje strone rezultatów ale nie jako DoModal
+'-----------------------------------------------------------------------
+private function rules_ShowPage()
+	g_bAllowExit = false
+	doc_.pushpage page_.get_this
+	page_.activate
+	page_.updateview
+end function
+
+'-----------------------------------------------------------------------
+' Kończy pokazywanie strony ale nie jako domodal (rules_ShowPage) i
+' przechodzi do trybu domodalauto
+'-----------------------------------------------------------------------
+private function rules_DisplayPage()
+	if (g_bBreakProcess) then
+		rules_message "Przerwano sprawdzanie reguł. Aktualny stan - błędów " + CStr(g_nErrors) + ", ostrzeżeń " + CStr(g_nWarnings), 0, 0, 0
+	else
+		rules_message "Zakończono sprawdzanie reguł. błędów " + CStr(g_nErrors) + ", ostrzeżeń " + CStr(g_nWarnings), 0, 0, 0
+	end if
+
+	page_.activate
+
+	'Nie mozna wcisnac "Przerwij"
+	page_.ctrl(ID_BUTTON_BREAK).disable=true
+	page_.ctrl(ID_STATIC_PROGRESS).hide=true
+	page_.updateview
+
+	page_.activate
+	doc_.poppage
+
+	g_bAllowExit = true
+	rules_DisplayPage = page_.domodalauto()
+end function
+
+'-----------------------------------------------------------------------
+' Pobierz wskaznik do funkcji o podanej nazwie
+'-----------------------------------------------------------------------
+private function rules_GetFunctionRef(byval strFunctionName): set rules_GetFunctionRef = nothing
+	on error resume next
+	set rules_GetFunctionRef = getref(strFunctionName)
+	on error goto 0
+end function
+
+'-----------------------------------------------------------------------
+' Wykonaj sprawdzenie pojedynczej reguly
+'
+' pRule - reguła do sprawdzenia - obiekt n5rule
+'-----------------------------------------------------------------------
+private function rules_check_single(byref pRule): rules_check_single = false
+
+	'Sprawdzamy czy ktoś nie chce sprawdzać zasady, której
+	'sprawdzanie jeszcze się nie zakończyłą (zapętlenie)
+	if (g_pRulesStack.IndexOf(pRule.IdObj)>-1) then
+		rules_warning "Nie sprawdzam reguły """ + pRule.strName + """ ponieważ system jest właśnie w trakcie jej sprawdzania - określono grupy reguł wzajemnie wołające się.", 0, 0
+		exit function
+	end if
+
+	dim pRuleDefinition, i, n
+	set pRuleDefinition = Rules_SearchByType(pRule.strCode, i, n)
+
+	if (pRuleDefinition is nothing) then
+		rules_error "Nie odnaleziono definicji dla reguły typu """ + pRule.strCode + """", 0, 0
+		exit function
+	end if
+
+	'Funkcja jaka ma być zawołana na sprawdzenie danej reguły
+	dim pfnFunction2Execute
+	set pfnFunction2Execute = rules_GetFunctionRef( pRuleDefinition.strFunctionName )
+
+	if (pfnFunction2Execute is nothing) then
+		rules_error "Nie odnaleziono funkcji """ + pRuleDefinition.strFunctionName + """ sprawdzającej regułe """ + pRule.strName + """(" + pRule.strCode + ")", 0, 0
+		exit function
+	end if
+
+	dim pRequiredParams
+	set pRequiredParams = pRule.n5rule_getRequiredParams()
+
+	if (pRequiredParams is nothing) then
+		rules_error "Nie się pobrać zapisanych parametrów wymaganych dla reguły """ + pRule.strName + """", 0, 0
+		exit function
+	end if
+
+	dim pOptionalParams
+	set pOptionalParams = pRule.n5rule_getOptionalParams()
+
+	if (pOptionalParams is nothing) then
+		rules_error "Nie się pobrać zapisanych parametrów opcjonalnych dla reguły """ + pRule.strName + """", 0, 0
+		exit function
+	end if
+
+	if (g_bBreakProcess) then
+		exit function
+	end if
+
+	g_pRulesStack.Add pRule.IdObj
+
+	dim varResult
+	varResult = pfnFunction2Execute(pRule, pRuleDefinition, pRequiredParams, pOptionalParams, nothing)
+
+	g_pRulesStack.Remove g_pRulesStack.UpperIndex()
+
+	rules_check_single = true
+end function
+
+'-----------------------------------------------------------------------
+' Wykonaj sprawdzenie pojedynczej reguly
+'
+' nIdObj - idobj reguły z n5rule
+'-----------------------------------------------------------------------
+private function rules_check_singleById(byval nIdObj): rules_check_singleById = false
+
+	if (g_bBreakProcess) then
+		exit function
+	end if
+
+	dim pSingleRule
+	set pSingleRule = trans_.getobj(TYPEID_N5RULE, nIdObj)
+
+	if (not pSingleRule is nothing) then
+
+		rules_message_size "Rozpoczynam sprawdzanie reguły """ + pSingleRule.strName + """", 0, 0, 80928, 0, 0
+
+		'Sprawdzaj pojedyncza regułe mając obiekt
+		'z tablicy n5rule
+		rules_check_single pSingleRule
+
+		if (g_bBreakProcess) then
+			exit function
+		end if
+
+		rules_message_size "Zakończono sprawdzanie reguły """ + pSingleRule.strName + """", 0, 0, 80929, 0, 0
+
+	else
+		rules_error "Nie udało się uzyskać dostępu do obiektu reguły o id " + CStr(nIdObj) + ". Obiekt usunięty lub używany przez innego użytkownika. Reguła zostaje pominięta.", 0, 0
+	end if
+
+	'Jezeli ustawiono, ze sprawdzanie grupy ma zostac
+	'przerwane po pojawieniu sie pierwszego błędu to
+	'przwrywamy
+	if (g_bExitOnErr) then
+		if (g_nErrors>0) then
+			rules_warning "Sprawdzanie reguł zostało przerwane z powodu błędu. Patrz poprzednie komunikaty.", 0, 0
+			exit function
+		end if
+	end if
+
+	'Mam kontynuować sprawdzanie następnych reguł więc
+	'zwracamy true
+	rules_check_singleById = true
+end function
+
+'-----------------------------------------------------------------------
+' Wykonaj sprawdzenie grupy reguł. Zwraca true gdy przeszedl przez
+' wszystkie reguły, które były do sprawdzenia a nie gdy nie było
+' błędów lub warningów
+'
+' varRules2Check - tablica zawierająca idObj obiektów n5rule lub
+' idobj obiektu n5rule gdy mamy sprawdzić jedną regułę
+'-----------------------------------------------------------------------
+function rules_check(byref varRules2Check): rules_check = false
+
+	'Jeżeli przerwano to nie ma co sprawdzać
+	if (g_bBreakProcess) then
+		exit function
+	end if
+
+	'Pokazujemy stronke
+	rules_ShowPage
+
+	dim nIdObj 'idobj reguły do sprawdzenia
+
+	if (isObject(varRules2Check)) then
+
+		dim noOfRules
+		noOfRules = varRules2Check.UpperIndex()
+		
+		'Mamy obiekt co oznacza, ze bedziemy sprawdzac
+		'wszystkie reguly znajdujace sie w dostarczonej tablicy
+		dim i
+		for i = 0 to noOfRules
+			nIdObj = varRules2Check.Value(i)
+
+			page_.ctrl(ID_STATIC_PROGRESS).text = "Sprawdzanie reguły " + CStr(i+1) + "/" + CStr(noOfRules+1)
+
+			if (not rules_check_singleById(nIdObj)) then
+				'Jeżeli sprawdzenie pojedyńczej reguły zwraca nam
+				'false oznacza to, że mamy przerwać sprawdzanie
+				'następnych reguł
+				rules_DisplayPage
+				exit function
+			end if
+
+			if (g_bBreakProcess) then
+				rules_DisplayPage
+				exit function
+			end if
+
+		next 
+
+	else
+
+		'Nie mamy obiektu co oznacza, ze bedziemy
+		'sprawdzac dokladnie jedna regułę - dostarczono
+		'samo idobj z n5rule
+
+		page_.ctrl(ID_STATIC_PROGRESS).text = "Sprawdzanie reguły 1/1"
+
+		nIdObj = CLng(varRules2Check)
+
+		'Dokonujemy sprawdzenia pojedyńczej reguły. Nie interesuje nas
+		'wynik tzn. czy przerwac sprawdzanie następnych bo
+		'i tak sprawdzamy wyłącznie jedną
+		rules_check_singleById nIdObj
+
+	end if 'isObject
+
+	rules_DisplayPage
+	rules_check = true
+end function
+
+'-----------------------------------------------------------------------
+' Ustaw znacznik, że sprawdzanie grupy ma zostać przerwane gdy wystąpi
+' jakiś błąd
+'-----------------------------------------------------------------------
+function rules_StopOnError()
+	g_bExitOnErr = true
+end function
+
+'-----------------------------------------------------------------------
+' Dodaje do tabelki komunikatów jeden informacje o błędzie
+'-----------------------------------------------------------------------
+private function rules_error(byval strMessage, byval nTypeId, byval nIdObj)
+	g_nErrors = g_nErrors + 1
+	rules_message strMessage, nTypeId, nIdObj, PICTURE_ICON_STOP
+end function
+
+'-----------------------------------------------------------------------
+' Dodaje do tabelki komunikatów ostrzezenie
+'-----------------------------------------------------------------------
+private function rules_warning(byval strMessage, byval nTypeId, byval nIdObj)
+	g_nWarnings = g_nWarnings + 1
+	rules_message strMessage, nTypeId, nIdObj, PICTURE_ICON_EXCLAMATION
+end function
+
+'-----------------------------------------------------------------------
+' Zwraca TableBuilder dla tabelki rezultatów
+'-----------------------------------------------------------------------
+private function rules_tablebilder()
+	set rules_tablebilder = doc_.afc.new_tb(page_).attach(page_.ctrl(ID_TABLE_RESULT))
+end function
+
+'-----------------------------------------------------------------------
+' Dodaje do tabelki komunikatów dowolny komunikat z obrazkiem o 
+' rozmiarach 16x16
+'-----------------------------------------------------------------------
+private function rules_message(byval strMessage, byval nTypeId, byval nIdObj, byval nPictureID)
+	rules_message = rules_message_size(strMessage, nTypeId, nIdObj, nPictureID, SIZE_FOR_12PX, SIZE_FOR_12PX)
+end function
+
+'-----------------------------------------------------------------------
+' Dodaje do tabelki komunikatów dowolny komunikat z obrazkiem o podanych
+' rozmiarach
+'-----------------------------------------------------------------------
+private function rules_message_size(byval strMessage, byval nTypeId, byval nIdObj, byval nPictureID, byval nHeight, byval nWidth)
+	dim pTab
+	set pTab = rules_tablebilder()
+
+	pTab.newrow
+
+	if ((pTab.rownr-1) mod 2) = 0 then
+		pTab.row.styleitem = STYLE_ROW_EVEN
+	end if
+
+	if (nPictureID>0) then
+		'Dodajemy komórke
+		pTab.newcell
+		pTab.cell.width = CLng(MINIMIZE_SIZE)
+
+		'Wstawiamy obrazek
+		pTab.addctrl CTRL_TYPE_PICTURE, -1
+		pTab.element.image = CLng(nPictureID)
+		if (nHeight>0) then
+			pTab.element.height = nHeight
+		end if
+
+		if (nWidth>0) then
+			pTab.element.width = nWidth
+		end if
+	end if
+	
+	'Komórke i tekst
+	pTab.newcell
+	if (nPictureID=0) then
+		pTab.cell.colspan = CLng(2)
+	end if
+
+	pTab.addtext strMessage
+	if nTypeId <> 0 and nIdObj <> 0 then
+		set pTab.element.hli = doc_.createhlistr( _
+			doc_.afc.convert.formatter("OPEN_FORM_PROXY_HLI_USAGE(%1,%2,USAGE_VIEW)").add(nTypeId).add(nIdObj).done())
+	end if
+	
+	page_.updateview
+end function
+
+
+]]>
+</script>
+</config>
+
+<body>
+
+	<p name='p##ID_CONTAINER_BREAK'>
+		<button style='STYLE_BUTTON' name='b##ID_BUTTON_BREAK' href='varFunction="BreakProcess"'>Przerwij</button>
+		<t name='t##ID_STATIC_PROGRESS' align='center' width='max'></t>
+		<br/>
+		<t/><br/>
+	</p>
+	
+	<table name='t##ID_TABLE_RESULT' border='1'>
+		<thead style='STYLE_TABLE_HEADER'>
+			<tr>
+				<td colspan='2'>
+					<t>Wyniki sprawdzania reguł</t>
+				</td>
+			</tr>
+		</thead>
+
+		<tbody style='STYLE_TABLE_BODY'>
+		</tbody>
+	</table>
+
+</body>
+
+</page>

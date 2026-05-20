@@ -1,0 +1,313 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+RAPTEMPLATE_STAN_MAG_ILOSC_ZBIORCZY
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1250.h"
+
+#define RAPORT_TITLE Stany ilościowe (zbiorczy)
+
+#define STAMMAG_NIEZEROWE		1
+#define STAMMAG_POWYZEJ_MAX		2
+#define STAMMAG_PONIZEJ_MIN		3
+#define STAMMAG_ZEROWE			4
+#define STAMMAG_UJEMNE			5
+
+#define PARAM_FILTR_STANY_MAG   8
+
+-->
+<page style='36'>
+<config>
+<title>RAPORT_TITLE</title>
+<script>
+<![CDATA[
+VB_PRINT_PORTRAIT_GRAYSCALE
+VB_PRINTPREV_PORTRAIT_GRAYSCALE
+
+<%
+
+function query()
+query = "select 'c_oznprod' = max( t_prod.strCecha1) ,'c_field_second' = t_2.p_strIndeks, " +_
+" 'c_field_first'= t_2.p_strNazwa,'c_prod_idobj'=max(t_2.p_idObj),'c_opak' = t_2.c_strNazwa,'c_jedn_opak' = max(t_4.strSkrot), " +_
+" 'c_prec_opak' = max(t_4.nDokladnosc), 'c_jedn_ewid' = max(t_5.strSkrot),'c_prec_ewid' = max(t_5.nDokladnosc), " +_ 
+" 'c_ilosc_opak' = isnull(sum(t_0.gmo_curIlosc),0),'c_ilosc_ewid' = isnull(sum(t_0.gmo_curIlosc * t_2.c_currKrotnosc),0) , " +_
+" 'c_ilosc_max' = max(t_2.c_curIloscMax) , 'c_ilosc_min' = max(t_2.c_curIloscMin) " +_
+" from vlist_n5produkt_listOpakowania as t_2  " +_
+" inner join n5jednostka as t_4 on t_2.c_pJednOpak = t_4.IdObj " +_
+" inner join n5jednostka as t_5 on t_2.p_pJednostkaEwid = t_5.IdObj " +_
+" inner join n5produkt as t_prod on t_prod.idobj = t_2.p_idobj  "+_
+" cross join n5magazyn as t_1 " +_
+" left outer join n5gmop as t_0 on t_2.p_idobj =  t_0.gmo_pProd and t_0.gmo_pMag = t_1.idobj "+_
+" and t_2.c_idobj = t_0.gmo_pOpak " +_
+" where t_prod.pGrupaProd in (select tmp_group_idobj from #tmp_prod_hierarchy) "+_
+" and %1 and %3 and %4 and %6 and %8 and NUMOPBORDER and t_prod.eRodzaj=1 " +_
+" group by t_2.p_strNazwa,t_2.p_strIndeks,t_2.c_strNazwa " +_
+" having %7 and [STANY] " +_
+" order by c_field_first,c_field_second,c_opak"
+end function
+%>
+<%
+
+dim g_ModuleRapCustom:set g_ModuleRapCustom = doc_.getmodule(43025)
+dim g_ParamCustom
+
+dim pRaportMomentParam
+
+dim utilProdHierarchy : set utilProdHierarchy = doc_.getmodule(60246)
+dim pProdHierarchy : set pProdHierarchy = utilProdHierarchy.new_prod_hierarchy()
+
+dim pParamArray
+dim pGrupaParam
+
+
+function default_param()
+	set pParamArray = doc_.afc.new_navoarray()
+
+	pParamArray.add doc_.getmodule(43025).new_filtr_magazyn("t_1.idobj","N5TYPMAG_PODSTAWOWY,N5TYPMAG_ZWROTY,N5TYPMAG_PRODUKCJAWTOKU,N5TYPMAG_REZERWACJE")
+
+	set pRaportMomentParam = doc_.afc.rap.param.new_date("Analizowany moment").bindexpr("")
+	if trans_.isvar(APPVAR_RAPORT_FROM_OUTSIDE) then
+		pRaportMomentParam.first_value = trans_.var(1007)
+		pRaportMomentParam.mode = clng(1)
+	end if
+	pParamArray.add pRaportMomentParam
+
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwa produktu").bindexpr("t_2.p_strNazwa")
+	pParamArray.add doc_.afc.rap.param.new_text("Indeks produktu").bindexpr("t_2.p_strIndeks")
+	
+	set pGrupaParam = doc_.afc.rap.param.new_text("Grupa produktów").bindexpr("strNazwa")
+	pParamArray.add pGrupaParam
+	
+	dim pParamSTATUS: Set pParamSTATUS= doc_.afc.rap.param.new_choice("Dostępność").bindexpr("t_2.p_eAktywny")
+	doc_.afc.rap.param.init_on_enum pParamSTATUS, TYPEID_N5PRODUKT,"eAktywny"
+	pParamArray.add pParamSTATUS
+	pParamSTATUS.selected.value(1) = false
+
+	pParamArray.add doc_.afc.rap.param.new_currency("Ilość opakowań").bindexpr("isnull(sum(t_0.gmo_curIlosc),0)")	
+
+	dim pParamOPAK: set pParamOPAK = doc_.afc.rap.param.new_text("Nazwa opakowania").bindexpr("t_2.c_strNazwa")
+	pParamOPAK.mode = PARAM_TEXT_MODE_ANY_TEXT
+	pParamArray.add pParamOPAK 
+  
+  dim pParamStany : set pParamStany = doc_.afc.rap.param.new_choice("Stany magazynowe")
+  with pParamStany
+	  .multiple = true
+    .names.add "wszystkie niezerowe"
+    .values.add 1
+    .selected.add true
+    .names.add "tylko powyżej stanu maksymalnego"
+    .values.add 2
+    .selected.add true 
+    .names.add "tylko poniżej stanu minimalnego"
+    .values.add 3
+    .selected.add true 
+    .names.add "tylko zerowe"
+    .values.add 4
+    .selected.add true 
+    .names.add "tylko ujemne"
+    .values.add 5
+    .selected.add true     
+  end with  
+  pParamArray.add pParamStany    
+
+	set default_param = pParamArray
+end function
+%>
+<%
+'-----------------------------
+'filtr dla stanów magazynowych
+'-----------------------------
+function getFiltrStany(): getFiltrStany = ""
+  dim iter
+  for iter = 0 to pParamArray.value(PARAM_FILTR_STANY_MAG).selected.upperIndex
+    'wszystkie niezerowe
+    if pParamArray.value(PARAM_FILTR_STANY_MAG).selected.value(iter) then
+      getFiltrStany = getFiltrStany + get_where_stany(iter + 1) + " or "
+    end if
+  next
+  if Len(getFiltrStany) > 4 then
+    getFiltrStany = Mid(getFiltrStany,1,Len(getFiltrStany) - 4)
+  end if  
+end function
+
+function get_where_stany(nMode) 
+	select case nMode
+		case STAMMAG_NIEZEROWE:
+			get_where_stany = "(isnull(sum(t_0.gmo_curIlosc),0) <> 0)"
+		case STAMMAG_POWYZEJ_MAX:
+			get_where_stany = "(isnull(sum(t_0.gmo_curIlosc),0) > max(t_2.c_curIloscMax) )"
+		case STAMMAG_PONIZEJ_MIN:
+			get_where_stany = "(isnull(sum(t_0.gmo_curIlosc),0) < max(t_2.c_curIloscMin) )"
+		case STAMMAG_ZEROWE:
+			get_where_stany = "(isnull(sum(t_0.gmo_curIlosc),0) = 0)"
+		case STAMMAG_UJEMNE:
+			get_where_stany = "(isnull(sum(t_0.gmo_curIlosc),0) < 0)"
+	end select
+End Function
+%>
+<%
+function write_actual_param(byref pActualParam)
+dim iter
+dim bAnyWritten : bAnyWritten = false
+if not pActualParam is nothing then
+for iter = 0 to pActualParam.upperIndex
+if pActualParam.value(iter).get_desc() <> "" then 
+bAnyWritten = true
+	so.write "<t size='5' /><text fontsize='4'><![CD"+"ATA[" + pActualParam.value(iter).get_desc() + "]"+"]></text><br/>"
+end if
+next
+end if
+if not bAnyWritten then 
+	so.write "<t fontsize='4'>brak</t><br/>"
+end if
+	so.write "<br/>"
+end function
+%>
+<%
+function body_row(byref pSection,byref pRec)
+if pRapExec.RecNr mod 2 = 0 then
+%>
+<tr bordercolor='white'>
+<%
+else
+%>
+<tr bordercolor='white' style='37'>
+<%
+end if
+%>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+<td align='right'>RXE_LP</td>
+	<td>
+		RXE_TEXT_LINK_FORM_VCC(TYPEID_N5PRODUKT,c_prod_idobj,c_field_first)
+	</td>
+	<td>
+		RXE_AUTO_TEXT(c_field_second)
+	</td>
+  <td align='right'>
+    RXE_AUTO_TEXT(c_jedn_ewid)
+  </td>
+  <td align='right'>
+	  RXE_QUANTITY_CVC(c_ilosc_ewid,"",c_prec_ewid)
+  </td> 
+</tr><%
+end function
+%>
+<%
+function body_header(byref pSection,byref pRec)
+'so.write "<p backcolor='yellow'><text><![CD"+"ATA["+pRapExec.get_final_query() + "]"+"]></text></p><br/>" 
+%>
+<table border='1'>
+<thead>
+<tr style='21'>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+	<td width='min'><t>LP</t></td>
+	<td width='max'>
+		<text><![CDATA[Nazwa]]></text>
+	</td>
+	<td width='max'>
+		<text><![CDATA[Indeks]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Jednostka miary]]></text>
+	</td>
+	<td width='2000'>
+		<text><![CDATA[Ilość w j.ewid.]]></text>
+	</td>
+</tr>
+</thead>
+<tbody>
+<%
+end function
+%>
+<%
+function body_footer(byref pSection)
+%>
+</tbody>
+</table>
+<%
+end function
+%>
+<%dim nSectionPicCounter : nSectionPicCounter = 10000000%>
+function section_hideshow_hli(byref pHLI)
+doc_.afc.formsection.section_hideshow page_, pHLI.prop(100)
+end function
+]]>
+</script>
+</config>
+<header>
+</header>
+<body>
+<p>
+RAPORT_HEADER(3,0)
+</p>
+
+<p>
+<t size='2'/>
+</p>
+
+<p><text fontsize='7'><![CDATA[RAPORT_TITLE]]></text></p><br/><br/>
+<t fontsize='5' bold='true'>Kryteria selekcji:</t><br/>
+<%
+dim pRapExec : set pRapExec = rapeng_.new_engine()
+with pRapExec
+	.add_body_ex getref("body_header"),getref("body_footer"),getref("body_row")
+if .prepare("RAPORT_TITLE",default_param(),rapeng_.get_raport_param(),query()) then
+%>
+<%
+
+
+	dim pPerf : set pPerf = doc_.performing("Trwa przygotowywanie wyników...")
+		pProdHierarchy.fill_on_prodgrupa_param pGrupaParam
+	set pPerf = nothing
+
+
+	write_actual_param rapeng_.get_raport_param()
+
+	if false and pRaportMomentParam.first_value = trans_.var(1007) then
+		.ReplaceQueryParam "DUMMY",rapeng_.query_apply_actual_param(query(), rapeng_.get_raport_param())
+	else
+		.ReplaceQueryParam "DUMMY",rapeng_.query_apply_actual_param(query(), rapeng_.get_raport_param())
+
+		dim nDummy
+		
+		#ifdef APPCONFIG_GM_RAPORT_BY_DATE
+		
+		.ReplaceQueryParam "NUMOPBORDER", _
+			"t_0.gmo_nNumOp  in (select om2.gmo_nNumOp from view_operacje_magazynowe om2 where om2.dDataOp <= START_DATE ) "
+		.ReplaceQueryParam "START_DATE",trans_.afc.convert.date2SQL(pRaportMomentParam.first_value)			
+		#else
+		.ReplaceQueryParam "NUMOPBORDER", _
+			"t_0.gmo_nNumOp " + doc_.getmodule(43025).rap_param_date_2_gm_num_oper_where(pRaportMomentParam,nDummy)
+		
+		#endif
+		
+		
+		
+		
+		'.ReplaceQueryParam "NUMOPBORDER", _
+		'	"t_0.gmo_nNumOp " + doc_.getmodule(43025).rap_param_date_2_gm_num_oper_where(pRaportMomentParam,nDummy)
+	end if
+
+  .ReplaceQueryParam "[STANY]", getFiltrStany()
+
+	if not .perform then
+	so.write "<p style='21'><t>Brak danych spełniających podane kryteria</t></p>"
+	end if
+%>
+<%
+end if
+end with
+
+pProdHierarchy.manual_done() : set pProdHierarchy = nothing
+set utilProdHierarchy = nothing
+
+%>
+</body>
+<footer>
+</footer>
+</page>

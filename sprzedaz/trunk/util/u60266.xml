@@ -1,0 +1,307 @@
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200.h"
+#include "h1201.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1240.h"
+
+#define ID_TABLE_RESULT		1001
+#define ID_BUTTON_RUN		1002
+#define ID_BUTTON_DEL		1003
+
+<?xml version="1.0" encoding="windows-1250" ?>
+<page style='STYLE_PAGE' width='10000'>
+<config>
+<title>Dostępne reguły</title>
+<script>
+<![CDATA[
+
+'-----------------------------------------------------------------------
+' (c) 2002 NAVO Ltd.
+' Spikowski Piotr
+'-----------------------------------------------------------------------
+
+'MessageBox
+#include "50122"
+'view_message
+#include "50516"
+
+dim g_pSelectedItems	'Tablica zawierająca idObj wybranych obiektów
+dim g_pSelectedRowIds	'Tablica zawierająca id wierszy z zaznaczonymi
+						'checkbox'ami. Indeksy pokrywają się z g_pSelectedItems
+
+'-----------------------------------------------------------------------
+' Zainicjuj zmienne globalne, ustaw wartości początkowe
+'-----------------------------------------------------------------------
+function fopen()
+	'Robimy tablice zawierająca idObj n5rule wybranych
+	'przez zaznaczenie checkbox'ów
+	set g_pSelectedItems = doc_.afc.new_navoarray()
+
+	'Robimy tablice identyfikatorow wierszy z zaznaczonymi
+	'checkbox'ami
+	set g_pSelectedRowIds = doc_.afc.new_navoarray()
+
+	'Dodaja elementy do tablicy unikaj ich powtarzania się
+	g_pSelectedItems.AllowDuplicate = false
+	g_pSelectedRowIds.AllowDuplicate = false
+
+	'Czy zrobić nieaktywny przycisk "Wykonaj"
+	ButtonRun_EnableDisable
+end function
+
+'-----------------------------------------------------------------------
+' Generujemy raport zawierający zdefiniowane reguły
+'-----------------------------------------------------------------------
+private function Rules_CreateReport()
+	dim pTab
+	set pTab = doc_.afc.new_tb(page_).attach(page_.ctrl(ID_TABLE_RESULT)).section_head.removeall
+
+	'Nagłówek
+	pTab.newrow
+	pTab.row.styleitem = STYLE_TABLE_HEADER
+
+	pTab.newcell.addtext "Nazwa reguły"
+	pTab.element.width = clng(MINIMIZE_SIZE)
+
+	pTab.newcell.addtext "Selekcja"
+	pTab.element.width = clng(MINIMIZE_SIZE)
+
+	'Body
+	pTab.section_body.removeall
+
+	dim pCursor
+	set pCursor = trans_.createrawcursor(TYPEID_N5RULE, "cVisible='1'", "strName", "")
+
+	dim pRule
+	for each pRule in pCursor
+
+		'Nowy wiersz reguły
+		pTab.newrow
+
+		dim idRow
+		idRow = pTab.row.ident
+
+		if ((pTab.rownr-1) mod 2) = 0 then
+			pTab.row.styleitem = STYLE_ROW_EVEN
+		end if
+
+		'Skrót wyboru elementu
+		dim pShortCut
+		set pShortCut = doc_.createhli()
+
+		pShortCut.prop(GVAR_FUNCTIONHLI) = "choiceelem"
+		pShortCut.prop(100) = CLng(pRule.IdObj)
+
+		'Skrót z nazwą elementy
+		pTab.newcell.addtexthli pRule.strName, pShortCut
+
+		dim nTextID
+		nTextID = pTab.element.ident
+
+		'Dodajemy możliwośc selekcji - checkbox
+		dim pCheckBox
+		set pCheckBox = pTab.newcell.addctrl(CTRL_TYPE_CHECKBOX, -1).element()
+		pCheckBox.customredirect CLng(1)
+		set pCheckBox.transfer = page_.createtransfer("custom")
+
+		pCheckBox.border = CLng(0)
+
+		'Kontrolka checkbox'a przechowuje dodatkowe
+		'informacje używane przy sytuacji gdy ktoś kliknie
+		'na checkbox'a. Ustawiam wiec userprop
+		dim pUserHli
+		set pUserHli = doc_.createhli()
+		
+		pUserHli.prop(100) = CLng(pRule.IdObj) 'IdObj z n5rule
+		pUserHli.prop(101) = CLng(nTextID)	'Identyfikator static'a z tekstem
+		pUserHli.prop(102) = CLng(idRow)	'Identyfikator wiersza
+
+		set pCheckBox.userprop = pUserHli
+
+		'Dodawane tylko po to by pojawił się checkbox
+		dim pText
+		set pText=pCheckBox.addnew(CTRL_TYPE_STATIC, -1)
+	next
+
+end function
+
+'-----------------------------------------------------------------------
+' Funkcje ongetdata i ondataentered wołane dla wszystkich checkbox'ów
+' bez względu na jego id (patrz customredirect)
+'-----------------------------------------------------------------------
+function c1_ongetdata(byref oCtrl): c1_ongetdata=true
+end function
+
+function c1_ondataentered(byref oCtrl, byval newValue)
+
+	dim nIdObj
+	nIdObj = oCtrl.userprop.prop(100)
+
+	dim nIdRow
+	nIdRow = oCtrl.userprop.prop(102)
+
+	if (newValue="1") then
+		g_pSelectedItems.Add nIdObj
+		g_pSelectedRowIds.Add nIdRow
+	else
+		g_pSelectedItems.RemoveValue nIdObj
+		g_pSelectedRowIds.RemoveValue nIdRow
+	end if
+
+	ButtonRun_EnableDisable
+
+	c1_ondataentered=true
+end function
+
+function ButtonRun_EnableDisable()
+	if (g_pSelectedItems.Count()=0) then
+		'Nie ma zaznaczonych reguł do wykonania
+		page_.ctrl(ID_BUTTON_RUN).disable=true
+		page_.ctrl(ID_BUTTON_DEL).disable=true
+	else
+		'Są jakieś reguły do wykonania
+		page_.ctrl(ID_BUTTON_RUN).disable=false
+		page_.ctrl(ID_BUTTON_DEL).disable=false
+	end if
+end function
+
+'-----------------------------------------------------------------------
+' Wykonuje zaznaczone checkbox'ami reguły
+'-----------------------------------------------------------------------
+function executerules()
+	dim pExecuteRules
+	set pExecuteRules = doc_.getmodule(MODULE_EXECUTE_RULES)
+
+	pExecuteRules.rules_check g_pSelectedItems
+
+	page_.goback
+end function
+
+'-----------------------------------------------------------------------
+' Usuń zaznaczone reguły
+'-----------------------------------------------------------------------
+function deleterules()
+	if (MessageBox("Jesteś pewien, że chcesz usunąc zaznaczone reguły?", "Usunąć", vbYesNo, vbQuestion)=vbYes) then
+		
+		'Tworzymy podtransakcje
+		dim pSubTrans
+		set pSubTrans=trans_.createsubtran()
+
+		dim pPrerforming
+		set pPrerforming = doc_.performing("Usuwanie zaznaczonych reguł")
+
+		dim i
+		for i = 0 to g_pSelectedItems.UpperIndex()
+			
+			dim pRule
+			set pRule = trans_.getobj(TYPEID_N5RULE, g_pSelectedItems.Value(i))
+
+			if (not pRule is nothing) then
+				pRule.markdel = true
+			else
+				view_message 6287, 0
+				exit function
+			end if
+
+			set pRule = nothing
+
+		next
+
+		set pPrerforming = nothing
+
+		if (not trans_.saveobjects()) then
+			view_message 6288, 0
+		end if
+
+		'Udalo sie usunięcie - ukrywamy usunięte wiersze
+		for i = 0 to g_pSelectedRowIds.UpperIndex()
+			page_.ctrl( g_pSelectedRowIds.Value(i) ).hide=true
+		next
+
+		g_pSelectedRowIds.RemoveAll
+		g_pSelectedItems.RemoveAll
+		
+		set pSubTrans = nothing
+
+		ButtonRun_EnableDisable
+		page_.updateview
+
+	end if
+end function
+
+'-----------------------------------------------------------------------
+' Uruchamia nasz raport
+'-----------------------------------------------------------------------
+function getRuleID()
+	'Robimy raport
+	Rules_CreateReport
+
+	getRuleID = page_.domodalauto()
+	
+	if (getRuleID=0) then
+		getRuleID = CLng(-1)
+	elseif (getRuleID=-1) then
+		getRuleID = CLng(0)
+	end if
+end function
+
+'-----------------------------------------------------------------------
+' Wybrano "Dodaj nową pozycję"
+'-----------------------------------------------------------------------
+function addnewitemex()
+	page_.result = CLng(-1)
+	page_.goback
+end function
+
+'-----------------------------------------------------------------------
+' Wybrano istniejący element
+'-----------------------------------------------------------------------
+function choiceelem(byref pHli)
+	page_.result = CLng(pHli.prop(100))
+	page_.goback
+end function
+
+]]>
+</script>
+</config>
+
+<body>
+	<table>
+		<tbody>
+			
+			<tr>
+				<td colspan='2'>
+					<table>
+					<tbody>
+						<tr>
+							<td style='STYLE_ROW_BTN'>
+								<button style='STYLE_BUTTON' href='varFunction="addnewitemex"'>Dodaj</button>
+								<button style='STYLE_BUTTON' name='b##ID_BUTTON_RUN' href='varFunction="executerules"'>Wykonaj</button>
+								<button style='STYLE_BUTTON' name='b##ID_BUTTON_DEL' href='varFunction="deleterules"'>Usuń</button>
+							</td>
+						</tr>
+					</tbody>
+					</table>
+				</td>
+			</tr>
+
+			<tr>
+			<td colspan='2'>
+				<table name='t##ID_TABLE_RESULT'>
+					<thead style='STYLE_TABLE_HEADER'>
+					</thead>
+					<tbody style='STYLE_TABLE_BODY'>
+					</tbody>
+				</table>
+			</td>
+			</tr>
+
+		</tbody>
+	</table>
+</body>
+
+</page>

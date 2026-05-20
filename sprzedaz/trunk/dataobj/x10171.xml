@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h" 
+#include "h1200.h" 
+#include "h1201.h" 
+#include "h1231.h" 
+#include "h1232.h" 
+#include "h1240.h" 
+-->
+<class>
+	<identifier>TYPEID_N5ROKKSIEG</identifier>
+	<table>n5rokksieg</table>
+	<humanname>Rok księgowy</humanname>
+	<idobj/>
+	<embedded>
+		<name>dDataRozp</name>
+		<sqltype>SQLdate</sqltype>
+		<humanname>Data rozpoczęcia roku</humanname>
+		<nonempty/>
+	</embedded>
+	<!--
+	Data rozpoczęcia roku księgowego
+	-->
+	<embedded>
+		<name>dDataZakon</name>
+		<sqltype>SQLdate</sqltype>
+		<humanname>Data zakończenia</humanname>
+		<nonempty/>
+	</embedded>
+	<!--
+	Data zakończenia roku księgowego
+	-->
+
+	<embedded>
+		<name>dDataZamk</name>
+		<sqltype>SQLdate</sqltype>
+		<humanname>Data zamknięcia</humanname>
+	</embedded>
+	<!--
+	Data zamknięcia roku księgowego
+	-->
+
+
+	<embedded>
+		<name>dLastDataZakon</name>	
+		<sqltype>SQLdate</sqltype>
+		<humanname>Data zakończenia ostatniego roku</humanname>
+		<virtual/>
+	</embedded>
+
+
+<cursors>
+	<cursor>
+		<identifier>CRSR_N5ROKKSIEG_ROK_WG_DATY_ROZPOCZECIA</identifier>
+		<humanname>Rok wg daty rozpoczęcia</humanname>
+		<join></join>
+		<where></where>
+		<orderby>dDataRozp</orderby>
+	</cursor>
+</cursors>
+
+<script>
+<![CDATA[
+
+'----------------------------------------------------------------------
+' Sprawdza czy podana data nalezy do roku księgowego (this_) i czy
+' nie nalezy do okresu zamkniętego
+'
+' dDate2Check - data do sprawdzenia
+'----------------------------------------------------------------------
+function n5rokksieg_checkdate(byval dDate2Check): n5rokksieg_checkdate = false
+  'gdy 2 parametr true => sprawdzaj rok księgowy
+  n5rokksieg_checkdate = n5rokksieg_checkdate_ext(dDate2Check,true)
+end function
+
+function n5rokksieg_checkdate_ext(byval dDate2Check, byval bCheckDate): n5rokksieg_checkdate_ext = false
+	if trans_.var(GVAR_OPERATION_MODE) <> clng(OPERATION_MODE_IMPORT) and trans_.var(GVAR_OPERATION_MODE) <> clng(OPERATION_MODE_UPGRADE) then
+		if bCheckDate then
+      if (dDate2Check < this_.dDataRozp or _
+			  dDate2Check > this_.dDataZakon) then
+				  trans_.message 1002, 0, "Data " + trans_.afc.display.fulldate(dDate2Check) + " nie zawiera się w roku księgowym."
+				  exit function
+		  end if
+    end if  
+		
+		if (this_.dDataZamk <> trans_.afc.globals.nulldate()) then
+			if (dDate2Check<=this_.dDataZamk) then
+				trans_.message 1002, 0, "Data " + trans_.afc.display.fulldate(dDate2Check) + " należy do okresu zamkniętego roku księgowego."
+				exit function
+			end if
+		end if
+	end if
+
+	n5rokksieg_checkdate_ext = true
+end function
+
+function n5rokksieg_initnew()
+	
+	dim oRecordset
+	set oRecordset=trans_.createadors("SELECT isnull(MAX(dDataZakon),'31-12-1899') as dLastDataZakon from n5rokksieg")
+	
+	if oRecordset.recordCount=1 then		
+		if (cdate(oRecordset.fields("dLastDataZakon").value) > cdate(trans_.afc.globals.nulldate()) ) then
+			'ustawienie pól wirtualnych
+			this_.dLastDataZakon = cdate(oRecordset.fields("dLastDataZakon").value) 
+			
+			'Ustawienie daty rozpoczęcia (data ostatniego zakończenia + 1 dzień)
+			dim dTempDate
+			dTempDate = this_.dLastDataZakon
+			this_.dDataRozp = DateAdd("d", 1, dTempDate)
+
+		else 
+			'Ustawienie daty rozpoczęcia (1 stycznia br)
+			this_.dDataRozp = cdate("01-01-"+ cstr(year(trans_.var(GVAR_TODAY))))
+			this_.dLastDataZakon = trans_.afc.globals.nulldate()
+		end if				
+	
+	end if
+	'Ustawienie daty zakońćzenia (data rozpoczęcia + 1 rok - 1 dzień)
+	dTempDate = DateAdd("yyyy", 1, this_.dDataRozp)
+	dTempDate = DateAdd("d", -1, dTempDate)
+	this_.dDataZakon = dTempDate 
+
+	this_.dDataZamk = trans_.afc.globals.nulldate()
+	
+	n5rokksieg_initnew=true
+end function
+
+function n5rokksieg_befins()
+	n5rokksieg_befins = n5rokksieg_check
+end function
+
+function n5rokksieg_befupd()
+	n5rokksieg_befupd = n5rokksieg_check
+end function
+
+function n5rokksieg_check:n5rokksieg_check = false
+	
+	if trans_.var(GVAR_OPERATION_MODE) <> clng(OPERATION_MODE_IMPORT) then
+		if(this_.dLastDataZakon <> trans_.afc.globals.nulldate() ) then
+			'Błąd jeżeli data rozpoczęcia roku jest mniejsza od daty zakończenia poprzedniego
+			if(this_.dDataRozp) <= this_.dLastDataZakon then
+				trans_.message 6525, 0, "Data rozpoczęcia nowego roku jest mniejsza od daty zakończenia roku poprzedniego"
+				exit function
+			end if
+			'Błąd jeżeli data zakończenia roku jest mniejsza lub równa dacie rozpoczęcia
+			if this_.dDataRozp >= this_.dDataZakon then
+				trans_.message 6526, 0, "Data rozpoczęcia nowego roku musi być mniejsza od daty zakończenia"
+				exit function
+			end if
+		end if
+	end if
+	
+	n5rokksieg_check = true
+end function
+
+
+function n5rokksieg_as_text(): n5rokksieg_as_text=""
+	n5rokksieg_as_text = "("+trans_.afc.display.fulldate(this_.dDataRozp)+" - "+trans_.afc.display.fulldate(this_.dDataZakon)+")"
+end function
+
+]]>
+</script>
+	
+	
+	
+	
+</class>

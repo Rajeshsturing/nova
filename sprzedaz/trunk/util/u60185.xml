@@ -1,0 +1,376 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+interfejs modułu
+	create_config_object(pRejestr)
+
+interfejs obiektu "config"
+	
+	void load_from_string(byref strConfig)
+	function save_to_string
+	[property] string operation_name(nOperNr)
+	show_config_page(nOperNr)
+	perform_operation(nOperNr,byref pObject)
+	void init_with_defaults(nTypRej)
+
+moduł operacji dla obiektu n5realprod
+
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1222.h"
+#include "h1224.h"
+
+#define SECID_ALL	1
+
+#define FORM_SPAN	2
+#define RCELL_SPAN	1
+
+#define CTRLID_DPC_1		101
+#define CTRLID_DPC_2		102
+#define CTRLID_CREATE_TASK	103
+
+#define CTRLID_PIC_DPC_1	104
+#define CTRLID_PIC_DPC_2	105
+
+#define CTRLID_REALIZE		106
+#define CTRLID_SHOW_COLLECTOR 107
+
+#define CTRLID_DPC_1_PREVIEW	108
+#define CTRLID_DPC_2_PREVIEW	109
+
+#ifdef ENABLE_DB13
+#define COUNT_OPERATIONS	13
+#define COUNT_OPERATIONS_INX	14
+#else
+#define COUNT_OPERATIONS	7
+#define COUNT_OPERATIONS_INX	8
+#endif
+
+-->
+<page style='STYLE_PAGE' width='10000'>
+<config>
+<startpos>center</startpos>
+<script>
+<![CDATA[
+#include "50200"
+'qxx_publication
+#include "50217"
+'realize publication
+#include "50518"
+'MessageBoxAndForget
+#include "50122"
+
+class cn5realprod_oper_config
+	public m_strName
+	public m_cCreateTask
+	public m_cRealize
+	public m_cCollector
+
+	public m_idObjDPC_1
+	public m_idObjDPC_2
+
+	
+	public sub class_initialize()
+		m_strName = ""
+		m_cCreateTask = "0"
+		m_cRealize = "0"		
+		m_idObjDPC_1 = 0	'no DP to perform
+		m_idObjDPC_2 = 0	'no DP to perform
+		m_cCollector = "0"
+	end sub
+
+
+	public property get is_empty()			
+		is_empty =	(m_cCreateTask = "0") and _
+					(m_cRealize = "0") and _
+					(m_cCollector = "0") and _
+					(m_idObjDPC_1 = clng(0)) and _
+					(m_idObjDPC_2 = clng(0))
+	end property
+
+	public sub load_from_string(byref strConfig)
+		dim aItems : aItems = split(strConfig, vbTab)
+		'db4 - OK
+		if ubound(aItems) = 5 then
+			m_strName		= aItems(0)
+			m_cCreateTask	= left(aItems(1),1)
+			m_idObjDPC_1	= clng(aItems(2))
+			m_idObjDPC_2	= clng(aItems(3))
+			m_cRealize    = cstr(aItems(4))	
+			m_cCollector = left(aItems(5),1)
+		end if
+	end sub
+	
+	public function save_to_string
+		save_to_string = doc_.afc.convert.formatter("%1"+vbTab+"%2"+vbTab+"%3"+vbTab+"%4"+vbTab+"%5"+vbTab+"%6") _
+			(m_strName)(cstr(m_cCreateTask))(cstr(m_idObjDPC_1))(cstr(m_idObjDPC_2))(cstr(m_cRealize))(cstr(m_cCollector)).done()
+	end function
+
+
+	public sub show_config_page
+		dim pPage : set pPage = doc_.getpagehli("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=THIS_FILE")
+
+		pPage.topelement.title = "Konfiguracja operacji """ + m_strName + """"
+
+		pPage.ctrl(CTRLID_CREATE_TASK).value = m_cCreateTask
+		pPage.ctrl(CTRLID_REALIZE).value = m_cRealize
+		pPage.ctrl(CTRLID_SHOW_COLLECTOR).value = m_cCollector
+		'todo: otwieranie i wybór
+		
+		dim strPubType : strPubType = "N5DPC_PUBTYPE_REALIZACJA_PRODUKCJI"
+
+		setup_choose_dpc_pic pPage,CTRLID_PIC_DPC_1,CTRLID_DPC_1_PREVIEW,CTRLID_DPC_1,m_idObjDPC_1,strPubType
+		setup_choose_dpc_pic pPage,CTRLID_PIC_DPC_2,CTRLID_DPC_2_PREVIEW,CTRLID_DPC_2,m_idObjDPC_2,strPubType
+		setup_choose_dpc_label pPage,CTRLID_DPC_1,abs(m_idObjDPC_1)
+		setup_choose_dpc_label pPage,CTRLID_DPC_2,abs(m_idObjDPC_2)
+		setup_choose_dpc_preview pPage , CTRLID_DPC_1_PREVIEW , m_idObjDPC_1 
+		setup_choose_dpc_preview pPage , CTRLID_DPC_2_PREVIEW , m_idObjDPC_2 
+
+		if pPage.domodalauto() = CMD_CHOICE then
+			m_cCreateTask = pPage.ctrl(CTRLID_CREATE_TASK).value
+			m_idObjDPC_1 = get_choosen_dpc(pPage,CTRLID_PIC_DPC_1,CTRLID_DPC_1_PREVIEW)
+			m_idObjDPC_2 = get_choosen_dpc(pPage,CTRLID_PIC_DPC_2,CTRLID_DPC_2_PREVIEW)
+			m_cRealize = pPage.ctrl(CTRLID_REALIZE).value
+			m_cCollector = pPage.ctrl(CTRLID_SHOW_COLLECTOR).value
+		end if
+	end sub
+	public sub perform_operation(byref pObject , byref pPage)
+		perform_operation_on_config	Me, pObject , pPage
+	end sub
+end class
+
+class cn5realprod_dok_config
+private m_aOperations(COUNT_OPERATIONS_INX)
+	public m_eTypRej
+
+	public function is_empty(byval nNumOper)		
+		dim pOperConf:set pOperConf = m_aOperations(nNumOper)
+		is_empty =	pOperConf.is_empty
+	end function
+	
+	public sub class_initialize()
+		dim i
+		for i = 0 to COUNT_OPERATIONS
+			set m_aOperations(i) = new cn5realprod_oper_config
+		next
+	end sub
+
+	public sub init_with_defaults(nTypRej)
+		dim i
+		for i = 0 to COUNT_OPERATIONS
+			set m_aOperations(i) = new cn5realprod_oper_config
+		next
+		m_aOperations(2).m_strName = "Wydruk potwierdzenia"
+		'todo: wyszukanie publikacji: m_aOperations(1).m_idObjDPC_1
+	end sub
+
+	public sub load_from_string(byref strConfig)
+		dim aItems : aItems = split(strConfig, REJDOK_CONG_SEPARATOR)
+		dim i 
+		dim last : last = ubound(aItems)
+		if last > COUNT_OPERATIONS then
+			last = COUNT_OPERATIONS
+		end if
+		for i = 0 to last
+			m_aOperations(i).load_from_string aItems(i)
+		next
+	end sub
+	
+	public function save_to_string
+		dim strTotal : strTotal = ""
+		dim i
+		for i = 0 to COUNT_OPERATIONS
+			strTotal = strTotal + m_aOperations(i).save_to_string() + REJDOK_CONG_SEPARATOR
+		next
+		save_to_string = strTotal
+	end function
+
+	public property get operation_name(byval nOperNr)
+		operation_name = m_aOperations(nOperNr).m_strName
+	end property
+	public property let operation_name(byval nOperNr,byref strName)
+		m_aOperations(nOperNr).m_strName = strName
+	end property
+
+	public sub show_config_page(byval nOperNr)
+		m_aOperations(nOperNr).show_config_page
+	end sub
+	public sub perform_operation(nOperNr,byref pObject,byref pPage)
+#ifdef _DEBUG
+		trans_.message 1002 , 0 , "DEBUG: " + cstr(operation_name(nOperNr))
+#endif
+		m_aOperations(nOperNr).perform_operation pObject , pPage
+	end sub
+end class
+
+function create_config_object(byref pRejestr)
+	dim pNewConfig : set pNewConfig = new cn5realprod_dok_config
+	pNewConfig.m_eTypRej = pRejestr.eTyp
+
+	set create_config_object = pNewConfig
+end function
+
+
+'--------------------------- config page ------------------
+function fok
+	page_.result = CMD_CHOICE
+	page_.goback
+end function
+
+
+function fcancel
+	page_.goback
+end function
+
+'--------------------------- perform operation ------------------
+private sub perform_operation_on_config(byref pConfig,byref pRealProd , byref pPage)
+	if not make_task_on_realprod(pConfig.m_cCreateTask,pRealProd,pPage) then
+		exit sub
+	end if
+	
+	if not make_publication_on_realprod(pConfig.m_idObjDPC_1,pRealProd,pPage) then
+		exit sub
+	end if
+
+	if not make_publication_on_realprod(pConfig.m_idObjDPC_2,pRealProd,pPage) then
+		exit sub
+	end if
+
+	if not realize_on_realprod(pConfig.m_cRealize,pRealProd,pPage) then
+		exit sub
+	end if
+
+	if not FillFromCollector(pConfig.m_cCollector,pRealProd,pPage) then
+		exit sub
+	end if
+
+end sub
+
+private function realize_on_realprod(cRealize , byref pRealProd,byref pPage):realize_on_realprod = true
+
+	if cRealize = "0" then
+		exit function
+	end if
+
+	dim pM60234 : set pM60234 = doc_.getmodule(60234)
+	
+	dim pZUIDPA : set pZUIDPA = pM60234.new_zuidpa()
+
+	dim pConfigPage
+	set pConfigPage = doc_.getpagehli("varCmd=CMD_OPEN_WIZARD_PAGE varDestPage=20603")
+	
+	dim dblKrotnoscRecepty : dblKrotnoscRecepty = cdbl(1.0)
+
+	if (pConfigPage.getZuzycieParams(pZUIDPA)=CMD_CHOICE) then
+		select case pZUIDPA.m_eMode
+		case 1
+			dblKrotnoscRecepty = pZUIDPA.m_curIlosc
+		case 2
+			if not pM60234.convert_il_wyrobu_na_krotnosc( _
+				pZUIDPA.m_pWyrobLubSurowiec.idobj, pZUIDPA.opakowanie.idobj, _
+				pZUIDPA.m_curIlosc,pZUIDPA.m_pRecepta,dblKrotnoscRecepty) then
+				exit function
+			end if
+		case 3
+			if not pM60234.convert_il_surowca_na_krotnosc( _
+				pZUIDPA.m_pWyrobLubSurowiec.idobj, pZUIDPA.opakowanie.idobj, _
+				pZUIDPA.m_curIlosc,pZUIDPA.m_pRecepta,dblKrotnoscRecepty) then
+				exit function
+			end if
+		case else
+			exit function
+		end select
+		set pConfigPage = nothing
+
+		dim pDummy:set pDummy = nothing
+		pM60234.fill_real_prod_poz_on_recepta pRealProd,pZUIDPA.m_pRecepta,dblKrotnoscRecepty , pDummy
+
+	end if
+
+end function
+
+
+private function make_task_on_realprod(cCreateTask,byref pRealProd,byref pPage) : make_task_on_realprod = true
+	if cCreateTask = "0" then
+		exit function
+	end if
+
+	if pPage.std_fsave_external_with_saveobjects() then
+		make_task_on_realprod = false
+	end if
+end function
+
+private function make_publication_on_realprod(idObjDPC,byref pRealProd,byref pPage) : make_publication_on_realprod = true
+
+	if idObjDPC = 0 then
+		exit function
+	end if
+
+	if not pPage.std_fsave_external_with_saveobjects() then
+		make_publication_on_realprod = false
+		exit function
+	end if
+	
+	make_publication_on_realprod = (realize_publication(abs(idObjDPC),pRealProd,idObjDPC>0,nothing) = 0)
+end function
+'---------------------------------------------------------------------------------
+' wypełnia dokument magazynowy jeśli użytkownik wciśnie "wczytaj"
+' albo wysyła bazę artykułów do kolektora
+'---------------------------------------------------------------------------------
+function FillFromCollector(idObjDPC, byref pRealProd, byref pPage)
+	
+	FillFromCollector = doc_.getmodule(60194).FillFromCollector(idObjDPC, pRealProd, pPage)
+	
+end function
+'---------------------------------------------------------------------------------
+' dodaje pozycje do dokumentu magazynowego
+'---------------------------------------------------------------------------------
+sub DokmagAddPoz(byref pRealProd,byval pProdukt, byval lp ,byval ilosc,byval cena)
+
+	doc_.getmodule(60194).DokmagAddPoz pDokMag, pProdukt,lp , ilosc, cena
+	
+end sub
+'---------------------------------------------------------------------------------
+
+]]>
+</script>
+</config>
+<body>
+QXF_BEGIN
+	QXS_BEGIN_FLAT(SECID_ALL,Konfiguracja,FORM_SPAN)
+		<tr>
+			QXX_CHOOSE_PUBLICATION(CTRLID_DPC_1,CTRLID_PIC_DPC_1,CTRLID_DPC_1_PREVIEW,1)
+		</tr>		
+
+		<tr>
+			QXX_CHOOSE_PUBLICATION(CTRLID_DPC_2,CTRLID_PIC_DPC_2,CTRLID_DPC_2_PREVIEW,1)
+		</tr>
+		
+		QXR_SEPARATOR(2)
+#comment NEXTVERSION - wywalic hide
+		<tr hide='true'>
+			QXC_LABEL(Zdarzenia,1)
+			<td>
+				<checkbox width='max' name='CTRLID_CREATE_TASK' >
+					<text>zapamiętaj zdarzenie</text>
+				</checkbox>
+			</td>
+		</tr>
+
+		QXR_LABELED_CHECK(CTRLID_REALIZE,,wypełnij zużyciem idealnym)
+		QXR_LABELED_CHECK(CTRLID_SHOW_COLLECTOR,,Kolektor danych)
+		
+
+		QXR_SEPARATOR(FORM_SPAN)
+
+	QXS_END_FLAT(FORM_SPAN)
+QXF_END
+
+XFDIALOGBUTTONS
+
+</body>
+</page>

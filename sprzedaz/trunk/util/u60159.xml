@@ -1,0 +1,510 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+REV:KB:WORKING
+
+#include "h1000.h" 
+#include "h1200.h" 
+#include "h1231.h" 
+#include "h1240.h" 
+#include "h1203.h"
+-->
+<page>
+<config>
+<script>
+<!--
+	Zestawienie obrotów i sald (moduł usługowy)
+
+	I you	Do following:
+	want	
+	display|Query  Configure CalcSaS
+	BO     |T - -  - - - -   - - -
+	ObrP   |- T -  - - - -   - - -
+	ObrO   |- - T  - - - -   - - -
+	ObrN   |- T T  - - T -   - - -
+	SalP   |T T -  T - - -   - - -
+	SalO   |- - T  - T - -   - - -
+	SalN   |T T T  - - T T   - - -
+	SaSP   |T T -  T - - -   T - -
+	SaSO   |- - T  - T - -   - T -
+	SaSN   |T T T  - - T T   - - T
+
+	options must be logically OR'ed
+-->
+<![CDATA[
+'getCurrentRKS
+#include "50120"
+
+function prepare_zois(dDateStart,dDateEnd,byref pParChoiceStatus,byref pParamSymbol,byref pParChoiceColums,byval idKwalifikator)
+	set prepare_zois = 	prepare_zois_bilans_filter(dDateStart,dDateEnd,pParChoiceStatus,pParamSymbol,pParChoiceColums,idKwalifikator,false)
+end function
+
+'------------------------------------------------
+'funkcja kompatybilna z istniejacymi wywolaniami
+'------------------------------------------------
+function prepare_zois_bilans_filter(dDateStart,dDateEnd,byref pParChoiceStatus,byref pParamSymbol,byref pParChoiceColums,byval idKwalifikator , bilans_filter)	
+  dim strFiltrSymbolu : strFiltrSymbolu = ""
+  
+  if not pParamSymbol is nothing then
+    strFiltrSymbolu = cstr(pParamSymbol.get_where_part(trans_))
+	end if
+  
+  set prepare_zois_bilans_filter = prepare_zois_bilans_filter_ex(dDateStart, dDateEnd, pParChoiceStatus, strFiltrSymbolu, _
+    pParChoiceColums, idKwalifikator, bilans_filter)	
+end function
+
+function prepare_zois_bilans_filter_ex(byval dDateStart, byval dDateEnd, byref pParChoiceStatus, byval strFiltrSymbolu, _
+  byref pParChoiceColums,byval idKwalifikator, bFiltrBilansowe)
+  set prepare_zois_bilans_filter_ex = prepare_zois_bilans_filter_ex_2(dDateStart, dDateEnd, pParChoiceStatus, strFiltrSymbolu, pParChoiceColums,idKwalifikator, bFiltrBilansowe, "")	
+end function
+
+'------------------------------------------------------------------------------------------------
+'aktualna wersja
+'
+' uwaga: tabela n5konto ma alias t_konto (ważne przy budowaniu filtra na symbol
+'------------------------------------------------------------------------------------------------
+function prepare_zois_bilans_filter_ex_2(byval dDateStart, byval dDateEnd, byref pParChoiceStatus, byval strFiltrSymbolu, _
+  byref pParChoiceColums,byval idKwalifikator, bFiltrBilansowe, byval strSkrot)	
+	
+  '-------------------
+  dim pKIM : set pKIM = doc_.system.activex("navofk.CKontoInfoMan")
+  
+  '-------------------
+  'PASS 0: inicjalizacja
+	pKIM.configure true,true,true,true
+  
+  '-------------------
+	'PASS 1: wypełnij słownik kontami
+	pKIM.init_konto 0	'<root>
+
+  dim pCursKonta : set pCursKonta = trans_.createadors("select idobj from n5konto")
+	do while not pCursKonta.EOF
+    pKIM.init_konto pCursKonta(0)
+    pCursKonta.movenext
+	loop		
+	set pCursKonta = nothing
+  
+  '-------------------
+	'PASS 2 - utwórz hierarchię
+	set pCursKonta = trans_.createadors("select idobj, pkontonadrz from n5konto")
+	do while not pCursKonta.EOF
+    pKIM.set_parent pCursKonta(0), pCursKonta(1)
+		pCursKonta.movenext
+	loop		
+  set pCursKonta = nothing
+  
+  '-------------------
+	'PASS 3 - Query 1: wylicz BO
+	dim strWhere : strWhere = "eTyp=N5_DEKRET_TYP_BO and eAnalit=N5KONTO_ANALITYCZNE and dDataKsieg >= " +_
+		doc_.afc.convert.date2SQL(getCurrentRKS().dDataRozp) +_
+		 " and dDataKsieg <= " + doc_.afc.convert.date2SQL(getCurrentRKS().dDataZakon)
+  if strSkrot = "" then   
+    strWhere = build_zois_where(strWhere, pParChoiceStatus, strFiltrSymbolu, idKwalifikator, bFiltrBilansowe)
+  else
+    strWhere = build_zois_where_ex(strWhere, pParChoiceStatus, strFiltrSymbolu, idKwalifikator, bFiltrBilansowe, strSkrot)  
+  end if
+	
+#ifdef _IOW
+	dim pCursDekrety : set pCursDekrety = trans_.createadors( _
+		"select t_ds.pKonto,case when sum(t_ds.curWn)-sum(t_ds.curMa) > 0 then sum(t_ds.curWn)-sum(t_ds.curMa) else 0 end," +_
+    "case when sum(t_ds.curMa)- sum(t_ds.curWn) > 0 then sum(t_ds.curMa)- sum(t_ds.curWn) else 0 end from n5dekret_sums as t_ds " +_
+    "join n5konto as t_konto on t_ds.pKonto=t_konto.idobj where " + strWhere + " group by t_ds.pKonto")
+#else
+	dim pCursDekrety : set pCursDekrety = trans_.createadors( _
+		"select t_ds.pKonto, sum(t_ds.curWn), sum(t_ds.curMa) from n5dekret_sums as t_ds join n5konto as t_konto " +_
+    "on t_ds.pKonto=t_konto.idobj where " + strWhere + " group by t_ds.pKonto")
+#endif
+
+	do while not pCursDekrety.EOF
+		pKIM.put_BO pCursDekrety(0),pCursDekrety(1),pCursDekrety(2)
+		pCursDekrety.movenext
+	loop
+  set pCursDekrety = nothing
+  
+  '-------------------	
+  'PASS 4 - Query 2: wylicz 'przed okresem'
+
+	strWhere = "eTyp=N5_DEKRET_TYP_NORMALNY and eAnalit=N5KONTO_ANALITYCZNE and dDataKsieg >= " + doc_.afc.convert.date2SQL(getCurrentRKS().dDataRozp) +_
+    " and dDataKsieg <" + doc_.afc.convert.date2SQL(dDateStart) 
+  if strSkrot = "" then
+    strWhere = build_zois_where(strWhere, pParChoiceStatus, strFiltrSymbolu, idKwalifikator, bFiltrBilansowe)
+  else
+    strWhere = build_zois_where_ex(strWhere, pParChoiceStatus, strFiltrSymbolu, idKwalifikator, bFiltrBilansowe, strSkrot)  
+  end if
+
+	set pCursDekrety = trans_.createadors( _
+		"select pKonto,sum(curWn),sum(curMa) from n5dekret_sums as t_ds join n5konto as t_konto " +_
+    "on t_ds.pKonto=t_konto.idobj where " + strWhere + " group by t_ds.pKonto")
+	do while not pCursDekrety.EOF
+		pKIM.put_ObrP pCursDekrety(0),pCursDekrety(1),pCursDekrety(2)
+		pCursDekrety.movenext
+	loop
+  set pCursDekrety = nothing
+  '-------------------	
+
+	'PASS 5 - Query 3: wylicz 'w okresie'
+#ifdef _SECURITY
+	strWhere = "(eTyp=N5_DEKRET_TYP_NORMALNY or eTyp=N5_DEKRET_TYP_BZ_OSTAT) and eAnalit=N5KONTO_ANALITYCZNE and dDataKsieg between " +_
+#else
+	strWhere = "eTyp=N5_DEKRET_TYP_NORMALNY and eAnalit=N5KONTO_ANALITYCZNE and dDataKsieg between " +_
+#endif  
+    doc_.afc.convert.date2SQL(dDateStart) + " and " + doc_.afc.convert.date2SQL(dDateEnd)  
+  if strSkrot = "" then
+    strWhere = build_zois_where(strWhere, pParChoiceStatus, strFiltrSymbolu, idKwalifikator, bFiltrBilansowe)
+  else
+    strWhere = build_zois_where_ex(strWhere, pParChoiceStatus, strFiltrSymbolu, idKwalifikator, bFiltrBilansowe, strSkrot)  
+  end if
+
+	set pCursDekrety = trans_.createadors(_
+		"select pKonto,sum(curWn),sum(curMa) from n5dekret_sums as t_ds join n5konto as t_konto " +_
+    "on t_ds.pKonto=t_konto.idobj where " + strWhere + " group by t_ds.pKonto")
+	do while not pCursDekrety.EOF
+		pKIM.put_ObrO pCursDekrety(0),pCursDekrety(1),pCursDekrety(2)
+		pCursDekrety.movenext
+	loop
+	set pCursDekrety = nothing
+  '-------------------	
+
+	'PASS 6 - wylicz obroty okres
+	set pCursKonta = trans_.createadors("select idobj from n5konto where eAnalit=N5KONTO_ANALITYCZNE")
+	do while not pCursKonta.EOF
+		pKIM.calc_Obr pCursKonta(0)
+		pCursKonta.movenext
+	loop		
+  '-------------------	
+
+	'PASS 7 - wylicz obroty nar i salda
+	set pCursKonta = trans_.createadors("select idobj from n5konto where eAnalit=N5KONTO_ANALITYCZNE")
+	do while not pCursKonta.EOF
+		pKIM.calc_SO pCursKonta(0)
+		pCursKonta.movenext
+	loop		
+  '-------------------	
+
+	'PASS 8
+	'todo: configure according pParChoiceColums
+	pKIM.calc_SaS true, true, true
+  '-------------------	
+	
+  set prepare_zois_bilans_filter_ex_2 = pKIM
+end function
+'------------------------------------------------
+' funkcja pomocnicza dla ZOiS
+'------------------------------------------------
+function build_zois_where_ex(strInputWhere, byref pParChoiceStatus, byval strFiltrSymbolu, byval idKwalifikator , bFiltrBilansowe, byval strSkrot)
+	
+  if idKwalifikator <> -1 then
+    strInputWhere = strInputWhere + " and pKwalifikator=" + cstr(idKwalifikator)
+  end if
+
+  if not pParChoiceStatus is nothing then 
+    strInputWhere = strInputWhere + " and " + cstr(pParChoiceStatus.get_where_part(trans_))
+  end if
+
+  if strFiltrSymbolu <> "" then
+    strInputWhere = strInputWhere + " and " + strFiltrSymbolu
+  end if
+
+  if bFiltrBilansowe then
+    strInputWhere = strInputWhere + " and t_konto.eBilans = N5KONTO_BILANSOWE "
+  end if
+  
+  if strSkrot <> "" then
+    'pobierz IdObj jednostki
+    dim nIdJedn: nIdJedn = trans_.findobjid(TYPEID_N5JEDNOSTKA,"strSkrot='" + strSkrot + "'")
+    if nIdJedn > 0 then
+      strInputWhere = strInputWhere + " and t_konto.pJednostka = " + CStr(nIdJedn)
+    end if
+  end if
+  
+  build_zois_where_ex = strInputWhere
+end function
+
+function build_zois_where(strInputWhere, byref pParChoiceStatus, byval strFiltrSymbolu, byval idKwalifikator , bFiltrBilansowe)
+  build_zois_where = build_zois_where_ex(strInputWhere, pParChoiceStatus, strFiltrSymbolu, idKwalifikator, bFiltrBilansowe, "")
+end function
+
+'funkcja generuje BO z BZ podanego roku księgowego (pPopRokKsieg)
+'i umieszcza jako dowody księgowe we wskazanym rejestrze BO
+'(pDestRejBO)
+'funkcja nie zapisuje tego
+
+function generate_bo_from_bz_param(byref pPopRokKsieg, byref pDestRejBO, byval strPodzialNaTrans, byval strPomin)
+	dim idRejBO : idRejBO = pDestRejBO.idobj
+	dim dDataRozpRK : dDataRozpRK = pPopRokKsieg.dDataRozp
+	dim dDataZakonRK : dDataZakonRK = pPopRokKsieg.dDataZakon
+
+	'remove all old records from pDestRejBO
+	dim pCursOldBO : set pCursOldBO = trans_.createrawcursor(TYPEID_N5DOWODKSIEG,"pRejestrDok=" + cstr(idRejBO) , "" , "")
+	dim pDK
+	for each pDK in pCursOldBO
+		pDK.markdel = true
+	next
+	
+	'reset counters
+	pDestRejBO.nLicznik = pDestRejBO.n5rejestrdok_get_licznik_for_db(clng(1))
+	trans_.save
+  
+  '-- compose conditions
+  dim strCond1 : strCond1 = split2cond(strPodzialNaTrans)
+  dim strCond2 : strCond2 = split2cond(strPomin)
+  
+	'prepare query
+	dim strSQL1 : strSQL1 = _
+    "select dek.pKonto,dek.pTransakcja,dek.pKwalifikator,"
+  dim strSQL2 : strSQL2 = _
+    "select dek.pKonto,0,0,"
+  dim strSQL3 : strSQL3 = "sum(curWn),sum(curMa),max(k.strSymbol) from n5dekret as dek inner join n5konto as k on dek.pKonto = k.idobj " +_
+	"where dek.dDataksieg between " + trans_.afc.convert.date2SQL(dDataRozpRK) +_
+	" and " + trans_.afc.convert.date2SQL(dDataZakonRK)
+  strSQL1 = strSQL1 + strSQL3 + " and " + strCond1 + " and not " + strCond2
+  strSQL2 = strSQL2 + strSQL3 + " and not " + strCond1 + " and not " + strCond2
+  strSQL1 = strSQL1 + " group by dek.pKonto" + ",dek.pTransakcja,dek.pKwalifikator having sum(curWn) <> sum(curMa) "
+  strSQL2 = strSQL2 + " group by dek.pKonto having sum(curWn) <> sum(curMa) "
+	
+  dim strSQL : strSQL = strSQL1 + " union all " + strSQL2 + " order by max(k.strSymbol) "
+
+	'fill new DK
+
+	trans_.var(APPVAR_DZIENNIK_DK) = idRejBO
+	set pDK = trans_.newobj(TYPEID_N5DOWODKSIEG)
+	dim pCursSalda : set pCursSalda = trans_.createadors(strSQL)
+	
+	do while not pCursSalda.EOF
+		dim pDekret
+		set pDekret = pDK.listDekret.addnew()
+		with pDekret
+			set .pKonto = trans_.getobj(TYPEID_N5KONTO,clng(pCursSalda(0)))
+
+			dim idTrans : idTrans = clng(pCursSalda(1))
+			if idTrans <> 0 then
+				set .pTransakcja = trans_.getobj(TYPEID_N5TRANSAKCJA,idTrans)
+			else
+				set .pTransakcja = nothing
+			end if
+			
+			dim idKwal : idKwal = clng(pCursSalda(2))
+			if idKwal <> 0 then
+				set .pKwalifikator = trans_.getobj(TYPEID_N5KWALIFIKATOR,idKwal)
+			else
+				set .pKwalifikator = nothing
+			end if
+			dim curWn : curWn = ccur(pCursSalda(3))
+			dim curMa : curMa = ccur(pCursSalda(4))
+			if curWn > curMa then
+				.curWn = curWn - curMa
+				.curMa = ccur(0.0)
+			else
+				.curWn = ccur(0.0)
+				.curMa = curMa - curWn
+			end if
+			.strOpis = ""
+		end with
+		pCursSalda.movenext
+	loop
+
+end function
+
+'zamien konta rozdzielone srednikiem na warunek
+function split2cond(strKonta)
+  dim arrParts : arrParts = Split(strKonta,";")
+
+  dim strCond : strCond = "((0=1)"
+  dim iter
+  for iter = 0 to UBound(arrParts)
+    if arrParts(iter) <> "" then
+      strCond = strCond + " or k.strSymbol like '" + arrParts(iter) + "%'"
+    end if
+  next
+  strCond = strCond + ")"
+  
+  split2cond = strCond
+end function
+
+'funkcja generuje BO bieżącego roku księgowego z BZ poprzedniego roku
+'umieszcza w rejestr
+function generate_bo_from_bz(byval strPodzialNaTrans, byval strPomin) : generate_bo_from_bz = 0
+	dim pCurrRKS : set pCurrRKS = getCurrentRKS()
+	if pCurrRKS is nothing then
+		generate_bo_from_bz = -1
+		exit function
+	end if
+	dim pCursRK : set pCursRK = trans_.createrawcursor(TYPEID_N5ROKKSIEG,"dDataZakon <" +_
+			trans_.afc.convert.date2SQL(pCurrRKS.dDataRozp) , "dDataZakon desc" , "")
+	if not pCursRK.exists(1) then
+		generate_bo_from_bz = -2
+		exit function
+	end if
+
+	dim idRejBO : idRejBO = trans_.findobjid(TYPEID_N5REJESTRDOK,_
+		"eTyp=N5REJESTRDOK_DZIENNIK_BO and pRokKsieg=" + cstr(pCurrRKS.idobj))
+	if idRejBO <= 0 then
+		generate_bo_from_bz = -3
+		exit function
+	end if
+	
+	dim pDestRejBO : set pDestRejBO = trans_.getobj(TYPEID_N5REJESTRDOK,idRejBO)
+	
+	generate_bo_from_bz_param pCursRK.get(1),pDestRejBO, strPodzialNaTrans, strPomin
+end function
+
+function get_current_rok_ksiegowy()
+	set get_current_rok_ksiegowy = getCurrentRKS()
+end function
+
+#ifdef _SECURITY
+function wczytaj_dane_trio()
+
+dim strSQL
+
+strSQL =  "if exists (select * from sysobjects where name like 'konto_map') drop table konto_map" 
+trans_.execsql strSQL
+strSQL = "create table konto_map (" + vbCrLf +_
+              "strSymbol varchar(64) not null," + vbCrLf +_
+              "id_baza1 int not null," + vbCrLf +_
+              "id_baza2 int not null," + vbCrLf +_
+              "zrodlo int not null, " + vbCrLf +_
+              "nowy int not null )" 
+
+trans_.execsql strSQL
+
+strSQL = "insert into konto_map select strSymbol,idobj,idobj,0,0 from navo2002..n5konto"+ vbCrLf
+trans_.execsql strSQL
+
+strSQL = "insert into konto_map select strSymbol,0,idobj,1,1 from navo2002bis..n5konto"+ vbCrLf
+trans_.execsql strSQL
+
+strSQL =  " update konto_map set nowy=0, id_baza1= " + vbCrLf +_
+          " (select id_baza1 from konto_map as k_m where konto_map.strsymbol=k_m.strsymbol and id_baza1<>0) " + vbCrLf +_
+          " where id_baza1=0 and id_baza2 in (select k_m2.id_baza2 from konto_map as k_m1 " + vbCrLf +_
+          " inner join konto_map as k_m2 on k_m1.strsymbol=k_m2.strsymbol " + vbCrLf +_
+          " where k_m1.id_baza1 <> k_m2.id_baza1 and k_m2.id_baza1=0) "
+trans_.execsql strSQL
+
+strSQL = "delete from n5dekret_sums "
+trans_.execsql strSQL
+
+strSQL = "delete from n5dekret"
+trans_.execsql strSQL
+
+strSQL = "delete from n5konto "
+trans_.execsql strSQL
+
+strSQL = " insert into n5konto select k.idobj,k.versionid,k.strSymbol,k.strNazwa,k.strOpis,k.pJednostka,0,0, " + vbCrLf +_
+         " k.pKontoNadrz,k.eAnalit,k.eBilans,k.eAktywne,k.nSubLen " + vbCrLf +_
+         " from navo2002..n5konto k "
+trans_.execsql strSQL
+
+strSQL = " if exists (select * from sysobjects where name='kopiowanie_kont') " + vbCrLf +_
+	       " drop procedure kopiowanie_kont" 
+trans_.execsql strSQL
+
+strSQL = "create procedure kopiowanie_kont " + vbCrLf +_
+         " as " + vbCrLf +_
+         " declare  " + vbCrLf +_
+	       " @nNumKonto integer, " + vbCrLf +_
+	       " @strSymbol varchar(64), " + vbCrLf +_
+	       " @strNazwa varchar(128), " + vbCrLf +_
+	       " @strOpis varchar(1024), " + vbCrLf +_
+	       " @pJednostka integer , " + vbCrLf +_
+	       " @wrefPodmiotRozrach integer, " + vbCrLf +_
+	       " @wrefPodmiotRozrach_wrt integer , " + vbCrLf +_
+	       " @pKontoNadrz integer , " + vbCrLf +_
+	       " @eAnalit integer , " + vbCrLf +_
+	       " @eBilans integer , " + vbCrLf +_
+	       " @eAktywne integer, " + vbCrLf +_
+	       " @nSubLen integer " + vbCrLf +_
+         " declare konto_cursor cursor for  " + vbCrLf +_
+	       " select k.strSymbol,k.strNazwa,k.strOpis,k.pJednostka,0,0, " + vbCrLf +_
+	       " k.pKontoNadrz,k.eAnalit,k.eBilans,k.eAktywne,k.nSubLen " + vbCrLf +_ 
+	       " from navo2002bis..n5konto k where (k.strsymbol collate Polish_CI_AS) in  " + vbCrLf +_
+	       " (select strsymbol from konto_map where id_baza1=0) " + vbCrLf +_
+         " select @nNumKonto=isnull(max(idobj)+1,1) from n5konto " + vbCrLf +_
+         " open konto_cursor " + vbCrLf +_
+         " fetch next from konto_cursor into @strSymbol,@strNazwa,@strOpis,@pJednostka,@wrefPodmiotRozrach,@wrefPodmiotRozrach_wrt,@pKontoNadrz,@eAnalit, " + vbCrLf +_
+         "  	@eBilans,@eAktywne,@nSubLen " + vbCrLf +_
+         " while @@fetch_status = 0  " + vbCrLf +_
+         " begin " + vbCrLf +_
+         " insert into n5konto select  @nnumKonto,1,@strSymbol,@strNazwa,@strOpis,@pJednostka,@wrefPodmiotRozrach,@wrefPodmiotRozrach_wrt,@pKontoNadrz,@eAnalit, " + vbCrLf +_
+         "	@eBilans,@eAktywne,@nSubLen " + vbCrLf +_
+         " update konto_map set id_baza1 = @nnumKonto where strsymbol like @strSymbol " + vbCrLf +_
+         " set  @nNumKonto= @nNumKonto+1 " + vbCrLf +_
+         " fetch next from konto_cursor into @strSymbol,@strNazwa,@strOpis,@pJednostka,@wrefPodmiotRozrach,@wrefPodmiotRozrach_wrt,@pKontoNadrz,@eAnalit, " + vbCrLf +_
+         "	@eBilans,@eAktywne,@nSubLen " + vbCrLf +_
+         " end " + vbCrLf +_
+         " close konto_cursor " + vbCrLf +_
+         " deallocate konto_cursor " 
+trans_.execsql strSQL
+
+strSQL = "kopiowanie_kont"
+trans_.execsql strSQL
+
+strSQL = " update n5konto set pkontonadrz = (select id_baza1 from konto_map as k_m where " + vbCrLf +_
+     		 " n5konto.pkontonadrz = k_m.id_baza2 and k_m.zrodlo=1 ) " + vbCrLf +_
+         " where idobj in (select id_baza1 from konto_map where nowy=1) and " + vbCrLf +_
+         " pkontonadrz <> 0 "
+trans_.execsql strSQL
+
+
+strSQL = " insert into n5dekret " + vbCrLf +_
+         " select d.idobj,d.versionid," + vbCrLf +_
+         " d.pKonto,d.curWn,d.curMa,d.dDataKsieg,d.strOpis,d.eTyp,d.eStatus,d.pTransakcja,d.pKwalifikator,d.cAuto " + vbCrLf +_
+         " from navo2002..n5dekret d " 
+trans_.execsql strSQL
+
+
+strSQL = " if exists (select * from sysobjects where name='kopiowanie_dekretow')" + vbCrLf +_
+	       " drop procedure kopiowanie_dekretow" 
+trans_.execsql strSQL
+
+strSQL = "create procedure kopiowanie_dekretow " + vbCrLf +_
+         " as" + vbCrLf +_
+         " declare " + vbCrLf +_
+         " 	@nNumOper integer," + vbCrLf +_
+         " 	@pKonto integer," + vbCrLf +_
+         " 	@curWn decimal(12,2)," + vbCrLf +_
+         " 	@curMa decimal(12,2)," + vbCrLf +_
+         " 	@dDataKsieg datetime," + vbCrLf +_
+         " 	@strOpis varchar(128)," + vbCrLf +_
+         " 	@eTyp integer," + vbCrLf +_
+         " 	@eStatus integer," + vbCrLf +_
+         " 	@pTransakcja integer," + vbCrLf +_
+         " 	@pKwalifikator integer," + vbCrLf +_
+         " 	@cAuto varchar(1)" + vbCrLf +_
+         " declare dekret_cursor cursor for" + vbCrLf +_ 
+         " 	select  km.id_baza1, d2.curWn,d2.curMa,d2.dDataKsieg,d2.strOpis,d2.eTyp,d2.eStatus,d2.pTransakcja,d2.pKwalifikator,d2.cAuto" + vbCrLf +_
+         "     from navo2002bis..n5dekret d2 " + vbCrLf +_
+         "     join konto_map km on d2.pkonto = km.id_baza2 " + vbCrLf +_
+         " 	where km.zrodlo=1" + vbCrLf +_
+         " select @nnumoper=isnull(max(idobj)+1,1) from n5dekret" + vbCrLf +_
+         " open dekret_cursor" + vbCrLf +_
+         " fetch next from dekret_cursor into	@pKonto,@curWn,	@curMa,	@dDataKsieg,@strOpis,@eTyp ,@eStatus ," + vbCrLf +_
+         " 	@pTransakcja,@pKwalifikator,@cAuto" + vbCrLf +_
+         " while @@fetch_status = 0 " + vbCrLf +_
+         " begin" + vbCrLf +_
+         " insert into n5dekret select  @nnumoper,1, @pKonto,@curWn,	@curMa,	@dDataKsieg,@strOpis,@eTyp ,@eStatus ," + vbCrLf +_
+         " 	@pTransakcja,@pKwalifikator,@cAuto" + vbCrLf +_
+         "     print 'wykonywanie procedury kopiowanie_dekretow'+(str(@nnumoper))" + vbCrLf +_
+         " set @nnumoper=@nnumoper+1" + vbCrLf +_
+         " fetch next from dekret_cursor into 	@pKonto,@curWn,	@curMa,	@dDataKsieg,@strOpis,@eTyp,@eStatus ," + vbCrLf +_
+         " 	@pTransakcja,@pKwalifikator,@cAuto" + vbCrLf +_
+         " end" + vbCrLf +_
+         " close dekret_cursor" + vbCrLf +_
+         " deallocate dekret_cursor"
+trans_.execsql strSQL
+
+strSQL = "kopiowanie_dekretow"
+trans_.execsql strSQL
+
+wczytaj_dane_trio = true
+
+end function
+#endif
+
+]]>
+</script>
+</config>
+
+	<body>
+	<t>Zestawienie obrotów i sald (moduł usługowy)</t>
+	</body>
+</page>

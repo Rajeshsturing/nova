@@ -1,0 +1,1594 @@
+#ifndef LIBRARY_50613
+#define LIBRARY_50613
+
+
+'////////////////////////////////////////////////////////////////////////////
+'// (c) Navo 2002 Ltd.
+'// CADOExportManager
+'//
+'// Spikowski Piotr
+'////////////////////////////////////////////////////////////////////////////
+
+#include "50122"
+#include "50126"
+#include "50203"
+#include "50306"
+#include "50516"
+
+#define EVENT_CONVERSION_TO_STERAM	"_Convert2Stream"
+#define EVENT_SAVE_STREAM			"_SaveStream"
+
+#define EVENT_CREATE_PERFORMING		"Export_CreatePerforming"
+#define EVENT_DESTROY_PERFORMING	"Export_DestroyPerforming"
+
+#define LIST_ELEMENT_IDENTITY	"<list>"
+
+#define SYSTEM_EVENT_START_WAITING	-1
+#define SYSTEM_EVENT_STOP_WAITING	-2
+#define SYSTEM_EVENT_SAVE_DATA_NOW	-3
+#define SYSTEM_CUSTOM_OBJECT		-4
+
+#ifdef _DEBUG
+	#ifndef MACRO_IMPTRACE
+	TRACE2FILE_NAME(imptrace)
+	#macro IMPTRACE(message) TRACE2FILE("Navo Import.log", message, imptrace)
+	#define MACRO_IMPTRACE
+	#endif
+#else
+	#ifndef IMPTRACE
+	#define IMPTRACE '
+	#endif
+#endif
+
+#define ON_ERROR_RESUME_NEXT	on error resume next
+
+'-----------------------------------------------------------------------
+'Klasa odpowiedzialana jest za wolanie odpowiednich zdarzen powstajacych
+'podczas eksportu danych i zarzadzanie calym eksportem
+'
+'
+'
+'BOOL connectSQL(byval strServerName, byval strDBName, byval strUser, byval strPwd)
+'
+'BOOL fromRecordset(byval strQuery, byval strRootTable)
+'BOOL fromObject(byval strRootTable, byval strTableIdentFld, byval nIdObj)
+'BOOL fromVirtualObject(byval strRootTable, byval nRecordId, byref pRecordset, byref pSourceExtra)
+'
+'VOID cancelExport()
+'
+'OBJECT container()
+'VOID setContainer(byref pNewContainer)
+'
+'VOID performing_show(byval strText)
+'VOID performing_destroy()
+'-----------------------------------------------------------------------
+class CADOExportManager
+
+	
+	private m_bCancel	    'true jezeli nalezy przerwac eksport
+	private m_pConnection   'obiekt connection do bazy danych
+	private m_pObjectsStack 'tablica obiektow, ktore sa eksportowane
+	private m_pImportedObjs 'dictionary zaimportowanych obiektów
+	private m_pContainer	'obiekt kontener eksportu
+	private m_nObjects		'liczba wyeskportowanych obiektów
+	private m_pfnCreatePerf  'robimy performing
+	private m_pfnDestroyPerf 'niszczymy go
+	private m_strLastPerforming
+	private m_pDirectImport	'wskaznik na klase imporu. Ustawiamy
+							'w przypadku gdy ekportujac z bazy
+							'zrodlowej chcemy beposrednio importowac
+							'tzn. mamy podlaczenie do bazy docelowej
+							'podczas eksportu
+	public m_nLevel			'Poziom wejœcia w funckje fromRecordset
+	public m_nRecords		'Liczba rekordów zapytania g³ównego ustalona przez funckje RecordCount
+	public m_nCurrentRecord	'Aktualny rekord z zapytania g³ównego
+	public m_bExport		'True jezeli eksportowac false jezeli nie. Mozna wtedy
+							'wolac inne funkcje np. recordcount a eksport
+							'nie zostanie wywolany
+
+	public  m_bOnlyLogonTest 'true jezeli nie bedziemy eksportowac
+							 'a chcemy uzyc naszej klasy do wywolania
+							 'funkcji database_logon by sprawdzic
+							 'czy podlaczenie do jakiejs bazy jest mozliwe
+
+
+
+	private sub class_initialize()
+		m_bCancel = false
+		set m_pConnection = nothing
+		set m_pContainer = nothing
+		set m_pDirectImport = nothing
+		set m_pObjectsStack = doc_.afc.new_navoarray()
+		set m_pImportedObjs = CreateObject("Scripting.Dictionary")
+		m_nObjects = clng(0)
+		m_nLevel = clng(0)
+		m_nRecords = clng(0)
+		m_nCurrentRecord = clng(0)
+		set m_pfnCreatePerf = getFunctionPointer( EVENT_CREATE_PERFORMING )
+		set m_pfnDestroyPerf = getFunctionPointer( EVENT_DESTROY_PERFORMING )
+		m_strLastPerforming=""
+		m_bOnlyLogonTest = false
+		m_bExport = true
+		performing_destroy
+	end sub
+
+	
+	private sub class_terminate()   'OK
+		set m_pObjectsStack = nothing
+		set m_pConnection = nothing
+		set m_pImportedObjs = nothing
+		set m_pContainer = nothing
+		set m_pfnCreatePerf = nothing
+		set m_pfnDestroyPerf = nothing
+		performing_destroy
+	end sub
+
+
+	public function performing_show(byval strText)
+		if (m_pfnCreatePerf is nothing) then
+			exit function
+		end if
+
+		m_strLastPerforming = strText
+		m_pfnCreatePerf me, strText
+	end function
+
+	public function KindOf()
+		KindOf = "CADOExportManager"
+	end function
+
+	public function performing_destroy()
+		if (m_pfnDestroyPerf is nothing) then
+			exit function
+		end if
+
+		m_pfnDestroyPerf me
+	end function
+
+
+	public function performing_restore()
+		performing_show m_strLastPerforming
+	end function
+
+
+	'----------------------------------------------------------------
+	' Ustawiamy wsk. na klase importujaca gdy eksportujac mamy
+	' bezposrednie polaczenie z baza docelowa
+	'----------------------------------------------------------------
+	public function directImport(byref pImportClass)
+		set m_pDirectImport = pImportClass
+	end function
+
+	'----------------------------------------------------------------
+	' Czy powinnismy kontynuowac import danych
+	'----------------------------------------------------------------
+	public function shouldContinue(byref pImportStream): shouldContinue = true
+		
+		pImportStream.bAfterShouldContinue = true
+				
+		if (m_pDirectImport is nothing) then
+			exit function
+		end if
+
+		set m_pDirectImport.m_pImportStream = pImportStream
+
+		dim nRecordID
+		nRecordID = m_pDirectImport.call_befImport( pImportStream )
+
+		shouldContinue = (nRecordID>=0)
+
+		if (not shouldContinue) then
+			m_pDirectImport.add2map pImportStream.typeid, pImportStream.idobj, (nRecordID * (-1)), pImportStream.unique_str
+		end if
+
+		dim pInfoObj
+		set pInfoObj = m_pObjectsStack.value(m_pObjectsStack.Count()-1)
+
+		pInfoObj.direct_db_checking = true
+		pInfoObj.direct_db_result = nRecordID
+	end function
+	
+	
+	'----------------------------------------------------------------
+	' Podlacz sie do bazy SQL'owej na wybranym serwerze
+	'----------------------------------------------------------------
+	public function connectSQL(byval strServerName, byval strDBName, byval strUser, byval strPwd): connectSQL = false
+		ON_ERROR_RESUME_NEXT
+
+		if (not m_bOnlyLogonTest) then
+			performing_show "connectSQL"
+		else
+			performing_show "connectSQL_TEST"
+		end if
+		
+		err.clear
+		set m_pConnection = createobject("ADODB.Connection")
+
+		if (not m_pConnection is nothing) then
+			m_pConnection.ConnectionTimeout = 30
+			m_pConnection.CommandTimeout = 180
+		
+			'proba podlaczenia do serwera
+			m_pConnection.open "Provider=SQLOLEDB;Server=" + strServerName + ";DATABASE=" + strDBName, strUser, strPwd
+
+			if (err.number<>0) then
+				'próba pod³¹czenia na user sa bez has³a
+				err.clear
+				m_pConnection.open "Provider=SQLOLEDB;Server=" + strServerName + ";DATABASE=" + strDBName, "sa", ""
+
+				if (err.number<>0) then
+					'próba pod³¹czenia na usera navo2002user
+					err.clear
+					m_pConnection.open "Provider=SQLOLEDB;Server=" + strServerName + ";DATABASE=" + strDBName, "navo2002user", "y1410grun"
+				end if
+
+			end if
+
+			'true jezeli podlaczono
+			connectSQL = (m_pConnection.state = clng(1))
+
+			'jezeli nie udalo sie podlaczyc to nie eksportujemy
+			m_bCancel = (not connectSQL)
+
+			if (connectSQL) then
+				IMPTRACE("EXPORT: Connected to SQL Server")
+				if (not m_bOnlyLogonTest) then
+					performing_show "Analiza danych"
+				end if
+			else
+				IMPTRACE("EXPORT: Unable to connect to SQL Server")
+				performing_destroy
+			end if
+
+		end if
+	end function
+
+	'----------------------------------------------------------------
+	' Pod³¹cz siê do Ÿród³a danych DSN
+	'
+	' strDSNName - nazwa Ÿród³a danych
+	' strUserName brane gdy <> ""
+	' strPassword brane gdy strUserName <> ""
+	'----------------------------------------------------------------
+	public function connectDSN(byval strDSNName, byval strUserName, byval strPassword): connectDSN = false
+		ON_ERROR_RESUME_NEXT
+
+		if (not m_bOnlyLogonTest) then
+			performing_show "connectSQL"
+		else
+			performing_show "connectSQL_TEST"
+		end if
+
+		err.clear
+		set m_pConnection = createobject("ADODB.Connection")
+
+		if (not m_pConnection is nothing) then
+			m_pConnection.ConnectionTimeout = 30
+			m_pConnection.CommandTimeout = 180
+
+			if (strUserName<>"") then
+				m_pConnection.open strDSNName, strUserName, strPassword
+			else
+				m_pConnection.open strDSNName
+			end if
+
+			'true jezeli podlaczono
+			connectDSN = (m_pConnection.state = clng(1))
+
+			'jezeli nie udalo sie podlaczyc to nie eksportujemy
+			m_bCancel = (not connectDSN)
+
+			if (connectDSN) then
+				IMPTRACE("EXPORT: Connected to DSN")
+				if (not m_bOnlyLogonTest) then
+					performing_show "Analiza danych"
+				end if
+			else
+				IMPTRACE("EXPORT: Unable to connect to DSN")
+				performing_destroy
+			end if
+
+		end if
+	end function 
+
+	'----------------------------------------------------------------
+	' Pod³¹cz sie do pliku Excel'owego
+	'----------------------------------------------------------------
+	public function connectExcel(byval strFileName)
+		ON_ERROR_RESUME_NEXT
+
+		if (not m_bOnlyLogonTest) then
+			performing_show "connectExcel"
+		else
+			performing_show "connectExcel_TEST"
+		end if
+
+		err.clear
+		set m_pConnection = createobject("ADODB.Connection")
+
+		if (not m_pConnection is nothing) then
+
+#ifdef APPCONFIG_USE_EXCEL_8
+			m_pConnection.Provider = "Microsoft.Jet.OLEDB.4.0"
+			m_pConnection.Properties("Extended Properties") = "Excel 8.0; IMEX=1"
+#else
+			m_pConnection.Provider = "Microsoft.ACE.OLEDB.12.0"
+			m_pConnection.Properties("Extended Properties") = "Excel 12.0;HDR=YES;IMEX=1"
+#endif
+
+			m_pConnection.Open strFileName
+
+			'true jezeli podlaczono
+			connectExcel = (m_pConnection.state = clng(1))
+
+			'jezeli nie udalo sie podlaczyc to nie eksportujemy
+			m_bCancel = (not connectExcel)
+
+			if (connectExcel) then
+				IMPTRACE("EXPORT: Connected to EXCEL")
+				if (not m_bOnlyLogonTest) then
+					performing_show "Analiza danych"
+				end if
+			else
+				IMPTRACE("EXPORT: Unable to connect to Excel")
+				performing_destroy
+			end if
+
+		end if
+
+	end function
+
+
+	'----------------------------------------------------------------
+	' Pobiera wskaznik na funkcje o podanej nazwie
+	'----------------------------------------------------------------
+	public function getFunctionPointer(byval strFunctionName): set getFunctionPointer = nothing
+		ON_ERROR_RESUME_NEXT
+		set getFunctionPointer = GetRef( strFunctionName )
+	end function
+
+
+	'----------------------------------------------------------------
+	' Wola funkcjê zdarzenia konwersji recordset'a na stream'a
+	' dla podanego obiektu
+	'----------------------------------------------------------------
+	private function call_Convert2Steram(byval strObjectName, byref pRecordset, byref pImportStream, byref bResult): set call_Convert2Steram = nothing
+		dim pfnConvert2Stream
+		set pfnConvert2Stream = getFunctionPointer( strObjectName + EVENT_CONVERSION_TO_STERAM )
+
+		bResult = false
+
+		if (pfnConvert2Stream is nothing) then
+			#ifdef _DEBUG
+				MsgBox "DEBUG: Nie zdefiniowa³eœ funkcji " + strObjectName + EVENT_CONVERSION_TO_STERAM
+			#endif
+			exit function
+		end if
+
+		'wolamy eventa by user'a funckja wypelnila pImportStream
+		bResult = pfnConvert2Stream(me, pRecordset, pImportStream)
+
+		set call_Convert2Steram = pImportStream
+	end function
+
+	
+	'----------------------------------------------------------------
+	' Funckja wo³a zdarzenie na zapis export stream'a
+	'----------------------------------------------------------------
+	private function call_SaveStream(byref pStream, byval strRootTable, byref pRecord): call_SaveStream = false
+		dim pfnSaveStream
+		set pfnSaveStream = getFunctionPointer( strRootTable + EVENT_SAVE_STREAM )
+
+		if (pfnSaveStream is nothing) then
+			exit function
+		end if
+
+		call_SaveStream = pfnSaveStream(me, pStream, pRecord)
+	end function
+
+	
+	'----------------------------------------------------------------
+	' Pobiera klucz reprezentujacy dany obiekt
+	'----------------------------------------------------------------
+	public function getObjKey(byval strRootTable, byval nIdObj)
+		dim varIdObj: varIdObj = ""
+		if (not isNull(nIdObj)) then
+			varIdObj = CStr(nIdObj)
+		end if
+
+		getObjKey = lcase(strRootTable) + "=" + lcase(varIdObj)
+	end function
+
+	
+	'----------------------------------------------------------------
+	' Sprawdza czy obiekt z danej tablicy o danym id zostal juz
+	' wyeksportowany czy tez nie
+	'----------------------------------------------------------------
+	public function isExported(byval strRootTable, byval nIdObj)
+		isExported = m_pImportedObjs.exists( getObjKey(strRootTable, nIdObj) )
+	end function
+
+
+	'----------------------------------------------------------------
+	' Dodaje dany obiekt do wyeksportowanych
+	'----------------------------------------------------------------
+	public function add2Exported(byval strRootTable, byval nIdObj)
+		dim varIdObj
+		varIdObj = "Null"
+		
+		if (not isNull(nIdObj)) then
+			varIdObj = CStr(nIdObj)
+		end if
+
+		IMPTRACE("EXPORT: add2exported: root_table=" + CStr(strRootTable) + " id=" + varIdObj)
+		m_pImportedObjs.add getObjKey(strRootTable, nIdObj), 0
+	end function
+
+
+	'----------------------------------------------------------------
+	' Rozpocznij eksport obiektu(ów) na podstawie dostarczonej
+	' nazwy obiektu i recordset'u
+	'
+	' strRootTable - nazwa_tablicy z ktorej dokonujemy eksportu
+	' nRecordId - id rekordu - nie musi byc to long moze byc np.
+	'			  string unikalnie identyfikujacy rekord
+	' pRecordset - dowolny recordset, ktory bedzie przydatny do eksportu
+	'			   obiektu wirtualnego
+	'----------------------------------------------------------------
+	public function fromVirtualObject(byval strRootTable, byval nRecordId, byref pRecordset, byref pExtraStream): fromVirtualObject = false
+
+		if (m_bCancel) then
+			exit function
+		end if
+
+		'czy eksportowany element jest pozycja listy
+		dim bExportListElement
+		bExportListElement = false
+
+		if (not isNumeric(nRecordId) or VarType(nRecordId)=vbString) then
+			if (nRecordId = LIST_ELEMENT_IDENTITY) then
+				bExportListElement = true
+			elseif (VarType(nRecordId)=vbString) then
+				nRecordId = ucase(trim(nRecordId))
+			end if
+		else
+			nRecordId = clng(nRecordId)
+		end if
+		'pRecordset.rerepopo = 0
+
+		dim bAlreadyExported
+		if (bExportListElement) then
+			'elementy listy eksportujemy zawsze
+			bAlreadyExported = false
+		else
+			'inne obiekty eksportujemy tylko gdy nie byly
+			'jeszcze wyeksportowane
+			bAlreadyExported = isExported(strRootTable, nRecordId)
+		end if
+		
+		'pRecordset.rerepopo = 0
+		
+		'Eksportujemy obiekty, ktore nie byly jeszcze
+		'wyeksportowane
+		dim pObjectInformation
+		dim pImportStream
+		dim bResult
+		if (not bAlreadyExported) then		
+			if (1=1) then 'strRootTable <> "XLSOpakowanie" or not (isNull(pRecordset.fields("Nazwa opakowania").Value) or pRecordset.fields("Nazwa opakowania").Value = "") then
+				'if pRecordset.fields("Nazwa opakowania").Value = "Podstawowe" then
+				'	aa=0
+				'	dim g
+				'	g = 9
+				'else
+					'na stos wrzucamy informacje o wlasnie eksportowanym
+					'obiektcie
+					set pObjectInformation = new CImportExportObject
+
+					'ustaw odpowiednie info
+					pObjectInformation.strName = strRootTable
+
+					#ifdef _DEBUG
+						dim varRecordId
+						varRecordId = "Null"
+						if (not isNull(nRecordId)) then
+							varRecordId = CStr(nRecordId)
+						end if
+						IMPTRACE("EXPORT: starting export for " + CStr(strRootTable) + " id=" + varRecordId)
+					#endif
+
+					'dodaj na stos
+					m_pObjectsStack.add pObjectInformation
+
+					'event eksportu - konwersja do stream
+					set pImportStream = new CImportStream
+
+					'przekazujemy do klasy ref na obiekt z info o obiekcie
+					pImportStream.internal_init pObjectInformation, nRecordId, m_pObjectsStack
+
+					if (not pExtraStream is nothing) then
+						'kopiujemy ze stream'a pola typu extra
+						'do nowego stream'a
+						pExtraStream.extraCopy2 pImportStream
+					end if
+
+					set pImportStream = call_Convert2Steram(strRootTable, pRecordset, pImportStream, bResult)
+
+					'Zawo³aj event'a do zapisu stream'a
+					if ((not pImportStream is nothing) and (bResult)) then
+
+						IMPTRACE("EXPORT: stream for object " + CStr(strRootTable) + " is prepared")
+
+						performing_show strRootTable
+
+						if (not call_SaveStream(pImportStream, strRootTable, pRecordset)) then
+							IMPTRACE("EXPORT: unable to save stream for object " + CStr(strRootTable))
+							view_message1 6236, 0, strRootTable
+							cancelExport
+							exit function
+						end if
+
+						IMPTRACE("EXPORT: stream for object " + CStr(strRootTable) + " is saved")
+					end if
+
+					'usuwamy ze stosu informacji o eksportowanych obiektach
+					'poniewaz ten obiekt jest juz wyeksportowany
+					m_pObjectsStack.remove (m_pObjectsStack.Count()-1)
+
+					if (not bExportListElement) then
+						'zaznacz, ze taki obiekt zostal wyeksportowany
+						add2Exported strRootTable, nRecordId
+					end if
+
+					'W trybie bezposredniego polaczenia z baza docelowa
+					'jezeli wykonal sie save mozemy usunac informacje z
+					'mapy eksportowej - findobjid znajdzie juz odpowiednie
+					'rekordy
+					if (pObjectInformation.direct_db_checking) then
+						if (m_pDirectImport.m_bSaved) then
+							IMPTRACE("EXPORT: clear map of exported objects")
+							m_pImportedObjs.RemoveAll
+						end if
+					end if
+
+					m_nObjects = m_nObjects + 1
+				'end if
+			end if
+
+		else
+			'aaa=0 
+			if strRootTable = "XLSProdukt" then 'and not (isNull(pRecordset.fields("Nazwa opakowania").Value) or pRecordset.fields("Nazwa opakowania").Value = "" or pRecordset.fields("Nazwa opakowania").Value = "Podstawowe") then
+				'-----------------------------------------------------------------------------------
+				'strRootTable = "XLSOpakowanie"
+				'nRecordId = "<list>"
+				'na stos wrzucamy informacje o wlasnie eksportowanym
+				'obiektcie
+				set pObjectInformation = new CImportExportObject
+
+				'ustaw odpowiednie info
+				pObjectInformation.strName = strRootTable
+				pObjectInformation.typeid = TYPEID_N5PRODUKT
+
+				'dodaj na stos
+				m_pObjectsStack.add pObjectInformation
+
+				'event eksportu - konwersja do stream
+				set pImportStream = new CImportStream
+
+				'przekazujemy do klasy ref na obiekt z info o obiekcie
+				pImportStream.internal_init pObjectInformation, nRecordId, m_pObjectsStack
+
+				if (not pExtraStream is nothing) then
+					'kopiujemy ze stream'a pola typu extra
+					'do nowego stream'a
+					pExtraStream.extraCopy2 pImportStream
+				end if
+				
+				fromVirtualObject "XLSOpakowanie", "<list>", pRecordset, nothing
+
+				'usuwamy ze stosu informacji o eksportowanych obiektach
+				'poniewaz ten obiekt jest juz wyeksportowany
+				m_pObjectsStack.remove (m_pObjectsStack.Count()-1)
+
+				'if (not bExportListElement) then
+				'	'zaznacz, ze taki obiekt zostal wyeksportowany
+				'	add2Exported strRootTable, nRecordId
+				'end if
+
+				'W trybie bezposredniego polaczenia z baza docelowa
+				'jezeli wykonal sie save mozemy usunac informacje z
+				'mapy eksportowej - findobjid znajdzie juz odpowiednie
+				'rekordy
+				if (pObjectInformation.direct_db_checking) then
+					if (m_pDirectImport.m_bSaved) then
+						IMPTRACE("EXPORT: clear map of exported objects")
+						m_pImportedObjs.RemoveAll
+					end if
+				end if
+
+				m_nObjects = m_nObjects + 1
+				'-----------------------------------------------------------------------------------
+			end if
+			'if strRootTable = "XLSProdukt" then
+			'	fromVirtualObject "XLSOpakowanie", "<list>", pRecordset, nothing
+			'end if
+		end if 'isExported
+
+		#ifdef _DEBUG
+			dim varRecordId2
+			varRecordId2 = "Null"
+			if (not isNull(nRecordId)) then
+				varRecordId = CStr(nRecordId)
+			end if
+			IMPTRACE("EXPORT: Export for " + CStr(strRootTable) + " id=" + CStr(varRecordId2) + " is done.")
+		#endif
+
+		fromVirtualObject = true
+
+	end function
+
+	'----------------------------------------------------------------
+	' Zwieksza lub zmniejasz poziom rekursji zapytan bazodanowych.
+	' Jezeli poziom rowny jest jeden oznacza to, ze mamy doczynienia
+	' z glownym zapytaniem eksportujacym
+	'----------------------------------------------------------------
+	private function OnRecordsetEnter()
+		m_nLevel = m_nLevel + 1
+	end function
+
+	private function OnRecordsetLeave()
+		m_nLevel = m_nLevel - 1
+	end function
+
+	'----------------------------------------------------------------
+	' Funckja ustawia calkowita liczbe rekordo ale tylko dla
+	' zapytania g³ównego - level 1
+	'----------------------------------------------------------------
+	public function RecordsetCount(byval strTableName, byval strWhere)
+
+		if (not m_bExport) then
+
+			IMPTRACE("EXPORT: records count from " + strTableName)
+
+			ON_ERROR_RESUME_NEXT
+
+			dim strQuery
+			strQuery = "select count(*) from " + strTableName + " " + strWhere
+
+			dim pRecordset
+			set pRecordset = getConnection().execute( strQuery )
+
+			m_nRecords = m_nRecords + CLng(pRecordset.fields(0).value)
+
+			set pRecordset = nothing
+
+			on error goto 0
+
+			IMPTRACE("EXPORT: records count result " + CStr(m_nRecords))
+
+		end if
+
+	end function
+
+	'----------------------------------------------------------------
+	' Rozpocznij eksport obiektu(ów) na podstawie dostarczonego
+	' zapytania SQL
+	'
+	' strQuery - pelne zapytanie sql'owe. UWAGA! Wymaga siê aby 
+	'			 pierwsze pole by³o unikalnym identyfikatorem
+	'			 tablicy strRootTable
+	'
+	'			 Jednak jezeli nazwa pierwszego pola to unique_id1
+	'			 a 2'giego to unique_id2 to jezeli unique_id1 = ''
+	'			 zostanie pobrany unique_id2. Wymagane bo np. w
+	'			 sybase nie da sie zrobiæ case'a
+	' strRootTable - nazwa_tablicy z ktorej dokonujemy eksportu
+	' bNAVOQuery   - true jezeli zapytanie ma byc przekierowane
+	'				 do bazy NAVO Enterprise
+	'----------------------------------------------------------------
+	public function fromRecordsetNAVO(byval strQuery, byval strRootTable, byval bNAVOQuery): fromRecordsetNAVO = false
+
+		if (not m_bExport) then
+			fromRecordsetNAVO = true
+			exit function
+		end if
+
+		OnRecordsetEnter
+
+		'jezeli przerwano eksport
+		if (m_bCancel) then
+			OnRecordsetLeave
+			exit function
+		end if
+
+		ON_ERROR_RESUME_NEXT
+
+		dim pRecordset
+		if (bNAVOQuery) then
+			set pRecordset = trans_.createadors( strQuery )
+		else
+			set pRecordset = getConnection().execute( strQuery )
+		end if
+
+		IMPTRACE("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+		IMPTRACE("EXPORT: executing query=""" + CStr(strQuery) + """")
+
+		if (err.number<>0) then
+			IMPTRACE("EXPORT: unable to execute query: " + CStr(err.description))
+			view_message2 6237, 0, strRootTable, err.description
+			cancelExport
+			OnRecordsetLeave
+			exit function
+		end if
+
+		on error goto 0
+
+		dim ktoryWiersz : ktoryWiersz = 0
+		
+		if (not pRecordset.EOF) then
+		dim nRecordId
+		nRecordId = pRecordset.fields(0).value		
+			while  (not pRecordset.EOF)
+				ktoryWiersz = ktoryWiersz + 1
+				
+				if (m_nLevel=1) then
+					m_nCurrentRecord = m_nCurrentRecord + 1
+				end if
+
+				nRecordId = pRecordset.fields(0).value
+
+				'³ata!!!!!!!!!!
+				'dla produktów jesli kolumna indeks jest null abo pusta to pomijamy i komunikujemy
+				if Ucase(strRootTable) = ucase("XLSProdukt") then
+					if isNull(nRecordId) then
+						if not isNull(pRecordset.fields("Nazwa").value) then
+							nx_.trace.error "B³¹d w zak³adce PRODUKTY", "Brak indeksu dla produktu o nazwie " + cstr(pRecordset.fields("Nazwa").value) + ". Wiersz nr " + cstr(ktoryWiersz)
+						else
+							nx_.trace.error "B³¹d w zak³adce PRODUKTY", "Niewystarczaj¹ce dane w wierszu " + cstr(ktoryWiersz) + " (pusty wiersz?)"
+						end if
+					end if
+				end if
+
+				if (pRecordset.fields(0).Name="unique_id1") then
+					if (Trim(CStr(nRecordId))="") then
+						nRecordId = pRecordset.fields(1).value
+					end if
+				end if
+
+				if (not fromVirtualObject(strRootTable, nRecordId, pRecordset, nothing)) then
+					OnRecordsetLeave
+					exit function
+				end if
+
+				if (m_nLevel=1) then
+					performing_show strRootTable
+				end if
+				
+				ON_ERROR_RESUME_NEXT
+				pRecordset.movenext
+
+				if (err.number<>0) then
+					IMPTRACE("EXPORT: unable to call movenext: " + CStr(err.description))
+					view_message2 6253, 0, strRootTable, err.description
+					cancelExport
+					OnRecordsetLeave
+					exit function
+				end if
+
+				on error goto 0
+			wend
+			fromRecordsetNAVO = true
+		end if
+
+		pRecordset.close
+		IMPTRACE("EXPORT: closing recordset")
+		set pRecordset = nothing
+
+		OnRecordsetLeave
+	end function
+	
+	'----------------------------------------------------------------
+	' Rozpocznij eksport obiektu(ów) na podstawie dostarczonego
+	' zapytania SQL
+	'
+	' strQuery - pelne zapytanie sql'owe. UWAGA! Wymaga siê aby 
+	'			 pierwsze pole by³o unikalnym identyfikatorem
+	'			 tablicy strRootTable
+	'
+	'			 Jednak jezeli nazwa pierwszego pola to unique_id1
+	'			 a 2'giego to unique_id2 to jezeli unique_id1 = ''
+	'			 zostanie pobrany unique_id2. Wymagane bo np. w
+	'			 sybase nie da sie zrobiæ case'a
+	' strRootTable - nazwa_tablicy z ktorej dokonujemy eksportu
+	'----------------------------------------------------------------
+	public function fromRecordset(byval strQuery, byval strRootTable)
+		fromRecordset = fromRecordsetNAVO(strQuery, strRootTable, false)
+	end function
+
+
+	'----------------------------------------------------------------
+	' Rozpocznij eksport pojedynczego obiektu
+	'
+	' strRootTable - nazwa_tablicy z ktorej dokonujemy eksportu
+	' strTableIdentFld - nazwa pola z tej tablicy bedacego
+	'                    unikalnym identyfikatorem rekordu
+	' nIdObj - id rekordu z tej tablicy do eksportu
+	'----------------------------------------------------------------
+	public function fromObject(byval strRootTable, byval strTableIdentFld, byval nIdObj): fromObject = false
+
+		if (m_bCancel) then
+			exit function
+		end if
+
+		'jezeli zostal juz eksportowany to wychodzimy		
+		if (isExported(strRootTable, nIdObj)) then
+			fromObject = true
+			exit function
+		end if
+
+		'eskportujemy nasz obiekt
+		fromObject = fromRecordset("select * from " + strRootTable + " where " + strTableIdentFld + "=" + CStr(nIdObj), strRootTable)
+	end function
+
+
+	'----------------------------------------------------------------
+	' Powoduje przerwanie procesu eksportu
+	'----------------------------------------------------------------
+	public function cancelExport()
+		m_bCancel = true
+		IMPTRACE("EXPORT: canceled")
+		if (not m_pDirectImport is nothing) then
+			m_pDirectImport.cancelImport
+		end if
+	end function
+
+	'----------------------------------------------------------------
+	' Czy export zosta³ anulowany
+	'----------------------------------------------------------------
+	public function isCanceled()
+		isCanceled = m_bCancel
+	end function
+
+	'----------------------------------------------------------------
+	' Pobiera wczesniej ustawiony kontener
+	'----------------------------------------------------------------
+	public function container()
+		set container = m_pContainer
+	end function
+
+
+	'----------------------------------------------------------------
+	' Ustawia nowy kontener
+	'----------------------------------------------------------------
+	public function setContainer(byref pNewContainer)
+		set m_pContainer = pNewContainer
+	end function
+
+	'----------------------------------------------------------------
+	' Eksportuje systemowe informacje notyfikuj¹ce managera importu
+	'----------------------------------------------------------------
+	private function system_event(byval TypeId, byval IdObj)
+		dim pImportStream
+		set pImportStream = new CImportStream
+
+		pImportStream.typeid = TypeId
+		pImportStream.idobj = IdObj
+
+		'Zawo³aj event'a do zapisu stream'a
+		if (not call_SaveStream(pImportStream, "ExportManager", nothing)) then
+			cancelExport
+			exit function
+		end if
+	end function
+
+
+	'----------------------------------------------------------------
+	' Rozpoczyna czekanie na dzieci
+	'----------------------------------------------------------------
+	public function start_waiting()
+		system_event SYSTEM_EVENT_START_WAITING, SYSTEM_EVENT_START_WAITING
+	end function
+
+
+	'----------------------------------------------------------------
+	' Konczy czekanie na dzieci
+	'----------------------------------------------------------------
+	public function stop_waiting()
+		system_event SYSTEM_EVENT_STOP_WAITING, SYSTEM_EVENT_STOP_WAITING
+	end function
+
+
+	public function save_data()
+		system_event SYSTEM_EVENT_SAVE_DATA_NOW, SYSTEM_EVENT_SAVE_DATA_NOW
+	end function
+
+
+	public function getConnection()
+		set getConnection = m_pConnection
+	end function
+		
+
+end class
+
+'-----------------------------------------------------------------------
+' Klasa reprezentuje informacje o eksportowanym / importowanym
+' aktualnie obiekcie
+'-----------------------------------------------------------------------
+class CImportExportObject
+	public strName		'nazwa obiektu z ktorego eksportujemy
+	public idobj		'idobj tego obiektu
+	public typeid		'typeid obiektu eksportowanego
+	public strDestName	'nazwa obiektu docelowego np. n5pracownik
+	
+	public child				'czy obiekt jest dzieckiem
+	public parenttypeid			'typeid ojca gdy child = true
+	public parentidobj			'idobj ojca
+	public parent_list_fld		'numer pola listy w praencie
+	public direct_db_checking	'czy mamy bezpoœrednie po³¹czenie z baz¹ z której importujemy
+	public direct_db_result		'cache'owane id zwrocone przez befImport
+
+	private sub class_initialize()
+		strName = ""
+		idobj = 0
+		typeid = 0
+		parenttypeid = 0
+		parentidobj = 0
+		parent_list_fld = ""
+		strDestName = ""
+		direct_db_checking = false
+		child = false
+	end sub
+
+	public function setparentfld(byval strFldName)
+		parent_list_fld = strFldName
+	end function
+
+	public function KindOf()
+		KindOf = "CImportExportObject"
+	end function
+
+end class
+
+'-----------------------------------------------------------------------
+' Klasa reprezentuje jedno pole obiektu
+'-----------------------------------------------------------------------
+class CObjectField
+	public strName	 'nazwa pola NE
+	public nIndex	 'indeks w kolekcji pol
+	public reftypeid 'typeid obiektu na ktory wskazuje
+	public typeid    'typeid obiektu
+	public sqltype   'np. SQLlong itd.
+	public fldtype   'np. RELT_REF itd.
+	
+	public virtual	 'czy pole wskazuje na tablice
+					 'ktora nie istnieje w bazie zrodlowej
+	
+	private sub class_initialize()
+		strName = ""
+		nIndex = -1
+		reftypeid = 0
+		fldtype = -1
+		virtual = false
+	end sub
+
+	public function KindOf()
+		KindOf = "CObjectField"
+	end function
+
+end class
+
+class CImportFldValue
+	public varValue
+	public bunique	 'czy pole wyznacza unikalnosc
+
+	private sub class_initialize()
+		bunique = false
+	end sub
+
+	public function KindOf()
+		KindOf = "CImportFldValue"
+	end function
+
+end class
+
+dim pFieldsInfoCache
+set pFieldsInfoCache = CreateObject("Scripting.Dictionary")
+
+class CExtraData
+	public strName
+	public varValue
+
+	public function KindOf()
+		KindOf = "CExtraData"
+	end function
+
+end class
+
+'-----------------------------------------------------------------------
+' Klasa reprezentuje jeden rekord do zapisania w bazie NE
+'
+'
+'VOID begin_object(byval nType, byval nIdObj)
+'VARIANT fields(byval strFieldName) = VARIANT
+'VOID fieldref(byval strFieldName, byval nTypeId) = LONG
+'OBJECT fieldByName(byval strFldName)
+'OBJECT infoByName(byval strFldName)
+'-----------------------------------------------------------------------
+class CImportStream
+	
+	public idobj		'idobj tego obiektu
+	public unique_str	'string wyznaczjacy unikalnosc na podstawie wartosci pol
+	public typeid		'typeid obiektu
+	public name
+	private pObjectInfo 'wsk. na stos z informacja o tym obiekcie
+						'informacja o obiekcie z ktorego eksportujemy
+
+	private pFieldInfo		'dictionary informacji o polach
+	private pFieldsValue	'dictionary wartosci pol
+	public  pSetFields		'tablica ustawionych pol
+	private pObjectsStack	'tylko do eksportu
+	private pExtraData		'tablica dodatkowych pol (extra) przenoszonych
+							'podczas eksportu
+	public bAfterShouldContinue 'czy jestesmy juz za ShouldContinue
+
+	private sub class_initialize()
+		idobj = 0
+		typeid = 0
+		name = ""
+		unique_str = ""
+
+		set pFieldsValue = CreateObject("Scripting.Dictionary")
+		set pFieldInfo = nothing
+		set pSetFields = doc_.afc.new_navoarray()
+		set pExtraData = doc_.afc.new_navoarray()
+
+		set pObjectInfo = nothing
+		set pObjectsStack = nothing
+		bAfterShouldContinue = false
+	end sub
+
+	
+	private sub class_terminate()   'OK
+		set pFieldsValue = nothing
+		set pObjectInfo = nothing
+	end sub
+
+
+	public function getInfo()
+		set getInfo = pObjectInfo
+	end function
+
+
+	public function setInfo(byref pNewInfo)
+		set pObjectInfo = pNewInfo
+	end function
+
+
+	public function KindOf()
+		KindOf = "CImportStream"
+	end function
+	
+
+	'----------------------------------------------------------------
+	' Wolane przez manager'a exportu
+	'----------------------------------------------------------------
+	public function internal_init(byref pObjectInformation, byval nIdObj, byref pCurrentObjectStack)
+		'dodaj wsk. na stos z informacja o obiektach
+		'danego typu
+		set pObjectInfo = pObjectInformation
+		set pObjectsStack = pCurrentObjectStack
+		pObjectInfo.idobj = nIdObj
+	end function
+
+	'----------------------------------------------------------------
+	'Uzywana by zaznaczyc, ze obiekt jest typu child - nie dla importu
+	'w Navo Enterprise
+	'----------------------------------------------------------------
+	public function as_child_non_ne()
+		pObjectInfo.child = true
+
+		dim pParentInfo
+		set pParentInfo = pObjectsStack.value( pObjectsStack.count() - 2 )
+
+		pObjectInfo.parenttypeid = pParentInfo.typeid
+		pObjectInfo.parentidobj = pParentInfo.idobj
+	end function
+
+	'----------------------------------------------------------------
+	'Uzywana by zaznaczyc, ze obiekt jest typu child - nie dla importu
+	'w Navo Enterprise
+	'----------------------------------------------------------------
+	public function as_child(byval strParentFieldName)
+		pObjectInfo.child = true
+
+		dim pParentInfo
+		'rerepopo = 0
+		set pParentInfo = pObjectsStack.value( pObjectsStack.count() - 2 )
+
+		pObjectInfo.parenttypeid = pParentInfo.typeid
+		pObjectInfo.parentidobj = pParentInfo.idobj
+		pObjectInfo.setparentfld strParentFieldName
+	end function
+
+	'----------------------------------------------------------------
+	' Rozpocznij obiekt ale nie wchodzacy do NE
+	'----------------------------------------------------------------
+	public function begin_object_name(byval strObjectName, byval nType, byval bSprzedaz)
+		'tego nie ma
+		pObjectInfo.typeid = nType
+		typeid = nType
+		idobj = 0
+		
+		'Ustawiamy nazwe obiektu
+		name = strObjectName
+		pObjectInfo.strDestName = name
+
+		if (bSprzedaz) then
+			extra("SPRZEDAZ") = "yes"
+		end if
+	end function
+
+	'----------------------------------------------------------------
+	' Rozpocznij obiekt o podanym TYPEID i IdObj
+	'----------------------------------------------------------------
+	public function begin_object_id(byval nType, byval nIdObj)
+		idobj = nIdObj
+		typeid = nType
+
+		dim pObjDef
+		set pObjDef = doc_.stdobjdef.getobjdef( nType )
+
+		name = pObjDef.tablename
+
+		if (not pObjectInfo is nothing) then
+			pObjectInfo.typeid = nType
+			pObjectInfo.strDestName = name
+		end if
+
+		if (not pFieldsInfoCache.exists(cstr(nType))) then
+		
+			'wypelnij informacje o polach tego obiektu
+			'wypelniaj informacje o polach w danym obiekcie
+
+			set pFieldInfo = CreateObject("Scripting.Dictionary")
+
+			dim pObjField, nCounter: nCounter = 0
+			for each pObjField in pObjDef
+
+				if (nCounter>0) then
+
+					dim pField
+					set pField = new CObjectField
+
+					pField.typeid = pObjField.type
+					pField.strName = pObjField.name
+					
+					if (pObjField.type=RELT_REF) then
+						pField.reftypeid = pObjField.reftypeid
+					end if
+
+					pField.sqltype = pObjField.sqltype
+					pField.nIndex = nCounter
+					pField.fldtype = pObjField.type
+
+					'dodaj do mapy informacji o polach
+					pFieldInfo.add pField.strName, pField
+
+				end if 'nCounter>0
+
+				nCounter = nCounter + 1
+
+			next
+
+			pFieldsInfoCache.add cstr(nType), pFieldInfo
+
+		else
+
+			set pFieldInfo = pFieldsInfoCache.item(cstr(nType))
+
+		end if 'cached
+	end function
+
+	'----------------------------------------------------------------
+	' Rozpocznij obiekt o podanym TYPEID i IdObj. Wolane z funkcji
+	' zdarzen
+	'----------------------------------------------------------------
+	public function begin_object(byval nType)
+		begin_object = begin_object_id(nType, pObjectInfo.idobj)
+	end function
+
+
+	'----------------------------------------------------------------
+	' Zwraca pole pobrane z nazwy pola
+	'----------------------------------------------------------------
+	public function fieldByName(byval strFldName): set fieldByName = nothing
+		if (pFieldsValue.exists(strFldName)) then
+			set fieldByName = pFieldsValue.Item(strFldName)
+		end if
+	end function
+
+
+	'----------------------------------------------------------------
+	' Pobieramy informacje o podanym polu na podstawie nazwy
+	'----------------------------------------------------------------
+	public function infoByName(byval strFldName): set infoByName = nothing
+		if (pFieldInfo.exists(strFldName)) then
+			set infoByName = pFieldInfo.item( strFldName )
+		end if
+	end function
+
+
+	private function add2unique(byval strNewValue)
+		if (not bAfterShouldContinue) then
+			if (unique_str<>"") then
+				unique_str = unique_str + "="
+			end if
+			unique_str = unique_str + CStr(strNewValue)
+		end if
+	end function
+
+	'----------------------------------------------------------------
+	' Ustawienia i pobieranie wartoœci pól
+	'----------------------------------------------------------------
+	public property let fields(byval strFieldName, byval varValue)
+		dim pField
+		set pField = fieldByName( strFieldName )
+
+		if (pField is nothing) then
+			set pField = new CImportFldValue
+			
+			if (not bAfterShouldContinue) then
+				'jezeli nie jestesmy za ShouldContinue oznacza to,ze
+				'pole wyznacza unikalnosc
+				pField.bunique = true
+			end if
+
+			pFieldsValue.add strFieldName, pField
+
+			'dodaj do tablicy pol jakie zostaly ustawione
+			pSetFields.add strFieldName
+		end if
+
+		'konwersja podstawienia do odpowiedniego typu
+		select case infoByName(strFieldName).sqltype
+
+			case SQLlong
+				pField.varValue = CLng(varValue)
+
+			case SQLdate
+				pField.varValue = CDate(varValue)
+
+			case SQLcurrency, SQLqty
+				pField.varValue = CCur(varValue)
+
+			case SQLtime
+				pField.varValue = CLng(varValue)
+
+			case SQLc1
+				pField.varValue = left(trim(CStr(varValue)), 1)
+
+			case SQLc4
+				pField.varValue = left(trim(CStr(varValue)), 4)
+			
+			case SQLc8
+				pField.varValue = left(trim(CStr(varValue)), 8)
+			
+			case SQLc20
+				pField.varValue = left(trim(CStr(varValue)), 20)
+
+			case SQLc24
+				pField.varValue = left(trim(CStr(varValue)), 24)
+			
+			case SQLc32
+				pField.varValue = left(trim(CStr(varValue)), 32)
+
+			case SQLc64
+				pField.varValue = left(trim(CStr(varValue)), 64)
+
+			case SQLc128
+				pField.varValue = left(trim(CStr(varValue)), 128)
+
+			case SQLvc4
+				pField.varValue = left(trim(CStr(varValue)), 4)
+
+			case SQLvc8
+				pField.varValue = left(trim(CStr(varValue)), 8)
+
+			case SQLvc20
+				pField.varValue = left(trim(CStr(varValue)), 20)
+
+			case SQLvc32
+				pField.varValue = left(trim(CStr(varValue)), 32)
+
+			case SQLvc64
+				pField.varValue = left(trim(CStr(varValue)), 64)
+
+			case SQLvc96
+				pField.varValue = left(trim(CStr(varValue)), 96)
+
+			case SQLvc128
+				pField.varValue = left(trim(CStr(varValue)), 128)
+
+			case SQLvc256
+				pField.varValue = left(trim(CStr(varValue)), 256)
+
+			case SQLvc512
+				pField.varValue = left(trim(CStr(varValue)), 512)
+
+			case SQLvc1024
+				pField.varValue = left(trim(CStr(varValue)), 1024)
+
+			case SQLvc7900
+				pField.varValue = left(trim(CStr(varValue)), 7900)
+
+			case else
+				pField.varValue = varValue
+				'todo:spiko Nie eksportowaæ pól opcjonalnych
+				IMPTRACE("STREAM: Nie uda³o siê przekonwertowaæ dla sqltype=" + CStr(infoByName(strFieldName).sqltype) + " dla pola " + strFieldName)
+						
+		end select
+
+		add2unique CStr(pField.varValue)
+	end property
+
+	'----------------------------------------------------------------
+	' Ustawia do pola wartoœc typu STRING
+	' Uzywane dla importu nie do Navo Enterprise
+	'----------------------------------------------------------------
+	public function fieldsSTRING(byval strFieldName, byval nStrLen, byval varValue): fieldsSTRING = false
+		dim pField
+		set pField = fieldByName( strFieldName )
+
+		if (pField is nothing) then
+			set pField = new CImportFldValue
+			
+			if (not bAfterShouldContinue) then
+				'jezeli nie jestesmy za ShouldContinue oznacza to,ze
+				'pole wyznacza unikalnosc
+				pField.bunique = true
+			end if
+
+			pFieldsValue.add strFieldName, pField
+
+			'dodaj do tablicy pol jakie zostaly ustawione
+			pSetFields.add strFieldName
+
+			'todo:spiko Sprawdzenie konwersji
+			pField.varValue = Mid(Trim(CStr(varValue)), 1, nStrLen)
+		end if
+
+		fieldsSTRING = true
+	end function
+
+	'----------------------------------------------------------------
+	' Ustawia do pola wartoœc typu Long
+	' Uzywane dla importu nie do Navo Enterprise
+	'----------------------------------------------------------------
+	public function fieldsLONG(byval strFieldName, byval varValue): fieldsLONG = false
+		dim pField
+		set pField = fieldByName( strFieldName )
+
+		if (pField is nothing) then
+			set pField = new CImportFldValue
+			
+			if (not bAfterShouldContinue) then
+				'jezeli nie jestesmy za ShouldContinue oznacza to,ze
+				'pole wyznacza unikalnosc
+				pField.bunique = true
+			end if
+
+			pFieldsValue.add strFieldName, pField
+
+			'dodaj do tablicy pol jakie zostaly ustawione
+			pSetFields.add strFieldName
+
+			'todo:spiko Sprawdzenie konwersji
+			pField.varValue = CLng(varValue)
+		end if
+
+		fieldsLONG = true
+	end function
+
+	'----------------------------------------------------------------
+	' Ustawia do pola wartoœc typu Object
+	' Uzywane dla importu nie do Navo Enterprise
+	'----------------------------------------------------------------
+	public function fieldsOBJ(byval strFieldName, byval varValue): fieldsOBJ = false
+		dim pField
+		set pField = fieldByName( strFieldName )
+
+		if (pField is nothing) then
+			set pField = new CImportFldValue
+			
+			if (not bAfterShouldContinue) then
+				'jezeli nie jestesmy za ShouldContinue oznacza to,ze
+				'pole wyznacza unikalnosc
+				pField.bunique = true
+			end if
+
+			pFieldsValue.add strFieldName, pField
+
+			'dodaj do tablicy pol jakie zostaly ustawione
+			pSetFields.add strFieldName
+
+			'todo:spiko Sprawdzenie konwersji
+			set pField.varValue = varValue
+		end if
+
+		fieldsOBJ = true
+	end function
+
+	'----------------------------------------------------------------
+	' Ustawia do pola wartoœc typu CURRENCY
+	' Uzywane dla importu nie do Navo Enterprise
+	'----------------------------------------------------------------
+	public function fieldsCURRENCY(byval strFieldName, byval varValue): fieldsCURRENCY = false
+		dim pField
+		set pField = fieldByName( strFieldName )
+
+		if (pField is nothing) then
+			set pField = new CImportFldValue
+			
+			if (not bAfterShouldContinue) then
+				'jezeli nie jestesmy za ShouldContinue oznacza to,ze
+				'pole wyznacza unikalnosc
+				pField.bunique = true
+			end if
+
+			pFieldsValue.add strFieldName, pField
+
+			'dodaj do tablicy pol jakie zostaly ustawione
+			pSetFields.add strFieldName
+
+			'todo:spiko Sprawdzenie konwersji
+			pField.varValue = CCur(varValue)
+		end if
+
+		fieldsCURRENCY = true
+	end function
+
+
+	'----------------------------------------------------------------
+	' Ustawia do pola wartoœc typu DATE
+	' Uzywane dla importu nie do Navo Enterprise
+	'----------------------------------------------------------------
+	public function fieldsDATE(byval strFieldName, byval varValue): fieldsDATE = false
+		dim pField
+		set pField = fieldByName( strFieldName )
+
+		if (pField is nothing) then
+			set pField = new CImportFldValue
+			
+			if (not bAfterShouldContinue) then
+				'jezeli nie jestesmy za ShouldContinue oznacza to,ze
+				'pole wyznacza unikalnosc
+				pField.bunique = true
+			end if
+
+			pFieldsValue.add strFieldName, pField
+
+			'dodaj do tablicy pol jakie zostaly ustawione
+			pSetFields.add strFieldName
+
+			'todo:spiko Sprawdzenie konwersji
+			pField.varValue = CDate(varValue)
+		end if
+
+		fieldsDATE = true
+	end function
+
+
+	public property get fields(byval strFieldName)
+		dim pField
+		set pField = fieldByName( strFieldName )
+
+		if (pField is nothing) then
+			exit property
+		end if
+
+		if (isObject(pField.varValue)) then
+			set fields = pField.varValue
+		else
+			fields = pField.varValue
+		end if
+	end property
+
+
+	'----------------------------------------------------------------
+	' Reczne skojarzenie pole z referencja - uzywane dla dzikich
+	' referencje - zwykle ida z automatu
+	'----------------------------------------------------------------
+	public property let fieldref(byval strFieldName, byval nTypeId, byval varValueId)
+		dim pField
+		set pField = fieldByName( strFieldName )
+
+		if (pField is nothing) then
+			set pField = new CImportFldValue
+			pFieldsValue.add strFieldName, pField
+
+			'dodaj do tablicy pol jakie zostaly ustawione
+			pSetFields.add strFieldName
+		end if
+
+		pField.varValue = CLng( varValueId )
+		add2unique CStr(varValueId) + "." + CStr(nTypeId)
+		
+		infoByName(strFieldName).reftypeid = CLng( nTypeId )
+	end property
+
+	public property let virtualfieldref(byval strFieldName, byval nTypeId, byval strValueId)
+		dim pField
+		set pField = fieldByName( strFieldName )
+
+		if (pField is nothing) then
+			set pField = new CImportFldValue
+			pFieldsValue.add strFieldName, pField
+
+			'dodaj do tablicy pol jakie zostaly ustawione
+			pSetFields.add strFieldName
+		end if
+
+		'pFldInfo.rerepopo = 10
+		
+		pField.varValue = ucase(trim(CStr( strValueId )))
+		add2unique CStr( strValueId ) + "." + CStr(nTypeId)
+
+		dim pFldInfo
+		set pFldInfo = infoByName(strFieldName)
+
+		pFldInfo.reftypeid = CLng( nTypeId )
+		pFldInfo.virtual = true
+		'pFldInfo.rerepopo = 10
+	end property
+
+
+	public property let extra(byval strFieldName, byval varValue)
+		dim pExtraDataValue
+		set pExtraDataValue = nothing
+
+		dim i
+		for i = 0 to (pExtraData.count() - 1)
+			if (pExtraData.value(i).strName = strFieldName) then
+				set pExtraDataValue = pExtraData.value(i)
+				exit for
+			end if
+		next
+
+		if (pExtraDataValue is nothing) then
+			set pExtraDataValue = new CExtraData
+			pExtraDataValue.strName = strFieldName
+			pExtraData.Add pExtraDataValue
+		end if
+
+		pExtraDataValue.varValue = varValue
+			
+	end property
+
+	public property get extra(byval strFieldName)
+		dim i
+		for i = 0 to (pExtraData.count() - 1)
+			if (pExtraData.value(i).strName = strFieldName) then
+				extra = pExtraData.value(i).varValue
+			end if
+		next
+	end property
+
+	public function extraExists(byval strFieldName): extraExists = false
+		dim i
+		for i = 0 to (pExtraData.count() - 1)
+			if (pExtraData.value(i).strName = strFieldName) then
+				extraExists = true
+				exit function
+			end if
+		next
+	end function
+
+	public function extraCopy2(byref pDestStream)
+		dim i
+		for i = 0 to (pExtraData.count() - 1)
+			pDestStream.extra(pExtraData.value(i).strName) = pExtraData.value(i).varValue
+		next
+	end function
+
+end class
+
+#endif

@@ -1,0 +1,564 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203_appconfig.h"
+#include "h1220.h"
+#include "h1240.h"
+#include "h1222.h"
+#include "h1228.h"
+#include "h1231.h"
+#include "h1242.h"
+
+#if varFormUsage = USAGE_SP_EDIT_SIMPLE
+#define SIMPLE_MODE		dev
+#endif
+
+#if appvar_rejestr_typ = N5REJESTRDOK_ZAPAKOWANIA
+#define FORM_PAKOWANIE		dev
+
+#define WYROB_NAME			Wyrób
+
+#define OPAK2_NAME			Pakuj
+#define OPAK2_TIP			Wybierz co ma być zapakowane --->
+#define ILOSC2_NAME			w ilości
+
+#define OPAK1_NAME			do
+#define OPAK1_TIP			Wybierz do czego zapakować --->
+#define ILOSC1_NAME			powstanie
+
+#define BUTTON_NAME			Pakuj
+#define BUTTON_ACTION		pack_start
+
+#endif
+
+#if appvar_rejestr_typ = N5REJESTRDOK_ROZPAKOWANIA
+#define FORM_ROZPAKOWANIE	dev
+
+#define WYROB_NAME			Wyrób
+
+#define OPAK2_NAME			Rozpakuj
+#define OPAK2_TIP			Wybierz co ma być rozpakowane --->
+#define ILOSC2_NAME			w ilości
+
+#define OPAK1_NAME			do
+#define OPAK1_TIP			Wybierz do czego rozpakować --->
+#define ILOSC1_NAME			powstanie
+
+#define BUTTON_NAME			Rozpakuj
+#define BUTTON_ACTION		depack_start
+
+#endif
+
+#define CTRLID_UZYTKREJ		1
+#define CTRLID_DOWKSIEG		2
+#define CTRLID_SCHEMAT		3
+#define CTRLID_REJDOK		4
+#define CTRLID_OPERATIONS_ROW 5
+#define CTRLID_NUMDOK		6
+#define CTRLID_WYROB		7
+#define CTRLID_OPAK2		8
+#define CTRLID_OPAK1		9
+#define CTRLID_ILOSC1		10
+#define CTRLID_ILOSC2		11
+#define CTRLID_UZYTKMODYF	12
+
+#ifdef ENABLE_DB13
+#define CTRLID_OPERATIONS_ROW2		13
+#endif
+
+#define FORM_SPAN			5
+#define RCELL_SPAN			4
+
+#define SECID_KSIEGOWANIE		600
+#define SECID_PODSTAWOWE		602
+#define SECID_POZYCJE			604
+
+#define CTRLID_ILOSC_OPAK			501
+-->
+<page style='STYLE_PAGE'>
+<config>
+<title>
+
+	#ifdef FORM_PAKOWANIE
+		Pakowanie
+	#else
+		Rozpakowywanie
+	#endif
+
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+</title>
+<typeid>TYPEID_N5REALPROD</typeid>
+<script><![CDATA[
+
+DECLARE_CRITICAL_SECTION(calculate)
+
+'MessageBox
+#include "50122"
+
+'std_choose_opak_list_hli
+#include "50606"
+
+'std_choose_schematdekr_field_hli
+#include "50612"
+
+VBG_ILOSC_OPAK_STD_HANDLERS(CTRLID_ILOSC_OPAK,true)
+
+'---------------------------------------------------------------
+'std_choice_list_hli
+#include "50200"
+
+'section_*
+#include "50222"
+
+'operations buttons
+#include "50128"
+
+
+function fsearch()
+	dim pSearchChoice : set pSearchChoice = doc_.getmodule(60115)
+	pSearchChoice.addAdditionalWhere "N5REALPROD.pRejestrDok=" + CStr(page_.root.pRejestrDok.idobj)
+	fsearch = pSearchChoice.std_search(page_)
+	set pSearchChoice = nothing
+end function
+
+
+
+function std_choose_prod(hli)
+	dim pProd,lp
+	set pProd =  doc_.getmodule(60271).choose_produkt_obj("n5produkt.prod_cWyrob='1' and n5produkt.prod_cSurowiec='1'" , "" , lp)
+	if not pProd is nothing then
+		page_.root.n5realprod_setProdukt_wyrob pProd
+		page_.root.n5realprod_setProdukt_surowiec pProd
+		'if lp > 0 then
+		'	page_.root.n5realprod_setOpakowanie_surowiec pProd.listOpakowania.get(lp)
+		'end if
+	end if
+end function
+
+
+function fsave(): fsave = false
+
+
+	if (page_.root.n5realprod_checkPackDepack(false)) then
+		
+		dim nCheckQuantity
+		nCheckQuantity = page_.root.n5realprod_checkQuantity()
+		
+		if (nCheckQuantity<>0) then
+
+			dim strMessage
+			strMessage = "Podana liczba opakowań ""%1"" nie mieści się w podanej liczbie opakowań ""%2"""
+
+			dim strMessage2
+			strMessage2 = "Nie wykorzystano całej przestrzeni w opakowaniu zbiorczym ""%1""."
+
+			dim strMessageOut: strMessageOut = ""
+
+			select case page_.root.pRejestrDok.eTyp
+				case N5REJESTRDOK_ROZPAKOWANIA
+					if (nCheckQuantity>0) then
+						strMessageOut = doc_.afc.convert.formatter(strMessage).add(page_.root.n5realprod_getOpakowanie_wyrob().text).add(page_.root.n5realprod_getOpakowanie_surowiec().text).done()
+					else
+						strMessageOut = doc_.afc.convert.formatter(strMessage2).add(page_.root.n5realprod_getOpakowanie_surowiec().text).done()
+					end if
+					
+				case N5REJESTRDOK_ZAPAKOWANIA
+					if (nCheckQuantity>0) then
+						strMessageOut = doc_.afc.convert.formatter(strMessage2).add(page_.root.n5realprod_getOpakowanie_wyrob().text).done()
+					else
+						strMessageOut = doc_.afc.convert.formatter(strMessage).add(page_.root.n5realprod_getOpakowanie_surowiec().text).add(page_.root.n5realprod_getOpakowanie_wyrob().text).done()
+					end if
+
+			end select	
+
+			if MessageBox(strMessageOut + " Chcesz kontynuować?", "Niepełna ilość", vbYesNo, vbQuestion)<>vbYes then
+				exit function
+			end if
+
+		end if
+	end if
+
+	dim bSave
+	bSave = std_fsave()
+
+	if (not bSave) then
+		section_fsave THIS_FILE
+	end if	
+
+	fsave = bSave
+end function
+
+function fopen():fopen = false
+	if not std_fopen() then
+		exit function
+	end if
+
+	section_fopen THIS_FILE
+#ifndef SIMPLE_MODE
+	rebuild_configuration
+#endif
+	fopen = true
+end function
+
+function fclose()
+	section_fclose THIS_FILE
+end function
+
+#ifndef SIMPLE_MODE
+function foptions
+	FORCE_REALOAD_OBJECT(page_.root.pRejestrDok)
+
+	if doc_.getmodule(60175).dok_rej_preferences(page_.root.pRejestrDok.idobj,TYPEID_N5REALPROD) then
+		
+		FORCE_REALOAD_OBJECT(page_.root.pRejestrDok)
+
+		'apply settings
+		rebuild_configuration
+	end if
+end function
+#endif
+
+QVX_WPROWADZIL_MODYFIKOWAL(CTRLID_UZYTKREJ,CTRLID_UZYTKMODYF,pUzytRej,realprod_pUzytModyf)
+QVX_DOWOD_KSIEGOWY(CTRLID_DOWKSIEG)
+QVX_SCHEMAT_DEKR(CTRLID_SCHEMAT)
+QVX_REJESTR_DOK(CTRLID_REJDOK)
+QVE_NRDOK_FROM_REJESTR(CTRLID_NUMDOK,pRejestrDok,strNrDok)
+
+
+#ifndef SIMPLE_MODE
+private sub rebuild_configuration
+	dim pConfigObject : set pConfigObject = nothing
+	dim pConfigModule : set pConfigModule = nothing
+#ifdef ENABLE_DB13
+	rebuild_operation_buttons_n_2 page_.root.pRejestrDok,CTRLID_OPERATIONS_ROW, CTRLID_OPERATIONS_ROW2, pConfigObject, pConfigModule , 1 , 7, 6
+#else    
+	rebuild_operation_buttons page_.root.pRejestrDok,CTRLID_OPERATIONS_ROW, pConfigObject, pConfigModule
+#endif  
+end sub
+#endif
+
+function cust_operation_hli(byref pHLI)
+	std_cust_operation_hli pHLI,page_.root.pRejestrDok,page_.root,page_
+end function
+
+'---------------------------------------------------------------------------
+' WYROB
+'---------------------------------------------------------------------------
+
+function std_choose_wyrob(byref pHLI)
+	doc_.getmodule(60271).choose_produkt_field page_.root, "pWyrob", CRSR_N5PRODUKT_TOWAR_PROD_AKT, ""
+end function
+
+'---------------------------------------------------------------------------
+' OPAKOWANIE 1
+'---------------------------------------------------------------------------
+
+function std_choose_opak1(byref hli)
+
+	dim pProdukt
+	set pProdukt = page_.root.n5realprod_getProdukt_wyrob()
+
+	if pProdukt is nothing then
+		exit function
+	end if
+
+	dim strWhere: strWhere = "0=0"
+	#ifdef FORM_PAKOWANIE
+	'-- ifdef form_pakowanie
+	if (not page_.root.n5realprod_getOpakowanie_surowiec() is nothing) then
+		strWhere = "pOpakowanieJedn = " +	CStr(page_.root.n5realprod_getOpakowanie_surowiec().IdObj)
+	end if
+	'-- endif
+	#else
+	'-- ifndef form_pakowanie
+	if (not page_.root.n5realprod_getOpakowanie_surowiec() is nothing) then
+		strWhere = "n5opakowanie_produktu.IdObj = " +	CStr(page_.root.n5realprod_getOpakowanie_surowiec().pOpakowanieJedn.IdObj)
+	end if
+	'-- endif
+	#endif
+
+	dim lp_opak: lp_opak = choose_opakowanie_lp_where(pProdukt, strWhere)
+
+	if lp_opak <> 0 then
+		
+		page_.root.n5realprod_setOpakowanie_wyrob (pProdukt.listOpakowania.get( lp_opak ))
+
+		if not page_.root.n5realprod_getOpakowanie_wyrob is nothing then
+
+			page_.ctrl(CTRLID_ILOSC1).precision = page_.root.n5realprod_getOpakowanie_wyrob().pJednOpak.nDokladnosc - 1
+			page_.ctrl(CTRLID_ILOSC1).unit = page_.root.n5realprod_getOpakowanie_wyrob().pJednOpak.strSkrot
+
+		end if
+
+	end if
+
+end function
+
+
+
+function c##CTRLID_OPAK1##_ongetdata(byref oCtrl)
+	if (not page_.root.n5realprod_getOpakowanie_wyrob() is nothing) then
+		oCtrl.value = page_.root.n5realprod_getOpakowanie_wyrob().text
+	else
+		oCtrl.value = "OPAK1_TIP"
+	end if
+	c##CTRLID_OPAK1##_ongetdata=true
+end function
+
+
+
+function c##CTRLID_OPAK1##_ondataentered(byref oCtrl, byval newValue)
+	if (newValue="") then
+		page_.root.n5realprod_setOpakowanie_wyrob nothing
+		page_.ctrl(CTRLID_ILOSC2).precision = 2
+		page_.ctrl(CTRLID_ILOSC2).unit = ""
+	end if
+	c##CTRLID_OPAK1##_ondataentered = true
+end function
+
+
+function c##CTRLID_ILOSC1##_ongetdata(byref oCtrl)
+	oCtrl.value = page_.root.n5realprod_getIlosc_wyrob()
+	if not page_.root.n5realprod_getOpakowanie_wyrob is nothing then
+		oCtrl.unit = page_.root.n5realprod_getOpakowanie_wyrob().pJednOpak.strSkrot
+		oCtrl.precision = page_.root.n5realprod_getOpakowanie_wyrob().pJednOpak.nDokladnosc - 1
+	else
+		oCtrl.unit = ""
+		oCtrl.precision = clng(0)
+	end if
+	c##CTRLID_ILOSC1##_ongetdata=true
+end function
+
+function c##CTRLID_ILOSC1##_ondataentered(byref oCtrl, byval newValue)
+	page_.root.n5realprod_setIlosc_wyrob newValue
+	c##CTRLID_ILOSC1##_ondataentered = true
+end function
+
+
+
+'---------------------------------------------------------------------------
+' OPAKOWANIE 2
+'---------------------------------------------------------------------------
+
+function std_choose_opak2(byref hli)
+	dim pProdukt
+	set pProdukt = page_.root.n5realprod_getProdukt_wyrob()
+
+	if pProdukt is nothing then
+		exit function
+	end if
+
+	dim strWhere: strWhere = "0=0"
+	#ifdef FORM_ROZPAKOWANIE
+	'-- ifdef form_rozpakowanie
+	strWhere = "eRodzaj = N5OPAK_ZBIORCZE"
+	'-- endif
+	#endif
+
+	dim lp_opak: lp_opak = choose_opakowanie_lp_where(pProdukt, strWhere)
+	
+	if lp_opak <> 0 then
+		page_.root.n5realprod_setOpakowanie_surowiec pProdukt.listOpakowania.get( lp_opak )
+		page_.ctrl(CTRLID_ILOSC2).precision = page_.root.n5realprod_getOpakowanie_surowiec().pJednOpak.nDokladnosc - 1
+		page_.ctrl(CTRLID_ILOSC2).unit = page_.root.n5realprod_getOpakowanie_surowiec().pJednOpak.strSkrot
+	end if
+
+end function
+
+'todo:spiko Skrocona wersja formularza
+
+
+
+'listPozycje
+
+function c##CTRLID_OPAK2##_ongetdata(byref oCtrl)
+	if (not page_.root.n5realprod_getOpakowanie_surowiec() is nothing) then
+		oCtrl.value = page_.root.n5realprod_getOpakowanie_surowiec().text
+	else
+		oCtrl.value = "OPAK2_TIP"
+	end if
+	c##CTRLID_OPAK2##_ongetdata=true
+end function
+
+function c##CTRLID_OPAK2##_ondataentered(byref oCtrl, byval newValue)
+	if (newValue="") then
+		page_.root.n5realprod_setOpakowanie_surowiec nothing
+		page_.ctrl(CTRLID_ILOSC2).precision = 2
+		page_.ctrl(CTRLID_ILOSC2).unit = ""
+	end if
+	c##CTRLID_OPAK2##_ondataentered = true
+end function
+
+
+function c##CTRLID_ILOSC2##_ongetdata(byref oCtrl)
+	oCtrl.value = page_.root.n5realprod_getIlosc_surowiec()
+	if not page_.root.n5realprod_getOpakowanie_surowiec() is nothing then
+		oCtrl.unit = page_.root.n5realprod_getOpakowanie_surowiec().pJednOpak.strSkrot
+		oCtrl.precision = page_.root.n5realprod_getOpakowanie_surowiec().pJednOpak.nDokladnosc - 1
+	else
+		oCtrl.unit = ""
+		oCtrl.precision = clng(0)
+	end if
+	c##CTRLID_ILOSC2##_ongetdata=true
+end function
+
+
+function c##CTRLID_ILOSC2##_ondataentered(byref oCtrl, byval newValue)
+	page_.root.n5realprod_setIlosc_surowiec newValue
+	c##CTRLID_ILOSC2##_ondataentered = true
+end function
+
+
+
+
+
+
+
+
+function c##CTRLID_WYROB##_ongetdata(byref oCtrl)
+	if (not page_.root.n5realprod_getProdukt_wyrob() is nothing) then
+		oCtrl.value = page_.root.n5realprod_getProdukt_wyrob().text
+	else
+		oCtrl.value = "OPAK2_TIP"
+	end if
+	c##CTRLID_WYROB##_ongetdata=true
+end function
+
+function c##CTRLID_WYROB##_ondataentered(byref oCtrl, byval newValue)
+	if (newValue="") then
+		page_.root.n5realprod_setProdukt_surowiec nothing
+		page_.root.n5realprod_setProdukt_wyrob nothing
+		page_.ctrl(CTRLID_ILOSC2).precision = 2
+		page_.ctrl(CTRLID_ILOSC2).unit = ""
+	end if
+	c##CTRLID_WYROB##_ondataentered = true
+end function
+
+
+
+]]></script>
+</config>
+<header>
+</header>
+
+<body>
+<p>
+
+QXF_BEGIN
+
+	#ifndef SIMPLE_MODE
+	QXS_BEGIN_FLAT(SECID_PODSTAWOWE,Informacje podstawowe,FORM_SPAN)
+		<tr>	
+			QXC_LABEL_REQ(Numer dokumentu,1)
+			QXC_EDIT_CUSTOM(CTRLID_NUMDOK,20,1)
+			QXC_LABEL_REQ(Data wystawienia,1)
+			QXC_DATE_FIELD(-1,dDataWyst,2)
+		</tr>
+		<tr>	
+			QXC_LABEL(Numer operacji mag.,1)
+			QXX_NUMOPER(nNumOper,1,true)
+			QXC_LABEL_REQ(Magazyn,1)
+			QXC_EDIT_REF(-1,20,PICTURE_CHOICE_N5MAGAZYN,pMagazyn,strNazwa,CURSOR_MAGAZYNY_PRODUKCYJNE_I_PODSTAWOWE,2)
+		</tr>
+	QXS_END_FLAT(FORM_SPAN)
+	#else
+		<tr>
+			QXC_LABEL_REQ(Magazyn, 1)
+			QXC_EDIT_REF(-1, 20, PICTURE_CHOICE_N5MAGAZYN,pMagazyn,strNazwa,CURSOR_MAGAZYNY_PRODUKCYJNE, RCELL_SPAN)
+		</tr>
+	#endif
+
+	QXS_BEGIN_FLAT(SECID_POZYCJE,Pozycje,FORM_SPAN)
+		
+		#ifndef SIMPLE_MODE
+		QXR_SEPARATOR(FORM_SPAN)
+		#endif
+
+
+		<tr>
+			QXC_LABEL_REQ(WYROB_NAME, 1)
+			<td keepline='true' colspan='2'>
+			
+				<edit clearonly='true' size='30' style='STYLE_CTRL' name="CTRLID_WYROB">
+					<transfer mode='custom'/>
+				</edit>
+
+				QXE_PICTURE_ACTION(-1, PICTURE_CHOICE_N5PRODUKT,varFunctionHLI="std_choose_prod", Wybór produktu)
+
+			</td>
+		</tr>
+
+
+		QXR_SEPARATOR(FORM_SPAN)
+
+		<tr>
+			QXC_LABEL_REQ(OPAK2_NAME, 1)
+			<td keepline='true' colspan='2'>
+			
+				<edit tip='OPAK2_TIP' clearonly='true' size='30' style='STYLE_CTRL' name="e##CTRLID_OPAK2">
+					<transfer mode='custom'/>
+				</edit>
+
+				QXE_PICTURE_ACTION(-1, PICTURE_CHOICE_N5OPAKOWANIE_PRODUKTU,varFunctionHLI="std_choose_opak2", Wybór opakowania)
+			</td>
+			QXC_LABEL(ILOSC2_NAME, 1) 
+			<td width='max'>
+				<currency name='e##CTRLID_ILOSC2' style='STYLE_CTRL' size='10' precision='2' unit=''>
+					<transfer mode='custom'/>
+				</currency>
+			</td>
+		</tr>
+
+
+		<tr>
+			QXC_LABEL_REQ(OPAK1_NAME, 1)
+			<td keepline='true' colspan='2'>
+			
+				<edit tip='OPAK1_TIP' clearonly='true' size='30' style='STYLE_CTRL' name='e##CTRLID_OPAK1'>
+					<transfer mode='custom'/>
+				</edit>
+
+				QXE_PICTURE_ACTION(-1, PICTURE_CHOICE_N5OPAKOWANIE_PRODUKTU,varFunctionHLI="std_choose_opak1",Wybór opakowania)
+			</td>
+			QXC_LABEL(ILOSC1_NAME, 1) 
+			<td width='max' keepline='true'>
+				<currency name='e##CTRLID_ILOSC1' style='STYLE_CTRL' size='10' precision='2' unit=''>
+					<transfer mode='custom'/>
+				</currency>
+			</td>
+		</tr>
+
+
+
+		#ifndef SIMPLE_MODE
+		<tr>
+		QXX_WPROWADZIL_MODYFIKOWAL(CTRLID_UZYTKREJ,CTRLID_UZYTKMODYF,pUzytRej,realprod_pUzytModyf,FORM_SPAN)
+		</tr>
+		#endif
+	QXS_END_FLAT(FORM_SPAN)
+
+	#ifndef SIMPLE_MODE
+	QXS_BEGIN_REQ(SECID_KSIEGOWANIE,Księgowanie,FORM_SPAN)
+		QXX_REJESTR_DOK(CTRLID_REJDOK,-1,RCELL_SPAN)
+#ifndef APPCONFIG_PKPIR	
+		QXX_DOWOD_KSIEGOWY_SCHEMAT(CTRLID_DOWKSIEG,-1,CTRLID_SCHEMAT,-1,2)
+#endif
+	QXS_END_REQ(FORM_SPAN)
+	#endif
+
+	#ifndef SIMPLE_MODE
+    #ifdef ENABLE_DB13
+      QXX_OPERATIONS_12(CTRLID_OPERATIONS_ROW,CTRLID_OPERATIONS_ROW2,FORM_SPAN)
+    #else
+		  QXX_OPERATIONS(CTRLID_OPERATIONS_ROW,FORM_SPAN)
+    #endif    
+	#endif
+QXF_END
+</p>
+</body>
+<footer>
+</footer>
+</page>

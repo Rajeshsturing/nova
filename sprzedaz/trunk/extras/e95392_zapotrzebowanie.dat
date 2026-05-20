@@ -1,0 +1,255 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!-- 2021-07-09 Utworzenie -->
+<!--
+RAPTEMPLATE_ZAPOTRZEBOWANIE_NA_PRODUKTY
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1250.h"
+
+#define RAPORT_TITLE Zapotrzebowanie na produkty
+
+#define TMP_TABLE #tmp_zapotrzebowanie
+
+-->
+<page style='36'>
+<config>
+<title>RAPORT_TITLE</title>
+<script>
+<![CDATA[
+
+<%
+function query()
+	dim tmp_query
+	
+	tmp_query = _
+	"create table TMP_TABLE " + vbNewLine +_
+	"( " + vbNewLine +_
+	"	idProd int, " + vbNewLine +_
+	"	idOpak int, " + vbNewLine +_
+	"	strIndeks varchar(32), " + vbNewLine +_
+	"	strSkrot varchar(4), " + vbNewLine +_
+	"	nDokladnosc int, " + vbNewLine +_
+	"	curIloscOpak decimal(14,4), " + vbNewLine +_
+	"	curIloscStan decimal(14,4), " + vbNewLine +_
+	"	curIloscPoz	decimal(14,4) " + vbNewLine +_
+	")"	
+	trans_.execsql tmp_query
+	
+	'Ilość sprzedanych produktów w okresie
+	tmp_query = _
+	"insert into TMP_TABLE " + vbNewLine +_
+	"select 'c_prod_idobj'=t_prod.IdObj,'c_prod_idobj'=t_opak.IdObj, 'c_indeks'= max(t_prod.strIndeks), 'c_jedn'=max(t_jedn.strSkrot), " + vbNewLine +_
+	"'c_prec'=max(t_jedn.nDokladnosc),'c_ilosc_sum'=SUM(t_sprz.c_curIloscOpak - isnull(t_orgsprz.c_curIloscOpak,0)), " + vbNewLine +_
+	"0,0 " + vbNewLine +_
+	"from vlist_n5sprzedaz_listpozycje as t_sprz " + vbNewLine +_
+	"left outer join vlist_n5sprzedaz_listpozycje t_orgsprz on t_sprz.p_ppopsprzed = t_orgsprz.p_idobj and t_sprz.coll_lp = t_orgsprz.coll_lp " + vbNewLine +_
+	"inner join n5produkt as t_prod on t_sprz.c_pProdukt = t_prod.IdObj " + vbNewLine +_
+	"inner join n5opakowanie_produktu as t_opak on t_sprz.c_pOpak = t_opak.IdObj " + vbNewLine +_
+	"inner join n5jednostka as t_jedn on t_opak.pJednOpak = t_jedn.IdObj " + vbNewLine +_
+	"where t_prod.pGrupaProd in (select tmp_group_idobj from #tmp_prod_hierarchy) and " + vbNewLine +_
+	"t_sprz.p_pRozlVAT <> 0 and %1 and %2 " + vbNewLine +_
+	"and t_sprz.p_prejestrdok not in (select idobj from n5rejestrdok where eTyp in (N5REJESTRDOK_DOSTAWA, N5REJESTRDOK_KOR_DOSTAWA)) " + vbNewLine +_
+	"group by t_prod.IdObj,t_opak.IdObj"
+	tmp_query = rapeng_.query_apply_actual_param(tmp_query, pParamArray)
+	trans_.execsql tmp_query
+	
+	'Stan magazynowy
+	tmp_query = _
+	"insert into TMP_TABLE " + vbNewLine +_
+	"select idProd,idOpak,'','',-1,0, " + vbNewLine +_
+	"(select isnull(sum(gms_curIlosc),0) from n5gmstan " + vbNewLine +_ 
+	"where gms_pProd=idProd and gms_pOpak=idOpak and gms_pMag in " + vbNewLine +_ 
+	"(select IdObj from n5magazyn where eTyp = N5TYPMAG_PODSTAWOWY and mag_eAktywny = N5MAGAZYN_AKTYWNY)),0 " + vbNewLine +_
+	"from TMP_TABLE"
+	trans_.execsql tmp_query
+	
+	'niezrealizowana ilość w zamówieniach własnych
+	tmp_query = _
+	"insert into TMP_TABLE " + vbNewLine +_
+	"select idProd,idOpak,'','',-1,0,0, " + vbNewLine +_
+	"(select sum(c_curIloscOpakPoz) from vlist_n5zamowienie_listPozycje zam " + vbNewLine +_
+	"where zam.c_pprodukt = idProd and zam.c_popak = idOpak and " + vbNewLine +_
+	"zam.p_pRejestrDok in (select idobj from n5rejestrdok where eTyp = N5REJESTRDOK__ZAM_WLASNE) and " + vbNewLine +_
+	"zam.c_curIloscOpakPoz > 0 " + vbNewLine +_
+	"group by zam.c_pprodukt,zam.c_popak) " + vbNewLine +_
+	"from TMP_TABLE " + vbNewLine +_
+	"group by idProd,idOpak"
+	trans_.execsql tmp_query
+
+	query = "select 'c_prod_idobj'=idProd,'c_opak_idobj'=idOpak, 'c_indeks'= max(strIndeks), " + vbNewLine +_ 
+	"'c_jedn'=max(strSkrot),'c_prec'=max(nDokladnosc),'c_ilosc_opak'=sum(curIloscOpak), " + vbNewLine +_
+	"'c_ilosc_stan'=sum(curIloscStan),'c_ilosc_poz'=sum(curIloscPoz), " + vbNewLine +_
+	"'c_zapotrzebowanie'=sum(curIloscOpak) - sum(curIloscStan) - sum(curIloscPoz) " + vbNewLine +_
+	"from TMP_TABLE " + vbNewLine +_
+	"group by idProd,idOpak " + vbNewLine +_
+	"order by c_zapotrzebowanie desc, c_indeks"
+
+end function
+%>
+<%
+dim utilProdHierarchy : set utilProdHierarchy = doc_.getmodule(60246)
+dim pProdHierarchy : set pProdHierarchy = utilProdHierarchy.new_prod_hierarchy()
+ 
+function default_param()
+	set pParamArray = doc_.afc.new_navoarray()
+	pParamArray.add doc_.afc.rap.param.new_date_range("Okres sprzedaży").bindexpr("t_sprz.p_ddatawyst")
+	pParamArray.add doc_.afc.rap.param.new_text("Indeks produktu").bindexpr("t_prod.strIndeks")	
+	set pGrupaParam = doc_.afc.rap.param.new_text("Grupa produktów").bindexpr("strNazwa")
+	pParamArray.add pGrupaParam	
+	set default_param = pParamArray
+end function
+%>
+<%
+function write_actual_param(byref pActualParam)
+dim iter
+dim bAnyWritten : bAnyWritten = false
+if not pActualParam is nothing then
+for iter = 0 to pActualParam.upperIndex
+if pActualParam.value(iter).get_desc() <> "" then 
+bAnyWritten = true
+	so.write "<t size='5' /><text fontsize='4'><![CD"+"ATA[" + pActualParam.value(iter).get_desc() + "]"+"]></text><br/>"
+end if
+next
+end if
+if not bAnyWritten then 
+	so.write "<t fontsize='4'>brak</t><br/>"
+end if
+	so.write "<br/>"
+end function
+%>
+<%
+function body_row(byref pSection,byref pRec)
+if pRapExec.RecNr mod 2 = 0 then
+%>
+<tr bordercolor='white'>
+<%
+else
+%>
+<tr bordercolor='white' style='37'>
+<%
+end if
+%>
+<td align='right'>RXE_LP</td>
+	<td>
+		RXE_TEXT_LINK_FORM_VCC(TYPEID_N5PRODUKT,c_prod_idobj,c_indeks)		
+	</td>
+	<td>
+		RXE_TEXT(c_jedn)
+	</td>	
+	<td align='right'>
+		RXE_QUANTITY_CVC(c_ilosc_opak,"",c_prec) 
+	</td>
+	<td align='right'>
+		RXE_QUANTITY_CVC(c_ilosc_stan,"",c_prec) 
+	</td>
+	<td align='right'>
+		RXE_QUANTITY_CVC(c_ilosc_poz,"",c_prec) 
+	</td>
+	<td align='right'>
+		RXE_QUANTITY_CVC(c_zapotrzebowanie,"",c_prec) 
+	</td>	
+</tr>
+<%
+end function
+%>
+<%
+function body_header(byref pSection,byref pRec)
+%>
+<table border='1'>
+<thead>
+<tr style='21'>
+	<td width='min'><t>LP</t></td>
+	<td width='min'>		
+		<t><![CDATA[Indeks]]></t>
+	</td>
+	<td>
+		<t><![CDATA[J.m.]]></t>
+	</td>
+	<td>
+		<t><![CDATA[Ilość sprzedana]]></t>
+	</td>	
+	<td>
+		<t><![CDATA[Stan magazynowy]]></t>
+	</td>
+	<td>
+		<t><![CDATA[Ilość niezrealizowana]]></t>
+	</td>
+	<td>
+		<t><![CDATA[Zapotrzebowanie]]></t>
+	</td>	
+</tr>
+</thead>
+<tbody>
+<%
+end function
+%>
+<%
+function body_footer(byref pSection)
+%>
+</tbody>
+</table>
+<%
+end function
+%>
+<%dim nSectionPicCounter : nSectionPicCounter = 10000000%>
+function section_hideshow_hli(byref pHLI)
+doc_.afc.formsection.section_hideshow page_, pHLI.prop(100)
+end function
+]]>
+</script>
+</config>
+<header>
+</header>
+<body>
+<p>
+RAPORT_HEADER(3,0)
+</p>
+
+<p>
+<t size='2'/>
+</p>
+
+<p><text fontsize='7'><![CDATA[RAPORT_TITLE]]></text></p><br/><br/>
+<t fontsize='5' bold='true'>Kryteria selekcji:</t><br/>
+<%
+dim pRapExec : set pRapExec = rapeng_.new_engine()
+with pRapExec
+	.add_body_ex getref("body_header"),getref("body_footer"),getref("body_row")
+	
+	dim pGrupaParam
+	dim pParamArray : set pParamArray = default_param()
+	rapeng_.merge_params pParamArray,rapeng_.get_raport_param()
+	pRapExec.title = "RAPORT_TITLE"
+
+	if rapeng_.show_raport_param_dialog(pParamArray,"RAPORT_TITLE") <> 0 then
+		dim pPerf : set pPerf = doc_.performing("Trwa przygotowywanie wyników...")
+		pProdHierarchy.fill_on_prodgrupa_param pGrupaParam		
+		pRapExec.put_final_query query()
+		set pPerf = nothing	
+		
+		rapeng_.set_raport_param pParamArray
+	
+		write_actual_param rapeng_.get_raport_param()
+  
+	end if
+  
+	if not .perform then
+	  so.write "<p style='21'><t>Brak danych spełniających podane kryteria</t></p>"
+	end if	
+	
+end with
+pProdHierarchy.manual_done() : set pProdHierarchy = nothing
+set utilProdHierarchy = nothing
+
+trans_.execsql "drop table TMP_TABLE"
+
+%>
+</body>
+<footer>
+</footer>
+</page>

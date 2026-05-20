@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1200.h"
+#include "h1231.h"
+-->
+<page>
+<config>
+<script>
+
+<![CDATA[
+
+#comment '------------------------------------------------------------------------------------
+
+#define TMP_PRODUKTY_HIERARCHIA #tmp_prod_hierarchy
+
+class CProdHierarchy
+
+  private bDisposed
+
+	private sub class_initialize()
+    bDisposed = false
+    
+#ifdef _DEBUG
+		trans_.message 1002, 0 , "DEBUG: create table TMP_PRODUKTY_HIERARCHIA "
+#endif
+		dim strSQL
+		strSQL = "create table TMP_PRODUKTY_HIERARCHIA " + vbCrLf +_
+		"(" + vbCrLf +_
+		"tmp_group_idobj integer not null," + vbCrLf +_		
+		")" + vbCrLf
+		trans_.execsql strSQL
+
+#comment 'index spowalnia	
+#comment 'w tym przypadku trans_.execsql "create index TMP_PRODUKTY_HIERARCHIA##1 on TMP_PRODUKTY_HIERARCHIA## (tmp_group_idobj)"
+#comment 
+#ifdef NOT_NOW
+
+	create procedure #n5grupaproduktow_subtree(@idroot integer)
+	as
+	declare @idobj integer
+	declare @sub_cur cursor
+	set @sub_cur = cursor fast_forward for select idobj from n5grupaproduktow where pGrupaNadrzedna=@idroot
+	insert into #tmp_prod_hierarchy values(@idroot)
+	open @sub_cur
+	fetch next from @sub_cur into @idobj
+	while @@fetch_status = 0
+	begin
+	exec #n5grupaproduktow_subtree @idobj
+	fetch next from @sub_cur into @idobj
+	end
+	close @sub_cur
+	deallocate @sub_cur
+#endif	
+
+		trans_.execsql _
+		"create procedure #n5grupaproduktow_subtree(@idroot integer)"+ vbCrLf +_
+		"as"+ vbCrLf +_
+		"declare @idobj integer"+ vbCrLf +_
+		"declare @sub_cur cursor"+ vbCrLf +_
+		"set @sub_cur = cursor fast_forward for select idobj from n5grupaproduktow where pGrupaNadrzedna=@idroot"+ vbCrLf +_
+		"insert into TMP_PRODUKTY_HIERARCHIA values(@idroot)"+ vbCrLf +_
+		"open @sub_cur"+ vbCrLf +_
+		"fetch next from @sub_cur into @idobj"+ vbCrLf +_
+		"while @@fetch_status = 0"+ vbCrLf +_
+		"begin"+ vbCrLf +_
+		"exec #n5grupaproduktow_subtree @idobj"+ vbCrLf +_
+		"fetch next from @sub_cur into @idobj"+ vbCrLf +_
+		"end"+ vbCrLf +_
+		"close @sub_cur"+ vbCrLf +_
+		"deallocate @sub_cur"+ vbCrLf
+
+
+	end sub
+
+
+	public sub fill_on_prodgrupa_param (byval param)
+#ifdef _DEBUG
+		trans_.message 1002, 0 , "DEBUG: fill table TMP_PRODUKTY_HIERARCHIA "
+		trans_.message 1002 , 0 , "DEBUG: " + param.get_where_part(trans_)  
+#endif
+		dim strSQL : strSQL = "select idobj from n5grupaproduktow"
+	
+		if param.get_where_part(trans_) = "(strNazwa is not null)" then
+			strSQL = strSQL + " where " + "(pGrupaNadrzedna=0)"
+		else
+      if param.get_where_part(trans_) <> "" then
+			   strSQL = strSQL + " where " + param.get_where_part(trans_)
+      end if   
+		end if
+    
+		dim rs:set rs = trans_.createadors(strSQL)
+		do while not rs.eof
+			trans_.execsql "exec #n5grupaproduktow_subtree " + cstr(rs("idobj"))
+			rs.movenext
+		loop
+	end sub
+
+	public sub fill_on_grupa_idobj(byval idGrupa)
+		trans_.execsql "exec #n5grupaproduktow_subtree " + cstr(idGrupa)
+	end sub
+
+  public sub manual_done()
+  if not bDisposed then
+    bDisposed = true
+    
+#ifdef _DEBUG
+		trans_.message 1002, 0 , "DEBUG: drop table TMP_PRODUKTY_HIERARCHIA "
+#endif
+		dim strSQL
+		strSQL =  "if exists (select * from tempdb..sysobjects where name like 'TMP_PRODUKTY_HIERARCHIA##%') drop table TMP_PRODUKTY_HIERARCHIA" + vbCrLf
+		trans_.execsql strSQL
+
+		trans_.execsql _
+			"if exists (select * from tempdb..sysobjects where name like '#n5grupaproduktow_subtree%') drop procedure #n5grupaproduktow_subtree" + vbCrLf
+    
+  end if
+  end sub
+
+	private sub class_terminate() 'OK
+    manual_done()
+	end sub
+
+end class
+
+function new_prod_hierarchy
+	set new_prod_hierarchy = new CProdHierarchy
+end function
+
+
+]]>
+</script>
+</config>
+	<body>
+	</body>
+</page>

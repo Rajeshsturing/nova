@@ -1,0 +1,808 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+REV:KB:20040122
+
+#include "h1000.h" 
+#include "h1200.h" 
+#include "h1203.h" 
+#include "h1229.h" 
+#include "h1231.h" 
+#include "h1240.h" 
+-->
+<class>
+	<identifier>TYPEID_N5PLNALICZENIE</identifier>
+	<table>n5plnaliczenie</table>
+	<humanname>Naliczenie płac</humanname>
+	<idobj/>
+
+	XDF_PLACE_DOKUMENT
+	
+	XDF_REJDOWSCHEM
+
+	<embedded>
+		<name>nNumNal</name>
+		<sqltype>SQLlong</sqltype>
+		<humanname>Numer naliczenia</humanname>
+		<nonempty/>
+	</embedded>
+	<embedded>
+		<name>dDataNal</name>
+		<sqltype>SQLdate</sqltype>
+		<humanname>Data naliczenia</humanname>
+		<nonempty/>
+	</embedded>
+	<ref>
+		<name>pListaPlac</name>
+		<humanname>Lista płac</humanname>
+		<typeid>TYPEID_N5PLLISTAPLAC</typeid>
+	</ref>
+	<ref>
+		<name>pTransakcja</name>
+		<humanname>Transakcja</humanname>
+		<typeid>TYPEID_N5TRANSAKCJA</typeid>
+		<optional/>
+	</ref>
+	<ref>
+		<name>pZadanie</name>
+		<humanname>Zadanie</humanname>
+		<typeid>TYPEID_N5ZADANIE</typeid>
+		<optional/>
+	</ref>
+	<list>
+		<name>listSkladnik</name>
+		<humanname>Składniki naliczenia</humanname>
+		<typeid>TYPEID_N5PLSKLNAL</typeid>
+	</list>
+	<list>
+		<name>listDekret</name>
+		<humanname>Dekrety płacowe</humanname>
+		<typeid>TYPEID_N5PLDEKRET</typeid>
+	</list>
+	<file>
+		<name>fTextInfo</name>
+		<humanname>Dodatkowy opis tekstowy</humanname>
+	</file>
+
+
+	<ref>
+		<name>plnal_pPKPIR</name>
+		<humanname>PKPIR</humanname>
+		<typeid>TYPEID_N5PKPIR</typeid>
+		<optional/>
+	</ref>
+
+	<!-- DB9 -->
+	<ref>
+		<name>plnal_pTransakcjaUS</name>
+		<humanname>Transakcja US</humanname>
+		<typeid>TYPEID_N5TRANSAKCJA</typeid>
+		<optional/>
+	</ref>
+	<ref>
+		<name>plnal_pTransakcjaZUS51</name>
+		<humanname>Transakcja ZUS-1</humanname>
+		<typeid>TYPEID_N5TRANSAKCJA</typeid>
+		<optional/>
+	</ref>
+	<ref>
+		<name>plnal_pTransakcjaZUS52</name>
+		<humanname>Transakcja ZUS-52</humanname>
+		<typeid>TYPEID_N5TRANSAKCJA</typeid>
+		<optional/>
+	</ref>
+	<ref>
+		<name>plnal_pTransakcjaZUS53</name>
+		<humanname>Transakcja ZUS-53</humanname>
+		<typeid>TYPEID_N5TRANSAKCJA</typeid>
+		<optional/>
+	</ref>
+	<ref>
+		<name>plnal_pTransakcjaInne</name>
+		<humanname>Transakcja Inne</humanname>
+		<typeid>TYPEID_N5TRANSAKCJA</typeid>
+		<optional/>
+	</ref>
+	<ref>
+		<name>plnal_pTransakcjaInne2</name>
+		<humanname>Transakcja Inne2</humanname>
+		<typeid>TYPEID_N5TRANSAKCJA</typeid>
+		<optional/>
+	</ref>
+
+<cursors>
+	<cursor>
+		<identifier>CRSR_DEFAULT</identifier>
+		<humanname>wg pracowników</humanname>
+		<join>n5pracownik on n5pracownik.idobj=pPracownik</join>
+		<where></where>
+		<orderby>n5pracownik.strNazwisko,dDataDo desc</orderby>
+	</cursor>
+
+	<cursor>
+		<identifier>CRSR_PLNALICZENIE_BY_DATE</identifier>
+		<humanname>wg daty</humanname>
+		<join></join>
+		<where></where>
+		<orderby>dDataOd</orderby>
+	</cursor>
+
+</cursors>
+
+<script>
+<![CDATA[
+'GetCurrentUser
+#include "50203"
+
+'getCurrentRKS
+#include "50120"
+
+'make_dk_*
+#include "L50214.NXB"
+
+'OBJECT_SORTER
+#include "50618"
+
+'operacja transakcji
+#include "50525"
+
+#comment '-----------------------------------------------------------
+function n5plnaliczenie_initnew()
+	this_.dDataOd = PIERWSZY_DZIEN_MCA
+	this_.dDataDo = OSTATNI_DZIEN_MCA
+	this_.dDataNal = OSTATNI_DZIEN_MCA
+
+	set this_.pUzytRej = GetCurrentUser()
+	set this_.pUzytModyf = this_.pUzytRej
+
+	set this_.pRejestrDok =  trans_.getobj(TYPEID_N5REJESTRDOK,trans_.var(APPVAR_REJESTR_DOKUMENTOW) )
+	
+	if trans_.isvar(APPVAR_LISTAPLACE) then
+		set this_.pListaPlac = trans_.getobj(TYPEID_N5PLLISTAPLAC,trans_.var(APPVAR_LISTAPLACE) )
+		this_.dDataNal = this_.pListaPlac.dDataNal
+		this_.dDataOd = this_.pListaPlac.dDataOd
+		this_.dDataDo = this_.pListaPlac.dDataDo	
+		this_.nNumNal = this_.pListaPlac.lppl_nNumListy
+	end if
+
+	n5plnaliczenie_initnew = true
+end function
+
+
+function n5plnaliczenie_checkPracownik()
+	n5plnaliczenie_checkPracownik = not this_.pPracownik is nothing
+	if not n5plnaliczenie_checkPracownik then
+		trans_.message 1002 , 0 , "Brak pracownika"
+	end if
+end function
+
+
+function n5plnaliczenie_befins()
+	n5plnaliczenie_befins = n5plnaliczenie_checkDate(this_.dDataNal) and n5plnaliczenie_checkPracownik()
+	if n5plnaliczenie_befins then
+		n5plnaliczenie_befins = n5plnaliczenie_check_skladniki()
+	end if
+	if n5plnaliczenie_befins then
+		n5plnaliczenie_befins = n5plnaliczenie_check_numnal()
+	end if
+  
+  if not n5plnaliczenie_rebuild_trop(false) then
+    exit function
+  end if
+
+	n5plnaliczenie_set_uszus_to_transaction this_.plnal_pTransakcjaZUS51,n5plnaliczenie_get_zus51(true)
+	n5plnaliczenie_set_uszus_to_transaction this_.plnal_pTransakcjaZUS52,n5plnaliczenie_get_zus52(true)
+	n5plnaliczenie_set_uszus_to_transaction this_.plnal_pTransakcjaZUS53,n5plnaliczenie_get_zus53(true)
+
+	if n5plnaliczenie_befins then
+#ifdef APPCONFIG_PKPIR
+		set this_.plnal_pPKPIR = make_pkpir_insert(this_.get_this(),this_.pSchematDekr,n5plnaliczenie_befins)
+#else
+		set this_.pDowodKsieg = make_dk_insert(this_.get_this(),this_.pSchematDekr,n5plnaliczenie_befins)
+#endif
+	end if
+end function
+
+function n5plnaliczenie_rebuild_trop(byval bMode) : n5plnaliczenie_rebuild_trop = false
+  'utworzenie obiektu n5transakcja_operacja
+  dim oTransOper
+  initialize_transaction_oper this_, oTransOper
+  
+  n5plnaliczenie_initialize_transaction
+	dim curWyplata : curWyplata = n5plnaliczenie_sumakonta("WYPLATA")
+      
+#ifdef ENABLE_DB14
+  update_transaction_oper this_, oTransOper, 1, curWyplata, 0, curWyplata, ccur(0.0), ccur(0.0)
+#else
+  update_transaction_oper this_, oTransOper, 1, curWyplata, 0, curWyplata
+#endif
+
+  
+  if not oTransOper is nothing then
+    set oTransOper.trop_pTransakcja = this_.pTransakcja
+  end if
+  
+	n5plnaliczenie_set_wyplata_to_transaction this_.pTransakcja,curWyplata,curWyplata
+
+  'stworzenie obiektu n5transakcja_operacja (US)
+  dim oTransOperUS: set oTransOperUS = nothing
+  if not n5plnaliczenie_initialize_trans_oper_US(oTransOperUS) then
+    n5plnaliczenie_rebuild_trop = false
+    exit function
+  end if
+
+	n5plnaliczenie_initialize_transaction_US
+	dim curZalPD : curZalPD = n5plnaliczenie_sumakonta("ZALPDZM")
+   
+      
+#ifdef ENABLE_DB14
+  update_transaction_oper this_, oTransOperUS, 0, curZalPD, 0, curZalPD, ccur(0.0), ccur(0.0)
+#else
+  update_transaction_oper this_, oTransOperUS, 0, curZalPD, 0, curZalPD
+#endif
+
+
+  if not oTransOperUS is nothing then
+    set oTransOperUS.trop_pTransakcja = this_.plnal_pTransakcjaUS
+  end if  
+  
+	n5plnaliczenie_set_uszus_to_transaction this_.plnal_pTransakcjaUS,curZalPD
+ 
+  'stworzenie obiektów n5transakcja_operacja (ZUS)
+  dim oTransOperZUS51, oTransOperZUS52, oTransOperZUS53
+  n5plnaliczenie_initialize_trans_oper_ZUS oTransOperZUS51, "plnal_pTransakcjaZUS51"
+  n5plnaliczenie_initialize_trans_oper_ZUS oTransOperZUS52, "plnal_pTransakcjaZUS52"
+  n5plnaliczenie_initialize_trans_oper_ZUS oTransOperZUS53, "plnal_pTransakcjaZUS53"
+
+	if not n5plnaliczenie_initialize_transaction_ZUS("plnal_pTransakcjaZUS51","ZUS-51") then
+    n5plnaliczenie_rebuild_trop = false
+    exit function
+  end if
+  
+	n5plnaliczenie_initialize_transaction_ZUS "plnal_pTransakcjaZUS52","ZUS-52"
+	n5plnaliczenie_initialize_transaction_ZUS "plnal_pTransakcjaZUS53","ZUS-53"
+    
+      
+#ifdef ENABLE_DB14
+  update_transaction_oper this_, oTransOperZUS51, 0, n5plnaliczenie_get_zus51(true), 0, n5plnaliczenie_get_zus51(true), ccur(0.0), ccur(0.0)
+  update_transaction_oper this_, oTransOperZUS52, 0, n5plnaliczenie_get_zus52(true), 0, n5plnaliczenie_get_zus52(true), ccur(0.0), ccur(0.0)
+  update_transaction_oper this_, oTransOperZUS53, 0, n5plnaliczenie_get_zus53(true), 0, n5plnaliczenie_get_zus53(true), ccur(0.0), ccur(0.0)
+#else
+  update_transaction_oper this_, oTransOperZUS51, 0, n5plnaliczenie_get_zus51(true), 0, n5plnaliczenie_get_zus51(true)
+  update_transaction_oper this_, oTransOperZUS52, 0, n5plnaliczenie_get_zus52(true), 0, n5plnaliczenie_get_zus52(true)
+  update_transaction_oper this_, oTransOperZUS53, 0, n5plnaliczenie_get_zus53(true), 0, n5plnaliczenie_get_zus53(true)
+#endif
+
+  if not oTransOperZUS51 is nothing then
+    set oTransOperZUS51.trop_pTransakcja = this_.plnal_pTransakcjaZUS51
+  end if
+  if not oTransOperZUS52 is nothing then
+    set oTransOperZUS52.trop_pTransakcja = this_.plnal_pTransakcjaZUS52
+  end if  
+  if not oTransOperZUS53 is nothing then
+    set oTransOperZUS53.trop_pTransakcja = this_.plnal_pTransakcjaZUS53   
+  end if 
+  
+  n5plnaliczenie_rebuild_trop = true
+end function
+
+function n5plnaliczenie_befupd(): n5plnaliczenie_befupd = true
+	set this_.pUzytModyf = GetCurrentUser()
+
+	n5plnaliczenie_befupd = n5plnaliczenie_checkDate(this_.dDataNal) and n5plnaliczenie_checkPracownik()
+	if n5plnaliczenie_befupd then
+		n5plnaliczenie_befupd = n5plnaliczenie_check_skladniki()
+	end if
+	
+	if n5plnaliczenie_befupd then
+		n5plnaliczenie_befupd = n5plnaliczenie_check_numnal()
+	end if
+
+	n5plnaliczenie_initialize_transaction 
+	dim curWyplata : curWyplata = n5plnaliczenie_sumakonta("WYPLATA")
+  
+  'update obiektu n5transakcja_operacja
+  dim oTransOper      
+  if not this_.pTransakcja is nothing then
+     set oTransOper = find_transaction_oper(this_,this_.pTransakcja)           
+         
+#ifdef ENABLE_DB14
+    update_transaction_oper this_, oTransOper, 1, curWyplata, 0, curWyplata, ccur(0.0), ccur(0.0)
+#else
+    update_transaction_oper this_, oTransOper, 1, curWyplata, 0, curWyplata    
+#endif
+
+  end if 
+  
+	n5plnaliczenie_set_wyplata_to_transaction this_.old_pTransakcja,ccur(0.0),ccur(0.0)
+	n5plnaliczenie_set_wyplata_to_transaction this_.pTransakcja,curWyplata,curWyplata
+
+	dim curOldZalPD : curOldZalPD = n5plnaliczenie_old_sumakonta("ZALPDZM")
+	dim curZalPD : curZalPD = n5plnaliczenie_sumakonta("ZALPDZM")
+
+	n5plnaliczenie_initialize_transaction_US
+  'update obiektu n5transakcja_operacja (US)   
+  dim oTransOperUS: set oTransOperUS = nothing
+  if not this_.plnal_pTransakcjaUS is nothing then
+     set oTransOperUS = find_transaction_oper(this_,this_.plnal_pTransakcjaUS)
+         
+#ifdef ENABLE_DB14
+    update_transaction_oper this_, oTransOperUS, 0, curZalPD, 0, curZalPD, ccur(0.0), ccur(0.0)
+#else
+    update_transaction_oper this_, oTransOperUS, 0, curZalPD, 0, curZalPD   
+#endif
+
+  end if
+  
+	n5plnaliczenie_set_uszus_to_transaction this_.old_plnal_pTransakcjaUS,-curOldZalPD
+	n5plnaliczenie_set_uszus_to_transaction this_.plnal_pTransakcjaUS,curZalPD
+
+  if not n5plnaliczenie_initialize_transaction_ZUS("plnal_pTransakcjaZUS51","ZUS-51") then
+    n5plnaliczenie_befupd = false
+    nx_.trace.fatal "FPL004", "Nie podano ZUS w danych firmy"
+    exit function
+  end if
+  
+	n5plnaliczenie_initialize_transaction_ZUS "plnal_pTransakcjaZUS52","ZUS-52"
+	n5plnaliczenie_initialize_transaction_ZUS "plnal_pTransakcjaZUS53","ZUS-53"
+  
+    'update obiektu n5transakcja_operacja (ZUS51)      
+    if not this_.plnal_pTransakcjaZUS51 is nothing then
+      set oTransOper = find_transaction_oper(this_,this_.plnal_pTransakcjaZUS51)          
+          
+#ifdef ENABLE_DB14
+      update_transaction_oper this_, oTransOper, 0, n5plnaliczenie_get_zus51(true), 0, n5plnaliczenie_get_zus51(true), ccur(0.0), ccur(0.0)
+#else
+      update_transaction_oper this_, oTransOper, 0, n5plnaliczenie_get_zus51(true), 0, n5plnaliczenie_get_zus51(true)    
+#endif
+
+    end if       
+    'update obiektu n5transakcja_operacja (ZUS52)      
+    if not this_.plnal_pTransakcjaZUS52 is nothing then
+      set oTransOper = find_transaction_oper(this_,this_.plnal_pTransakcjaZUS52)
+          
+#ifdef ENABLE_DB14
+      update_transaction_oper this_, oTransOper, 0, n5plnaliczenie_get_zus52(true), 0, n5plnaliczenie_get_zus52(true), ccur(0.0), ccur(0.0)  
+#else
+      update_transaction_oper this_, oTransOper, 0, n5plnaliczenie_get_zus52(true), 0, n5plnaliczenie_get_zus52(true)    
+#endif
+
+    end if
+    'update obiektu n5transakcja_operacja (ZUS53)      
+    if not this_.plnal_pTransakcjaZUS53 is nothing then
+      set oTransOper = find_transaction_oper(this_,this_.plnal_pTransakcjaZUS53)
+          
+#ifdef ENABLE_DB14
+      update_transaction_oper this_, oTransOper, 0, n5plnaliczenie_get_zus53(true), 0, n5plnaliczenie_get_zus53(true), ccur(0.0), ccur(0.0)      
+#else
+      update_transaction_oper this_, oTransOper, 0, n5plnaliczenie_get_zus53(true), 0, n5plnaliczenie_get_zus53(true)    
+#endif
+
+    end if  
+
+	n5plnaliczenie_set_uszus_to_transaction this_.old_plnal_pTransakcjaZUS51, - n5plnaliczenie_get_zus51(false)
+	n5plnaliczenie_set_uszus_to_transaction this_.old_plnal_pTransakcjaZUS52, - n5plnaliczenie_get_zus52(false)
+	n5plnaliczenie_set_uszus_to_transaction this_.old_plnal_pTransakcjaZUS53, - n5plnaliczenie_get_zus53(false)
+
+	n5plnaliczenie_set_uszus_to_transaction this_.plnal_pTransakcjaZUS51,n5plnaliczenie_get_zus51(true)
+	n5plnaliczenie_set_uszus_to_transaction this_.plnal_pTransakcjaZUS52,n5plnaliczenie_get_zus52(true)
+	n5plnaliczenie_set_uszus_to_transaction this_.plnal_pTransakcjaZUS53,n5plnaliczenie_get_zus53(true)
+
+
+	if n5plnaliczenie_befupd then
+#ifdef APPCONFIG_PKPIR
+		set this_.plnal_pPKPIR = make_pkpir_update(this_.get_this(),this_.plnal_pPKPIR,this_.pSchematDekr,n5plnaliczenie_befupd)
+#else
+		set this_.pDowodKsieg = make_dk_update(this_.get_this(),this_.pDowodKsieg,this_.pSchematDekr,n5plnaliczenie_befupd)
+#endif
+	end if
+end function
+
+function n5plnaliczenie_befdel(): n5plnaliczenie_befdel=false
+	n5plnaliczenie_befdel = n5plnaliczenie_checkDate(this_.old_dDataNal)
+
+	n5plnaliczenie_set_wyplata_to_transaction this_.old_pTransakcja,ccur(0.0),ccur(0.0)
+  
+  dim oTransOper      
+  if not this_.pTransakcja is nothing then
+    set oTransOper = find_transaction_oper(this_,this_.pTransakcja)
+    if not oTransOper is nothing then
+       'usuń operację transakcji
+       try_delete_transaction_oper oTransOper.IdObj
+    end if      
+  end if   
+
+	n5plnaliczenie_initialize_transaction_US
+	dim curOldZalPD : curOldZalPD = n5plnaliczenie_old_sumakonta("ZALPDZM")
+	n5plnaliczenie_set_uszus_to_transaction this_.old_plnal_pTransakcjaUS,-curOldZalPD
+        
+  if not this_.plnal_pTransakcjaUS is nothing then
+    set oTransOper = find_transaction_oper(this_,this_.plnal_pTransakcjaUS)
+    if not oTransOper is nothing then
+       'usuń operację transakcji
+       try_delete_transaction_oper oTransOper.IdObj
+    end if      
+  end if        
+
+	if not n5plnaliczenie_initialize_transaction_ZUS("plnal_pTransakcjaZUS51","ZUS-51") then
+    n5plnaliczenie_befdel = false
+    nx_.trace.fatal "FPL004", "Nie podano ZUS w danych firmy"
+    exit function
+  end if
+  
+	n5plnaliczenie_initialize_transaction_ZUS "plnal_pTransakcjaZUS52","ZUS-52"
+	n5plnaliczenie_initialize_transaction_ZUS "plnal_pTransakcjaZUS53","ZUS-53"
+
+	n5plnaliczenie_set_uszus_to_transaction this_.old_plnal_pTransakcjaZUS51, - n5plnaliczenie_get_zus51(false)
+	n5plnaliczenie_set_uszus_to_transaction this_.old_plnal_pTransakcjaZUS52, - n5plnaliczenie_get_zus52(false)
+	n5plnaliczenie_set_uszus_to_transaction this_.old_plnal_pTransakcjaZUS53, - n5plnaliczenie_get_zus53(false)
+       
+  if not this_.plnal_pTransakcjaZUS51 is nothing then
+    set oTransOper = find_transaction_oper(this_,this_.plnal_pTransakcjaZUS51)
+    if not oTransOper is nothing then
+       'usuń operację transakcji
+       try_delete_transaction_oper oTransOper.IdObj
+    end if      
+  end if      
+  if not this_.plnal_pTransakcjaZUS52 is nothing then
+    set oTransOper = find_transaction_oper(this_,this_.plnal_pTransakcjaZUS52)
+    if not oTransOper is nothing then
+       'usuń operację transakcji
+       try_delete_transaction_oper oTransOper.IdObj
+    end if      
+  end if
+  if not this_.plnal_pTransakcjaZUS53 is nothing then
+    set oTransOper = find_transaction_oper(this_,this_.plnal_pTransakcjaZUS53)
+    if not oTransOper is nothing then
+       'usuń operację transakcji
+       try_delete_transaction_oper oTransOper.IdObj
+    end if      
+  end if   
+
+	if n5plnaliczenie_befdel then
+#ifdef APPCONFIG_PKPIR
+		n5plnaliczenie_befdel = make_pkpir_delete(this_.get_this(),this_.plnal_pPKPIR)
+#else
+		n5plnaliczenie_befdel = make_dk_delete(this_.get_this(),this_.pDowodKsieg)
+#endif
+	end if
+end function
+
+#comment '-----------------------------------------------------------
+function n5plnaliczenie_checkDate(byval dData)
+	n5plnaliczenie_checkDate = false
+  
+	if trans_.var(GVAR_OPERATION_MODE) = clng(OPERATION_MODE_UPGRADE) then
+		n5plnaliczenie_checkDate = true
+		exit function
+	end if  
+
+	if this_.pListaPlac is nothing then
+		trans_.message 1002 , 0 , "Należy wskazać listę płac"
+		exit function
+	end if
+
+	if month(this_.dDataOd) <> month(this_.dDataDo) or year(this_.dDataOd) <> year(this_.dDataDo) then
+		trans_.message 1002 , 0 , "Naliczenie może dotyczyć tylko jednego miesiaca kalendarzowego"
+		exit function
+	end if
+
+	if this_.dDataOd < this_.pListaPlac.dDataOd or this_.dDataDo > this_.pListaPlac.dDataDo then
+		trans_.message 1002 , 0 , "Okres naliczenia musi zawierać się okresie listy płac"
+		exit function
+	end if
+
+	n5plnaliczenie_checkDate = getCurrentRKS().n5rokksieg_checkdate(dData) and this_.pRejestrDok.n5rejestrdok_checkdate(dData)
+	if not n5plnaliczenie_checkDate then
+		trans_.message 1002 , 0 , "Nieprawidłowa data naliczenia"
+	end if
+end function
+
+function n5plnaliczenie_check_skladniki()
+	dim pUmowa
+	n5plnaliczenie_check_skladniki = n5plnaliczenie_resolve_umowa(pUmowa)
+	if not n5plnaliczenie_check_skladniki then
+		trans_.message 6521, 1, "Naliczenie musi zawierać składniki związane z tą samą umową"
+		exit function
+	end if
+	if not pUmowa is nothing then
+		if this_.dDataOd < pUmowa.dDataOd then
+			n5plnaliczenie_check_skladniki = false
+			trans_.message 6521, 1, "Naliczenie nie może obejmować okresu przed rozpoczęciem umowy tzn." + _
+				trans_.afc.display.fulldate(pUmowa.dDataOd)
+			exit function
+		end if
+		if pUmowa.dDataDo <> trans_.afc.globals.nulldate() then
+			if this_.dDataDo > pUmowa.dDataDo then
+				n5plnaliczenie_check_skladniki = false
+				trans_.message 6521, 1, "Naliczenie nie może obejmować okresu po zakończeniu umowy tzn." + _
+						trans_.afc.display.fulldate(pUmowa.dDataDo)
+				exit function
+			end if
+		end if
+	end if
+end function
+
+function n5plnaliczenie_check_numnal()
+	n5plnaliczenie_check_numnal = false
+
+	dim strWhere : strWhere = "nNumNal=" + cstr(this_.nNumNal) + " and pPracownik=" + cstr(this_.pPracownik.idobj)
+
+	dim idFound : idFound = trans_.FindObjId(TYPEID_N5PLNALICZENIE, strWhere)
+	if idFound <> 0 and idFound <> this_.idobj then
+		trans_.message 4090, 0, "Istnieje już naliczenie o numerze " + cstr(this_.nNumNal) + _
+		" dla pracownika " + this_.pPracownik.text
+		exit function
+	end if
+	n5plnaliczenie_check_numnal = true
+end function
+
+#comment '-----------------------------------------------------------
+
+function n5plnaliczenie_pPracownik_change(oldval)
+	n5plnaliczenie_pPracownik_change = true
+
+	while this_.listSkladnik.exists(1)
+		this_.listSkladnik.delete(1)
+	wend
+	
+	dim pDekret
+	for each pDekret in this_.listDekret
+		set pDekret.pPracownik = this_.pPracownik
+	next
+end function
+
+function n5plnaliczenie_dDataNal_change(oldval)
+	n5plnaliczenie_dDataNal_change = true
+	dim pDekret
+	for each pDekret in this_.listDekret
+		pDekret.dDataNal = this_.dDataNal
+	next
+end function
+
+function n5plnaliczenie_pListaPlac_change(oldval)
+	n5plnaliczenie_pListaPlac_change = true
+
+	if not this_.pListaPlac is nothing then
+		this_.dDataNal = this_.pListaPlac.dDataNal
+		
+		if this_.pListaPlac.dDataOd > this_.dDataOd then
+			this_.dDataOd = this_.pListaPlac.dDataOd
+		end if
+		
+		if this_.pListaPlac.dDataDo < this_.dDataDo then
+			this_.dDataDo = this_.pListaPlac.dDataDo	
+		end if
+		this_.nNumNal = this_.pListaPlac.lppl_nNumListy
+	end if
+end function
+
+VDF_PREJESTRDOK_DISABLE_CHANGE(n5plnaliczenie)
+
+#comment '-----------------------------------------------------------
+
+function n5plnaliczenie_gsfz_2(byref pDokZrodl,byval nLP,byref pSklNalInstance)
+	set n5plnaliczenie_gsfz_2 = nothing
+
+	select case pDokZrodl.type
+	case TYPEID_N5PLUMOWA
+		set n5plnaliczenie_gsfz_2 = pDokZrodl.n5plumowa_get_skladnik_2(nLP,pSklNalInstance)
+	case TYPEID_N5PLCHOROBA
+		set n5plnaliczenie_gsfz_2 = pDokZrodl.n5plchoroba_get_skladnik_2(nLP,pSklNalInstance)
+	case TYPEID_N5PLNIEOB
+		set n5plnaliczenie_gsfz_2 = pDokZrodl.n5plnieob_get_skladnik_2(nLP,pSklNalInstance)
+	case TYPEID_N5PLPOZOSTALE
+		set n5plnaliczenie_gsfz_2 = pDokZrodl.n5plpozostale_get_skladnik_2(nLP,pSklNalInstance)
+	end select
+end function
+#comment '-----------------------------------------------------------
+
+function n5plnaliczenie_as_text()
+	dim strText
+
+	if not this_.pListaPlac is nothing then
+		strText = this_.pListaPlac.text
+	else
+		strText = ""
+	end if
+
+	if not this_.pPracownik is nothing then
+		strText = strText + " " + this_.pPracownik.strNazwisko + " (" + this_.pPracownik.strPESEL + ")"
+	end if
+	 
+	n5plnaliczenie_as_text=strText
+end function
+
+#comment '-----------------------------------------------------------
+
+function n5plnaliczenie_getumowa(byref pDokZrodl)
+	select case pDokZrodl.type
+	case TYPEID_N5PLUMOWA
+		set n5plnaliczenie_getumowa = pDokZrodl
+	case TYPEID_N5PLCHOROBA
+		set n5plnaliczenie_getumowa = pDokZrodl.pUmowa
+	case TYPEID_N5PLNIEOB
+		set n5plnaliczenie_getumowa = pDokZrodl.pUmowa
+	case TYPEID_N5PLPOZOSTALE
+		set n5plnaliczenie_getumowa = pDokZrodl.pUmowa
+	end select
+end function
+
+#comment '-----------------------------------------------------------
+#comment ' sprawdza czy wszystkie składniki są z tej samej umowy
+#comment ' i zwraca tę umowę
+#comment '-----------------------------------------------------------
+
+function n5plnaliczenie_resolve_umowa(byref pUmowa)
+	set pUmowa = nothing
+	n5plnaliczenie_resolve_umowa = true
+	dim pSklNal
+	for each pSklNal in this_.listSkladnik
+		dim pSklUmowa : set pSklUmowa = n5plnaliczenie_getumowa(pSklNal.wrefDokument)
+		if pUmowa is nothing then
+			set pUmowa = pSklUmowa
+		else
+			if not (pSklUmowa is pUmowa) then
+				n5plnaliczenie_resolve_umowa = false
+				exit function
+			end if
+		end if
+	next
+end function
+
+#comment '-----------------------------------------------------------
+#comment 'FK: suma dekretow w naliczeniu o podanym kodzie subkonta
+#comment '-----------------------------------------------------------
+function n5plnaliczenie_sumakonta(byval strSubKonto)
+	n5plnaliczenie_sumakonta = ccur(0.0)
+	dim pPLDekret	
+	for each pPLDekret in this_.listDekret
+		if pPLDekret.pSubKonto.strKod = strSubKonto then
+			n5plnaliczenie_sumakonta = n5plnaliczenie_sumakonta + pPLDekret.curKwota
+		end if
+	next
+end function
+
+function n5plnaliczenie_old_sumakonta(byval strSubKonto)
+	n5plnaliczenie_old_sumakonta = ccur(0.0)
+	dim pPLDekret	
+	if not this_.old_listDekret is nothing then
+	  for each pPLDekret in this_.old_listDekret
+		  if pPLDekret.pSubKonto.strKod = strSubKonto then
+			  n5plnaliczenie_old_sumakonta = n5plnaliczenie_old_sumakonta + pPLDekret.old_curKwota
+		  end if
+	  next
+	end if
+end function
+#comment ------------------------------------------------------------------------
+private sub n5plnaliczenie_set_wyplata_to_transaction(byref pTransakcja,byval curKwota,byval curKwotaEwid)
+	if not pTransakcja is nothing then
+		with pTransakcja
+#ifndef ENABLE_DB11_TROP     
+			.curMa = curKwota
+#endif      
+		end with
+	end if
+end sub
+
+private sub n5plnaliczenie_initialize_transaction()
+	if this_.pTransakcja is nothing then
+
+		dim strWhere : strWhere = "strSymTrans='" + trans_.afc.convert.DoubleApostrophe(cstr(this_.pListaPlac.strNrDok)) + "' and " +_
+			" wrefPodmiot=" + cstr(this_.pPracownik.idobj) + " and wrefPodmiot_wrt=TYPEID_N5PRACOWNIK"
+
+		dim idFound : idFound = trans_.FindObjId(TYPEID_N5TRANSAKCJA, strWhere)
+		if idFound > 0 then
+			set this_.pTransakcja = trans_.getobj(TYPEID_N5TRANSAKCJA,idFound)
+		else
+			set this_.pTransakcja = trans_.newobj(TYPEID_N5TRANSAKCJA)
+		end if
+		with this_.pTransakcja
+			.strSymTrans = this_.pListaPlac.strNrDok
+			.eTyp = clng(N5TRANSAKCJA_ZOBOWIAZANIE)
+			.dDataWym = this_.dDataNal
+			set .wrefPodmiot = this_.pPracownik	
+		end with
+	end if
+end sub
+
+#comment ------------------------------------------------------------------------
+private sub n5plnaliczenie_initialize_transaction_US()
+	if this_.plnal_pTransakcjaUS is nothing then
+		dim oFirma : set oFirma = getcurrentFirma()
+		if not oFirma is nothing then
+			if not oFirma.pUrzadSkarbowyPD is nothing then
+				dim strSymbolTRUS
+				strSymbolTRUS = "PIT-4/" + cstr(year(this_.pListaPlac.dDataNal)) + "/" +_
+					trans_.afc.convert.AddZeros(month(this_.pListaPlac.dDataNal),2)
+
+				dim strWhere : strWhere = "strSymTrans='" + strSymbolTRUS + "' and " +_
+					" wrefPodmiot=" + cstr(oFirma.pUrzadSkarbowyPD.idobj) + _
+					" and wrefPodmiot_wrt=TYPEID_N5INSTYTUCJA"
+
+				dim idFound : idFound = trans_.FindObjId(TYPEID_N5TRANSAKCJA, strWhere)
+				if idFound > 0 then
+					set this_.plnal_pTransakcjaUS = trans_.getobj(TYPEID_N5TRANSAKCJA,idFound)
+				else
+					set this_.plnal_pTransakcjaUS = trans_.newobj(TYPEID_N5TRANSAKCJA)
+				end if
+				with this_.plnal_pTransakcjaUS
+					.strSymTrans = strSymbolTRUS
+					.eTyp = clng(N5TRANSAKCJA_ZOBOWIAZANIE)
+					.dDataWym = dateserial(year(this_.pListaPlac.dDataNal),1+month(this_.pListaPlac.dDataNal),20)
+					set .wrefPodmiot = oFirma.pUrzadSkarbowyPD	
+				end with
+			end if
+		end if
+	end if
+end sub
+
+private function n5plnaliczenie_initialize_transaction_ZUS(byval strFldName,byval strSymbol)
+  n5plnaliczenie_initialize_transaction_ZUS = true
+	if this_.field(strFldName) is nothing then
+    n5plnaliczenie_initialize_transaction_ZUS = false
+		dim oFirma : set oFirma = getcurrentFirma()
+		if not oFirma is nothing then
+			if not oFirma.pZUS is nothing then
+				dim strSymbolTRUS
+				strSymbolTRUS = strSymbol +"/" + cstr(year(this_.pListaPlac.dDataNal)) + "/" +_
+					trans_.afc.convert.AddZeros(month(this_.pListaPlac.dDataNal),2)
+
+				dim strWhere : strWhere = "strSymTrans='" + strSymbolTRUS + "' and " +_
+					" wrefPodmiot=" + cstr(oFirma.pZUS.idobj) + _
+					" and wrefPodmiot_wrt=TYPEID_N5INSTYTUCJA"
+
+				dim idFound : idFound = trans_.FindObjId(TYPEID_N5TRANSAKCJA, strWhere)
+				if idFound > 0 then
+					set this_.field(strFldName) = trans_.getobj(TYPEID_N5TRANSAKCJA,idFound)
+				else
+					set this_.field(strFldName) = trans_.newobj(TYPEID_N5TRANSAKCJA)
+				end if
+				with this_.field(strFldName)
+					.strSymTrans = strSymbolTRUS
+					.eTyp = clng(N5TRANSAKCJA_ZOBOWIAZANIE)
+					.dDataWym = dateserial(year(this_.pListaPlac.dDataNal),1+month(this_.pListaPlac.dDataNal),20)
+					set .wrefPodmiot = oFirma.pZUS	
+				end with
+        n5plnaliczenie_initialize_transaction_ZUS = true
+			end if
+		end if
+	end if
+end function
+
+private sub n5plnaliczenie_set_uszus_to_transaction(byref pTransakcja,byval curKwota)
+	if not pTransakcja is nothing then
+		with pTransakcja
+#ifndef ENABLE_DB11_TROP  
+			.curMa = .curMa + curKwota
+#endif      
+		end with
+	end if
+end sub
+
+private function n5plnaliczenie_get_zus51(byval bNew)
+	if bNew then 
+		n5plnaliczenie_get_zus51 = n5plnaliczenie_sumakonta("UBPRAC") + n5plnaliczenie_sumakonta("UBFIRMA")
+	else
+		n5plnaliczenie_get_zus51 = n5plnaliczenie_old_sumakonta("UBPRAC") + n5plnaliczenie_old_sumakonta("UBFIRMA")
+	end if
+end function
+
+private function n5plnaliczenie_get_zus52(byval bNew)
+	if bNew then 
+		n5plnaliczenie_get_zus52 = n5plnaliczenie_sumakonta("UBZDR")
+	else
+		n5plnaliczenie_get_zus52 = n5plnaliczenie_old_sumakonta("UBZDR")
+	end if
+end function
+
+private function n5plnaliczenie_get_zus53(byval bNew)
+	if bNew then 
+		n5plnaliczenie_get_zus53 = n5plnaliczenie_sumakonta("FGSP") + n5plnaliczenie_sumakonta("FP")
+	else
+		n5plnaliczenie_get_zus53 = n5plnaliczenie_old_sumakonta("FGSP") + n5plnaliczenie_old_sumakonta("FP")
+	end if
+end function
+
+]]>
+</script>
+</class>

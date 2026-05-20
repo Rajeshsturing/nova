@@ -1,0 +1,533 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1004.h"
+#include "h1201.h"
+#include "h1220.h"
+#include "h1226.h"
+#include "h1230.h"
+#include "h1234.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1222.h"
+#include "h1200.h"
+#include "h1232.h"
+
+#define SECID_WYKAZ_BANK           1000
+#define SECID_WYKAZ_MAGAZYN        1001
+#define SECID_NALEZNOSCI           1002
+#define SECID_ZOBOWIAZANIA         1003
+
+#define CTRLID_WYKAZ_BANK             100
+#define CTRLID_WYKAZ_BANK_TABLE       101
+#define CTRLID_WYKAZ_MAGAZYN          102
+#define CTRLID_WYKAZ_MAGAZYN_TABLE    103
+#define CTRLID_NALEZNOSCI             104
+#define CTRLID_NALEZNOSCI_TABLE       105
+#define CTRLID_ZOBOWIAZANIA           106
+#define CTRLID_ZOBOWIAZANIA_TABLE     107
+#define CTRLID_MIEJSCOWOSC_DATA       108
+#define CTRLID_TOTAL_TABLE            109
+
+#macro XCARDSECBEG_HIDE(_hname_,_ctrl_,_ctrl2_,_color_) \
+  <tr userprop="propc_section_start='1' propc_section_hidden='1' propc_section_img='_ctrl_' propc_section_req='0'">   \
+    <td border='1' keepline='true' style='STYLE_SECTION_OSTRE' backcolor='#_color_'>  \
+      <picture name='p##_ctrl_' ignoresysdisable='true' tip='Rozwiń' image='PICTURE_SMALL_PLUS' width='SIZE_FOR_PLUS' height='SIZE_FOR_PLUS' href='varFunctionHLI="section_hideshow_hli" vn100=_ctrl_'/>	\
+      <t/><t name='t##_ctrl2_' ignoresysdisable='true' fontsize='6' border='0'>_hname_</t>	\
+    </td>	\
+  </tr>	\
+  <tr hide='true'>  \
+    <td style='STYLE_TABLE_BODY'>
+    
+#define XCARDSECEND_HIDE  \
+		</td>	\
+	</tr>	\
+	<tr hide='true' userprop="propc_section_end='1'" /> 
+
+-->
+<page>
+  <config>
+    <title>
+Raport dla szefa
+#ifdef _DEBUG
+[THIS_FILE]
+#endif
+    </title>
+
+<secidread>UAR_CMDID(CMDID_RAPORT_DLA_SZEFA)</secidread>    
+    
+    <script>
+      <![CDATA[
+
+#include "50200"
+#include "50222"
+
+'getCurrentFirma
+#include "50203"
+
+dim curSumaEwid: curSumaEwid = ccur(0.0)
+dim curSumaMag: curSumaMag = ccur(0.0)
+dim curWartNalAllSaldo: curWartNalAllSaldo = ccur(0.0)
+dim curWartZobAllSaldo: curWartZobAllSaldo = ccur(0.0)
+
+
+function fopen(): fopen = std_fopen()
+  if not fopen then
+    exit function
+  end if
+
+  dim oPerf: set oPerf = doc_.performing("Raport dla szefa - trwa generowanie raportu")
+  
+  'miejscowość i data
+  page_.ctrl(CTRLID_MIEJSCOWOSC_DATA).text = getCurrentFirma().pMiejscowosc.strNazwa + ", " + trans_.afc.display.fulldate(trans_.var(GVAR_TODAY))
+  
+  'wykaz środkow bankowych
+  wykazBankowy
+  
+  'wartość magazynów
+  wykazMagazynow
+  
+  'należnosci
+  naleznosci
+  
+  'należnosci
+  zobowiazania
+  
+  'suma razem
+  total
+  
+  set oPerf = nothing
+  fopen = true
+end function
+
+'----------------------------------------
+'ustawia kolor wiersza w zależności od LP
+'----------------------------------------
+sub changeColor(byref pTB, byval nLP)
+  if nLP mod 2 = 0 then
+    pTB.row.bordercolor = RGB(255,255,255)
+    pTB.row.backcolor = RGB(255,255,255)
+  else
+    pTB.row.bordercolor = RGB(255,255,255)
+    pTB.row.styleitem = STYLE_ROW_EVEN
+  end if
+end sub
+
+'-----------------------------------
+'wypełnia tabelę stanami banków/kasy
+'-----------------------------------
+function wykazBankowy()
+  dim pTB: set pTB = doc_.afc.new_tb(page_).attach(page_.ctrl(CTRLID_WYKAZ_BANK_TABLE)).removeall
+  dim strSQL: strSQL = "select IdObj from n5rejestrdok where eTyp in (N5REJESTRDOK_BANKOWY,N5REJESTRDOK_KASOWY) and eAktywny = 1"
+  dim oRS: set oRS = trans_.createadors(doc_.getmodule(60300).bqry_stan_kasybanku_rejestrami(strSQL))
+  
+  dim pHLI, curSrodki, curSrodkiEwid
+  dim strSkrotWal: strSkrotWal = getCurrentFirma().pWaluta.strSkrot
+  dim nLP: nLP = 1
+  
+  'wpełnienie tabeli wynikami zapytania
+  do while not oRS.EOF
+    dim idRej: idRej = clng(oRS("c_idrej").value)
+    set pHLI = doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=PAGE_RAPORT_TRANSAKCJE appvar_raport_type=RAPTEMPLATE_PLATNOSCI_LISTA " +_
+                                 "appvar_rejestr_dokumentow=" + cstr(idRej) + " vs4100='" + cstr(idRej) + "'")
+                                  
+    curSrodki = ccur(oRS("c_stan").value)
+    dim g_curKurs
+    dim oRejestr : set oRejestr = trans_.getobj(TYPEID_N5REJESTRDOK, clng(idRej))
+    dim bRes : bRes = doc_.getmodule(60182).kantor_external(100.0, oRejestr.wrefParam1, getCurrentFirma().pWaluta, trans_.var(GVAR_TODAY), N5KURSWALUT_SPRZEDAZY, g_curKurs)
+
+    'curSrodkiEwid = ccur(oRS("c_stanewid").value)
+    curSrodkiEwid = ccur(curSrodki * g_curKurs / ccur(100.0))
+    
+    curSumaEwid = curSumaEwid + curSrodkiEwid
+    
+    'wyświetlenie wyników
+    pTB.newrow
+    changeColor pTB, nLP    
+    pTB.newcell.addtexthli CStr(oRS("c_nazwarej").value), pHLI
+    pTB.newcell.addtext doc_.afc.display.money(curSrodki,CStr(oRS("c_waluta").value))
+    pTB.cell.align = ALIGN_RIGHT
+    pTB.newcell.addtext doc_.afc.display.money(curSrodkiEwid,strSkrotWal)
+    pTB.cell.align = ALIGN_RIGHT
+    nLP = nLP + 1
+    
+    oRS.movenext
+  loop
+  
+  'suma środków w PLN
+	page_.ctrl(CTRLID_WYKAZ_BANK).text = "Dostępne środki: " + doc_.afc.display.money(curSumaEwid,strSkrotWal)  
+  
+end function
+
+'------------------------------------------
+'wypełnia tabelę z wartościami magazynowymi
+'------------------------------------------
+function wykazMagazynow()
+  dim pTB: set pTB = doc_.afc.new_tb(page_).attach(page_.ctrl(CTRLID_WYKAZ_MAGAZYN_TABLE)).removeall
+  if doc_.getmodule(60253).gm_ensure_accuracy_ui(true) then
+    dim strSQL
+    strSQL = "select 'm_nazwa'=m.strNazwa,'m_idobj'=m.idobj,'wartosc'=isnull(sum(gm.gmo_curWartosc),0),'j_skrot'=max(j.strSkrot) " + vbNewLine +_
+             "from n5magazyn m " + vbNewLine +_
+	           "   inner join n5jednostka j on m.pWaluta = j.idobj " + vbNewLine +_
+	           "   left outer join n5gmop gm on gm.gmo_pMag = m.idobj " + vbNewLine +_ 
+	           "   left outer join n5produkt p on gm.gmo_pProd = p.idobj " + vbNewLine +_ 
+             "where m.eTyp in (N5TYPMAG_PODSTAWOWY,N5TYPMAG_PRODUKCJAWTOKU,N5TYPMAG_REZERWACJE) and m.mag_eAktywny = N5PRODUKT_AKTYWNY and p.eRodzaj = N5PRODUKT_TOWAR " + vbNewLine +_ 
+             "group by m.strNazwa,m.idobj " + vbNewLine +_ 
+             "order by m.strNazwa"
+    
+    dim pHLI, strNazwaMag, curWartMag, strWal
+    dim oRS: set oRS = trans_.createadors(strSQL)
+    dim nLP: nLP = 1
+    
+    do while not oRS.EOF
+      set pHLI = doc_.createhlistr("varFunctionHLI = raport_magazyn vs1 = " + CStr(oRS("m_idobj").value)) 
+      strWal = CStr(oRS("j_skrot").value)
+      strNazwaMag = CStr(oRS("m_nazwa").value)
+      curWartMag = CStr(oRS("wartosc").value)
+      curSumaMag = curSumaMag + curWartMag
+
+      'wyświetlenie wyników
+      pTB.newrow
+      changeColor pTB, nLP    
+      pTB.newcell.addtexthli strNazwaMag, pHLI
+      pTB.newcell.addtext doc_.afc.display.money(curWartMag,strWal)
+      pTB.cell.align = ALIGN_RIGHT
+      
+      nLP = nLP + 1
+      oRS.movenext
+    loop
+  
+    'suma wartości magazynów
+	  page_.ctrl(CTRLID_WYKAZ_MAGAZYN).text = "Wartość magazynów: " + doc_.afc.display.money(curSumaMag,strWal)  
+    
+  else
+    page_.ctrl(CTRLID_WYKAZ_MAGAZYN).text = "Wartość magazynów nie może być ustalona."
+  end if
+end function
+
+'------------------------
+'raport stany wartościowe
+'------------------------
+function raport_magazyn(pHLI)
+  dim pParamArray: set pParamArray = doc_.afc.new_navoarray()
+  dim pExtraParam: set pExtraParam = doc_.afc.rap.param.new_filter("Typ")
+	pExtraParam.set_where_part "(t_1.idobj = " + CStr(pHLI.prop(1)) + ")"
+	pParamArray.add pExtraParam
+
+  dim pAnalizOkres: set pAnalizOkres = doc_.afc.rap.param.new_date("Analizowany okres").bindexpr("")
+  pAnalizOkres.first_value = trans_.var(GVAR_TODAY)
+  pAnalizOkres.mode = clng(1)
+  pParamArray.add pAnalizOkres
+  trans_.var(APPVAR_RAPORT_FROM_OUTSIDE) = clng(1)
+
+  pParamArray.add doc_.afc.rap.param.new_text("Nazwa produktu").bindexpr("t_2.strNazwa")
+  pParamArray.add doc_.afc.rap.param.new_text("Indeks produktu").bindexpr("t_2.strIndeks")
+  pParamArray.add nothing
+  
+  dim pParamFactory2: set pParamFactory2= doc_.afc.rap.param
+  dim pParam2: Set pParam2= pParamFactory2.new_choice("Status produktu").bindexpr("t_2.eAktywny")
+  pParamFactory2.init_on_enum pParam2, TYPEID_N5PRODUKT,"eAktywny"
+  pParamArray.add pParam2	
+
+  doc_.getmodule(PAGE_MODULE_RAPORT_CALLER).make_raport_stanmag_wartosc_param pParamArray
+end function
+
+'-------------------------------
+'wypełnia tabelę z należnościami
+'-------------------------------
+function naleznosci()
+  dim pTB: set pTB = doc_.afc.new_tb(page_).attach(page_.ctrl(CTRLID_NALEZNOSCI_TABLE)).removeall
+  
+  dim curWartNalAll: curWartNalAll = ccur(0.0)
+  
+  dim curWartNalPrzet: curWartNalPrzet = ccur(0.0)
+  dim curWartNalPrzetSaldo: curWartNalPrzetSaldo = ccur(0.0)
+  
+  dim curWartNalTerm: curWartNalTerm = ccur(0.0)
+  dim curWartNalTermSaldo: curWartNalTermSaldo = ccur(0.0)
+  
+  'wszystkie należności
+  dim strSQL: strSQL = getQueryForTrans(N5TRANSAKCJA_NALEZNOSC,0)
+  dim oRS: set oRS = trans_.createadors(strSQL)
+  if oRS.RecordCount > clng(0) then
+    curWartNalAll = ccur(oRS(1).value)
+    curWartNalAllSaldo = ccur(oRS(3).value)
+  end if
+  dim pHLIAll
+  set pHLIAll = doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=PAGE_RAPORT_TRANSAKCJE appvar_raport_type=NALEZNOSCI_NIEROZLICZONE")  
+  
+  'należności przeterminowane
+  strSQL = getQueryForTrans(N5TRANSAKCJA_NALEZNOSC,1)
+  set oRS = trans_.createadors(strSQL)
+  if oRS.RecordCount > clng(0) then
+    curWartNalPrzet = ccur(oRS(1).value)
+    curWartNalPrzetSaldo = ccur(oRS(3).value)
+  end if 
+  dim pHLIPrzet
+  set pHLIPrzet = doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=PAGE_RAPORT_TRANSAKCJE appvar_raport_type=NALEZNOSCI_PRZETERMINOWANE")  
+  
+  'należności terminowe
+  curWartNalTerm = curWartNalAll - curWartNalPrzet
+  curWartNalTermSaldo = curWartNalAllSaldo - curWartNalPrzetSaldo  
+
+  'wyświetlenie wyników
+  pTB.newrow
+  'wszystkie
+  changeColor pTB, 1    
+  pTB.newcell.addtexthli "Wszystkie", pHLIAll
+  pTB.newcell.addtext doc_.afc.display.money(curWartNalAll,"PLN")
+  pTB.newcell.addtext doc_.afc.display.money(curWartNalAllSaldo,"PLN")
+  pTB.cell.align = ALIGN_RIGHT
+  'przeterminowane
+  pTB.newrow
+  changeColor pTB, 2    
+  pTB.newcell.addtexthli "Przeterminowane", pHLIPrzet
+  pTB.newcell.addtext doc_.afc.display.money(curWartNalPrzet,"PLN")
+  pTB.newcell.addtext doc_.afc.display.money(curWartNalPrzetSaldo,"PLN")
+  pTB.cell.align = ALIGN_RIGHT
+  'terminowe
+  pTB.newrow
+  changeColor pTB, 3    
+  pTB.newcell.addtext "Terminowe"
+  pTB.newcell.addtext doc_.afc.display.money(curWartNalTerm,"PLN")
+  pTB.newcell.addtext doc_.afc.display.money(curWartNalTermSaldo,"PLN")
+  pTB.cell.align = ALIGN_RIGHT  
+
+  'suma należności
+  page_.ctrl(CTRLID_NALEZNOSCI).text = "Należności - kwota: " + doc_.afc.display.money(curWartNalAllSaldo,"PLN") + " (" +_
+                                        doc_.afc.display.money(curWartNalPrzetSaldo,"PLN") + ")"
+    
+end function
+
+'--------------------------------
+'wypełnia tabelę z zobowiązaniami
+'--------------------------------
+function zobowiazania()
+  dim pTB: set pTB = doc_.afc.new_tb(page_).attach(page_.ctrl(CTRLID_ZOBOWIAZANIA_TABLE)).removeall
+  
+  dim curWartZobAll: curWartZobAll = ccur(0.0)
+  
+  dim curWartZobPrzet: curWartZobPrzet = ccur(0.0)
+  dim curWartZobPrzetSaldo: curWartZobPrzetSaldo = ccur(0.0)
+  
+  dim curWartZobTerm: curWartZobTerm = ccur(0.0)
+  dim curWartZobTermSaldo: curWartZobTermSaldo = ccur(0.0)
+  
+  'wszystkie zobowiązania
+  dim strSQL: strSQL = getQueryForTrans(N5TRANSAKCJA_ZOBOWIAZANIE,0)
+  dim oRS: set oRS = trans_.createadors(strSQL)
+  if oRS.RecordCount > clng(0) then
+    curWartZobAll = ccur(oRS(2).value)
+    curWartZobAllSaldo = ccur(oRS(3).value)
+  end if
+  dim pHLIAll
+  set pHLIAll = doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=PAGE_RAPORT_TRANSAKCJE appvar_raport_type=ZOBOWIAZANIA_NIEROZLICZONE")  
+  
+  'zobowiązania przeterminowane
+  strSQL = getQueryForTrans(N5TRANSAKCJA_ZOBOWIAZANIE,1)
+  set oRS = trans_.createadors(strSQL)
+  if oRS.RecordCount > clng(0) then
+    curWartZobPrzet = ccur(oRS(2).value)
+    curWartZobPrzetSaldo = ccur(oRS(3).value)
+  end if 
+  dim pHLIPrzet
+  set pHLIPrzet = doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=PAGE_RAPORT_TRANSAKCJE appvar_raport_type=ZOBOWIAZANIA_PRZETERMINOWANE")  
+  
+  'zobowiązania terminowe
+  curWartZobTerm = curWartZobAll - curWartZobPrzet
+  curWartZobTermSaldo = curWartZobAllSaldo - curWartZobPrzetSaldo  
+
+  'wyświetlenie wyników
+  pTB.newrow
+  'wszystkie
+  changeColor pTB, 1    
+  pTB.newcell.addtexthli "Wszystkie", pHLIAll
+  pTB.newcell.addtext doc_.afc.display.money(curWartZobAll,"PLN")
+  pTB.newcell.addtext doc_.afc.display.money(curWartZobAllSaldo,"PLN")
+  pTB.cell.align = ALIGN_RIGHT
+  'przeterminowane
+  pTB.newrow
+  changeColor pTB, 2    
+  pTB.newcell.addtexthli "Przeterminowane", pHLIPrzet
+  pTB.newcell.addtext doc_.afc.display.money(curWartZobPrzet,"PLN")
+  pTB.newcell.addtext doc_.afc.display.money(curWartZobPrzetSaldo,"PLN")
+  pTB.cell.align = ALIGN_RIGHT
+  'terminowe
+  pTB.newrow
+  changeColor pTB, 3    
+  pTB.newcell.addtext "Terminowe"
+  pTB.newcell.addtext doc_.afc.display.money(curWartZobTerm,"PLN")
+  pTB.newcell.addtext doc_.afc.display.money(curWartZobTermSaldo,"PLN")
+  pTB.cell.align = ALIGN_RIGHT  
+
+  'suma zobowiązań
+  page_.ctrl(CTRLID_ZOBOWIAZANIA).text = "Zobowiązania - kwota: " + doc_.afc.display.money(curWartZobAllSaldo,"PLN") + " (" +_
+                                        doc_.afc.display.money(curWartZobPrzetSaldo,"PLN") + ")"
+    
+end function
+
+'zapytanie dla należności i zobowiązań --------------------------------
+'rodzaj=0 (wszystkie), rodzaj=1 (przeterminowane), rodzaj=2 (terminowe)
+'----------------------------------------------------------------------
+function getQueryForTrans(byval eTyp, byval nRodzaj)
+  dim strRodzaj
+  if nRodzaj = 1 then
+    strRodzaj = "> 0"
+  elseif nRodzaj = 2 then
+    strRodzaj = "<= 0"
+  else
+    strRodzaj = "is not null"
+  end if
+  
+  getQueryForTrans = _
+  "select max(trans.idTrans),sum(trans.wn),sum(trans.ma),sum(trans.saldo) " + vbNewLine +_
+  "from " + vbNewLine +_ 
+  "(select distinct " + vbNewLine +_
+  "'idTrans'=t_trop.trop_pTransakcja, " + vbNewLine +_ 
+  "'wn'=sum(t_trop.trop_curWnEwid), " + vbNewLine +_
+  "'ma'=sum(t_trop.trop_curMaEwid), " + vbNewLine +_
+  "'saldo'=sum(t_trop.trop_curWnEwid-t_trop.trop_curMaEwid) " + vbNewLine +_ 
+  "from n5transakcja_operacja as t_trop " + vbNewLine +_ 
+  "inner join n5transakcja as t_trans on t_trop.trop_pTransakcja = t_trans.idobj " + vbNewLine +_ 
+  "left outer join n5klient as t_klient on t_trans.wrefPodmiot = t_klient.IdObj AND t_trans.wrefPodmiot_wrt = 10108 " + vbNewLine +_ 
+  "left outer join n5grupaklient as t_gr_klient on t_klient.pGrupaKlient = t_gr_klient.IdObj AND t_trans.wrefPodmiot_wrt = 10108 " + vbNewLine +_ 
+  "left outer join n5pracownik as t_prac on t_trans.wrefPodmiot = t_prac.IdObj AND t_trans.wrefPodmiot_wrt = 10109 " + vbNewLine +_ 
+  "left outer join n5instytucja as t_inst on t_trans.wrefPodmiot = t_inst.IdObj AND t_trans.wrefPodmiot_wrt = 10105 " + vbNewLine +_ 
+  "left outer join n5bank as t_bank on t_trans.wrefPodmiot = t_bank.IdObj AND t_trans.wrefPodmiot_wrt = 10104 " + vbNewLine +_ 
+  "left outer join n5firma as t_firma on t_trans.wrefPodmiot = t_firma.IdObj AND t_trans.wrefPodmiot_wrt = 10110 " + vbNewLine +_ 
+  "inner join n5jednostka as t_waluta on t_trans.pWaluta = t_waluta.IdObj " + vbNewLine +_ 
+  "left outer join n5pracownik as t_handlowiec on t_trans.trn_pHandlowiec = t_handlowiec.idobj " + vbNewLine +_ 
+  "left join n5sprzedaz as t_sprz on t_sprz.pTransakcja = t_trans.idobj and t_sprz.idobj in " + vbNewLine +_ 
+  "	(select isnull(min(idobj),0) from n5sprzedaz where pTransakcja = t_trans.idobj) " + vbNewLine +_ 
+  "left join n5kwalifikator as t_kwal on t_kwal.idobj = t_sprz.pKwalifikatorEx " + vbNewLine +_ 
+  "where (DATEDIFF(day, t_trans.dDataWym, GETDATE()) " + strRodzaj + ") " + vbNewLine +_
+  "and (t_trop.trop_dDataOp <= " + trans_.afc.convert.date2SQL(CDate(trans_.var(GVAR_TODAY))) + ") and (t_trans.eTyp = " + CStr(eTyp) + ") and " + vbNewLine +_
+  "	((t_trans.eTyp=2 and t_klient.idobj in " + vbNewLine +_ 
+  "	(select wrefpodmiotrozrach from n5konto where wrefpodmiotrozrach_wrt=10108 and " + vbNewLine +_ 
+  "	(strsymbol like '201%' or strSymbol like '203%'))) or " + vbNewLine +_ 
+  "	(t_trans.eTyp=1 and t_klient.idobj in " + vbNewLine +_ 
+  "	(select wrefpodmiotrozrach  from n5konto where wrefpodmiotrozrach_wrt=10108 and " + vbNewLine +_ 
+  "	(strsymbol like '204%' or strSymbol like '202%')))) " + vbNewLine +_ 
+  "group by t_trop.trop_ptransakcja " + vbNewLine +_ 
+  "having sum(t_trop.trop_curWn - t_trop.trop_curMa) <> 0) as trans"
+end function
+
+'--------------------------------
+'suma wartości firmy
+'--------------------------------
+function total()
+  dim pTB: set pTB = doc_.afc.new_tb(page_).attach(page_.ctrl(CTRLID_TOTAL_TABLE)).removeall
+  dim curTotal: curTotal = ccur(0.0)
+  curTotal = curSumaEwid + curSumaMag + curWartNalAllSaldo + curWartZobAllSaldo
+  
+  'wyświetlenie wyników
+  pTB.newrow
+  pTB.newcell.addtext "    Total: " + doc_.afc.display.money(curTotal,"PLN")
+end function
+
+
+]]>
+    </script>
+  </config>
+  <body>
+    <table>
+      <thead>
+        <tr>
+          <td align='right'><text name='CTRLID_MIEJSCOWOSC_DATA'></text></td>
+        </tr>
+        <tr>
+          <td>
+            <text fontsize='7'>Raport dla szefa</text>
+          </td>
+        </tr>
+        QXR_SEPARATOR(1)
+        QXR_SEPARATOR(1)
+      </thead>
+      <tbody>
+        XCARDSECBEG_HIDE(Wykaz bankowy,SECID_WYKAZ_BANK,CTRLID_WYKAZ_BANK,DEE7FE)
+          <table name='CTRLID_WYKAZ_BANK_TABLE'>
+            <thead style='STYLE_TABLE_HEADER'>
+              <tr>
+                <td>
+                  <text>Kasa / bank</text>		
+                </td>
+                <td>
+                  <text>Stan</text>		
+                </td>				
+                <td>
+                  <text>Wartość księgowa</text>
+                </td>				
+              </tr>
+            </thead>
+          </table>
+        XCARDSECEND_HIDE
+        
+        QXR_SEPARATOR(1)
+        
+        XCARDSECBEG_HIDE(Wartość magazynów,SECID_WYKAZ_MAGAZYN,CTRLID_WYKAZ_MAGAZYN,DEE7FE)
+          <table name='CTRLID_WYKAZ_MAGAZYN_TABLE'>
+            <thead style='STYLE_TABLE_HEADER'>
+              <tr>
+                <td>
+                  <text>Magazyn</text>		
+                </td>			
+                <td>
+                  <text>Wartość</text>
+                </td>				
+              </tr>
+            </thead>
+          </table>
+        XCARDSECEND_HIDE
+                
+        QXR_SEPARATOR(1)
+        
+        XCARDSECBEG_HIDE(Należności,SECID_NALEZNOSCI,CTRLID_NALEZNOSCI,DEE7FE)
+          <table name='CTRLID_NALEZNOSCI_TABLE'>
+            <thead style='STYLE_TABLE_HEADER'>
+              <tr>
+                <td>
+                  <text>Rodzaj</text>		
+                </td>			
+                <td>
+                  <text>Wartość</text>
+                </td>
+                <td>
+                  <text>Saldo</text>
+                </td>                
+              </tr>
+            </thead>
+          </table>
+        XCARDSECEND_HIDE        
+       
+        QXR_SEPARATOR(1)
+        
+        XCARDSECBEG_HIDE(Zobowiązania,SECID_ZOBOWIAZANIA,CTRLID_ZOBOWIAZANIA,DEE7FE)
+          <table name='CTRLID_ZOBOWIAZANIA_TABLE'>
+            <thead style='STYLE_TABLE_HEADER'>
+              <tr>
+                <td>
+                  <text>Rodzaj</text>		
+                </td>			
+                <td>
+                  <text>Wartość</text>
+                </td>
+                <td>
+                  <text>Saldo</text>
+                </td>                
+              </tr>
+            </thead>
+          </table>
+        XCARDSECEND_HIDE 
+      
+        QXR_SEPARATOR(1)
+        <tr>
+          <td>
+          <table name='CTRLID_TOTAL_TABLE' style='STYLE_TABLE_HEADER' fontsize='7'>
+          </table>            
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+  </body>
+</page>

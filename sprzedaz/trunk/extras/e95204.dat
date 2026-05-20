@@ -1,0 +1,410 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+
+<!-- 18.07.2004 filtr na grupe nie jako checkboxy -->
+<!-- 13.01.2005 podgrupy produktow --> 
+
+<!--
+RAPTEMPLATE_ZMIENNOSC_STANOW_MAGAZYNOWYCH
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1250.h"
+
+#define RAPORT_TITLE Operacje magazynowe wg produktów
+
+#ifdef APPCONFIG_RAPORT_BY_PROD_INX
+  #define C_FIELD_FIRST_EXPR		prod.strIndeks
+  #define C_FIELD_SECOND_EXPR		prod.strNazwa
+#else
+  #ifdef _IOW
+    #define C_FIELD_FIRST_EXPR		prod.strNazwa + '  ' + prod.strIndeks
+  #else
+    #define C_FIELD_FIRST_EXPR		prod.strNazwa
+  #endif
+  #define C_FIELD_SECOND_EXPR		prod.strIndeks
+#endif
+
+#ifdef APPCONFIG_GM_RAPORT_BY_DATE
+#define OKRES_NROPMAG_WHERE  %5
+#endif
+
+-->
+<page style='36'>
+<config>
+<title>RAPORT_TITLE</title>
+<script>
+<![CDATA[
+
+<%
+dim g_nNumOpStart : g_nNumOpStart = clng(0)
+dim g_curIloscPo
+dim g_strUnit
+dim g_nPrec
+
+function query()
+query = "select 'c_field_first'=C_FIELD_FIRST_EXPR,'c_field_second'=C_FIELD_SECOND_EXPR,'c_opak'=opz.strNazwa,'c_mag'=mag.strNazwa,'c_numop'=om.gmo_nNumOp,'c_lp'=om.gmo_nLP, " +_
+"'c_nrdok'=om.strNrDok,'c_typeid'=om.typeid,'c_idobj'=om.idobjdok, " +_
+"'c_ilosc'=om.gmo_curIlosc,'c_cena'=om.gmo_curCena,'c_jedn'=jedn.strSkrot,'c_prec'=jedn.nDokladnosc, " +_
+"'d_data_op'=om.dDataOp,'p_klient' = (select pKlient from n5dokmag where nNumOper = om.gmo_nNumOp), " +_
+"'c_ilosc_przed'=(select isnull(sum(n5gmop.gmo_curIlosc),0) from n5gmop where " +_
+"om.gmo_pMag = n5gmop.gmo_pMag and " +_
+"om.gmo_pProd = n5gmop.gmo_pProd and " +_
+"om.gmo_pOpak = n5gmop.gmo_pOpak and " +_
+#ifdef APPCONFIG_GM_RAPORT_BY_DATE
+"n5gmop.gmo_nNumOp in (select om2.gmo_nNumOp from view_operacje_magazynowe om2 where om2.dDataOp < START_DATE)) " +_
+#else
+"n5gmop.gmo_nNumOp < START_NROPMAG) " +_
+#endif
+"from view_operacje_magazynowe om " +_
+"inner join n5produkt as prod on om.gmo_pProd = prod.idobj " +_
+"inner join n5opakowanie_produktu opz on om.gmo_pOpak = opz.idobj " +_
+"inner join  n5magazyn as mag on om.gmo_pMag = mag.idobj " +_
+"inner join n5jednostka as jedn on opz.pJednOpak = jedn.idobj " +_
+"where prod.pGrupaProd in (select tmp_group_idobj from #tmp_prod_hierarchy) "+_
+"and %1 and %2 and %3 and OKRES_NROPMAG_WHERE " +_
+"order by c_field_first,c_field_second,c_opak,c_mag,c_numop,c_lp "
+end function
+%>
+<%
+
+
+'' jest używane poza default_param()
+dim RaportOkresParam
+
+dim utilProdHierarchy : set utilProdHierarchy = doc_.getmodule(60246)
+dim pProdHierarchy : set pProdHierarchy = utilProdHierarchy.new_prod_hierarchy()
+
+dim pParamArray
+dim pGrupaParam
+
+
+function default_param()
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+
+	pParamArray.add doc_.getmodule(43025).new_filtr_magazyn("mag.idobj","N5TYPMAG_PODSTAWOWY,N5TYPMAG_ZWROTY,N5TYPMAG_PRODUKCJAWTOKU,N5TYPMAG_REZERWACJE")
+
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwa produktu").bindexpr("prod.strNazwa")
+	pParamArray.add doc_.afc.rap.param.new_text("Indeks produktu").bindexpr("prod.strIndeks")
+	set pGrupaParam = doc_.afc.rap.param.new_text("Grupa produktów").bindexpr("strNazwa")
+	pParamArray.add pGrupaParam
+
+
+#ifdef APPCONFIG_GM_RAPORT_BY_DATE
+	set RaportOkresParam = doc_.afc.rap.param.new_date_range("Analizowany okres").bindexpr("om.dDataOp")
+#else
+	set RaportOkresParam = doc_.afc.rap.param.new_date_range("Analizowany okres").bindexpr("")
+#endif
+	pParamArray.add RaportOkresParam
+	
+	set default_param = pParamArray
+end function
+%>
+
+<%
+function write_actual_param(byref pActualParam)
+	write_actual_param = "0=1"
+
+	dim iter
+	dim bAnyWritten : bAnyWritten = false
+	if not pActualParam is nothing then
+		
+
+		dim nDummy2	
+		write_actual_param = "om.gmo_nNumOp " + doc_.getmodule(43025).rap_param_date_range_2_gm_num_oper_where(RaportOkresParam,g_nNumOpStart,nDummy2)
+
+		for iter = 0 to pActualParam.upperIndex
+			if pActualParam.value(iter).get_desc() <> "" then 
+				bAnyWritten = true
+				so.write "<t size='5' /><text fontsize='4'><![CD"+"ATA[" + pActualParam.value(iter).get_desc() + "]"+"]></text><br/>"
+			end if
+		next
+	end if
+	if not bAnyWritten then 
+		so.write "<t fontsize='4'>brak</t><br/>"
+	end if
+	so.write "<br/>"
+end function
+%>
+<%
+function section_header_1(byref pSection,byref pRec)
+%>
+<tr userprop='propc_section_start="1" propc_section_hidden="0" propc_section_req="0"' fontsize='4'>
+#ifdef _TORAL
+ <td style='27' colspan='11'>
+#else
+ <td style='27' colspan='10'>
+#endif 
+		<picture name='<%so.write cstr(nSectionPicCounter)%>' tip='Zwiń' ignoresysdisable='true' image='PICTURE_SMALL_MINUS' width='SIZE_FOR_PLUS' height='SIZE_FOR_PLUS' href='vs1022="section_hideshow_hli" vn100="<%so.write cstr(nSectionPicCounter)%>"'/>
+	RXE_AUTO_TEXT(c_field_first)
+#ifndef _IOW  
+	<t size='3'/>
+	RXE_AUTO_TEXT(c_field_second)
+#endif  
+</td>
+</tr>
+<%
+nSectionPicCounter=nSectionPicCounter+1
+end function
+%>
+<%
+function section_footer_1(byref pSection)
+%>
+<tr hide='true' userprop='propc_section_end="1"'><td colspan='8' /></tr>
+<%
+end function
+%>
+<%
+function section_header_2(byref pSection,byref pRec)
+%>
+<tr userprop='propc_section_start="2" propc_section_hidden="0" propc_section_req="0"' fontsize='4'>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+#ifdef _TORAL
+ <td style='27' colspan='10'>
+#else  
+	<td style='27' colspan='9'>
+#endif  
+		<picture name='<%so.write cstr(nSectionPicCounter)%>' tip='Zwiń' ignoresysdisable='true' image='PICTURE_SMALL_MINUS' width='SIZE_FOR_PLUS' height='SIZE_FOR_PLUS' href='vs1022="section_hideshow_hli" vn100="<%so.write cstr(nSectionPicCounter)%>"'/>
+	RXE_AUTO_TEXT(c_opak)
+</td>
+</tr>
+<%
+nSectionPicCounter=nSectionPicCounter+1
+end function
+%>
+<%
+function section_footer_2(byref pSection)
+%>
+<tr hide='true' userprop='propc_section_end="2"'><td colspan='8' /></tr>
+<%
+end function
+%>
+<%
+function section_header_3(byref pSection,byref pRec)
+%>
+<tr userprop='propc_section_start="3" propc_section_hidden="0" propc_section_req="0"' fontsize='4'>
+  <td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+#ifdef _TORAL
+ <td style='27' colspan='7'>
+#else  
+	<td style='27' colspan='6'>
+#endif   
+		<picture name='<%so.write cstr(nSectionPicCounter)%>' tip='Zwiń' ignoresysdisable='true' image='PICTURE_SMALL_MINUS' width='SIZE_FOR_PLUS' height='SIZE_FOR_PLUS' href='vs1022="section_hideshow_hli" vn100="<%so.write cstr(nSectionPicCounter)%>"'/>
+ 
+	RXE_AUTO_TEXT(c_mag)
+	</td>
+	<td align='right' style='27'>
+		RXE_QUANTITY_CCC(c_ilosc_przed,c_jedn,c_prec)
+	</td>
+	<td style='27' />
+	<%
+		g_curIloscPo = ccur(pRec("c_ilosc_przed"))
+		g_strUnit = cstr(pRec("c_jedn"))
+		g_nPrec = clng(pRec("c_prec")-1)
+	%>
+</tr>
+<%
+nSectionPicCounter=nSectionPicCounter+1
+end function
+%>
+<%
+function section_footer_3(byref pSection)
+%>
+<tr userprop='propc_section_end="3"'>
+#ifdef _TORAL
+	<td colspan='9' style='27' />
+#else
+	<td colspan='8' style='27' />
+#endif  
+	<td style='27' align='right' fontsize='4'>
+		RXE_QUANTITY_VVV(g_curIloscPo,g_strUnit,g_nPrec)
+	</td>
+	<td style='27' />
+</tr>
+<%
+end function
+%>
+<%
+function body_row(byref pSection,byref pRec)
+if pRapExec.RecNr mod 2 = 0 then
+%>
+<tr bordercolor='white'>
+<%
+else
+%>
+<tr bordercolor='white' style='37'>
+<%
+end if
+%>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+	<td align='right'>RXE_LP</td>
+	<td align='right'>
+		RXE_T(c_numop)
+	</td>
+	<td align='right'>
+		<t><%so.write cstr(clng(pRec("c_lp")) mod 10000)%></t>
+	</td>
+	<td>
+	<%if clng(pRec("c_typeid")) = 0 then%>
+		<t>Podsumowanie archiwum</t>
+	<%else%>
+		RXE_T_LINK_FORM_CCC(c_typeid,c_idobj,c_nrdok)
+	<%end if%>
+	</td>
+#ifdef _TORAL
+  <td>
+    RXE_DATE(d_data_op)
+  </td>  
+#endif  
+	<td align='right'>
+		RXE_QUANTITY_CCC(c_ilosc,c_jedn,c_prec)
+	</td>
+	<td align='right'>
+		<%
+		g_curIloscPo = g_curIloscPo + ccur(pRec("c_ilosc"))
+		%>
+		RXE_QUANTITY_VVV(g_curIloscPo,g_strUnit,g_nPrec)
+	</td>
+	<td align='right'>
+		RXE_QUANTITY_CVV(c_cena,"",#*gvar_price_prec)
+	</td>
+</tr><%
+end function
+%>
+
+<%
+function body_header(byref pSection,byref pRec)
+'so.write "<p backcolor='yellow'><text><![CD"+"ATA["+pRapExec.get_final_query() + "]"+"]></text></p><br/>" 
+%>
+<table border='1'>
+<thead>
+<tr style='21'>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+	<td width='min'><t>LP</t></td>
+	<td width='min'>
+		<text><![CDATA[Nr operacji]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[LP/dok.]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Numer dokumentu]]></text>
+	</td>
+#ifdef _TORAL  
+  <td width='min'>
+    <text><![CDATA[Data operacji]]></text>
+  </td>
+#endif
+  <td width='3000'>
+		<text><![CDATA[Zmiana ilości]]></text>
+	</td>
+	<td width='3000'>
+		<text><![CDATA[Ilość po]]></text>
+	</td>
+	<td>
+		<text><![CDATA[Cena]]></text>
+	</td>
+</tr>
+</thead>
+<tbody>
+<%
+end function
+%>
+<%
+function body_footer(byref pSection)
+%>
+</tbody>
+</table>
+<%
+end function
+%>
+<%dim nSectionPicCounter : nSectionPicCounter = 10000000%>
+function section_hideshow_hli(byref pHLI)
+doc_.afc.formsection.section_hideshow page_, pHLI.prop(100)
+end function
+]]>
+</script>
+</config>
+<header>
+</header>
+<body>
+<p>
+RAPORT_HEADER(3,0)
+</p>
+
+<p>
+<t size='2'/>
+</p>
+
+
+<p><text fontsize='7'><![CDATA[RAPORT_TITLE]]></text></p><br/><br/>
+
+<%
+if not doc_.getmodule(60253).gm_ensure_accuracy_ui(true) then
+%>
+<p border='1' fontsize='5' forecolor='red' bold='true'><t>Uwaga! Niepoprawny stan magazynu</t></p><br/><br/>
+<%
+end if
+%>
+
+<t fontsize='5' bold='true'>Kryteria selekcji:</t><br/>
+<%
+	dim pRapExec : set pRapExec = rapeng_.new_engine()
+	with pRapExec
+		.add_body_ex getref("body_header"),getref("body_footer"),getref("body_row")
+		.add_group_section 0,getref("section_header_1"),getref("section_footer_1")
+		.add_group_section 2,getref("section_header_2"),getref("section_footer_2")
+		.add_group_section 3,getref("section_header_3"),getref("section_footer_3")
+		if .prepare("RAPORT_TITLE",default_param(),rapeng_.get_raport_param(),query()) then
+
+			dim pPerf : set pPerf = doc_.performing("Trwa przygotowywanie wyników...")
+				pProdHierarchy.fill_on_prodgrupa_param pGrupaParam
+			set pPerf = nothing
+
+			dim nropmag_str : nropmag_str = write_actual_param(rapeng_.get_raport_param())
+
+			'' drobna modyfikacja zapytania - parametr nropmag
+#ifdef APPCONFIG_GM_RAPORT_BY_DATE
+  'do START_DATA zawsze jest najmniejsza z podanego okresu
+  if RaportOkresParam.mode =1 or RaportOkresParam.mode =5 then
+  .ReplaceQueryParam "START_DATE","{d '1899-12-31'}"
+  end if
+  if RaportOkresParam.mode =2 then
+  .ReplaceQueryParam "START_DATE",trans_.afc.convert.date2SQL(cstr( year(trans_.var(1007)) )+"-01-01")
+  end if
+  if RaportOkresParam.mode =3 then
+  .ReplaceQueryParam "START_DATE",trans_.afc.convert.date2SQL(cstr(year(trans_.var(1007)))+"-"+cstr(month(trans_.var(1007)))+"-01")
+  end if
+  if RaportOkresParam.mode =4 then
+  .ReplaceQueryParam "START_DATE",(trans_.afc.convert.date2SQL(trans_.var(GVAR_TODAY)))
+  end if
+  if RaportOkresParam.mode =6 or RaportOkresParam.mode =7 then
+  .ReplaceQueryParam "START_DATE",trans_.afc.convert.date2SQL(RaportOkresParam.first_value)
+  end if
+  #else
+  .ReplaceQueryParam "OKRES_NROPMAG_WHERE",nropmag_str
+  .ReplaceQueryParam "START_NROPMAG",cstr(g_nNumOpStart)
+  #endif
+
+			if not .perform then
+				so.write "<p style='21'><t>Brak danych spełniających podane kryteria</t></p>"
+			end if
+
+		end if
+	end with
+pProdHierarchy.manual_done() : set pProdHierarchy = nothing
+set utilProdHierarchy = nothing
+
+%>
+</body>
+<footer>
+</footer>
+</page>

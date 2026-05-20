@@ -1,0 +1,301 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+RAPTEMPLATE_TABELA_AMORTYZ
+
+
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1250.h" 
+
+#define RAPORT_TITLE #*vs1
+#define RAPORT_TRANS_TYPE #*vs2
+#define RAPORT_PODMIOT_WRT #*vs3
+#define RAPORT_PODMIOT_ID #*vs4
+
+
+#macro MONEY(_value_)					doc_.afc.display.money(_value_,"")
+#macro RXE_PERCENT_VAR(_var_)	<t><%so.write doc_.afc.display.money(_var_,"%")%></t>
+-->
+<page style='36'>
+<config>
+<title>RAPORT_TITLE</title>
+<script>
+<![CDATA[
+
+
+
+VB_PRINT_LANDSCAPE_COMMON
+VB_PRINTPREV_LANDSCAPE_COMMON
+
+
+<%
+function subquery(byval nDStart,byval nDEnd)
+with doc_.afc.convert
+		dim strDateRange : strDateRange = .Formatter(" (dDataWym between %1 and %2) ") _
+		(.date2SQL(trans_.var(GVAR_TODAY) + nDStart)) _
+		(.date2SQL(trans_.var(GVAR_TODAY) + nDEnd)).Done()
+end with
+
+#ifdef ENABLE_DB11
+subquery= "isnull((select sum(t_trop.trop_curWnEwid - t_trop.trop_curMaEwid) " + vbNewLine +_ 
+          " from n5transakcja_operacja t_trop " + vbNewLine +_
+		      " inner join n5transakcja t_trans on t_trop.trop_pTransakcja = t_trans.idobj " + vbNewLine +_
+		      " inner join n5klient on n5klient.idobj=t_trans.wrefpodmiot " + vbNewLine +_
+          " where %1 and %2 and (eTyp=RAPORT_TRANS_TYPE) and (RAPORT_PODMIOT_WRT) and (RAPORT_PODMIOT_ID) and " + vbNewLine +_
+          " wrefpodmiot_wrt=10108 and "+strDateRange + vbNewLine +_
+          " and %3 " + vbNewLine +_
+          " having sum(t_trop.trop_curWnEwid - t_trop.trop_curMaEwid) <> 0),0)"
+#else
+subquery="isnull((select sum(curWn) - sum(curMa) from n5transakcja inner join n5klient on n5klient.idobj=n5transakcja.wrefpodmiot "+_
+" where (curWn <> curMa) and %1 and %2 and (eTyp=RAPORT_TRANS_TYPE) and (RAPORT_PODMIOT_WRT) and (RAPORT_PODMIOT_ID) and"+_
+" wrefpodmiot_wrt=10108 and "+strDateRange+"),0)"
+#endif
+
+end function
+
+
+function query()
+query = "select distinct  " + vbNewLine +_
+        "'cur_nal_0_30dni'="+subquery(-30,-1)+", " + vbNewLine +_
+        "'cur_nal_31_60dni'="+subquery(-60,-31)+", " + vbNewLine +_  
+        "'cur_nal_61_90dni'="+subquery(-90,-61)+", " + vbNewLine +_
+        "'cur_nal_3_6mcy'="+subquery(-181,-91)+", " + vbNewLine +_
+        "'cur_nal_6_12mcy'="+subquery(-365,-182)+", " + vbNewLine +_
+        "'cur_nal_12_plus_mcy'="+subquery(-10000,-366)+", " + vbNewLine +_
+        "'cur_przyszle'="+subquery(0,1000)+_
+"from n5transakcja"
+
+
+
+end function
+%>
+<%
+dim pRaportMomentParam
+dim pParamDate
+
+function default_param()
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+		
+	pParamArray.add doc_.afc.rap.param.new_text("Nazwa kontrahenta").bindexpr("n5klient.strNazwa")
+	pParamArray.add doc_.afc.rap.param.new_text("Indeks kontrahenta").bindexpr("n5klient.strIndeks")
+#ifdef ENABLE_DB11
+	pParamArray.add doc_.afc.rap.param.new_date("Saldo na dzień").bindexpr("t_trop.trop_dDataOp")
+#endif   
+
+	set default_param = pParamArray
+end function
+%>
+
+
+<%
+function body_row(byref pSection,byref pRec)
+
+	dim cur_przeterm : cur_przeterm = ccur(0.0)
+    dim cur_razem : cur_razem = ccur(0.0)    
+
+    dim prcnt_nal_0_30dni : prcnt_nal_0_30dni = ccur(0.0)
+    dim prcnt_nal_31_60dni : prcnt_nal_31_60dni = ccur(0.0)
+    dim prcnt_nal_61_90dni : prcnt_nal_61_90dni = ccur(0.0)
+    dim prcnt_nal_3_6mce : prcnt_nal_3_6mce = ccur(0.0)
+    dim prcnt_nal_6_12mce : prcnt_nal_6_12mce = ccur(0.0)
+    dim prcnt_nal_12_plus_mcy : prcnt_nal_12_plus_mcy = ccur(0.0)
+    dim prcnt_przyszle : prcnt_przyszle = ccur(0.0)
+    dim prcnt_przeterm : prcnt_przeterm = ccur(0.0)
+    
+    cur_przeterm = ccur(pRec("cur_nal_0_30dni")) + ccur(pRec("cur_nal_31_60dni")) + ccur(pRec("cur_nal_61_90dni")) + ccur(pRec("cur_nal_3_6mcy")) + ccur(pRec("cur_nal_6_12mcy")) + ccur(pRec("cur_nal_12_plus_mcy"))
+	cur_razem = cur_przeterm + ccur(pRec("cur_przyszle"))
+	
+    if cur_razem <> 0.0 then
+		prcnt_nal_0_30dni = trans_.afc.convert.round2(100 * ccur(pRec("cur_nal_0_30dni")) / cur_razem)
+		prcnt_nal_31_60dni = trans_.afc.convert.round2(100 * ccur(pRec("cur_nal_31_60dni")) / cur_razem)
+		prcnt_nal_61_90dni = trans_.afc.convert.round2(100 * ccur(pRec("cur_nal_61_90dni")) / cur_razem)
+		prcnt_nal_3_6mce	= trans_.afc.convert.round2(100 * ccur(pRec("cur_nal_3_6mcy")) / cur_razem)
+		prcnt_nal_6_12mce	= trans_.afc.convert.round2(100 * ccur(pRec("cur_nal_6_12mcy")) / cur_razem)
+		prcnt_nal_12_plus_mcy = trans_.afc.convert.round2(100 * ccur(pRec("cur_nal_12_plus_mcy")) / cur_razem)
+		prcnt_przyszle		= trans_.afc.convert.round2(100 * ccur(pRec("cur_przyszle")) / cur_razem)
+		prcnt_przeterm      = trans_.afc.convert.round2(100 * cur_przeterm / cur_razem)
+	end if
+
+%>
+
+	<tr>
+		<td width='min'>
+			<t><![CDATA[przyszłe]]></t>
+		</td>
+		<td width='min' align='right'>
+			RXE_MONEY_VAR(ccur(pRec("cur_przyszle")))
+		</td>
+		<td width='min' align='right'>
+			RXE_PERCENT_VAR(prcnt_przyszle)
+		</td>
+	</tr>
+	<tr>
+		<td width='min'>
+			<t><![CDATA[przeterminowane, w tym:]]></t>
+		</td>
+		<td width='min' align='right'>
+			RXE_MONEY_VAR(cur_przeterm)
+		</td>
+		<td width='min' align='right'>
+			RXE_PERCENT_VAR(prcnt_przeterm)
+		</td>
+	</tr>
+  
+	<tr>
+    <td width='min'>
+			<t>&nbsp;&nbsp;do 30 dni</t>
+		</td>
+		<td width='min' align='right'>
+			RXE_MONEY_VAR(ccur(pRec("cur_nal_0_30dni")))
+		</td>
+		<td width='min' align='right'>
+			RXE_PERCENT_VAR(prcnt_nal_0_30dni)
+		</td>
+	</tr> 
+	<tr>
+    <td width='min'>
+			<t>&nbsp;&nbsp;od 31 do 60 dni</t>
+		</td>
+		<td width='min' align='right'>
+			RXE_MONEY_VAR(ccur(pRec("cur_nal_31_60dni")))
+		</td>
+		<td width='min' align='right'>
+			RXE_PERCENT_VAR(prcnt_nal_31_60dni)
+		</td>
+	</tr> 
+	<tr>
+    <td width='min'>
+			<t>&nbsp;&nbsp;od 61 do 90 dni</t>
+		</td>
+		<td width='min' align='right'>
+			RXE_MONEY_VAR(ccur(pRec("cur_nal_61_90dni")))
+		</td>
+		<td width='min' align='right'>
+			RXE_PERCENT_VAR(prcnt_nal_61_90dni)
+		</td>
+	</tr>
+	<tr>
+		<td width='min'>
+			<t>&nbsp;&nbsp;od 3 do 6 miesięcy</t>
+		</td>
+		<td width='min' align='right'>
+			RXE_MONEY_VAR(ccur(pRec("cur_nal_3_6mcy")) )
+		</td>
+		<td width='min' align='right'>
+			RXE_PERCENT_VAR(prcnt_nal_3_6mce)
+		</td>
+	</tr>
+	<tr>
+		<td width='min'>
+			<t>&nbsp;&nbsp;od 6 do 12 miesięcy</t>
+		</td>
+		<td width='min' align='right'>
+			RXE_MONEY_VAR(ccur(pRec("cur_nal_6_12mcy")) )
+		</td>
+		<td width='min' align='right'>
+			RXE_PERCENT_VAR(prcnt_nal_6_12mce)
+		</td>
+	</tr>
+	<tr>
+		<td width='min'>
+			<t>&nbsp;&nbsp;ponad 12 miesięcy</t>
+		</td>
+		<td width='min' align='right'>
+			RXE_MONEY_VAR(ccur(pRec("cur_nal_12_plus_mcy")))
+		</td>
+		<td width='min' align='right'>
+			RXE_PERCENT_VAR(prcnt_nal_12_plus_mcy)
+		</td>
+	</tr>
+</tbody>
+<tfoot>
+	<tr style='21'>
+		<td width='min'>
+			<t><![CDATA[Razem]]></t>
+		</td>
+		<td width='min' align='right'>
+			RXE_MONEY_VAR(cur_razem)
+		</td>
+		<td width='min' align='right'>
+			RXE_PERCENT_VAR(100)
+		</td>
+	</tr>
+</tfoot>
+
+<%
+end function
+%>
+<%
+function body_header(byref pSection,byref pRec)
+
+%>
+<table border='1' fontsize='3'>
+<thead>
+<tr style='21'>
+	
+	<td width='min'>
+		<text><![CDATA[Rodzaj]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Kwota]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[%]]></text>
+	</td>
+	
+</tr>
+</thead>
+<tbody>
+<%
+end function
+%>
+<%
+function body_footer(byref pSection)
+%>
+</tbody>
+</table>
+<%
+end function
+%>
+
+
+]]>
+</script>
+</config>
+<header>
+</header>
+<body fontsize='1'>
+<p><text fontsize='7'><![CDATA[RAPORT_TITLE]]></text></p><br/><br/>
+
+<t fontsize='5' bold='true'>Kryteria selekcji:</t><br/>
+<%
+dim pRapExec : set pRapExec = rapeng_.new_engine()
+with pRapExec
+	.add_body_ex getref("body_header"),getref("body_footer"),getref("body_row")
+if .prepare("RAPORT_TITLE",default_param(),rapeng_.get_raport_param(),query()) then
+%>
+<%
+
+	rapeng_.write_actual_param so,rapeng_.get_raport_param()
+ 
+#ifdef ENABLE_DB11
+  .ReplaceQueryParam "t_trop.trop_dDataOp =","t_trop.trop_dDataOp <="
+#endif	 
+  
+	if not .perform then
+	so.write "<p style='21'><t>Brak danych spełniających podane kryteria</t></p>"
+	end if
+%>
+<%
+end if
+end with
+%>
+</body>
+<footer>
+</footer>
+</page>

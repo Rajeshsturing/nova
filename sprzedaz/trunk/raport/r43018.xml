@@ -1,0 +1,241 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1001.h"
+#include "h1004.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1240.h"
+
+#define CTRLID_REZERWACJE_TABLE 101
+-->
+<page style='STYLE_PAGE'>
+<config>
+	<title>
+	Rezerwacje o przekroczonym terminie obowiązywania
+	</title>
+<startpos>center</startpos>
+<iid>THIS_FILE</iid>
+<script>
+<![CDATA[
+#include "50629"
+
+'chooserejestrdok
+#include "50517"
+
+'MessageBox
+#include "50122"
+
+'HARUI
+#include "50101"
+
+dim bSilent : bSilent = true
+
+function fopen()
+
+	if trans_.isvar(1) then
+		bSilent = false
+	end if 
+
+	'sprawdz uprawnienia
+	'CMDID_RAPORT_REZERWACJE_DO_ZWOLNIENIA
+	if bSilent then
+		if not HAR(UAR_CMDID(CMDID_RAPORT_REZERWACJE_DO_ZWOLNIENIA)) then
+			fopen = false
+			exit function
+		end if
+	else
+		if not HARUI(UAR_CMDID(CMDID_RAPORT_REZERWACJE_DO_ZWOLNIENIA)) then
+			fopen = false
+			exit function
+		end if
+	end if
+
+
+	if not find_page_on_iid(THIS_FILE) is nothing then
+		fopen = false
+		doc_.postcommand("varCmd=CMD_REFRESH gvar_page_iid=THIS_FILE")
+		exit function
+	end if
+	fopen = prepare_content()
+	if trans_.isvar(1) and not fopen then
+		MessageBox "Nie ma żadnych rezerwacji do zakończenia", "Sprawdzenie rezerwacji", vbOKOnly, vbInformation
+	end if
+end function
+
+function frefresh()
+	prepare_content
+end function
+
+'------ wyświetl listę dla dowolnego kryterium m.in. czasu ------------
+function prepare_content_where_time(byval strWhereTime) : prepare_content_where_time = false
+#ifdef _DEBUG
+	trans_.message 7000 , 0 , "Automatyczne sprawdzanie stanu rezerwacji..."
+#endif
+
+#ifdef APPCONFIG_MANUAL_CALL_REZERWACJE
+	if not bSilent then
+		strWhereTime = "1=1"
+	end if
+#endif
+
+  dim strWhere 
+  strWhere = trans_.afc.convert.Formatter("" +_
+  " idobj not in (select pDokMag from n5dokmag where nTypDok=N5REJESTRDOK_ZAK_REZERWACJI) and nTypDok=N5REJESTRDOK_REZERWACJE and (%1)")_
+  .add(strWhereTime) _
+  .done()
+
+#ifdef _TORAL
+  if not bSilent then
+    strWhere = strWhere + " and %1 and %2 and %3 "
+    dim pParamArray: set pParamArray = doc_.afc.new_navoarray()
+    pParamArray.add doc_.afc.rap.param.new_date_range("Data wystawienia").bindexpr("dDataWyst")
+    pParamArray.add doc_.afc.rap.param.new_date_range("Data obowiązywania").bindexpr("dDataRezerw")
+    pParamArray.add doc_.getmodule(43025).new_filtr_magazyn_ext("pMagZrod","N5TYPMAG_PODSTAWOWY,N5TYPMAG_ZWROTY,N5TYPMAG_PRODUKCJAWTOKU,N5TYPMAG_REZERWACJE","Magazyn wydania")    
+    dim pModRapEngine : set pModRapEngine = doc_.getmodule(60108)
+    if pModRapEngine.show_raport_param_dialog(pParamArray,"Rezerwacje") then
+      strWhere = pModRapEngine.query_apply_actual_param(strWhere,pParamArray)
+    else
+      exit function
+    end if  
+  end if
+#endif
+
+	dim oTB: set oTB = doc_.afc.new_tb(page_).attach(page_.ctrl(CTRLID_REZERWACJE_TABLE)).removeall
+
+	dim pRezerwacjeCrsr:set pRezerwacjeCrsr = trans_.createrawcursor(TYPEID_N5DOKMAG , 	strWhere , "dDataWyst" , "")
+	if not pRezerwacjeCrsr.exists(1) then
+		exit function
+	end if
+
+
+	dim pRezerwacja
+	dim iter : iter = 1
+	for each pRezerwacja in pRezerwacjeCrsr
+		oTB.newrow
+		if iter mod 2 = 0 then
+			oTB.row.styleitem = STYLE_ROW_EVEN
+		end if
+		set oTB.newcell.addtext(pRezerwacja.strNrDok).element.hli = _
+			doc_.createhlistr( doc_.afc.convert.formatter(" OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5DOKMAG,%1,USAGE_VIEW) ") _
+			.add(pRezerwacja.idobj).done())
+		oTB.newcell
+		if not pRezerwacja.pKlient is nothing then
+			oTB.addtext pRezerwacja.pKlient.text
+		end if
+		oTB.newcell.addtext trans_.afc.display.fulldate(pRezerwacja.dDataWyst)
+		oTB.newcell.addtext trans_.afc.display.fulldate(pRezerwacja.dDataRezerw) + " " + _
+			trans_.afc.display.longtime(pRezerwacja.tCzasRezerw)
+#ifndef _INTERCO			
+		with oTB.newcell.addctrl(CTRL_TYPE_BUTTON, -1).element
+			.text = "Zwolnij rezerwację"
+			.styleitem = STYLE_BUTTON
+			set .hli = doc_.createhlistr("varFunctionHLI='finish_rezerwacje_on_hli' vn1=" + cstr(pRezerwacja.idobj))
+		end with
+#endif
+#ifdef _TORAL
+	if not pRezerwacja.pMagZrod is nothing then
+		dim oMagZrod: set oMagZrod = trans_.getobj(TYPEID_N5MAGAZYN,pRezerwacja.pMagZrod.IdObj)
+		oTB.newcell.addtext oMagZrod.strNazwa
+	end if
+#endif
+		iter = iter + 1
+	next
+	
+	prepare_content_where_time = true
+end function
+
+'------ wyświetl listę rezerwacji przeterminowanych na bazie obecnego czasu -----------
+
+function prepare_content()
+	dim strWhereTime
+	strWhereTime = trans_.afc.convert.Formatter( _
+		"(dDataRezerw<>%1 and (dDataRezerw<%2 or (dDataRezerw=%2 and tCzasRezerw<%3)))") _
+		.add(trans_.afc.convert.date2SQL(trans_.afc.globals.nulldate())) _
+		.add(trans_.afc.convert.date2SQL(CDate(trans_.var(GVAR_SYSDATE)))) _
+		.add(trans_.var(GVAR_SYSTIME)) _
+		.done()
+	prepare_content = prepare_content_where_time(strWhereTime)
+end function
+
+'tworzy zakonczenie rezerwacji - true gdy zostało utworzone
+function finish_rezerwacje_on_id(byval idRezerwacja)
+	finish_rezerwacje_on_id = true
+	dim pTrans:set pTrans = trans_.createsubtran()
+
+	trans_.var(APPVAR_REJESTR_TYP) = clng(N5REJESTRDOK_ZAK_REZERWACJI)
+
+	dim idRejestr : idRejestr = choose_rejestr_dok(cstr(N5REJESTRDOK_ZAK_REZERWACJI), true , "Wybierz rejestr dokumentów")
+	if idRejestr <= 0 then
+		exit function
+	end if
+	trans_.var(APPVAR_REJESTR_DOKUMENTOW) = idRejestr
+	dim pRezerw:set pRezerw = trans_.getobj(TYPEID_N5DOKMAG , idRezerwacja)
+	trans_.var(APPVAR_POP_DOKUMENT) = pRezerw.idobj
+	dim pZakRezerw:set pZakRezerw = trans_.newobj(TYPEID_N5DOKMAG)
+
+	finish_rezerwacje_on_id = trans_.saveobjects()
+	set pTrans = nothing		
+end function
+
+function finish_rezerwacje_on_hli(byref pHLI)
+	finish_rezerwacje_on_id clng(pHLI.prop(1))
+	frefresh
+end function
+
+'-- przedłuża czas trwania rezerwacji --
+function extend_rezerwacje_on_id(byval idRezerwacja,byval dNowaDataRezerw,byval tNowyCzasRezerw)
+	extend_rezerwacje_on_id = true
+	dim pTrans:set pTrans = trans_.createsubtran()
+	dim pRezerwacja : set pRezerwacja=trans_.getobj(TYPEID_N5DOKMAG , idRezerwacja)
+	with pRezerwacja
+		.dDataRezerw = dNowaDataRezerw
+		.tCzasRezerw = tNowyCzasRezerw
+	end with
+
+	extend_rezerwacje_on_id = trans_.saveobjects()
+	set pTrans = nothing		
+end function
+]]>
+</script>
+
+</config>
+
+<header>
+</header>
+<body>
+<table name='CTRLID_REZERWACJE_TABLE'>
+	<thead>
+		<tr style='STYLE_TABLE_HEADER'>
+			<td>
+				<t>Numer dokumentu</t>
+			</td>
+			<td>
+				<t>Klient</t>
+			</td>
+			<td>
+				<t>Data utworzenia</t>
+			</td>
+			<td>
+				<t>Data i czas ważności</t>
+			</td>
+#ifndef _INTERCO
+			<td>
+				<t>Zakończ</t>
+			</td>
+#endif
+#ifdef _TORAL
+			<td>
+				<t>Magazyn wydania</t>
+			</td>
+#endif
+		</tr>
+	</thead>
+	<tbody border='1' style='STYLE_TABLE_BODY_RAPORT'>
+	</tbody>
+</table>
+</body>
+</page>

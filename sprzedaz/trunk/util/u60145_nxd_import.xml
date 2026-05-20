@@ -1,0 +1,557 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1203.h"
+
+dyrektywy:
+	_enter_sub	- rozpoczęcie podtransakcji
+	_leave_sub	- zakończenie podtranskacji
+	_save_now	- wymuszenie zapisu
+
+	_begin_unit - początek bloku (blokuje autozapis)
+	_end_unit	- koniec bloku (odblokowuje autozapis)
+
+	_with_recalc - włącz recalc dla tego obiektu
+	_match_mode  - sposób traktowania rekordów (domyślnie 3), bit 0 (=1) -> allow insert, bit 1 (=2) ->allow update
+-->
+<page>
+<config>
+<script>
+<![CDATA[
+
+#define TYPEID_SPECIAL_COMMAND		1
+#define TYPEID_SELFMAPID			2
+#define TYPEID_FIRST_STANDARD		10000	
+#define AUTOSAVE_COUNT		200
+#define DEFAULT_MATCH_MODE		 3
+
+#define ERRCODE_SAVE_FAILED		-1
+#define ERRCODE_MATCH_FAILED	-2
+#define ERRCODE_NEWOBJ_FAILED	-3
+#define ERRCODE_GETOBJ_FAILED	-4
+#define ERRCODE_INSERT_NOTALLWD	-5
+
+#define ERRCODE_INTERNAL_ERROR	-99
+
+
+class CNXDImportHandler
+	private m_pImportPackage
+	private m_pSkippedObjectDict
+	private m_pImportMsg
+	private m_nError
+
+	private m_pObjectMatcher
+	private m_pDestEnvHelper
+	private m_pFieldTranslator
+	private m_pObjectImporter
+
+	private m_nUnsavedCounter
+	private m_nObjectCounter
+	private m_nSaveDisableCnt
+	private m_strErrDesc
+	private m_pPerforming
+	private m_pSubTransStack
+	private m_bUpdateExisting
+
+	private sub class_initialize()
+		set m_pImportPackage = doc_.system.activex("navoexpimp.importpackage")
+		set m_pSkippedObjectDict = doc_.system.activex("scripting.dictionary")
+		set m_pImportPackage.sink = me
+		set m_pImportMsg = nothing
+		set m_pObjectMatcher = nothing
+		set m_pDestEnvHelper = nothing
+		set m_pFieldTranslator = nothing
+		set m_pObjectImporter = nothing
+		set m_pPerforming = nothing
+		m_nError = 0
+		m_strErrDesc = ""
+		m_nSaveDisableCnt = 0
+		m_nUnsavedCounter = 0
+		m_nObjectCounter = 0
+		set m_pSubTransStack = doc_.afc.new_navoarray()
+		m_bUpdateExisting = true
+	end sub
+	private sub class_terminate()   'OK
+		cleanup
+	end sub
+
+	private sub cleanup()
+		set m_pSubTransStack = nothing
+
+		set m_pImportMsg = nothing
+		set m_pObjectMatcher = nothing
+		set m_pDestEnvHelper = nothing
+		set m_pFieldTranslator = nothing
+		set m_pObjectImporter = nothing
+		set m_pSkippedObjectDict = nothing
+		set m_pImportPackage = nothing
+		set m_pPerforming = nothing
+	end sub
+	
+	public sub required_init(byref pObjectMatcher,byref pDestEnvHelper)
+		set m_pObjectMatcher = pObjectMatcher
+		set m_pDestEnvHelper = pDestEnvHelper
+	end sub
+
+	public function go(byref pInputStream)
+		m_pImportPackage.istream pInputStream
+
+		show_progress "Rozpoczęcie importu danych"
+
+		m_pImportPackage.go
+
+
+		go = m_nError
+	end function
+
+	public sub set_field_translator(byref pFieldTranslator)
+		set m_pFieldTranslator = pFieldTranslator
+	end sub
+
+	public sub set_object_importer(byref pObjectImporter)
+		set m_pObjectImporter = pObjectImporter
+	end sub
+
+	'-- importer interface ---
+	public sub OnMessageBegin(byref pMsgObj,byref bBreak)
+		bBreak = (m_nError <> 0)
+		set m_pImportMsg = pMsgObj
+	end sub
+	public sub OnMessageEnd(pMsgObj,byref bBreak)
+		if m_nError = 0 then
+			if m_nSaveDisableCnt = 0 then
+				if not trans_.saveobjects() then
+					m_nError = ERRCODE_SAVE_FAILED
+				end if
+			end if
+		else
+			cleanup
+			trans_.discard
+		end if
+	
+		bBreak = (m_nError <> 0)
+		set m_pImportMsg = nothing
+	end sub
+	public sub OnObject(pImpObject,byref bBreak)
+		if pImpObject.isfield("_enter_sub") then
+			dim pSubTrans : set pSubTrans = trans_.createsubtran()
+			pSubTrans.autorollback false
+			m_pSubTransStack.add pSubTrans
+			set pSubTrans = nothing
+		end if
+		if pImpObject.isfield("_begin_unit") then
+			enablesave = false			
+		end if
+		if pImpObject.typeid >= TYPEID_FIRST_STANDARD then
+			dim pStdObjDef : set pStdObjDef = doc_.stdobjdef.getobjdef(pImpObject.typeid)
+			
+			if pStdObjDef.child then
+				m_nError = std_import_child_object(me,pImpObject)
+			else
+				m_nError = std_import_object(me,pImpObject)
+			end if
+		else
+			if pImpObject.typeid = TYPEID_SELFMAPID then
+				dim idSelfMapType : idSelfMapType = clng(pImpObject("_selfmap_typeid"))
+				dim idSelfMapIdObj: idSelfMapIdObj= clng(pImpObject("_selfmap_idobj"))
+				setmapid idSelfMapType,idSelfMapIdObj,idSelfMapIdObj
+			end if
+		end if
+		if m_nError = 0 then
+			if pImpObject.isfield("_save_now") then
+				if not trans_.save() then
+					errordesc = "Zachowanie danych nieudane"
+					m_nError = ERRCODE_SAVE_FAILED
+				end if
+				m_nUnsavedCounter = 0
+			end if
+		end if
+		if pImpObject.isfield("_leave_sub") then
+			set m_pSubTransStack.Value(m_pSubTransStack.UpperIndex) = nothing
+			m_pSubTransStack.Remove m_pSubTransStack.UpperIndex
+		end if
+		if pImpObject.isfield("_end_unit") then
+			enablesave = true			
+		end if
+		'-- autosave
+		m_nUnsavedCounter = m_nUnsavedCounter + 1
+
+		if m_nError = 0 then
+			if m_nUnsavedCounter > AUTOSAVE_COUNT and (m_nSaveDisableCnt = 0) then
+				show_progress "Zachowywanie danych..."
+				if not trans_.save() then
+					errordesc = "Auto-zachowanie danych nieudane"
+					m_nError = ERRCODE_SAVE_FAILED
+				end if
+				m_nUnsavedCounter = 0
+			end if
+		end if
+		'-- 
+		bBreak = (m_nError <> 0)
+	end sub
+	'------ 
+	public function resolve_ref(byval nTypeId,byval idSrcObj)
+		if idSrcObj = 0 then
+			set resolve_ref = nothing
+		else
+			if doc_.stdobjdef.getobjdef(nTypeId).child then
+				dim nDestParentType
+				dim idSrcParent
+				dim strListField
+				dim nListLP
+				dim idDestChild : idDestChild = m_pImportMsg.getmapidex(nTypeId,idSrcObj,nDestParentType,idSrcParent,strListField,nListLP)
+				
+				set resolve_ref = trans_.getobj(nDestParentType, _
+					m_pImportMsg.mapid(nDestParentType,idSrcParent)). _
+						field(strListField).get(nListLP)
+			else
+				if m_pImportMsg.mapid(nTypeId,idSrcObj) = clng(0) then
+					if idSrcObj > clng(0) then
+						set resolve_ref = trans_.getobj(nTypeId,idSrcObj)
+					end if
+				else
+					set resolve_ref = trans_.getobj(nTypeId,m_pImportMsg.mapid(nTypeId,idSrcObj))
+				end if
+			end if
+		end if
+	end function
+
+	public sub setmapid(byval nTypeId,byval idSrcObj,byval idDestObj)
+		m_pImportMsg.mapid(nTypeId,idSrcObj) = idDestObj
+	end sub
+
+	public sub setmapidex(byval nTypeId,byval idSrcObj,byval idDestObj,byval nParentTypeId,byval nParentIdObj,_
+		byval strParentList,byval nParentLP)
+		m_pImportMsg.setmapidex nTypeId,idSrcObj,idDestObj,nParentTypeId,nParentIdObj,strParentList,nParentLP
+	end sub
+
+	'0 - insert
+	'>0 - update
+	public function find_match(byref pImpObject)
+		find_match = m_pObjectMatcher(pImpObject,me)
+	end function
+
+	public function prepare_object_env(byref pImpObject,byval idDestObj)
+		prepare_object_env = m_pDestEnvHelper(pImpObject,idDestObj,me)
+	end function
+
+	public property let enablesave(byval bEnable)
+		if bEnable then
+			m_nSaveDisableCnt = m_nSaveDisableCnt - 1
+		else
+			m_nSaveDisableCnt = m_nSaveDisableCnt + 1
+		end if
+	end property
+
+	public property let errordesc(byval strDesc)
+		m_strErrDesc = m_strErrDesc + strDesc + vbCrLf
+	end property
+
+	public property get errordesc()
+		errordesc = m_strErrDesc
+	end property
+
+	public property let updateexisting(byval bUpdate)
+		m_bUpdateExisting = bUpdate
+	end property
+
+	public property get updateexisting()
+		updateexisting = m_bUpdateExisting
+	end property
+
+	public sub hide_progress()
+		set m_pPerforming = nothing
+	end sub
+
+	public sub show_progress(strText)
+		if m_pPerforming is nothing then
+			set m_pPerforming = doc_.performing(strText)
+		else
+			m_pPerforming.text = strText
+		end if
+	end sub
+
+	public function import_object_fields(byref pImpObject,byref pDestStdObj)
+		if m_pObjectImporter is nothing then
+			import_object_fields = std_import_object_fields(pImpObject,pDestStdObj)
+		else
+			import_object_fields = m_pObjectImporter(Me,pImpObject,pDestStdObj)
+		end if
+	end function
+
+	public sub on_object_imported(byref pObject)
+		if m_nObjectCounter mod 10 = 0 then
+			show_progress "Zaimportowano: " + pObject.getobjdef.humanname + " (" + pObject.text + ")"
+		end if
+		m_nObjectCounter = m_nObjectCounter + 1
+	end sub
+
+	'robi translację pola
+	public function translate(byref pDestStdObj,byref pFieldDef,byref varValue)
+		if m_pFieldTranslator is nothing then
+			translate = true
+		else
+			translate = m_pFieldTranslator(pDestStdObj,pFieldDef,varValue)
+		end if
+	end function
+
+	'standardowa implementacja importu pól
+	public function std_import_object_fields(byref pImpObject,byref pDestStdObj)
+			std_import_object_fields = 0
+			pDestStdObj.recalcenabled = false
+			
+			if pImpObject.isfield("_with_recalc") then
+				pDestStdObj.recalcenabled = true
+			end if
+
+			dim pStdObjDef : set pStdObjDef = doc_.stdobjdef.getobjdef(pImpObject.typeid)
+			dim pFieldDef
+			dim iter : iter = 0
+
+			for each pFieldDef in pStdObjDef
+
+				if pImpObject.isfield(pFieldDef.name) then
+					if iter <> 0 then		'pomijamy idobj
+						select case pFieldDef.type
+						case RELT_EMBED,RELT_ENUM	'wbudowane
+							if not pFieldDef.iscomputed() then
+								dim varValue
+								'trim text fields
+								if pFieldDef.sqltype < SQLsmall then	
+									dim nFldLen : nFldLen = pFieldDef.sqltype
+									if nFldLen > 8192 then
+										nFldLen = nFldLen - 8192 
+									end if
+									varValue = rtrim(left(pImpObject(pFieldDef.name),nFldLen))
+								else
+									varValue = pImpObject(pFieldDef.name)
+								end if
+								if translate(pDestStdObj,pFieldDef,varValue) then
+									pDestStdObj.field(iter) = varValue
+								end if
+							end if
+						case RELT_REF		'ref
+							dim idRef : idRef = clng(pImpObject(pFieldDef.name))
+							if translate(pDestStdObj,pFieldDef,idRef) then
+								if idRef <> 0 then
+									set pDestStdObj.field(iter) = resolve_ref(pFieldDef.reftypeid,idRef)
+								else
+									set pDestStdObj.field(iter) = nothing
+								end if
+							end if
+						case RELT_WILDREF:	'dzika ref
+							dim idWildRef : idWildRef = clng(pImpObject(pFieldDef.name))
+							if translate(pDestStdObj,pFieldDef,idWildRef) then
+								if idWildRef <> 0 then
+									dim nWildRefType : nWildRefType = clng(pImpObject(pFieldDef.name + "_wrt"))
+									set pDestStdObj.field(iter) = resolve_ref(nWildRefType,idWildRef)
+								else
+									set pDestStdObj.field(iter) = nothing
+								end if
+							end if
+						case RELT_FILE		'plik
+							with pDestStdObj.field(iter)
+								.attach pImpObject(pFieldDef.name)
+								
+								if pImpObject.isfield(pFieldDef.name + "_ext") then
+									.ext = pImpObject(pFieldDef.name + "_ext")
+								end if
+
+							end with
+						end select
+					end if
+				end if
+				
+				iter = iter + 1
+			next
+			pDestStdObj.recalcenabled = true
+	end function
+	
+	public sub add_to_skipped(byval nTypeId,byval nSrcIdObj)
+		m_pSkippedObjectDict.Add cstr(nTypeId) + ";" + cstr(nSrcIdObj), true
+#ifdef _DEBUG
+		trans_.message 0,0,"import skipped " + cstr(nTypeId) + ";" + cstr(nSrcIdObj)
+#endif
+	end sub
+	public function is_skipped(byval nTypeId,byval nSrcIdObj)
+		is_skipped = m_pSkippedObjectDict.exists(cstr(nTypeId) + ";" + cstr(nSrcIdObj))
+	end function
+end class
+
+class CNXDPeekHeader
+	private m_pImportPackage
+	private m_pHeader
+
+	private sub class_initialize()
+		set m_pImportPackage = doc_.system.activex("navoexpimp.importpackage")
+		set m_pImportPackage.sink = me
+		set m_pHeader = nothing
+	end sub
+
+	public function go(byref pInputStream)
+		m_pImportPackage.istream pInputStream
+		m_pImportPackage.go
+	end function
+
+	public sub OnMessageBegin(byref pMsgObj,byref bBreak)
+		set m_pHeader = pMsgObj.header
+		bBreak = true
+	end sub
+	public sub OnMessageEnd(pMsgObj,byref bBreak)
+	end sub
+	public sub OnObject(pImpObject,byref bBreak)
+	end sub
+
+	public property get header()
+		set header = m_pHeader
+	end property
+end class
+
+
+
+function std_import_object(byref pHandler,byref pImpObject)
+
+	std_import_object = 0
+
+	dim idDestObj : idDestObj = pHandler.find_match(pImpObject)
+	if idDestObj <= -1 then	'error
+		pHandler.errordesc = "Skojarzenie dla obiektu typu " +_
+			doc_.stdobjdef.getobjdef(pImpObject.typeid).humanname +_
+			" [" + cstr(pImpObject.typeid) + "," + cstr(pImpObject.idobj) + "] nieudane"
+		std_import_object = ERRCODE_MATCH_FAILED
+		exit function
+	end if
+
+	dim nMatchMode : nMatchMode = clng(DEFAULT_MATCH_MODE)
+#ifndef _CTP  
+	if pImpObject.isfield("_match_mode") then
+		nMatchMode = clng(pImpObject("_match_mode"))
+	end if
+#endif  
+
+	dim bUpdateFields
+	if idDestObj = 0 then
+		bUpdateFields = ((nMatchMode and 1) = 1)
+
+		if not bUpdateFields then
+			
+			pHandler.errordesc = "Wstawienie nowego obiektu niedozwolone dla obiektu typu " +_
+				doc_.stdobjdef.getobjdef(pImpObject.typeid).humanname + " ["+ cstr(pImpObject.typeid) +_
+			"," + cstr(pImpObject.idobj) + "]"
+			std_import_object = ERRCODE_INSERT_NOTALLWD
+			exit function
+		end if
+	else
+		bUpdateFields = ((nMatchMode and 2) = 2)
+	end if
+
+	if bUpdateFields then
+
+		dim pDestStdObj
+		
+		std_import_object = pHandler.prepare_object_env(pImpObject,idDestObj)
+		if std_import_object <> 0 then
+			pHandler.errordesc = "Przygotowanie środowiska dla obiektu typu="+ cstr(pImpObject.typeid) +_
+			" i idobj=" + cstr(pImpObject.idobj) + " nieudane"
+			std_import_object = ERRCODE_INTERNAL_ERROR
+			exit function
+		end if
+
+		if idDestObj = 0 then
+			set pDestStdObj = trans_.newobj(pImpObject.typeid)
+			if pDestStdObj is nothing then
+				std_import_object = ERRCODE_NEWOBJ_FAILED
+				pHandler.errordesc = "Utworzenie obiektu typu="+ cstr(pImpObject.typeid) +_
+					" nieudane"
+				exit function
+			end if
+		else
+			set pDestStdObj = trans_.getobj(pImpObject.typeid,idDestObj)
+			if pDestStdObj is nothing then
+				std_import_object = ERRCODE_GETOBJ_FAILED
+				pHandler.errordesc = "Utworzenie obiektu typu="+ cstr(pImpObject.typeid) +_
+					" i idobj=" + cstr(pImpObject.idobj) + " nieudane"
+				exit function
+			end if
+		end if
+
+		idDestObj = pDestStdObj.idobj
+
+		'import fields as usual
+		std_import_object = pHandler.import_object_fields(pImpObject,pDestStdObj)
+		pHandler.on_object_imported pDestStdObj
+	else
+		pHandler.add_to_skipped pImpObject.typeid,pImpObject.idobj
+	end if
+
+	'store mapping (always when possible)
+	if(std_import_object = 0) then
+		if idDestObj <> 0 then
+			pHandler.setmapid pImpObject.typeid,pImpObject.idobj,idDestObj
+		end if
+	end if
+end function
+
+function std_import_child_object(byref pHandler,byref pImpObject)
+	std_import_child_object = 0
+
+	dim pDestStdObj : set pDestStdObj = nothing
+	dim nParentType : nParentType = clng(pImpObject("_parent_type"))
+	dim idSrcParent : idSrcParent = clng(pImpObject("_parent_idobj"))
+	dim strListFld : strListFld = cstr(pImpObject("_parent_list"))
+	dim nLP : nLP = clng(pImpObject("_list_lp"))
+
+	dim pDestParent : set pDestParent =  pHandler.resolve_ref(nParentType,idSrcParent)
+	dim pListField : set pListField = pDestParent.field(strListFld)
+
+	dim bUpdateFields : bUpdateFields = not pHandler.is_skipped(nParentType,idSrcParent)
+
+	if pListField.exists(nLP) then
+		set pDestStdObj = pListField.get(nLP)
+	else
+		if bUpdateFields then
+			set pDestStdObj = pListField.addnew()
+			nLP = pListField.count()
+		end if
+	end if
+
+	if bUpdateFields then
+			'import fields as usual
+			std_import_child_object = pHandler.import_object_fields(pImpObject,pDestStdObj)
+		
+		if pImpObject.isfield("_last_child") then
+			'remove extra elements from list
+			do while pListField.exists(nLP+1) 
+				pListField.delete pListField.count()
+			loop
+		end if
+	else
+		pHandler.add_to_skipped pImpObject.typeid,pImpObject.idobj
+	end if
+
+	'store mapping (child version) - when possible
+
+	if(std_import_child_object = 0) then
+		if not pDestStdObj is nothing then
+			pHandler.setmapidex pImpObject.typeid,pImpObject.idobj,pDestStdObj.idobj,_
+				pDestParent.type,idSrcParent,strListFld,nLP
+		end if
+	end if
+end function
+
+function new_import_handler()
+	set new_import_handler = new CNXDImportHandler
+end function
+
+function retrieve_header(byref pSO)
+	dim pNXDPeekHeader : set pNXDPeekHeader = new CNXDPeekHeader
+	pNXDPeekHeader.go pSO
+	set retrieve_header = pNXDPeekHeader
+end function
+]]>
+</script>
+
+</config>
+	<body>
+	</body>
+</page>

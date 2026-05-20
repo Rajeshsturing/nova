@@ -1,0 +1,988 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+
+
+#define ID_TABLE				100
+#define ID_T_HEADER				101
+
+#define PROP_ROW_NUMBER			100
+#define PROP_HAS_CHILDREN		101
+#define PROP_SOURCE_IDOBJ		102
+#define PROP_SOURCE_TYPE		103
+-->
+<page>
+<config>
+	<title></title>
+<script>
+<![CDATA[
+
+
+'////////////////////////////////////////////////////////////////
+'// (C) 2001 NAVO Ltd.										   //
+'// Hierarchy list											   //
+'// XXXXXX											   //
+'////////////////////////////////////////////////////////////////
+
+
+#include "50216"
+#include "50505"
+#include "50122"
+
+dim pGlobalHierarchyParam	'do wykorzystania w czasie pracy
+
+
+dim nGlobalChoiceTypeId		'w tych zmiennych pamietany jest
+dim nGlobalChoiceIdObj		'wybor danego elementu
+
+
+function fopen()
+	page_.topelement.backcolor=RGB(255,255,255)
+	reset_choice
+
+	fopen = true
+end function
+
+function fclose()
+	if (not pGlobalHierarchyParam.m_pfnClose is nothing) then
+		'call event
+		dim pDelegateParam
+		set pDelegateParam=new CDelegateParam
+
+		set pDelegateParam.pRow=nothing
+		set pDelegateParam.pObj=nothing
+		set pDelegateParam.pCell=nothing
+		set pDelegateParam.pRootContainer=nothing
+		set pDelegateParam.pPage=page_
+
+		fclose=pGlobalHierarchyParam.m_pfnClose( pDelegateParam )
+		set pDelegateParam=nothing
+		exit function
+	end if
+
+	fclose=true
+end function
+
+
+function fsave()
+	if (not pGlobalHierarchyParam.m_pfnSave is nothing) then
+		'call event
+		dim pDelegateParam
+		set pDelegateParam=new CDelegateParam
+
+		set pDelegateParam.pRow=nothing
+		set pDelegateParam.pObj=nothing
+		set pDelegateParam.pCell=nothing
+		set pDelegateParam.pRootContainer=nothing
+		set pDelegateParam.pPage=page_
+
+		fsave=pGlobalHierarchyParam.m_pfnSave( pDelegateParam )
+		set pDelegateParam=nothing
+		exit function
+	end if
+
+	fsave=true
+end function
+
+'-----------------------------------------------------------------------
+' True jeżeli wyświetlanie odbywa się dokładnie na stronie w page_
+'-----------------------------------------------------------------------
+function localMode(): localMode = true
+	if (not pGlobalHierarchyParam.m_pHierarchyPage is nothing) then
+		localMode = false
+	end if
+end function
+
+'-----------------------------------------------------------------------
+' Pobiera strone na ktorej ma być wszystko wyświetlone
+'-----------------------------------------------------------------------
+function getPage()
+	if (not pGlobalHierarchyParam.m_pHierarchyPage is nothing) then
+		set getPage = pGlobalHierarchyParam.m_pHierarchyPage.m_pPage
+	else
+		set getPage = page_
+	end if
+end function
+
+function getExternalLevel(): getExternalLevel = 0
+	if (not pGlobalHierarchyParam.m_pHierarchyPage is nothing) then
+		getExternalLevel = pGlobalHierarchyParam.m_pHierarchyPage.m_nLevel
+	end if
+end function
+
+'-----------------------------------------------------------------------
+' Zwraca nazwe funkcji wypełniającej pGlobalHierarchyParam
+'-----------------------------------------------------------------------
+function getFunctionName(): getFunctionName = ""
+	if (not pGlobalHierarchyParam.m_pHierarchyPage is nothing) then
+		getFunctionName = pGlobalHierarchyParam.m_pHierarchyPage.m_strFunctionName
+	end if
+end function
+
+'-----------------------------------------------------------------------
+' Pobierz ID tabelki do ktorej wstawiamy
+'-----------------------------------------------------------------------
+function getTableID()
+	if (not pGlobalHierarchyParam.m_pHierarchyPage is nothing) then
+		getTableID = pGlobalHierarchyParam.m_pHierarchyPage.m_nTableID
+	else
+		getTableID = ID_TABLE
+	end if
+end function
+
+function setHierarchyParam(byref pHierarchyParam)
+	'ustaw referencja na globalna zmienna
+	set pGlobalHierarchyParam = pHierarchyParam
+end function
+
+'-----------------------------------------------------------------------
+'Pobieranie/ustawianie/czyszczenie wyboru
+'-----------------------------------------------------------------------
+sub reset_choice()
+	nGlobalChoiceTypeId = 0
+	nGlobalChoiceIdObj = 0
+end sub
+
+'-----------------------------------------------------------------------
+'Pobranie dokonanego wyboru
+'-----------------------------------------------------------------------
+sub get_choice(byref nChoiceTypeId,byref nChoiceIdObj)
+	nChoiceTypeId = nGlobalChoiceTypeId
+	nChoiceIdObj = nGlobalChoiceIdObj
+end sub 
+
+'-----------------------------------------------------------------------
+'Otwieramy formularz
+'-----------------------------------------------------------------------
+function hier_open_form(pHli)
+	nGlobalChoiceTypeId = pHli.prop(GVAR_TYPEID)
+	nGlobalChoiceIdObj = pHli.prop(GVAR_OBJECT)
+
+	if (not pGlobalHierarchyParam.m_bAutoClose) then
+		if nGlobalChoiceTypeId <> 0 then
+			doc_.getmodule(60129).form_domodal nGlobalChoiceTypeId,nGlobalChoiceIdObj,USAGE_VIEW			
+		end if
+	else
+		getPage().goback
+	end if
+end function
+
+'-----------------------------------------------------------------------
+'Pobierz id collection dla join'a na podstawie informacji
+'o poziomach obiektow
+'-----------------------------------------------------------------------
+function GetIdCollection(byref pNextNode, byref pPrevNode)
+	GetIdCollection=clng( ( pPrevNode.nTypeid * 1000) + pNextNode.nListID )
+end function
+
+'-----------------------------------------------------------------------
+'Funkcja buduje zapytanie dla węzła drzewa na danym poziomie. Zapytanie
+'zwraca czy sa jakies dzieci i podwezly dla danego poziomu
+'-----------------------------------------------------------------------
+function tree_GetNodeQuery(byref pNodeLevel, byref pChildLevel, byval nParentIdObj)
+	tree_GetNodeQuery=""
+
+	with pGlobalHierarchyParam
+		
+		'zapytanie SQL'owe
+		dim strSQL:strSQL=""
+		
+		'strNodeTable - tablica węzła - w przypadku tupu dokumentu 
+		'i dokumentu beda to obiekty typów dokumentów czyli:
+		'
+		'					typ dok 1
+		'					/		\
+		'			typ dok 2		typ dok 3
+		'			/		\		/		\
+		'		typ dok A  typ B  typ C    typ C
+
+		dim strNodeTable : strNodeTable = doc_.stdobjdef.getobjdef( pNodeLevel.nTypeid ).tablename
+		
+		'strChildTable - tablica dziecka - w przypadku tupu dokumentu 
+		'i dokumentu beda to obiekty dokumentów należące do danej grupy
+		'dokumentu (typu)
+
+		dim strChildTable:strChildTable=""
+
+		if ( not pChildLevel is nothing ) then
+			strChildTable = doc_.stdobjdef.getobjdef( pChildLevel.nTypeid ).tablename
+		end if
+
+		'zapytanie dla danego rekordu zwraca czy istnieja jakies
+		'dzieci i węzły
+		strSQL = "select 'nodeidobj'=node1.idobj, "
+
+		if (pNodeLevel.strFieldName<>"") then
+			strSQL = strSQL + "'bSubNodes'=case when exists(select * from " + strNodeTable +_
+				" node2 where node2." + pNodeLevel.strFieldName + "=node1.idobj) then 1 else 0 end, "
+		else
+			strSQL = strSQL + "'bSubNodes'=0,"
+		end if
+			
+		'jezeli podano tablice dziecka
+		if (strChildTable<>"") then
+			
+			if (pChildLevel.bList) then
+
+				dim nIdCollection
+				nIdCollection=GetIdCollection( pChildLevel, pNodeLevel )
+				
+				strSQL = strSQL + "'bChildren'=case when exists " + _
+				"(" + _
+					"select * from " + strNodeTable + " nodeA " + _
+					"join collections on collections.IdParent=nodeA.IdObj and collections.IdCollection=" + CStr(nIdCollection) + _
+					" where nodeA.idobj=node1.idobj " + _
+				") then 1 else 0 end "
+
+			else
+				'elementy z referencja na ojca
+				strSQL = strSQL + "'bChildren'=case when exists(select * from " + strChildTable + " where " + pChildLevel.strParentFieldName + _
+				"=node1.idobj "
+
+				if (pChildLevel.strWhere<>"") then
+					strSQL=strSQL + " and (" + replace(pChildLevel.strWhere, "%root_table%", strChildTable) + ")"
+				end if
+				
+				strSQL = strSQL + ") then 1 else 0 end "
+			end if
+
+		else
+			
+			strSQL = strSQL + "'bChildren'=0 "
+
+		end if
+		 
+		 strSQL = strSQL + _
+		 " from " + strNodeTable + " node1 "
+		 
+		 if (pNodeLevel.strFieldName<>"") then
+			strSQL = strSQL + "where node1." + pNodeLevel.strFieldName + _
+			"=" + CStr( nParentIdObj )
+		 else
+			'jezeli nie ma routera to nie ma wyswietlac 
+			strSQL = strSQL + "where node1.idobj=0"
+		 end if
+
+		 'dodaj where user'a
+		 if (pNodeLevel.strWhere<>"") then
+			strSQL = strSQL + " and (" + replace(pNodeLevel.strWhere, "%root_table%", "node1") + ")"
+		 end if
+		 
+		 strSQL = strSQL +" order by "
+		 
+		 'order by dla zapytania
+		 if (pNodeLevel.strOrderBy="") then
+			strSQL = strSQL + "node1.idobj"
+		 else
+			strSQL = strSQL + pNodeLevel.strOrderBy
+		 end if
+
+		tree_GetNodeQuery = strSQL
+
+	end with
+
+end function
+
+'-----------------------------------------------------------------------
+'Funckcja buduje zapytanie dla dzieci danego poziomu
+'-----------------------------------------------------------------------
+function tree_getChildQuery(byref pNodeLevel, byref pChildLevel, byval nParentIdObj, byval nChildLevelIndex)
+	dim strJoin, strWhere, strSelect, strOrderBy
+
+	strJoin=""
+	strWhere=""
+	strOrderBy=""
+	strSelect="select child.idobj as childid"
+
+	dim pNextNode
+	set pNextNode=tree_GetLevelInfo(nChildLevelIndex+1)
+
+	if (not pNextNode is nothing) then
+		
+		if (not pNextNode.bList) then
+			
+			'jezeli istnieje router
+			if (pChildLevel.strFieldName<>"") then
+		
+				strSelect=strSelect + " ,'bSubChildren'=case when exists(select * from " + doc_.stdobjdef.getobjdef( pChildLevel.nTypeid ).tablename + _
+					 " node2 where node2." + pChildLevel.strFieldName + "=child.idobj) then 1 else 0 end"
+
+			else
+				
+				strSelect=strSelect + " ,'bSubChildren'=0"
+
+			end if
+
+		else
+			strSelect=strSelect + " ,'bSubChildren'=0"
+		end if
+
+	else
+		strSelect=strSelect + " ,'bSubChildren'=0"
+	end if
+
+	'jezeli podano tablice dziecka
+	if (not pNextNode is nothing) then
+			
+		if (pNextNode.bList) then
+			dim nIdCollection
+			nIdCollection=GetIdCollection( pNextNode, pChildLevel )
+
+			strSelect = strSelect + " ,'bChildren'=case when exists " + _
+			"(" + _
+				"select * from " + doc_.stdobjdef.getobjdef( pChildLevel.nTypeid ).tablename + " nodeA " + _
+				"join collections on collections.IdParent=nodeA.IdObj and collections.IdCollection=" + CStr(nIdCollection) + _
+				" where nodeA.idobj=child.idobj " + _
+			") then 1 else 0 end "
+
+		else
+			'elementy z referencja na ojca
+			strSelect = strSelect + " ,'bChildren'=case when exists(select * from " + doc_.stdobjdef.getobjdef( pNextNode.nTypeid ).tablename + " where " + pNextNode.strParentFieldName + _
+			"=child.idobj) then 1 else 0 end "
+		end if
+
+	else
+		strSelect=strSelect + " ,'bChildren'=0"
+	end if
+
+	if (pChildLevel.bList) then
+		strSelect=strSelect + " ,IdCollection, LP"
+	else
+		strSelect=strSelect + " ,'IdCollection'=0, 'LP'=0"
+	end if
+
+	strSelect=strSelect+" from " + doc_.stdobjdef.getobjdef( pChildLevel.nTypeid ).tablename + _
+			" as child"
+
+	
+	'Jezeli lisc nie jest lista
+	if (not pChildLevel.bList) then
+
+		strWhere=" where child." + pChildLevel.strParentFieldName + " in (select " + _
+			"idobj from " + _
+			doc_.stdobjdef.getobjdef( pNodeLevel.nTypeid).tablename + _
+			" as parent where parent.idobj=" + CStr(nParentIdObj) + ")"
+		
+	else
+
+		strJoin=" join collections on collections.IdObj=child.IdObj " + _
+		" and collections.IdCollection=" + CStr( GetIdCollection(pChildLevel, pNodeLevel) ) + " and " + _
+		"collections.IdParent=" + CStr(nParentIdObj)
+
+	end if
+
+	if (pChildLevel.strWhere<>"") then
+		strWhere=strWhere+" and (" + replace(pChildLevel.strWhere, "%root_table%", "child") + ")"
+	end if
+
+	'Teraz ustawiamy order by
+	if (pChildLevel.strOrderBy<>"") then
+		strOrderBy=" order by " + pChildLevel.strOrderBy
+	end if
+
+	'skladamy cale zapytanie	
+	tree_getChildQuery = strSelect + strJoin + _
+			strWhere + strOrderBy
+
+end function
+
+'-----------------------------------------------------------------------
+'Funckja dodaje wiersz, komorke i robi odpowiednie wciecia
+'-----------------------------------------------------------------------
+function tree_AddRow(byref pParentContainer, byval nIndent, byref pRow)
+
+	dim iRowNumber
+	iRowNumber=CLng(pParentContainer.count + 1)
+
+	dim pUserProp
+	set pUserProp=doc_.createhli()
+	
+	'dla wiersza ustaw w userprop, jaki to jest numer wiersza
+	pUserProp.prop(PROP_ROW_NUMBER)=CLng(iRowNumber)
+	'ustaw czy następny wiersz jest wierszem posiadajacym dzieci 0-nie 1-tak
+	pUserProp.prop(PROP_HAS_CHILDREN)=CLng(0)
+
+	dim pGroupRow
+	set pGroupRow=pParentContainer.insertnewrow(iRowNumber)
+
+	set pRow=pGroupRow
+	set pRow.userprop=pUserProp
+
+	dim pGroupCell
+	set pGroupCell=pGroupRow.addnew(CTRL_TYPE_TABLECELL,-1) 'insertnewcell(pGroupRow.count + 1)
+
+'KB: nie ma co się tak kisić	pGroupCell.width=clng( MINIMIZE_SIZE )
+
+	nIndent = nIndent + getExternalLevel()
+
+	'robimy wciecia
+	if nIndent > 0 then
+		dim pSpaces : set pSpaces = pGroupCell.addnew(CTRL_TYPE_STATIC, -1)
+		pSpaces.text = space(nIndent+nIndent)
+	end if
+	set tree_AddRow = pGroupCell
+end function
+
+'-----------------------------------------------------------------------
+'Ustawia jaki jest aktualny wezel i czy wyszukiwac w nim lisci - wolane
+'tylko dla root'a - na poczatku wszystkiego
+'-----------------------------------------------------------------------
+function tree_Begin(byval nParentIdObj, byval nContainerId, byval nIndent)
+
+	'Ostatnie 0 i 1 oznacza dzialanie na 2'ch pierwszych
+	'elementach tablicy zawierajacej opisy obiektow i ich
+	'powiazan ze soba
+	
+	tree_ConstructLevel nParentIdObj, nContainerId, nIndent, 0, 1, 0, 0
+
+end function
+
+'-----------------------------------------------------------------------
+'Funkcja zwraca odpowiednie informacje o poziomie drzewa na podstawie
+'podanego indeksu poziomu
+'-----------------------------------------------------------------------
+function tree_GetLevelInfo(byval nLevelIndex): set tree_GetLevelInfo=nothing
+	if ( nLevelIndex<=(pGlobalHierarchyParam.m_pConnector.Count()-1) ) then
+		set tree_GetLevelInfo=pGlobalHierarchyParam.m_pConnector.Value(nLevelIndex)
+	end if
+end function
+
+
+'-----------------------------------------------------------------------
+'Funckcja jest odpowiedzialana za wyswietlenia wiersza.
+'
+'pObj - obiekt na podstawie ktorego zbudować wiersz
+'pRootContainer - kontener tabelki do którego dodawać wiersze
+'bChildren - true jeżeli ma dzieci i można go rozwinąć
+'nIndent - numer poziomu zaglebienia w drzewie po roziwjaniu drzewa
+'nNodeLevelIndex - index informacji o wezle
+'pfnDelegateFunction - funkcja uzytkownika wypisujaca wiersz
+'-----------------------------------------------------------------------
+function tree_ConstructRow(byref pObj, byref pRootContainer, byval bChildren, byval nIndent, byval nNodeLevelIndex, byref pfnDelegateFunction, byref pPicIdModule)
+
+	'......................................................
+	'dodaj plusa i nazwe grupy
+	'dodaj to do tableki parenta
+	'......................................................
+
+	'dodaj nowy wiersz i komorke i pobierz dodana komore
+	dim pGroupCell, pGroupRow
+	set pGroupCell = tree_AddRow(pRootContainer, nIndent, pGroupRow)
+	pGroupCell.keepline=true
+
+
+	'Jezeli istnieja dzieci to bedzie mozna rowijac
+	'nasze drzewko - dodaj plus'a
+	dim pPicturePlus
+	set pPicturePlus=nothing
+
+	if (bChildren) then
+
+		set pPicturePlus = pGroupCell.addnew(CTRL_TYPE_PICTURE, -1)
+		pPicturePlus.image = clng(PICTURE_SMALL_PLUS)
+		pPicturePlus.tip = "Rozwiń"
+		
+		'zaznacz, ze wiersz ma dzieci
+		pGroupRow.userprop.prop(PROP_HAS_CHILDREN)=CLng(1)
+
+	else
+	'wyrównujemy wszystko do jednej lini z minusem lub plusem
+	
+		dim pEmptyText
+		set pEmptyText=pGroupCell.addnew(CTRL_TYPE_STATIC, -1)
+
+	end if
+
+	'ustaw id obiektu i jego typ
+	pGroupRow.userprop.prop(PROP_SOURCE_IDOBJ)=CLng(pObj.idobj)
+	pGroupRow.userprop.prop(PROP_SOURCE_TYPE)=CLng(pObj.type)
+
+	'Jezeli brak funkcji tworzacej wiersz
+	if (pfnDelegateFunction is nothing) then
+	
+		'dodajemy dla danego elementu jego domyślną ikonkę
+		dim nPicId : nPicId = pPicIdModule.get_obj_pic_id(pObj.type, pObj.idobj, PICUSE_LISTELEM)
+		dim pPicElem : set pPicElem = pGroupCell.addnew(CTRL_TYPE_PICTURE, -1)
+		
+		pPicElem.width=Clng( SIZE_FOR_12PX )
+		pPicElem.height=CLng( SIZE_FOR_12PX )
+		pPicElem.image = nPicId
+	
+		'wstaw właściwy tekst do komorki wiersza (static)
+		dim pNodeTxt
+		set pNodeTxt=pGroupCell.addnew(CTRL_TYPE_STATICEX, -1)
+		pNodeTxt.text = pObj.Text()
+		pNodeTxt.tip = "Pokaż szczegóły"
+
+
+		'skrot otwarcia elementu - dzieci nie maja swoich stron
+		'i moga byc otwierane tylko z parenta
+		if (not pObj.getobjdef.child) then
+
+			dim strFunctionCallName
+			if (localMode()) then
+				strFunctionCallName = "varFunctionHLI='hier_open_form' "
+			else
+				strFunctionCallName = "varFunctionHLI='hierarchy_external_call' vs300='hier_open_form' vs301='" + getFunctionName() + "' vn302='" + CStr(getExternalLevel()) + "' "
+			end if
+
+			dim pElementNameHli
+			set pElementNameHli=doc_.createhlistr(strFunctionCallName + _
+				"varTypeId=" + CStr(pObj.type) + " varObject=" + CStr(pObj.idobj) )
+
+			'ustaw skorty dla napisu
+			set pNodeTxt.hli=pElementNameHli
+
+		else
+			set pNodeTxt.hli=nothing
+		end if
+
+	else
+	'Wolamy funkcje user'a, ktora bedzie robic wiersz
+
+		'call event
+		dim pDelegateParam
+		set pDelegateParam=new CDelegateParam
+
+		set pDelegateParam.pRow=pGroupRow
+		set pDelegateParam.pObj=pObj
+		set pDelegateParam.pCell=pGroupCell
+		set pDelegateParam.pRootContainer=pRootContainer
+		set pDelegateParam.pPage=page_
+
+		pfnDelegateFunction pDelegateParam
+		set pDelegateParam=nothing
+
+	end if
+
+
+	'........................................................
+	'robimy tabelke, ktora reprezentująca jedną grupę czyli
+	'wszystko to co kryje się pod przyciskiem + - tylko gdy
+	'jest taka potrzeba czyli gdy istnieja dzieci
+	'........................................................
+
+	if (bChildren) then
+
+		dim nRowCount
+		nRowCount=pRootContainer.count + 1
+
+		dim pRow
+		set pRow=pRootContainer.insertnewrow(nRowCount)
+
+		set pRow.userprop=doc_.createhli()
+		pRow.userprop.prop(PROP_ROW_NUMBER)=CLng(nRowCount)
+
+		dim pCell
+		set pCell = pRow.addnew(CTRL_TYPE_TABLECELL,-1)'insertnewcell(pRow.count + 1)
+
+		pCell.colspan=pGroupRow.count
+
+		'Dodaj nowy kontener - tabelka w tabelce
+		dim pTableGroup
+		set pTableGroup=pCell.addnew(CTRL_TYPE_TABLE, -1 )
+		pTableGroup.parent.hide=true
+
+		dim pTableGroupBody
+		set pTableGroupBody=pTableGroup.body
+
+		'Obliczamy nowy index dla informacji o wezle
+		dim nNewNodeLevel
+		nNewNodeLevel=nNodeLevelIndex
+
+		'Jezeli zmienil sie typ obiektu to znaczy iz musimy
+		'aktualny poziom wezla podniesc do gory
+		if ( tree_GetLevelInfo(nNewNodeLevel).nTypeid<>pObj.type ) then
+			nNewNodeLevel= nNewNodeLevel + 1
+		end if
+
+		if (localMode()) then
+			strFunctionCallName = "varFunctionHLI='tree_ExpandCollapse'"
+		else
+			strFunctionCallName = "varFunctionHLI='hierarchy_external_call' vs300='tree_ExpandCollapse' vs301='" + getFunctionName() + "' vn302='" + CStr(getExternalLevel()) + "' "
+		end if
+
+		dim strCollapseHLI
+		strCollapseHLI=strFunctionCallName + _
+			" vn5001=" + CStr( pObj.IdObj ) + _
+			" vn5002=" + CStr( pTableGroupBody.ident ) +_
+			" vn5003=" + CStr( 1 + nIndent ) + _
+			" vn5004=" + CStr( pPicturePlus.ident ) + _
+			" vn5005=" + CStr( nNewNodeLevel )
+
+		set pPicturePlus.hli = doc_.createhlistr( strCollapseHLI )
+
+	end if	'sa dzieci
+
+end function
+
+
+'-----------------------------------------------------------------------
+'Funckcja jest odpowiedzialana za wyswietlenia wiersza "Więcej..."
+'-----------------------------------------------------------------------
+function tree_ConstructRow_More(byref pRootContainer, byval nIndent, _
+	nParentIdObj, nContainerId, nNodeLevelIndex, nChildLevelIndex, nStartRecord, nStartRecordNode)
+
+	'dodaj nowy wiersz i komorke i pobierz dodana komore
+	dim pGroupCell, pGroupRow
+	set pGroupCell = tree_AddRow(pRootContainer, nIndent, pGroupRow)
+	pGroupCell.keepline=true
+
+	dim strFunctionCallName
+	if (localMode()) then
+		strFunctionCallName = "varFunctionHLI='hier_more'"
+	else
+		strFunctionCallName = "varFunctionHLI='hierarchy_external_call' vs300='hier_more' vs301='" + getFunctionName() + "' vn302='" + CStr(getExternalLevel()) + "' "
+	end if
+
+	dim pNewHli
+	set pNewHli=doc_.createhlistr(strFunctionCallName)
+
+	'pobierze id wiersza, w ktorym jest "Więcej"
+	dim nIdRow: nIdRow=pGroupCell.parent.ident
+	
+	pNewHli.prop(5000)=CLng(nIndent)
+	pNewHli.prop(5001)=CLng(nParentIdObj)
+	pNewHli.prop(5002)=CLng(nContainerId)
+	pNewHli.prop(5003)=CLng(nNodeLevelIndex)
+	pNewHli.prop(5004)=CLng(nChildLevelIndex)
+	pNewHli.prop(5005)=CLng(nStartRecord)
+	pNewHli.prop(5006)=CLng(nIdRow)
+	pNewHli.prop(5007)=CLng(nStartRecordNode)
+
+	'wstaw właściwy tekst do komorki wiersza (static)
+	dim pNodeTxt
+	set pNodeTxt=pGroupCell.addnew(CTRL_TYPE_STATICEX, -1)
+	set pNodeTxt.hli=pNewHli
+	pNodeTxt.text = "Więcej . . ."
+
+end function
+
+
+'-----------------------------------------------------------------------
+' Reakcja na naciśniecie więcej
+'-----------------------------------------------------------------------
+function hier_more(byref pHli)
+
+	'nie usuwamy wiersza z tabelki tylko go ukrywamy
+	'Tak jest znacznie szybciej
+	getPage().ctrl( pHli.prop(5006) ).hide=true
+
+	tree_ConstructLevel pHli.prop(5001), pHli.prop(5002), _
+		pHli.prop(5000), pHli.prop(5003), pHli.prop(5004), _
+		pHli.prop(5005), pHli.prop(5007)
+end function
+
+
+'-----------------------------------------------------------------------
+'Funckja wolana przez tree_Begin i 
+'
+'nParentIdObj - id rekordu obiektu z nNodeLevelIndex
+'nContainerId - id kontenera, tabelki do ktorej dodawac wiersze
+'nIndent - poziom zaglebienia po rozwinieciu drzewka
+'nNodeLevelIndex - index aktualnego poziomu
+'nChildLevelIndex - index poziomu dzieci - wszystko dla tablicy z inf.
+'					o obiektach
+'nStartRecord - numer rekordu od ktorego bedziemy zaczynac pokazywanie
+'				numer ten dotyczy tylko liści
+'nStartRecordNode - numer od ktorego bedziemy zaczynac pokazywanie
+'					numer ten dotyczy wezlow (ojcow) (grup) czy jak kto woli??
+'dzieci
+'-----------------------------------------------------------------------
+function tree_ConstructLevel(byval nParentIdObj, byval nContainerId, byval nIndent, _
+		nNodeLevelIndex, nChildLevelIndex, nStartRecord, nStartRecordNode)
+
+	'........................................................
+	'Dobieramy się do odpowiedniej części tabelki
+	'czyli do naszego kontenera
+	'........................................................
+
+	dim pRootContainer
+	set pRootContainer = getPage().ctrl( nContainerId )
+
+	dim pPicIdModule
+	set pPicIdModule = doc_.getmodule(60301)
+	
+	'Odkrywamy samego siebie bo moglismy byc ukryci
+	pRootContainer.parent.parent.hide=false
+
+	
+	'Pobieramy sobie obiekty reprezentujace informacje
+	'o aktualnym wezle i dzieciach. Obiekty klasy CLevelInfo
+	dim pNodeLevel
+	set pNodeLevel=tree_GetLevelInfo(nNodeLevelIndex)
+
+	dim pChildLevel
+	set pChildLevel=tree_GetLevelInfo(nChildLevelIndex)
+
+	
+	'........................................................
+	'Zapytanie do bazy dla wezła na danym poziomie
+	'........................................................
+	
+	
+	dim pAdoRS
+	set pAdoRS=trans_.CreateAdoRS(tree_GetNodeQuery(pNodeLevel, pChildLevel, nParentIdObj))
+
+
+	dim pObj: set pObj=nothing
+
+	'liczba dzieci
+	dim nChildren
+
+	if (pAdoRS.RecordCount>=nStartRecordNode and (not pAdoRS.EOF)) then
+		pAdoRS.Move nStartRecordNode
+
+		nChildren=0
+	
+		do while not pAdoRS.EOF
+
+			nChildren = nChildren + 1
+		
+			'identyfikator rekordu węzła - w przypdaku dokumentu i 
+			'typu dokumentów będzie to id typu dokumentu
+			dim nNodeIdobj : nNodeIdobj = CLng( pAdoRS("nodeidobj") )
+
+			'true jezeli rekord posiada dzieci
+			dim bChildren
+			bChildren=( (CLng(pAdoRS("bSubNodes")) <> 0) or ((Clng(pAdoRS("bChildren")) <> 0) and pGlobalHierarchyParam.m_bShowChild) )
+
+			'pobieramy obiekt danego rekordu
+			set pObj=trans_.getobj( pNodeLevel.nTypeid, nNodeIdobj)
+			
+			'Budujemy sobie wiersz
+			if not pObj is nothing then
+				tree_ConstructRow pObj, pRootContainer, bChildren, nIndent, nNodeLevelIndex, pGlobalHierarchyParam.m_pfnGroup, pPicIdModule
+			end if
+
+			pAdoRS.movenext
+
+			if (pGlobalHierarchyParam.m_nMaxNodeElems>0) then
+				if (nChildren=pGlobalHierarchyParam.m_nMaxNodeElems and (not pAdoRS.EOF)) then
+					tree_ConstructRow_More pRootContainer, nIndent, nParentIdObj, nContainerId, nNodeLevelIndex, nChildLevelIndex, nStartRecord, (nChildren + nStartRecordNode)
+					exit do
+				end if
+			end if
+		loop	
+
+	end if
+
+
+	'........................................................
+	'Teraz zapytanie dla dzieci danego poziomu
+	'........................................................
+
+	set pObj=nothing
+		
+	if (not pChildLevel is nothing and _
+		pGlobalHierarchyParam.m_bShowChild) then
+	'Jeżeli na tym poziomie istnieją dzieci to
+	'bedziemy je wyswietlac
+
+		set pAdoRS=nothing
+		set pAdoRS=trans_.CreateAdoRS( tree_getChildQuery(pNodeLevel, pChildLevel, nParentIdObj, nChildLevelIndex) )
+
+		'badamy czy mamy doczynienia z lista tzn. z dzieckiem
+		dim pChildObjDef
+		set pChildObjDef=doc_.stdobjdef.getobjdef( pChildLevel.nTypeid )
+
+		'jezeli mamy doczynienia z dzie
+		dim bChildObj
+		bChildObj=(pChildObjDef.child)
+
+		nChildren=0
+
+		if (pAdoRS.RecordCount>=nStartRecord and (not pAdoRS.EOF)) then
+			pAdoRS.Move nStartRecord
+
+			dim pPerforming
+			if ((pAdoRS.RecordCount-nStartRecord)>=50) then
+				set pPerforming=doc_.performing("Czytanie elementów . . .")
+			end if
+		
+			do while not pAdoRS.EOF
+
+				nChildren=nChildren+1
+				
+				'id rekordu dziecka
+				dim nChildIdObj: nChildIdObj=CLng( pAdoRS("childid") )
+				'czy child ma inne dzieci
+				bChildren=( (CLng(pAdoRS("bSubChildren")) <> 0) or (Clng(pAdoRS("bChildren")) <> 0) )
+
+				'pobieramy obiekt danego rekordu
+				if (not bChildObj) then
+					set pObj=trans_.getobj( pChildLevel.nTypeid, nChildIdObj)
+				else
+					dim pParent
+					set pParent=trans_.getobj( pNodeLevel.nTypeid, nParentIdObj)
+
+					if (not pParent is nothing) then
+						'ktore pole listy
+						dim fldIndex
+						fldIndex=(CLng(pAdoRS("IdCollection")) mod 1000)
+						set pObj=pParent.field( fldIndex ).get( CLng(pAdoRS("LP")) )
+					end if
+				end if
+
+				'Budujemy sobie wiersz
+				if not pObj is nothing then
+					tree_ConstructRow pObj, pRootContainer, bChildren, nIndent, nChildLevelIndex, pGlobalHierarchyParam.m_pfnGroupElems, pPicIdModule
+				end if
+
+				pAdoRS.movenext
+
+				if (pGlobalHierarchyParam.m_nMaxElems>0) then
+					if (nChildren=pGlobalHierarchyParam.m_nMaxElems and (not pAdoRS.EOF)) then
+						tree_ConstructRow_More pRootContainer, nIndent, nParentIdObj, nContainerId, nNodeLevelIndex, nChildLevelIndex, (nStartRecord+nChildren), (nStartRecord+nChildren)
+						exit do
+					end if
+				end if
+
+			loop
+
+			set pPerforming=nothing
+
+		end if 'can Recordset.Move
+
+	end if 'sa dzieci
+
+end function
+
+
+'-----------------------------------------------------------------------
+'wolane na poczatku by zainicjowac - wyswietlic grupe typu root
+'oczywiscie grupa ta nigdy nie jest ukrywana
+'Rozpocznij od obiektu o id nParentIdObj
+'-----------------------------------------------------------------------
+function hierarchy_list(byref pHierarchyParam, byval nParentIdObj)
+	
+	'ustaw referencja na globalna zmienna
+	set pGlobalHierarchyParam = pHierarchyParam
+
+	if (localMode()) then
+		if (pGlobalHierarchyParam.m_pfnSave is nothing) then
+			getPage().cmdenabled CMD_SAVEFORM, false
+		else
+			getPage().cmdenabled CMD_SAVEFORM, true
+		end if
+
+		getPage().cmdenabled CMD_NEWFORM, false
+		getPage().cmdenabled CMD_DELETEFORM, false
+		getPage().cmdenabled CMD_FIRSTINCURSOR, false
+		getPage().cmdenabled CMD_PREVINCURSOR, false
+		getPage().cmdenabled CMD_NEXTINCURSOR, false
+		getPage().cmdenabled CMD_LASTINCURSOR, false
+		getPage().cmdenabled CMD_SEARCH, false
+
+		getPage().ctrl(ID_T_HEADER).text=pGlobalHierarchyParam.m_strHeadeText
+		getPage().topelement.title=pGlobalHierarchyParam.m_strTitle
+	end if
+
+	tree_Begin nParentIdObj, getPage().ctrl(getTableID()).body.ident, 0
+end function
+
+
+'-----------------------------------------------------------------------
+'Powoduje przeliczenie i ustawienie się w root'cie
+'-----------------------------------------------------------------------
+function hierarchy_refresh()
+	getPage().ctrl(getTableID()).body.removeall
+	tree_Begin 0, getPage().ctrl(getTableID()).body.ident, 0
+end function
+
+
+'-----------------------------------------------------------------------
+'Rekcja na naciśnięcie plusa/minusa - odczytuje dane z bazy i wyswietla
+'je w postaci drzewka - rozwija wybraną grupę
+'-----------------------------------------------------------------------
+function tree_ExpandCollapse(byref pHLI)
+
+	dim nParentIdObj : nParentIdObj = pHLI.prop(5001)
+	dim nContainerId : nContainerId = pHLI.prop(5002)
+	dim nIndent : nIndent = pHLI.prop(5003)
+	dim nNodeLevel : nNodeLevel=pHLI.prop(5005)
+
+	'dobieramy sie do rysunku z plusem lub minusem
+	dim pPicture
+	set pPicture=getPage().ctrl( pHLI.prop(5004) )
+
+	if (pPicture.image=PICTURE_SMALL_PLUS) then
+		'expand
+		pPicture.image = clng(PICTURE_SMALL_MINUS)
+		pPicture.tip = "Zwiń"
+		pPicture.width=SIZE_FOR_PLUS
+		pPicture.height=SIZE_FOR_PLUS
+		tree_ConstructLevel nParentIdObj, nContainerId, nIndent, nNodeLevel, (nNodeLevel+1), 0, 0
+	else
+		'collapse
+		pPicture.image = clng(PICTURE_SMALL_PLUS)
+		pPicture.tip = "Rozwiń"
+
+		'Usuwamy wszystko z kontenera, ktory zostal zamkniety
+		getPage().ctrl(nContainerId).removeall
+
+		'Ukrywamy nasza tabelke w tabelce
+		dim pRootContainer
+		set pRootContainer = getPage().ctrl(nContainerId)
+		pRootContainer.parent.parent.hide=true
+	end if
+
+end function
+
+function c100_ongetdata(byref oCtrl): c100_ongetdata=true
+end function
+
+function c100_ondataentered(byref oCtrl, byval newValue)
+	if (not pGlobalHierarchyParam.m_pfnPreTranslateMessage is nothing) then
+		c100_ondataentered=pGlobalHierarchyParam.m_pfnPreTranslateMessage(getPage().get_this, oCtrl, newValue)
+		exit function
+	end if
+	c100_ondataentered=true
+end function
+
+
+function foptions():foptions=false
+	
+	if (not pGlobalHierarchyParam.m_pfnOptions is nothing) then
+		foptions=pGlobalHierarchyParam.m_pfnOptions()
+		hierarchy_refresh
+	else
+		MessageBox "W tym raporcie nie ma opcji do ustawiania przez Ciebie." , "Brak konfigurowalnych opcji", vbOKOnly, vbInformation
+		foptions=true
+	end if
+
+end function
+
+
+]]>
+</script>
+</config>
+<body>
+	<table>
+		<tbody>
+			<tr style='STYLE_DESC_ROW'>
+				<td>
+					<t name='e##ID_T_HEADER'/>
+				</td>
+			</tr>
+			<tr style='STYLE_TABLE_BODY' width='min'>
+				<td>
+					<table name='t##ID_TABLE' border='0'>
+						<tbody>
+						</tbody>
+						<tfooter>
+						</tfooter>
+					</table>
+				</td>
+			</tr>
+		</tbody>
+	</table>
+</body>
+</page>
+

@@ -1,0 +1,292 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+
+<!--
+RAPTEMPLATE_OBROTY_WG_KLIENTOW_ABC
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203_appconfig.h"
+#include "h1220.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1250.h"
+
+#define RAPORT_TITLE Obroty wg klientów ABC
+
+-->
+
+<page style='36'>
+<config>
+<title>RAPORT_TITLE</title>
+<script>
+<![CDATA[
+
+<%
+function query(byref pParamArray)
+  dim strSQL
+  strSQL = "create table #temp " + vbNewLine +_
+           "( " + vbNewLine +_
+           "	strPrzedzial varchar(1), " + vbNewLine +_
+           "  idKlient integer, " + vbNewLine +_
+           "	strKlientNazwa 	varchar(255), " + vbNewLine +_
+           "	strAdres varchar(160), " + vbNewLine +_
+           "	curObrot decimal(12,2) " + vbNewLine +_
+           ")"
+           
+  trans_.execsql strSQL
+  
+  strSQL = "insert into #temp " + vbNewLine +_
+           "select '',temp.klient_idobj,MAX(temp.klient_nazwa), " + vbNewLine +_
+           "	MAX(temp.ulica) + ' ' + MAX(temp.nr_domu) + max(temp.nr_lokalu) + ' ' + MAX(temp.kod) + ' ' + MAX(temp.miejscowosc), " + vbNewLine +_
+           "	isnull(sum(temp.sprz_netto),0)  " + vbNewLine +_
+           "from " + vbNewLine +_
+           "(select 'klient_idobj'=k.IdObj,'klient_nazwa'=k.strNazwa, " + vbNewLine +_
+           "'ulica'=case when isnull(jo.IdObj,0) <> 0 then jo.strUlica else k.strUlica end, " + vbNewLine +_
+           "'nr_domu'=case when isnull(jo.IdObj,0) <> 0 then jo.strNrDomu else k.strNrDomu end, " + vbNewLine +_
+           "'nr_lokalu'=case when isnull(jo.IdObj,0) <> 0 then case when jo.strNrLokalu <> '' then '/'+jo.strNrLokalu else '' end  " + vbNewLine +_
+           "            else case when k.strNrLokalu <> '' then '/'+k.strNrLokalu else '' end end, " + vbNewLine +_
+           "'kod'=case when isnull(jo.IdObj,0) <> 0 then jo.strKod else k.strKod end, " + vbNewLine +_
+           "'miejscowosc'=case when isnull(jo.IdObj,0) <> 0 then (select strNazwa from n5miejscowosc where IdObj = jo.pMiejscowosc) else " + vbNewLine +_ 
+           "               (select strNazwa from n5miejscowosc where IdObj = k.pMiejscowosc) end, " + vbNewLine +_
+           "'sprz_netto'=(select top 1 c_curcenanetto from vlist_n5sprzedaz_listPozycje vl  " + vbNewLine +_
+           "		      where vl.p_idobj = dm.wrefDokHandl and dm.wrefDokHandl_wrt=TYPEID_N5SPRZEDAZ and " + vbNewLine +_
+           "			  pozdm.pProdukt = vl.c_pprodukt) " + vbNewLine +_
+           "from n5dokmag as dm " + vbNewLine +_
+           "	inner join n5klient as k on dm.pKlient = k.IdObj " + vbNewLine +_
+           "	left outer join n5_klient_jedn_org as jo on dm.pKlient_JO = jo.IdObj " + vbNewLine +_
+           "	inner join collections as dm_coll on dm.IdObj = dm_coll.IdParent AND dm_coll.IdCollection = 10162011 " + vbNewLine +_
+           "	inner join n5pozdokmag as pozdm on dm_coll.IdObj = pozdm.IdObj " + vbNewLine +_
+           "where %4 and dm.nTypDok = N5REJESTRDOK__WZ) as temp " + vbNewLine +_
+           "	inner join n5wojewodztwo_kod wk on temp.kod = wk.wkod_strKod " + vbNewLine +_
+           "	inner join n5wojewodztwo w on wk.wkod_pWojewodztwo = w.IdObj " + vbNewLine +_
+           "where %3 " + vbNewLine +_
+           "group by temp.klient_idobj " + vbNewLine +_
+           "order by sum(temp.sprz_netto) desc"
+           
+  strSQL = rapeng_.query_apply_actual_param(strSQL,pParamArray)
+  trans_.execsql strSQL
+  
+  dim curSumaObr: curSumaObr = ccur(0.0)
+  dim oRS: set oRS = trans_.createadors("select sum(curObrot) from #temp")
+  if oRS.RecordCount > clng(0) then
+    curSumaObr = ccur(oRS(0).value)
+  end if
+  
+  'procent wg parametrów
+  dim curParamProcA: curParamProcA = ccur(pParamArray.value(0).first_value)
+  dim curParamProcB: curParamProcB = ccur(pParamArray.value(1).first_value)
+  if curParamProcA = ccur(0.0) or curParamProcB = ccur(0.0) then
+    trans_.message 700, 0, "Procent A i Procent B musi być różne od 0"
+    query=""
+    exit function
+  end if
+  
+  'wylicz udział procentowy dla przedziałów
+  dim curProcA: curProcA = ccur(0.0)
+  dim curProcB: curProcB = ccur(0.0)
+  if curSumaObr > ccur(0.0) then
+    if (curParamProcA + curParamProcB) < 100 then
+      curProcA = ccur(curSumaObr * curParamProcA / 100)    
+      curProcB = ccur(curSumaObr * curParamProcB / 100)
+      
+      dim iter: iter = 1
+      dim strRate: strRate = ""
+      dim curSumaBuf: curSumaBuf = ccur(0.0)
+      'wykonaj update na tabeli pomocniczej
+      set oRS = trans_.createadors("select idKlient,curObrot from #temp")
+      do while not oRS.EOF
+        dim idKlient: idKlient = clng(oRS(0).value)
+        curSumaBuf = curSumaBuf + ccur(oRS(1).value)
+        
+        'dodaj pierwszego klienta do A
+        if iter = 1 then
+          strRate = "A"
+        else
+          if curSumaBuf <= curProcA then
+            strRate = "A"
+          else 
+            if (curSumaBuf > curProcA) and (curSumaBuf <= (curProcA + curProcB)) then
+              strRate = "B"
+            else 
+              strRate = "C"
+            end if
+          end if         
+        end if
+        iter = iter + 1
+        
+        trans_.execsql "update #temp set strPrzedzial = '" + strRate + "' where idKlient = " + cstr(idKlient)
+      
+        oRS.MoveNext
+      loop
+      
+      query="select 'przedzial'=strPrzedzial,'typeid'=10108,'id_klient'=idKlient,'nazwa_klient'=strKlientNazwa,'adres'=strAdres,'obrot'=curObrot from #temp"
+      
+    else
+      trans_.message 700, 0, "Procent A + Procent B musi być mniejszy od 100"
+      query=""
+    end if
+  else
+    query=""
+  end if
+end function
+%>
+
+<%
+function default_param()
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+  pParamArray.add doc_.afc.rap.param.new_currency("Procent A").bindexpr("")
+  pParamArray.add doc_.afc.rap.param.new_currency("Procent B").bindexpr("")
+  
+  dim pParamFactory: set pParamFactory = doc_.afc.rap.param
+	dim pParamWoj: set pParamWoj = pParamFactory.new_choice("Województwo").bindexpr("w.IdObj")
+	doc_.afc.rap.param.init_on_query pParamWoj, trans_ ,_
+		"select strNazwa, idobj from n5wojewodztwo where pKraj = 1 order by strNazwa"
+	pParamArray.add pParamWoj
+  
+  pParamArray.add doc_.afc.rap.param.new_date_range("Data wystawienia").bindexpr("dm.dDataWyst")
+ 
+	set default_param = pParamArray
+end function
+%>
+<%
+function section_header_1(byref pSection,byref pRec)
+%>
+<tr userprop='propc_section_start="1" propc_section_hidden="0" propc_section_req="0"' fontsize='4'>
+	<td style='27' colspan='5'>
+  		<picture name='<%so.write cstr(nSectionPicCounter)%>' tip='Zwiń' ignoresysdisable='true' image='PICTURE_SMALL_MINUS' width='SIZE_FOR_PLUS' height='SIZE_FOR_PLUS' href='vs1022="section_hideshow_hli" vn100="<%so.write cstr(nSectionPicCounter)%>"'/>
+	    RXE_AUTO_TEXT(przedzial)
+</td>
+</tr>
+<%
+nSectionPicCounter=nSectionPicCounter+1
+end function
+%>
+<%
+function section_footer_1(byref pSection)
+%>
+<tr hide='true' userprop='propc_section_end="1"'> <td colspan='5'></td></tr>
+<tr fontsize='4'>
+  <td style='27' colspan='4'></td>
+  <td style='27' align='right'>RXE_MONEY_VAR(pSection.counter(0).result)</td>
+</tr>
+<tr border='0'><td colspan='5'></td></tr>
+<%
+end function
+%>
+<%
+function body_row(byref pSection,byref pRec)
+if pRapExec.RecNr mod 2 = 0 then
+%>
+<tr bordercolor='white'>
+<%
+else
+%>
+<tr bordercolor='white' style='37'>
+<%
+end if
+%>
+  <td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+  <td align='right'>RXE_LP</td>
+  <td>
+    RXE_TEXT_LINK_FORM_CCC(typeid,id_klient,nazwa_klient)
+  </td>
+  <td>
+    RXE_TEXT(adres)
+  </td>
+	<td align='right'>
+		RXE_QUANTITY_CVV(obrot,"",2)
+	</td>
+</tr><%
+end function
+%>
+<%
+function body_header(byref pSection,byref pRec)
+%>
+<table border='1'>
+<thead>
+<tr style='21'>
+  <td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+	<td><text>LP</text></td>
+	<td width='6000'><text>Nazwa klienta</text></td>
+  <td width='6000'><text>Adres</text></td>
+  <td width='2000'><text>Obrót</text></td>
+</tr>
+</thead>
+<tbody>
+<%
+end function
+%>
+<%
+function body_footer(byref pSection)
+%>
+</tbody>
+<tfoot>
+<tr style='21'>
+  <td style='27' colspan='4' />
+	<td style='27' align='right'>
+		RXE_MONEY_VAR(pRapExec.body.counter(0).result)
+	</td>
+</tr>
+</tfoot>
+</table>
+<%
+end function
+%>
+<%dim nSectionPicCounter : nSectionPicCounter = 10000000%>
+function section_hideshow_hli(byref pHLI)
+doc_.afc.formsection.section_hideshow page_, pHLI.prop(100)
+end function
+]]>
+</script>
+</config>
+<header>
+</header>
+<body>
+<p>
+RAPORT_HEADER(3,0)
+</p>
+
+<p>
+<t size='2'/>
+</p>
+
+<p><text fontsize='7'><![CDATA[RAPORT_TITLE]]></text></p><br/><br/>
+<t fontsize='6' bold='true'>Kryteria selekcji:</t><br/>
+<%
+
+dim pRapExec : set pRapExec = rapeng_.new_engine()
+with pRapExec
+	dim pParamArray : set pParamArray = default_param() 
+	rapeng_.merge_params pParamArray, rapeng_.get_raport_param()
+	pRapExec.title = "RAPORT_TITLE" 
+    
+  dim bGenData: bGenData = false
+	if rapeng_.show_raport_param_dialog(pParamArray,"RAPORT_TITLE") <> 0 then
+  
+    dim pPerf: set pPerf = doc_.performing("Trwa przygotowywanie danych...")  
+		'zapytania pomocnicze i do raportu
+		pRapExec.put_final_query query(pParamArray)
+		rapeng_.set_raport_param pParamArray 
+    set pPerf = nothing
+    bGenData = true
+
+	  .add_body_ex(getref("body_header"),getref("body_footer"),getref("body_row")).add_sumator("obrot")
+    .add_group_section(0,getref("section_header_1"),getref("section_footer_1")).add_sumator("obrot")
+  
+	  rapeng_.write_actual_param so,rapeng_.get_raport_param()
+	  if not .perform then
+		  so.write "<p style='21'><t>Brak danych spełniających podane kryteria</t></p>"
+	  end if
+  
+    if bGenData then
+	    trans_.execsql "drop table #temp"
+    end if
+%>
+<%
+end if
+end with
+%>
+</body>
+<footer>
+</footer>
+</page>

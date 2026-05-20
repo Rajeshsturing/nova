@@ -1,0 +1,392 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+PAGE_FORM_INWMAG
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1220.h"
+#include "h1222.h"
+#include "h1231.h"
+#include "h1228.h"
+
+#define FORM_SPAN			4
+#define RCELL_SPAN			3
+
+#define SECID_NAGLOWEK		1001
+
+#define CTRLID_STOCK				12
+#define CTRLID_TRIGGER			13
+#define CTRLID_TABLE_RESULT		14
+#define CTRLID_STATUS 15
+
+#define CTRLID_DOKMAG_IR				21
+#define CTRLID_DOKMAG_IP				22
+
+-->
+<page style='STYLE_PAGE'>
+  <!--
+-->
+  <config>
+    <title>
+      Inwentaryzacja
+      #ifdef _DEBUG
+      [THIS_FILE]
+      #endif
+    </title>
+    <typeid>TYPEID_N5INWMAG</typeid>
+    <script>
+      <![CDATA[
+
+#include "l50100"
+#include "l50200"
+#include "l50222"
+
+'realize_publication
+#include "50518"
+#include "50610"
+#include "50517"
+
+dim g_IdObject: g_IdObject = -1
+function c##CTRLID_TRIGGER##_ongetdata(byref oCtrl): c##CTRLID_TRIGGER##_ongetdata=true
+	
+  on_record_change
+	g_IdObject = page_.root.IdObj
+  
+end function
+
+function fopen
+	if not std_fopen() then
+		fopen = false
+		exit function
+	end if
+
+  section_fopen THIS_FILE
+	on_record_change
+
+end function
+
+function on_record_change
+	if g_IdObject = page_.root.idobj then
+		exit function
+	end if
+	fill_dok_table
+end function
+
+function frefresh()
+	frefresh = true
+	fill_dok_table
+end function
+
+function fill_dok_table
+
+	page_.ctrl(CTRLID_TABLE_RESULT).removeall
+
+	dim oRS : set oRS = trans_.createadors(_
+		"select 'c_idobj'=t_ark.idobj,'c_nrdok'=t_ark.strNrDok,'c_datarozp'=t_ark.ia_dDataRozp, 'c_datazakon'=t_ark.ia_dDataZakon, 'c_status' = t_ark.ia_eStatus, " +_
+    "'c_lpoz'= (select count(*) from vlist_n5inwark_ia_listPozycje where p_idobj=t_ark.idobj and p_ia_pinwentaryzacja=" + cstr(page_.root.idobj) + "), " +_
+    "'c_lpoznwyp'= (select count(*) from vlist_n5inwark_ia_listPozycje where p_idobj=t_ark.idobj and p_ia_pinwentaryzacja=" + cstr(page_.root.idobj) + " and c_pia_cchecked <> '1') " +_
+		"from n5inwark t_ark " +_
+		"where t_ark.ia_pInwentaryzacja = " + cstr(page_.root.idobj) +_
+	  " order by t_ark.ia_dDataRozp")
+
+	if oRS.EOF then
+		with page_.ctrl(CTRLID_TABLE_RESULT).addnew(CTRL_TYPE_STATIC,-1)
+			.styleitem = STYLE_OPTION_PAD
+			.text = "Nie ma jeszcze żadnych arkuszy dla tej inwentaryzacji"
+			.width = clng(MAXIMIZE_SIZE)
+		end with
+		exit function
+	end if
+	dim pPlugInTable : set pPlugInTable = page_.ctrl(CTRLID_TABLE_RESULT).addnew(CTRL_TYPE_TABLE,-1)
+	pPlugInTable.styleitem = STYLE_TABLE_BODY
+	dim pTB : set pTB = doc_.afc.new_tb(page_).attach(pPlugInTable)
+
+	pTB.newrow
+	pTB.row.styleitem = STYLE_TABLE_HEADER
+	pTB.newcell.addtext("Nr arkusza").element.bold = true	
+	pTB.cell.width = clng(MINIMIZE_SIZE)  
+	pTB.newcell.addtext("Status").element.bold = true	
+	pTB.cell.width = clng(MINIMIZE_SIZE)
+	pTB.newcell.addtext("Data rozpoczęcia").element.bold = true
+	pTB.cell.width = clng(MINIMIZE_SIZE)
+	pTB.newcell.addtext("Data zakończenia").element.bold = true
+	pTB.cell.width = clng(MINIMIZE_SIZE)
+	pTB.newcell.addtext("Liczba pozycji").element.bold = true
+	pTB.cell.width = clng(MINIMIZE_SIZE)
+  pTB.newcell.addtext("Niewypełnione").element.bold = true
+	pTB.cell.width = clng(MINIMIZE_SIZE)
+
+	do while not oRS.EOF
+
+		pTB.newrow
+		pTB.row.border = 0
+		dim strHLI : strHLI = trans_.afc.convert.Formatter("OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5INWARK,%1,USAGE_EDIT) vn101=%2") _
+				(oRS.fields("c_idobj").value)(page_.root.idobj).done()
+    
+		pTB.newcell.addtexthli cstr(oRS.fields("c_nrdok").value), doc_.createhlistr(strHLI)
+		pTB.element.ignoresysdisable true    
+    
+		pTB.newcell.addtexthli enum2str(TYPEID_N5INWARK, doc_.stdobjdef.getobjdef(TYPEID_N5INWARK).getfieldindex("ia_eStatus"), oRS.fields("c_status").value), doc_.createhlistr(strHLI)
+		pTB.element.ignoresysdisable true
+        
+		pTB.newcell.addtexthli trans_.afc.display.fulldate(oRS.fields("c_datarozp").value), doc_.createhlistr(strHLI)
+		pTB.element.ignoresysdisable true
+	
+    pTB.newcell.addtexthli trans_.afc.display.fulldate(oRS.fields("c_datazakon").value), doc_.createhlistr(strHLI)
+		pTB.element.ignoresysdisable true
+
+		pTB.newcell.addtext(cstr(oRS.fields("c_lpoz").value)).cell.align = ALIGN_RIGHT
+		pTB.newcell.addtext(cstr(oRS.fields("c_lpoznwyp").value)).cell.align = ALIGN_RIGHT
+
+  oRS.MoveNext
+	loop
+end function
+
+
+function fsave()
+  fsave=std_fsave()
+end function
+
+QVE_REF_OPEN_FORM(CTRLID_STOCK,im_pMagazyn)
+
+function c##CTRLID_STATUS##_ongetdata(byref oCtrl):c##CTRLID_STATUS##_ongetdata=true
+	oCtrl.text = enum2str(TYPEID_N5INWMAG, doc_.stdobjdef.getobjdef(TYPEID_N5INWMAG).getfieldindex("im_eStatus"), page_.root.im_eStatus)
+end function
+'---------------------------------------------------------------
+function add_arkusz()
+  if page_.root.old_im_eStatus = clng(N5INWMAG_STATUS_ZATWIERDZONY) then
+	  MessageBox "Inwentaryzacja już jest zatwierdzona. Nie można dodawać arkusza.", "Inwentaryzacja już jest zatwierdzona",vbOkOnly,vbInformation
+    exit function
+  end if
+  if not fsave() then
+    exit function
+  end if
+  doc_.postcommand "OPEN_FORM_PROXY_HLI_USAGE(TYPEID_N5INWARK,0,USAGE_EDIT) vn101=" + cstr(page_.rootidobj)
+end function
+
+function make_ip_ir_doc()
+  if not page_.root.im_eStatus = clng(N5INWMAG_STATUS_ZATWIERDZONY) then
+ 	  MessageBox "Inwentaryzacja nie jest zatwierdzona. Najpierw należy zatwierdzić inwentaryzację", "Inwentaryzacja nie jest zatwierdzona",vbOkOnly,vbInformation
+    exit function 
+  end if
+
+dim idIP, idIR
+  if make_ip_ir(idIP,idIR) then
+    if idIP > 0 then
+      Show_DokMag trans_.getobj(TYPEID_N5DOKMAG, idIP)
+    end if
+    if idIR > 0 then
+      Show_DokMag trans_.getobj(TYPEID_N5DOKMAG, idIR)
+    end if
+  end if
+end function
+
+function make_ip_ir(byref idIP, byref idIR) : make_ip_ir=false
+  idIP = clng(0)
+  idIR = clng(0)
+  
+  if not page_.root.im_pIP is nothing or not page_.root.im_pIR is nothing then
+ 		MessageBox "Dla tej inwentaryzacji jest są już dokumenty IP/IR", "Tworzenie IP/IR",vbOkOnly,vbInformation
+   exit function
+  end if
+ 
+  dim strSQL0 : strSQL0 = "select 'c_prod_id' = vl.c_pia_pprodukt, 'c_opak_id' = vl.c_pia_popak, 'c_ilosc_ewid' = max(vl.c_pia_curiloscewid), "+_
+  " 'c_ilosc_fakt' = sum(vl.c_pia_curiloscfakt), " +_
+  " 'c_cena_fakt' = max(vl.c_pia_curcenafakt) from vlist_n5inwark_ia_listPozycje vl where vl.p_ia_pinwentaryzacja = " + cstr(page_.root.idobj) +_
+  " group by vl.c_pia_pprodukt, vl.c_pia_popak "
+ 
+  dim strSQLOrderBy : strSQLOrderBy= " order by min(p_idobj), min(coll_lp)"
+ 
+  dim strSQLIP : strSQLIP = strSQL0 + " having max(vl.c_pia_curiloscewid) < sum(vl.c_pia_curiloscfakt) " + strSQLOrderBy
+  dim oRS : set oRS = trans_.createadors(strSQLIP)
+  if not oRS.EOF then
+    dim oIP
+    if create_DokMag(oIP, N5REJESTRDOK__IP, page_.root) then
+    do while not oRS.EOF
+      dim oPos : set oPos = oIP.ListPozycje.addnew()
+      set oPos.pProdukt = trans_.getobj(TYPEID_N5PRODUKT,clng(oRS.fields("c_prod_id").value))
+      oPos.curIloscOpak = ccur(oRS.fields("c_ilosc_fakt").value) - ccur(oRS.fields("c_ilosc_ewid").value)
+      oPos.curCenaMag = ccur(oRS.fields("c_cena_fakt").value)
+      oRS.MoveNext
+    loop 
+    set page_.root.im_pIP = oIP
+    idIP = oIP.idobj
+   end if
+  end if
+  
+  dim strSQLIR : strSQLIR = strSQL0 + " having max(vl.c_pia_curiloscewid) > sum(vl.c_pia_curiloscfakt) " + strSQLOrderBy
+  set oRS = trans_.createadors(strSQLIR)
+  if not oRS.EOF then
+    dim oIR
+    if create_DokMag(oIR, N5REJESTRDOK__IR, page_.root) then
+    do while not oRS.EOF
+      set oPos = oIR.ListPozycje.addnew()
+      set oPos.pProdukt = trans_.getobj(TYPEID_N5PRODUKT,clng(oRS.fields("c_prod_id").value))
+      oPos.curIloscOpak = ccur(oRS.fields("c_ilosc_ewid").value) - ccur(oRS.fields("c_ilosc_fakt").value)
+      'oPos.curCenaMag = ccur(oRS.fields("c_cena_fakt").value)
+      oRS.MoveNext
+    loop 
+    set page_.root.im_pIR = oIR
+    idIR = oIR.idobj
+    end if
+  end if
+  
+  make_ip_ir= std_fsave()
+
+end function
+
+function Show_DokMag(byref pDokMag)
+	if (not pDokMag is nothing) then
+		
+
+		dim pHli
+		set pHli = doc_.getmodule(60129).prepare_form_open_command(TYPEID_N5DOKMAG, pDokMag.IdObj, USAGE_EDIT)
+
+		dim pPage
+		set pPage = doc_.getpagehli( pHli )
+
+		if (not pPage is nothing) then
+			pPage.domodalauto
+		end if
+
+	end if
+end function
+private function create_DokMag(byref pDokMag , byval nTypDok , byref oInwMag):create_DokMag = false
+
+	trans_.var(APPVAR_REJESTR_TYP) = CLng( nTypDok )
+
+	dim idRejestr
+	idRejestr = choose_rejestr_dok(CStr( nTypDok ), true, "Wybierz rejestr dokumentów")
+
+
+	if (idRejestr <= 0) then
+		view_message 6322, 0
+		exit function
+	end if
+
+	'Ustaw id rejestru dokumentów
+	trans_.var(APPVAR_REJESTR_DOKUMENTOW) = CLng( idRejestr )
+
+	set pDokMag = trans_.newobj( TYPEID_N5DOKMAG )
+	pDokMag.dDataWyst = oInwMag.im_dDataInw
+  
+	select case nTypDok
+		case N5REJESTRDOK__IP
+			set pDokMag.pMagDocel = oInwMag.im_pMagazyn
+		case N5REJESTRDOK__IR
+			set pDokMag.pMagZrod = oInwMag.im_pMagazyn
+	end select 
+
+	if (pDokMag is nothing) then
+		view_message 6323, 0
+		exit function 
+	end if
+
+	create_DokMag = true
+
+end function
+
+
+function commit_doc
+  dim idFound : idFound = trans_.FindObjId(TYPEID_N5INWARK, "ia_pinwentaryzacja=" + cstr(page_.root.idobj) + " and ia_eStatus<>N5INWARK_STATUS_ZATWIERDZONY")
+	if idFound <> 0 then
+	  MessageBox "Dla tej inwentaryzacji są niezatwierdzone arkusze.", "Niezatwierdzone arkusze",vbOkOnly,vbInformation
+    exit function
+	end if
+   
+	if MessageBox("Czy jesteś pewien, że chcesz zatwierdzić całą inwentaryzację ?", "Zatwierdzanie inwentaryzacji", vbYesNo, vbQuestion) <> vbYes then
+    exit function
+	end if
+  
+  page_.root.im_eStatus = clng(N5INWMAG_STATUS_ZATWIERDZONY)
+  fsave  
+end function
+
+function fsave
+  if page_.root.old_im_eStatus = clng(N5INWMAG_STATUS_ZATWIERDZONY) then
+	  MessageBox "Inwentaryzacja już jest zatwierdzona. Nie można wprowadzać zmian.", "Inwentaryzacja już jest zatwierdzona",vbOkOnly,vbInformation
+    exit function
+  end if
+	dim bSave: bSave=std_fsave()
+	if not bSave then
+		section_fsave THIS_FILE
+	end if
+	fsave=bSave
+end function
+
+QVE_REF_OPEN_FORM(CTRLID_DOKMAG_IR,im_pIR)
+QVE_REF_OPEN_FORM(CTRLID_DOKMAG_IP,im_pIP)
+
+function print_rozliczenie
+  'if not page_.root.im_eStatus = clng(N5INWMAG_STATUS_ZATWIERDZONY) then
+ 	'  MessageBox "Inwentaryzacja nie jest zatwierdzona. Najpierw należy zatwierdzić inwentaryzację", "Inwentaryzacja nie jest zatwierdzona",vbOkOnly,vbInformation
+  '  exit function 
+  'end if
+
+  dim strWhere: strWhere = "ePubType=N5DPC_PUBTYPE_INNY and pub_nInnyTyp = N5DPC_PUBTYPE_INNY_ROZLICZENIE_INW"
+  dim idDPC : idDPC = fire_choice_list(TYPEID_N5DPC,"Wybierz publikacje","strNazwa",strWhere,"","")
+  
+  if idDPC > clng(0) then
+    realize_publication idDPC,page_.root,true,nothing
+  else
+    trans_.message 7000, 0, "Nie wybrano publikacji."
+  end if
+end function
+
+function wyznacz_nr_op
+end function
+
+]]>
+    </script>
+  </config>
+  <header>
+  </header>
+  <body>
+    QXF_BEGIN
+    QXS_BEGIN_FLAT(SECID_NAGLOWEK,Nagłówek,FORM_SPAN)
+    <tr>
+      QXC_INFO_CUSTOM(Status:,CTRLID_STATUS,FORM_SPAN)
+    </tr>
+    <tr>
+      QXC_LABEL_REQ(Nr inwentaryzacji, 1)
+      QXC_EDIT_FIELD(-1, 30, strNrDok, 1)
+    </tr>
+    <tr>
+      QXC_LABEL_REQ(Data inwentaryzacji, 1)
+      QXC_DATE_FIELD(-1, im_dDataInw, 1)
+      QXC_LABEL_OPEN_REQ(CTRLID_STOCK, Magazyn, 1)
+      QXC_EDIT_REF(-1, 20, PICTURE_CHOICE_N5MAGAZYN, im_pMagazyn, strNazwa, CURSOR_MAGAZYNY_PODSTAWOWE, 1)
+    </tr>
+    <tr>
+      <td width='min' colspan='1'>
+        QXE_LABEL_REQ(Nr operacji)
+        <t name='CTRLID_TRIGGER' size='1'>
+          <transfer mode='custom'/>
+        </t>
+      </td>
+      QXC_INT_FIELD(-1, 7, ia_iNrOpMag, 1)
+    </tr>    <tr>
+      QXC_BUTTON(-1, 10, Wyznacz, varFunction=wyznacz_nr_op, 2)
+    </tr>
+    <tr>
+      <td colspan='FORM_SPAN' style='STYLE_OPTION_PAD' name='CTRLID_TABLE_RESULT'>
+      </td>
+    </tr>
+    <tr>
+      QXC_LABEL_OPEN(CTRLID_DOKMAG_IR,Manko - IR,1)
+      QXC_TEXT_REF(-1,10,im_pIR,strNrDok,1)
+      QXC_LABEL_OPEN(CTRLID_DOKMAG_IP,Superata - IP,1)
+      QXC_TEXT_REF(-1,10,im_pIP,strNrDok,1)
+    </tr>
+    <tr style='STYLE_ROW_BTN'>
+      QXC_BUTTON(-1,10,Nowy arkusz,varFunction=add_arkusz,1)
+      QXC_BUTTON(-1,10,Drukuj rozliczenie,varFunction=print_rozliczenie,1)
+      QXC_BUTTON(-1,10,Zatwierdź,varFunction=commit_doc,1)
+      QXC_BUTTON(-1,10,Przenieś na magazyn,varFunction=make_ip_ir_doc,1)
+    </tr>
+    QXS_END_FLAT(FORM_SPAN)
+    QXF_END
+  </body>
+  <footer>
+  </footer>
+</page>

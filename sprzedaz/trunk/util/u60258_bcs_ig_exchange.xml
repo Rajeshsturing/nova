@@ -1,0 +1,1151 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1200.h"
+#include "h1231.h"
+#include "h1220.h"
+#include "h1240.h"
+
+
+#define BCS_IMPORT_MODE_NEW_DOK			1
+#define BCS_IMPORT_MODE_UPDATE_DOK		2
+#define BCS_IMPORT_MODE_NEW_STRUCT		3
+#define BCS_IMPORT_MODE_UPDATE_STRUCT	4
+
+
+	Wymiana danych z urządzeniami PDA standard BCS dla InterGlobal
+-->
+<page>
+<config>
+<script>
+<![CDATA[
+
+'TRACE
+#include "50306"
+
+
+#ifdef _DEBUG
+	#ifndef MACRO_BCSTRACE
+	TRACE2FILE_NAME(bcstrace)
+	#macro BCSTRACE(message) TRACE2FILE("bcs.log", message, bcstrace)
+	#define MACRO_BCSTRACE
+	#endif
+#else
+	#ifndef BCSTRACE
+	#define BCSTRACE '
+	#endif
+#endif
+
+'choose_rejestr_dok
+#include "50517"
+
+
+
+'srvdate
+#include "50126"
+
+'==================================================================================
+' export
+'==================================================================================
+
+private function date2BCS(byval dDate)
+	date2BCS = trans_.afc.convert.Formatter("%1-%2-%3 0:00")(Day(dDate))(Month(dDate))(Year(dDate)).Done()
+end function
+
+private function write_position(byref pSO,byref pDokPosition)
+	pSO.write string(3,vbTab) + "<position>" + vbCrLf
+		pSO.write string(4,vbTab) + "<gds_name><![CD"+"ATA[" + pDokPosition.pProdukt.strNazwa + "]"+"]></gds_name>" + vbCrLf
+		pSO.write string(4,vbTab) + "<gds_bar_code><![CD"+"ATA[" + pDokPosition.pOpak.strEAN + "]"+"]></gds_bar_code>" + vbCrLf
+		pSO.write string(4,vbTab) + "<gds_index><![CD"+"ATA[" + pDokPosition.pProdukt.strIndeks + "]"+"]></gds_index>" + vbCrLf
+		
+		dim nPacks : nPacks = clng(0)		
+		dim curKrotnosc : curKrotnosc = pDokPosition.pProdukt.listOpakowania.get(pDokPosition.pProdukt.listOpakowania.count()).currKrotnosc
+
+		dim nUnits : nUnits  = clng(pDokPosition.curIloscOpak)
+		dim nAllUnits : nAllUnits = clng(pDokPosition.curIloscOpak)
+		dim nUnitsInPack : nUnitsInPack = clng(curKrotnosc)
+
+		pSO.write string(4,vbTab) + "<gds_packs>" + cstr(nPacks) + "</gds_packs>" + vbCrLf
+		pSO.write string(4,vbTab) + "<gds_units>" + cstr(nUnits) + "</gds_units>" + vbCrLf
+		pSO.write string(4,vbTab) + "<gds_all_units>" + cstr(nAllUnits) + "</gds_all_units>" + vbCrLf
+		pSO.write string(4,vbTab) + "<gds_units_in_pack>" + cstr(nUnitsInPack) + "</gds_units_in_pack>" + vbCrLf
+		pSO.write string(4,vbTab) + "<gds_created_date>" + date2BCS(DateSerial(1899,12,30)) + "</gds_created_date>" + vbCrLf
+		pSO.write string(4,vbTab) + "<section />" + vbCrLf
+	pSO.write string(3,vbTab) + "</position>" + vbCrLf
+end function
+
+private function write_positions(byref pSO,byref pDokListPos)
+	pSO.write string(2,vbTab) + "<doc_positions>" + vbCrLf
+	dim pDokPosition
+	for each pDokPosition in pDokListPos
+		write_position pSO,pDokPosition
+	next
+	pSO.write string(2,vbTab) + "</doc_positions>" + vbCrLf
+end function
+
+private function write_dochead(byref pSO,byref pDokument,byval strType)
+	pSO.write string(2,vbTab) + "<doc_head>" + vbCrLf
+		pSO.write string(3,vbTab) + "<type>" + strType + "</type>" + vbCrLf
+		pSO.write string(3,vbTab) + "<name><![CD"+"ATA[" + pDokument.strNrDok + "]"+"]></name>" + vbCrLf
+		pSO.write string(3,vbTab) + "<store><![CD"+"ATA[" + pDokument.pMagDocel.strNazwa + "]"+"]></store>" + vbCrLf
+		pSO.write string(3,vbTab) + "<doc_created_date>" + date2BCS(pDokument.dDataWyst) + "</doc_created_date>" + vbCrLf
+'		pSO.write string(3,vbTab) + "<doc_dependent_name />" + vbCrLf
+'		pSO.write string(3,vbTab) + "<doc_dependent_created_date>" + date2BCS(DateSerial(1899,12,30)) + "</doc_dependent_created_date>" + vbCrLf
+	pSO.write string(2,vbTab) + "</doc_head>" + vbCrLf
+end function
+
+function write_document(byref pSO,byref pDokument,byval strType)
+	pSO.write string(1,vbTab) + "<document>" + vbCrLf
+		write_dochead pSO,pDokument,strType
+		write_positions pSO,pDokument.listPozycje
+	pSO.write string(1,vbTab) + "</document>" + vbCrLf
+end function
+
+function begin_write_stream(byref pSO)
+	pSO.write "<?xml version=""1.0"" encoding=""windows-1250"" ?>" + vbCrLf
+	pSO.write "<doc_XML>" + vbCrLf
+end function
+
+function end_write_stream(byref pSO)
+	pSO.write "</doc_XML>" + vbCrLf
+end function
+
+
+
+
+
+
+
+function generate_stan_mag(byval pMagazyn , byval strNrDok , byval strPath)
+	dim pStream:set pStream = doc_.createstreamobj()
+	begin_write_stream pStream
+	pStream.write "<document>" + vbCrLf
+	write_stanmag_head pStream,strNrDok,pMagazyn.text,srvDate
+	pStream.write string(2,vbTab) + "<doc_positions>" + vbCrLf
+
+	dim adors:set adors = trans_.createadors(bqry_stan_mag_for_magazyn(pMagazyn.idobj))
+	while not adors.eof
+		write_stan_mag_position pStream , cstr(adors.fields("produkt_indeks").value) , cstr(adors.fields("produkt_nazwa").value) , cstr(adors.fields("produkt_kod_kreskowy").value) , ccur(adors.fields("produkt_ilosc").value) , clng(adors.fields("produkt_id").value)
+		adors.movenext
+	wend
+
+	pStream.write string(2,vbTab) + "</doc_positions>" + vbCrLf
+	pStream.write "</document>" + vbCrLf
+	end_write_stream pStream
+	pStream.save strPath
+end function
+
+
+function write_stan_mag_position (byref pSO , byval strIndeks , byval strNazwa , byval strKod , byval curIlosc , byval prod_idobj )	
+	pSO.write string(3,vbTab) + "<position>" + vbCrLf
+		pSO.write string(4,vbTab) + "<gds_name><![CD"+"ATA[" + strNazwa + "]"+"]></gds_name>" + vbCrLf
+		pSO.write string(4,vbTab) + "<gds_bar_code><![CD"+"ATA[" + strKod + "]"+"]></gds_bar_code>" + vbCrLf
+		pSO.write string(4,vbTab) + "<gds_index><![CD"+"ATA[" + strIndeks + "]"+"]></gds_index>" + vbCrLf
+		
+
+		dim nPacks : nPacks = clng(0)		
+		dim pProdukt:set pProdukt = trans_.getobj(TYPEID_N5PRODUKT , prod_idobj)
+		dim curKrotnosc : curKrotnosc = pProdukt.listOpakowania.get(pProdukt.listOpakowania.count()).currKrotnosc
+
+
+		dim nUnits : nUnits  = clng(curIlosc)
+		dim nAllUnits : nAllUnits = clng(curIlosc)
+		dim nUnitsInPack : nUnitsInPack = clng(curKrotnosc)
+
+		pSO.write string(4,vbTab) + "<gds_packs>" + cstr(nPacks) + "</gds_packs>" + vbCrLf
+		pSO.write string(4,vbTab) + "<gds_units>" + cstr(nUnits) + "</gds_units>" + vbCrLf
+		pSO.write string(4,vbTab) + "<gds_all_units>" + cstr(nAllUnits) + "</gds_all_units>" + vbCrLf
+		pSO.write string(4,vbTab) + "<gds_units_in_pack>" + cstr(nUnitsInPack) + "</gds_units_in_pack>" + vbCrLf
+		pSO.write string(4,vbTab) + "<gds_created_date>" + date2BCS(DateSerial(1899,12,30)) + "</gds_created_date>" + vbCrLf
+		pSO.write string(4,vbTab) + "<section />" + vbCrLf
+	pSO.write string(3,vbTab) + "</position>" + vbCrLf
+end function
+
+
+function write_stanmag_head(byref pSO , byval strNrDok , byval strMagazyn , byval dData)
+	pSO.write string(2,vbTab) + "<doc_head>" + vbCrLf
+		pSO.write string(3,vbTab) + "<type>STAN MAGAZYNU</type>" + vbCrLf
+		pSO.write string(3,vbTab) + "<name><![CD"+"ATA[" + strNrDok + "]"+"]></name>" + vbCrLf
+		pSO.write string(3,vbTab) + "<store><![CD"+"ATA[" + strMagazyn + "]"+"]></store>" + vbCrLf
+		pSO.write string(3,vbTab) + "<doc_created_date>" + date2BCS(dData) + "</doc_created_date>" + vbCrLf
+		pSO.write string(3,vbTab) + "<doc_dependent_name />" + vbCrLf
+		pSO.write string(3,vbTab) + "<doc_dependent_created_date />" + vbCrLf
+	pSO.write string(2,vbTab) + "</doc_head>" + vbCrLf
+end function
+
+
+
+function generate_products_dictionary(byval pMagazyn , byval strPath)
+	dim pStream:set pStream = doc_.createstreamobj()
+		dim pProdukt
+		dim curKrotnosc
+		dim nUnitsInPack
+
+	pStream.write "<?xml version=""1.0"" encoding=""windows-1250"" ?>" + vbCrLf
+	pStream.write "<dictionary_goods>" + vbCrLf
+	if not pMagazyn is nothing then
+		dim adors:set adors = trans_.createadors(bqry_stan_mag_for_magazyn(pMagazyn.idobj))
+		while not adors.eof			
+
+			set pProdukt = trans_.getobj(TYPEID_N5PRODUKT,clng(adors.fields("produkt_id").value))
+			curKrotnosc = pProdukt.listOpakowania.get(pProdukt.listOpakowania.count()).currKrotnosc
+			nUnitsInPack = clng(curKrotnosc)
+
+			write_prod_position pStream , cstr(adors.fields("produkt_nazwa").value) , cstr(adors.fields("produkt_indeks").value) , cstr(adors.fields("produkt_kod_kreskowy").value) , nUnitsInPack
+			adors.movenext
+
+		wend
+	else
+		dim cursor:set cursor = trans_.createrawcursor(TYPEID_N5PRODUKT, "eRodzaj=N5PRODUKT_TOWAR" , "" , "")
+		dim produkt
+		for each produkt in cursor
+
+			curKrotnosc = produkt.listOpakowania.get(produkt.listOpakowania.count()).currKrotnosc
+			nUnitsInPack = clng(curKrotnosc)
+
+			write_prod_position pStream , produkt.strNazwa , produkt.strIndeks , produkt.listopakowania.get(1).strEAN , nUnitsInPack
+		next
+	end if
+	pStream.write "</dictionary_goods>" + vbCrLf
+	pStream.save strPath
+end function
+
+
+
+function write_prod_position(byref pSO , byval strNazwa , byval strIndeks , byval strKod , byval curKrotnosc )
+	pSO.write string(1,vbTab) + "<goods>" + vbCrLf
+		pSO.write string(2,vbTab) + "<gds_name><![CD"+"ATA[" + strNazwa + "]"+"]></gds_name>" + vbCrLf
+		pSO.write string(2,vbTab) + "<gds_bar_code><![CD"+"ATA[" + strKod + "]"+"]></gds_bar_code>" + vbCrLf
+		pSO.write string(2,vbTab) + "<gds_index><![CD"+"ATA[" + strIndeks + "]"+"]></gds_index>" + vbCrLf	
+		pSO.write string(2,vbTab) + "<gds_units_in_pack>" + cstr(clng(curKrotnosc)) + "</gds_units_in_pack>" + vbCrLf
+	pSO.write string(1,vbTab) + "</goods>" + vbCrLf	
+end function
+
+
+
+
+function generate_stores_dictionary(byval strPath)
+	dim pStream:set pStream = doc_.createstreamobj()
+	pStream.write "<?xml version=""1.0"" encoding=""windows-1250"" ?>" + vbCrLf
+	pStream.write "<dictionary_store>" + vbCrLf
+	dim cursor:set cursor = trans_.createrawcursor(TYPEID_N5MAGAZYN , "" , "" , "")
+	dim magazyn
+	for each magazyn in cursor
+		pStream.write vbTab + "<store>" + vbCrLf
+			pStream.write string(2,vbTab) + "<store_name><![CD"+"ATA[" + magazyn.strNazwa + "]"+"]></store_name>" + vbCrLf	
+			pStream.write string(2,vbTab) + "<salesman_name><![CD"+"ATA[" + magazyn.strNazwa + "]"+"]></salesman_name>" + vbCrLf	
+		pStream.write vbTab + "</store>" + vbCrLf				
+	next
+	pStream.write "</dictionary_store>" + vbCrLf
+	pStream.save strPath
+end function
+
+
+
+
+
+'==================================================================================
+' import
+'==================================================================================
+
+
+
+class CBCSStruct
+
+	public m_strNrDok
+	public m_dDataWyst
+	public m_strStore
+	public m_strSalesman
+	public m_pPositions
+	
+
+	private sub class_initialize()
+		set m_pPositions = trans_.afc.new_navoarray()
+		m_strStore = ""
+		m_strSalesman = ""
+	end sub 
+
+	public function add_new()
+		dim pPos:set pPos = new CBCSStructPosition
+		m_pPositions.add pPos
+		set add_new = m_pPositions.value(m_pPositions.UpperIndex)
+	end function
+
+
+	public function fill_from_stanmag(byval pMagazyn)
+		m_strStore = pMagazyn.text
+		dim adors:set adors = trans_.createadors(bqry_stan_mag_for_magazyn(pMagazyn.idobj))
+		while not adors.eof
+			adors.movenext
+		wend
+	end function
+
+end class
+
+
+class CBCSStructPosition
+	public m_strNazwa
+	public m_strIndex
+	public m_curIlosc
+	public m_bUsed
+
+	private sub class_initialize()
+		m_strNazwa = ""
+		m_bUsed = false
+	end sub 
+
+end class
+
+
+
+
+class CBCSParser
+
+	private m_strCurrentTag
+	private m_strCurrentDokType
+	private m_pCurrentDok
+	private m_pCurrentPoz
+	private m_strLastError
+
+	private m_nMode
+	private m_strDokType
+	private m_bSkip
+
+	
+	private sub class_initialize()
+		m_strLastError = ""
+		set m_pCurrentDok = nothing
+		set m_pCurrentPoz = nothing
+		m_strDokType = ""
+		m_bSkip = false
+	end sub
+	private sub class_terminate() 'OK
+		set m_pCurrentDok = nothing
+		set m_pCurrentPoz = nothing
+	end sub
+
+	public function OnElementStart(byval strTag,byref pAttr)
+
+		if is_error() then
+			exit function
+		end if
+
+		m_strCurrentTag = strTag
+		trans_.message 0,0,"start:" + strTag
+
+		if strTag = "position" then
+			if skip_document() then
+				exit function
+			end if
+			on_new_position			
+		end if
+
+	end function
+	public function OnElementEnd(byval strTag)
+
+		if is_error() then
+			exit function
+		end if
+
+		if strTag="document" and not skip_document() then
+			m_strLastError = "tryb update - koniec dokumentu"
+		end if
+
+		trans_.message 0,0,"end:" + strTag
+		m_strCurrentTag = ""
+	end function
+	public function OnData(byval strValue)
+
+		if is_error() then
+			exit function
+		end if
+
+		trans_.message 0,0,"value:" + strValue
+		select case m_strCurrentTag
+		case "type"
+			m_strCurrentDokType = strValue
+			if skip_document() then
+				exit function
+			end if
+			on_new_document
+
+		case "name"
+			if skip_document() then
+				exit function
+			end if
+			on_name strValue
+
+		case "doc_created_date"
+			if skip_document() then
+				exit function
+			end if
+			on_date strValue
+						
+		case "store"
+			if skip_document() then
+				exit function
+			end if
+			dim idMag : idMag = lookup_magazyn(strValue , store_is_required() )
+			if is_error() then				
+				exit function			
+			end if
+			on_set_store idMag
+
+		case "salesman"
+			if skip_document() then
+				exit function
+			end if
+			dim idMagS : idMagS = lookup_magazyn(strValue , salesman_is_required() )
+			if is_error() then
+				exit function			
+			end if
+			on_set_salesman idMagS
+
+		case "gds_index"
+			if skip_document() then
+				exit function
+			end if
+			dim idProd : idProd = lookup_produkt(strValue)
+			if is_error() then
+				exit function
+			end if
+			on_set_produkt idProd			
+		case "gds_packs"
+			if skip_document() then
+				exit function
+			end if
+		case "gds_all_units"
+			if skip_document() then
+				exit function
+			end if
+			on_set_ilosc ccur(strValue)			
+		end select
+	end function
+
+
+	public function store_is_required()
+		store_is_required = true
+		if (m_nMode = BCS_IMPORT_MODE_NEW_DOK) or (m_nMode = BCS_IMPORT_MODE_UPDATE_DOK) then
+			store_is_required = (m_pCurrentDok.pRejestrDok.eTyp = N5REJESTRDOK__MM) 			
+		end if
+
+	end function
+
+
+	public function salesman_is_required()
+		salesman_is_required = true
+		if (m_nMode = BCS_IMPORT_MODE_NEW_DOK) or (m_nMode = BCS_IMPORT_MODE_UPDATE_DOK) then
+			salesman_is_required = (m_pCurrentDok.pRejestrDok.eTyp = N5REJESTRDOK__PW or m_pCurrentDok.pRejestrDok.eTyp = N5REJESTRDOK__MM) 			
+		end if
+	end function
+
+
+	public function on_set_ilosc(byval curValue)
+		if m_nMode = BCS_IMPORT_MODE_NEW_DOK or m_nMode = BCS_IMPORT_MODE_UPDATE_DOK then
+			m_pCurrentPoz.curIloscOpak = curValue
+		else
+			m_pCurrentPoz.m_curIlosc = curValue
+		end if
+			
+	end function
+
+
+	public function on_set_produkt(byval idProd)
+		dim pProdukt:set pProdukt = trans_.getobj(TYPEID_N5PRODUKT,idProd)
+		if m_nMode = BCS_IMPORT_MODE_NEW_DOK or m_nMode = BCS_IMPORT_MODE_UPDATE_DOK then
+			set m_pCurrentPoz.pProdukt = pProdukt
+		else
+			m_pCurrentPoz.m_strIndex = pProdukt.strIndeks
+		end if
+	end function
+
+
+
+	public function on_new_position
+		if m_nMode = BCS_IMPORT_MODE_NEW_DOK or m_nMode = BCS_IMPORT_MODE_UPDATE_DOK then
+			set m_pCurrentPoz = m_pCurrentDok.listPozycje.addnew()
+		else
+			set m_pCurrentPoz = m_pCurrentDok.add_new()
+		end if
+	end function
+
+
+	public function on_name(strValue)
+
+#comment	BCS - przy imporcie, dokument MM otrzymuje numer taki, jaki
+#comment	byl na handheldzie. Chyba lepiej bedzie jak numer MM
+#comment	bedzie nadawany automatycznie
+		'jezeli pracujemy z dokmag to ustawiamy odpowiednio numer
+		if m_nMode = BCS_IMPORT_MODE_NEW_DOK or m_nMode = BCS_IMPORT_MODE_UPDATE_DOK then
+'			m_pCurrentDok.strNrDok = strValue
+		else
+'			m_pCurrentDok.m_strNrDok = strValue
+		end if		
+	end function
+
+
+	public function on_date(strValue)
+		'jezeli pracujemy z dokmag to ustawiamy odpowiednio numer
+		if m_nMode = BCS_IMPORT_MODE_NEW_DOK or m_nMode = BCS_IMPORT_MODE_UPDATE_DOK then
+			m_pCurrentDok.dDataWyst = cdate(strValue)
+		else
+			m_pCurrentDok.m_dDataWyst = cdate(strValue)
+		end if		
+	end function
+
+
+
+	public function on_set_store(idMag)
+		if idMag < 1 then
+			exit function
+		end if
+		dim pMagazyn:set pMagazyn = trans_.getobj(TYPEID_N5MAGAZYN,idMag)
+		if m_nMode = BCS_IMPORT_MODE_NEW_DOK or m_nMode = BCS_IMPORT_MODE_UPDATE_DOK then			
+			select case m_pCurrentDok.pRejestrDok.eTyp
+				case N5REJESTRDOK__PZ
+					set m_pCurrentDok.pMagDocel = pMagazyn
+				case N5REJESTRDOK__WZ,N5REJESTRDOK__RW,N5REJESTRDOK__MM,N5REJESTRDOK__MR
+					set m_pCurrentDok.pMagZrod = pMagazyn				
+			end select
+		else
+			m_pCurrentDok.m_strStore	= pMagazyn.text
+			if m_pCurrentDok.m_strSalesman = "" then
+				m_pCurrentDok.m_strSalesman	= pMagazyn.text
+			end if
+		end if
+	end function
+
+
+
+	public function on_set_salesman(idMag)
+		if idMag < 1 then
+			exit function
+		end if
+		dim pMagazyn:set pMagazyn = trans_.getobj(TYPEID_N5MAGAZYN,idMag)
+		if m_nMode = BCS_IMPORT_MODE_NEW_DOK or m_nMode = BCS_IMPORT_MODE_UPDATE_DOK then
+			select case m_pCurrentDok.pRejestrDok.eTyp			
+				case N5REJESTRDOK__PW,N5REJESTRDOK__MM,N5REJESTRDOK__MP
+					set m_pCurrentDok.pMagDocel = pMagazyn
+			end select
+		else
+			m_pCurrentDok.m_strSalesman	= pMagazyn.text
+		end if
+	end function
+
+
+	public function on_new_document
+		
+		'na podstawie typu tworzymy odpowiedni dokument
+		'ustawiamy też zmienne środowiskowe
+
+		if m_strCurrentDokType = "ZALADUNEK" then
+			select case m_nMode
+				case BCS_IMPORT_MODE_NEW_DOK
+					trans_.var(APPVAR_REJESTR_TYP) = clng(N5REJESTRDOK__RW)
+					trans_.var(APPVAR_REJESTR_DOKUMENTOW) = clng(choose_rejestr_dok(cstr(N5REJESTRDOK__RW),true, "Wybierz rejestr RW"))
+					set m_pCurrentDok = trans_.newobj(TYPEID_N5DOKMAG)
+				case BCS_IMPORT_MODE_UPDATE_DOK
+				case BCS_IMPORT_MODE_NEW_STRUCT
+				case BCS_IMPORT_MODE_UPDATE_STRUCT
+			end select
+			set m_pCurrentPoz = nothing
+		end if
+		
+	end function
+
+
+	public function skip_document()
+
+		m_bSkip = false
+		skip_document = m_bSkip
+
+		if m_strDokType = "" or m_strDokType = m_strCurrentDokType then
+			exit function
+		end if		
+
+		m_bSkip = true
+		skip_document = m_bSkip
+		
+	end function
+
+
+	public function is_error()
+		is_error = (m_strLastError <> "")
+	end function
+
+	public function get_lasterror()
+		get_lasterror = m_strLastError 
+	end function
+
+#comment'------------------------------------------------------------------------------
+
+	private function lookup_magazyn(byref strValue , bReguired)
+		dim idMag : idMag = trans_.findobjid(TYPEID_N5MAGAZYN,"strNazwa='" + _
+			trans_.afc.convert.DoubleApostrophe(trim(strValue)) + "'")
+		if idMag = 0 and bReguired then
+			m_strLastError = "Nie znaleziono magazynu " + strValue
+		end if
+		if idMag < 0 then
+			m_strLastError = "Zduplikowana nazwa magazynu " + strValue
+		end if
+		lookup_magazyn = idMag
+	end function
+	
+	private function lookup_produkt(byref strValue)
+		dim idProd : idProd = trans_.findobjid(TYPEID_N5PRODUKT,"strIndeks='" + _
+			trans_.afc.convert.DoubleApostrophe(trim(strValue)) + "'")
+		if idProd = 0 then
+			m_strLastError = "Nie znaleziono produktu o indeksie " + strValue
+		end if
+		if idProd < 0 then
+			m_strLastError = "Zduplikowany produkt o indeksie " + strValue
+		end if
+		lookup_produkt = idProd
+	end function
+
+
+
+	public sub set_mode_update_doc(byref pDokMag)		
+		m_nMode = BCS_IMPORT_MODE_UPDATE_DOK
+		set m_pCurrentDok = pDokMag
+	end sub
+
+	public sub set_mode_new_doc()		
+		m_nMode = BCS_IMPORT_MODE_NEW_DOK
+	end sub
+
+
+	public sub set_mode_update_struct(byref pStruct)		
+		m_nMode = BCS_IMPORT_MODE_UPDATE_STRUCT
+		set m_pCurrentDok = pStruct
+	end sub
+
+	public sub set_mode_new_struct()		
+		m_nMode = BCS_IMPORT_MODE_NEW_STRUCT
+	end sub
+
+
+	public sub set_doc_type(byval strDok)		
+		m_strDokType = strDok
+	end sub
+
+
+end class
+
+function read_stream(byref pSI)
+	dim pCBCSParser : set pCBCSParser = new CBCSParser
+	doc_.parsexml pCBCSParser,pSI
+	read_stream = pCBCSParser.get_lasterror()
+end function
+
+
+
+function update_doc_from_stream(byref pSI , byref pDokMag , byval strDok)
+	dim pCBCSParser : set pCBCSParser = new CBCSParser
+	pCBCSParser.set_mode_update_doc pDokMag 
+	pCBCSParser.set_doc_type strDok
+
+	doc_.parsexml pCBCSParser,pSI
+	update_doc_from_stream = pCBCSParser.get_lasterror()
+end function
+
+
+function update_doc_from_stream_zaladunek(byref pSI , byref pDokMag)
+	update_doc_from_stream_zaladunek = update_doc_from_stream( pSI , pDokMag , "ZALADUNEK")	
+end function
+
+
+function update_doc_from_stream_zamowienie(byref pSI , byref pDokMag)
+	update_doc_from_stream_zamowienie = update_doc_from_stream( pSI , pDokMag , "ZAMOWIENIE")	
+end function
+
+
+function update_struct_from_stream(byref pSI , byref pStruct , byval strDok)
+	dim pCBCSParser : set pCBCSParser = new CBCSParser
+	pCBCSParser.set_mode_update_struct pStruct
+	pCBCSParser.set_doc_type strDok
+
+	doc_.parsexml pCBCSParser,pSI
+	update_struct_from_stream = pCBCSParser.get_lasterror()
+end function
+
+
+function get_BCSStruct()
+	set get_BCSStruct = new CBCSStruct
+end function
+
+
+'select file
+#include "50123"
+
+
+'CFileDrive
+#include "50211"
+
+
+function read_file_2_struct()
+
+
+	set read_file_2_struct = nothing
+	
+	dim strPath
+	strPath=SelectFile("c:\", "*.xml", "")
+
+	if (len(strPath)=0) then
+		exit function
+	end if
+
+	dim pStream : set pStream = doc_.createstreamobj()
+	pStream.attach  strPath
+
+	dim pStruct
+	set pStruct = get_BCSStruct()
+
+	update_struct_from_stream pStream , pStruct , ""
+
+	set read_file_2_struct = pStruct
+
+end function
+
+
+function make_raport(byref pTBContainer , byval pBCSStruct)
+
+
+	pTBContainer.newrow
+	pTBContainer.row.styleitem = STYLE_TABLE_HEADER
+	pTBContainer.newcell.addtext "Produkt"
+	pTBContainer.newcell.addtext "Indeks"
+	pTBContainer.newcell.addtext "Eurobiznes"
+	pTBContainer.newcell.addtext "BCS"
+
+
+
+
+	dim idMagazyn:idMagazyn = trans_.findobjid(TYPEID_N5MAGAZYN, "strNazwa like '"+pBCSStruct.m_strSalesman+"'")
+	if idMagazyn < 1 then
+		trans_.message 1002 , 0 , "Brak w bazie magazynu, ktory został wczytane z pliku ze stanem magazynowym"
+		exit function
+	end if 
+	dim adors:set adors = trans_.createadors(bqry_stan_mag_for_magazyn(idMagazyn))
+	dim iter
+
+
+
+	while not adors.eof
+
+		dim strProdInx:strProdInx = cstr(adors.fields("produkt_indeks").value)
+		dim strProdNazwa:strProdNazwa = cstr(adors.fields("produkt_nazwa").value)
+		dim strProdIlosc:strProdIlosc = cstr(adors.fields("produkt_ilosc").value)					
+
+		dim pBCSStructPosition:set pBCSStructPosition = nothing		
+		for iter = 0 to pBCSStruct.m_pPositions.upperIndex
+			set pBCSStructPosition = pBCSStruct.m_pPositions.value(iter)
+			if pBCSStructPosition.m_strIndex = strProdInx then
+				pBCSStructPosition.m_bUsed = true
+				exit for
+			else
+				set pBCSStructPosition = nothing
+			end if
+		next
+
+
+		pTBContainer.newrow
+		pTBContainer.row.styleitem = STYLE_TABLE_BODY
+
+		pTBContainer.newcell.addtext strProdNazwa
+		pTBContainer.newcell.addtext strProdInx
+
+		pTBContainer.newcell.cell.align = ALIGN_RIGHT
+		pTBContainer.addtext strProdIlosc
+
+		
+		if not pBCSStructPosition is nothing then
+			' stan z BCS
+			pTBContainer.newcell.cell.align = ALIGN_RIGHT
+			pTBContainer.addtext cstr(pBCSStructPosition.m_curIlosc)
+			if pBCSStructPosition.m_curIlosc <> ccur(strProdIlosc) then
+				pTBContainer.element.forecolor = RGB(255,0,0)	
+			end if
+		else
+			pTBContainer.newcell.cell.align = ALIGN_RIGHT
+			pTBContainer.addtext "<brak>"
+			pTBContainer.element.forecolor = RGB(255,0,0)
+		end if
+
+		adors.movenext
+	wend
+
+	dim idProd,pProdukt
+
+
+	for iter = 0 to pBCSStruct.m_pPositions.upperIndex
+		set pBCSStructPosition = pBCSStruct.m_pPositions.value(iter)
+		if not pBCSStructPosition.m_bUsed then
+
+
+			idProd = trans_.findobjid(TYPEID_N5PRODUKT, "strIndeks like '"+pBCSStructPosition.m_strIndex+"'")			
+
+			if idProd > 0 then
+
+				set pProdukt = trans_.getobj(TYPEID_N5PRODUKT , idProd)
+
+				pTBContainer.newrow
+				pTBContainer.row.styleitem = STYLE_TABLE_BODY
+				
+				pTBContainer.newcell.addtext pProdukt.strNazwa
+				pTBContainer.newcell.addtext pProdukt.strIndeks
+
+				pTBContainer.newcell.cell.align = ALIGN_RIGHT
+				pTBContainer.addtext "<brak>"
+				pTBContainer.element.forecolor = RGB(255,0,0)
+
+				pTBContainer.newcell.cell.align = ALIGN_RIGHT
+				pTBContainer.addtext cstr(pBCSStructPosition.m_curIlosc)
+
+			else
+				trans_.message 1002 , 0 , "Brak w bazie produktu, ktory został wczytany z pliku ze stanem magazynowym - " + cstr(pBCSStructPosition.m_strIndex)
+			end if
+
+		end if
+
+	next
+
+
+	
+
+end function
+
+
+function make_raport_param(byref pTBContainerWiecej , byref pTBContainerBraki , byref pTBContainerOK , byval pBCSStruct , byval idrejestr , byval dDataOd , byval dDataDo , byref strMagazyn , byref strMagazyn2)
+
+	if idrejestr = 0 then
+		trans_.message 1002, 0 , "Nie wskazano rejestru dokumentów"
+		exit function
+	end if
+
+	dim idMagazyn:idMagazyn = trans_.findobjid(TYPEID_N5MAGAZYN, "strNazwa like '"+pBCSStruct.m_strSalesman+"'")
+	if idMagazyn < 1 then
+		trans_.message 1002 , 0 , "Brak w bazie magazynu, ktory został wczytane z pliku ze stanem magazynowym"
+		exit function
+	end if 
+
+	strMagazyn2 = pBCSStruct.m_strStore
+
+	dim perf:set perf = doc_.performing("Trwa tworzenie raportu .....")
+
+	strMagazyn = trans_.getobj(TYPEID_N5MAGAZYN,idMagazyn).text
+
+	make_header pTBContainerWiecej
+	make_header pTBContainerBraki
+	make_header pTBContainerOK
+
+	dim adors:set adors = trans_.createadors(bqry_stan_mag_for_magazyn(idMagazyn))
+	dim adors_sprzed:set adors_sprzed = trans_.createadors(bqry_stan_mag_for_faktury(idRejestr , dDataOd , dDataDo))
+	dim adors_przychod:set adors_przychod = trans_.createadors(bqry_stan_mag_for_magazyn_by_date_and_ilosc(idMagazyn , dDataOd , dDataDo))
+	dim iter
+
+	dim strProdInx
+	dim strProdNazwa
+	dim strProdIlosc
+	dim strProdIloscSprzed
+	dim strProdIloscPrzychod
+	dim strProdIloscBCS
+	dim pBCSStructPosition
+	dim strJednostka
+	dim prec	
+
+	while not adors.eof
+
+		strProdInx = cstr(adors.fields("produkt_indeks").value)
+		strProdNazwa = cstr(adors.fields("produkt_nazwa").value)
+		strProdIlosc = cstr(adors.fields("produkt_ilosc").value)
+		strProdIloscSprzed = get_ilosc_by_inx ( adors_sprzed , strProdInx , "produkt_ilosc_sprzedana")
+		strProdIloscPrzychod = get_ilosc_by_inx ( adors_przychod , strProdInx , "produkt_ilosc")
+		strJednostka = cstr(adors.fields("jednostka").value)					
+		prec = clng(adors.fields("jednostka_prec").value) - 1
+		
+
+
+		set pBCSStructPosition = nothing		
+		for iter = 0 to pBCSStruct.m_pPositions.upperIndex
+			set pBCSStructPosition = pBCSStruct.m_pPositions.value(iter)
+			if pBCSStructPosition.m_strIndex = strProdInx then
+				strProdIloscBCS = pBCSStructPosition.m_curIlosc
+				pBCSStructPosition.m_bUsed = true
+				exit for
+			else
+				set pBCSStructPosition = nothing
+				strProdIloscBCS = ccur(0)
+			end if
+		next
+
+		if ccur(strProdIloscBCS) > ccur(strProdIlosc) then
+			insert_row pTBContainerWiecej , strProdNazwa , strProdInx , strProdIloscBCS , strProdIlosc , strProdIloscSprzed , strProdIloscPrzychod , strJednostka , prec
+		end if
+
+		if ccur(strProdIloscBCS) = ccur(strProdIlosc) then
+			insert_row pTBContainerOK , strProdNazwa , strProdInx , strProdIloscBCS , strProdIlosc , strProdIloscSprzed , strProdIloscPrzychod , strJednostka , prec
+		end if
+
+
+		if ccur(strProdIloscBCS) < ccur(strProdIlosc) then
+			insert_row pTBContainerBraki , strProdNazwa , strProdInx , strProdIloscBCS , strProdIlosc , strProdIloscSprzed , strProdIloscPrzychod , strJednostka , prec
+		end if
+
+		adors.movenext
+
+	wend
+
+	strProdIlosc = ccur(0)
+	strProdIloscSprzed = ccur(0)
+	strProdIloscBCS = ccur(0)
+
+
+	'teraz faktury
+	set adors = trans_.createadors(bqry_stan_mag_for_faktury(idrejestr , dDataOd , dDataDo))
+	while not adors.eof
+		strProdInx = cstr(adors.fields("produkt_indeks").value)
+		strProdNazwa = cstr(adors.fields("produkt_nazwa").value)
+		strProdIlosc = ccur(0)
+		strProdIloscSprzed = cstr(adors.fields("produkt_ilosc_sprzedana").value)
+		strProdIloscPrzychod = get_ilosc_by_inx ( adors_przychod , strProdInx , "produkt_ilosc")
+		strJednostka = cstr(adors.fields("jednostka").value)
+		prec = clng(adors.fields("jednostka_prec").value) - 1
+
+		set pBCSStructPosition = nothing		
+		for iter = 0 to pBCSStruct.m_pPositions.upperIndex
+			set pBCSStructPosition = pBCSStruct.m_pPositions.value(iter)
+			if pBCSStructPosition.m_strIndex = strProdInx and not pBCSStructPosition.m_bUsed  then
+				strProdIloscBCS = pBCSStructPosition.m_curIlosc
+				pBCSStructPosition.m_bUsed = true
+				exit for
+			else
+				set pBCSStructPosition = nothing
+			end if
+		next
+
+		'wtedy jest w fakturach, jest w BCS ale nie ma w stanmag
+		if not pBCSStructPosition is nothing then
+			insert_row pTBContainerWiecej , strProdNazwa , strProdInx , strProdIloscBCS , ccur(0) , strProdIloscSprzed , strProdIloscPrzychod, strJednostka , prec
+		end if
+
+		adors.movenext
+	wend
+
+
+	'a teraz tylko to co jest w bcs a nie ma nigdzie indziej
+	dim idProd
+	dim pProdukt
+	for iter = 0 to pBCSStruct.m_pPositions.upperIndex
+		set pBCSStructPosition = pBCSStruct.m_pPositions.value(iter)
+		if not pBCSStructPosition.m_bUsed then
+
+			idProd = trans_.findobjid(TYPEID_N5PRODUKT, "strIndeks like '"+pBCSStructPosition.m_strIndex+"'")			
+
+			if idProd > 0 then
+
+				set pProdukt = trans_.getobj(TYPEID_N5PRODUKT , idProd)
+				strJednostka = pProdukt.listOpakowania.get(1).pJednOpak.strSkrot
+
+				strProdIloscPrzychod = get_ilosc_by_inx ( adors_przychod , pProdukt.strIndeks , "produkt_ilosc")
+
+				prec = pProdukt.listOpakowania.get(1).pJednOpak.nDokladnosc - 1
+
+				insert_row pTBContainerWiecej , pProdukt.strNazwa , pProdukt.strIndeks , pBCSStructPosition.m_curIlosc , ccur(0) , ccur(0) , strProdIloscPrzychod , strJednostka , prec
+
+			else
+				trans_.message 1002 , 0 , "Brak w bazie produktu, ktory został wczytany z pliku ze stanem magazynowym - " + cstr(pBCSStructPosition.m_strIndex)
+			end if
+
+		end if
+
+	next
+
+	set perf = nothing
+
+end function
+
+
+function insert_row(byref pTB , strProdNazwa , strProdInx ,  strProdIloscBCS , strProdIlosc , strProdIloscSprzed , strProdIloscPrzychod ,  strJednostka , prec)
+	pTB.newrow
+	pTB.row.styleitem = STYLE_TABLE_BODY
+
+	pTB.newcell.addtext strProdInx
+
+
+	'przychody
+	pTB.newcell.cell.align = ALIGN_RIGHT
+	pTB.cell.width = clng(MINIMIZE_SIZE)
+	pTB.addtext trans_.afc.display.quantity(strProdIloscPrzychod,strJednostka,prec)
+
+
+	'rozchody
+	pTB.newcell.cell.align = ALIGN_RIGHT
+	pTB.cell.width = clng(MINIMIZE_SIZE)
+	pTB.addtext trans_.afc.display.quantity(strProdIloscSprzed,strJednostka,prec)
+
+
+	'stan wg eb
+	pTB.newcell.cell.align = ALIGN_RIGHT
+	pTB.cell.width = clng(MINIMIZE_SIZE)
+	pTB.addtext trans_.afc.display.quantity(strProdIlosc,strJednostka,prec)
+
+
+	'stan wg bcs
+	pTB.newcell.cell.align = ALIGN_RIGHT
+	pTB.cell.width = clng(MINIMIZE_SIZE)
+	pTB.addtext trans_.afc.display.quantity(strProdIloscBCS,strJednostka,prec)
+
+
+	'bcs - eb
+	pTB.newcell.cell.align = ALIGN_RIGHT
+	pTB.cell.width = clng(MINIMIZE_SIZE)
+	pTB.addtext trans_.afc.display.quantity(ccur(strProdIloscBCS) - ccur(strProdIlosc),strJednostka,prec)
+
+	pTB.newcell.cell.align = ALIGN_RIGHT
+	pTB.addtext ""
+
+
+	'strProdIloscPrzychod
+
+
+end function
+
+
+function make_header(byref pTB)
+	pTB.newrow
+	pTB.row.styleitem = STYLE_TABLE_HEADER
+
+	pTB.newcell.addtext "Indeks"
+	pTB.element.size = clng(15)
+	pTB.cell.width = clng(MINIMIZE_SIZE)
+
+
+	pTB.newcell.addtext "Przychody"
+	pTB.cell.width = clng(MINIMIZE_SIZE)
+
+	pTB.newcell.addtext "Rozchody"
+	pTB.cell.width = clng(MINIMIZE_SIZE)
+
+	pTB.newcell.addtext "Stan wg EB"
+	pTB.cell.width = clng(MINIMIZE_SIZE)
+
+	pTB.newcell.addtext "Stan wg BCS"
+	pTB.cell.width = clng(MINIMIZE_SIZE)
+
+	pTB.newcell.addtext "BCS-EB"
+	pTB.cell.width = clng(MINIMIZE_SIZE)
+
+	pTB.newcell.addtext "Adnotacje"
+
+	
+end function
+
+
+function get_ilosc_by_inx(byval rs , byval strProdInx , byval strFldName ):get_ilosc_by_inx = ccur(0)
+
+	if not rs.bof then
+		rs.movefirst
+	end if
+
+	if rs.eof then
+		exit function
+	end if
+
+	while not rs.eof
+		if cstr(rs("produkt_indeks")) = strProdInx then
+			get_ilosc_by_inx = ccur(rs(strFldName))
+			exit function
+		end if
+		rs.movenext	
+	wend
+	
+end function
+
+
+function bqry_stan_mag_for_faktury(byval idRej , byval dDataOd , byval dDataDo)
+	bqry_stan_mag_for_faktury = doc_.afc.convert.formatter( _
+	" select " + vbNewLine + _
+	" 'produkt_indeks' = t_1.p_strIndeks, " + vbNewLine + _
+	" 'produkt_id' = t_1.p_idobj, " + vbNewLine + _
+	" 'produkt_nazwa' = max(t_1.p_strNazwa), " + vbNewLine + _
+	" 'produkt_kod_kreskowy' = max(t_1.c_strEAN), " + vbNewLine + _
+	" 'produkt_ilosc_sprzedana' = sum(t_0.c_curIloscOpak) , " + vbNewLine + _
+	" 'jednostka' = max(t_2.strSkrot) , " + vbNewLine + _
+	" 'jednostka_prec' = max(t_2.nDokladnosc) " + vbNewLine + _
+	" from vlist_n5sprzedaz_listPozycje as t_0 " + vbNewLine + _
+	" join vlist_n5produkt_listopakowania as t_1 on t_1.p_idobj = t_0.c_pProdukt and t_1.c_idobj = t_0.c_pOpak and t_1.coll_lp = 1 " + vbNewLine + _
+	" join n5jednostka as t_2 on t_2.idobj = t_1.c_pJednOpak " + vbNewLine + _
+	" where t_0.p_pRejestrDok = %1 and t_0.p_dDataWyst between %2 and %3 " + vbNewLine + _
+	" group by t_1.p_strIndeks,t_1.p_idobj " + vbNewLine + _
+	" order by produkt_indeks " + vbNewLine ) _
+	(cstr(idrej))(trans_.afc.convert.date2SQL(dDataOd))(trans_.afc.convert.date2SQL(dDataDo)).done()
+end function
+
+function bqry_stan_mag_for_magazyn( byval id_mag)
+
+	bqry_stan_mag_for_magazyn = doc_.afc.convert.formatter( _
+		" select  " + vbNewLine + _
+		" 'produkt_indeks' = t_1.p_strIndeks, " + vbNewLine + _
+		" 'produkt_id' = t_1.p_idobj, " + vbNewLine + _
+		" 'produkt_nazwa' = max(t_1.p_strNazwa), " + vbNewLine + _		
+		" 'produkt_kod_kreskowy' = max(t_1.c_strEAN), " + vbNewLine + _
+		" 'produkt_krotnosc' = max(t_1.c_currKrotnosc), " + vbNewLine + _
+		" 'produkt_ilosc' = sum(t_0.gms_curIlosc), " + vbNewLine + _
+		" 'jednostka' = max(t_4.strSkrot), " + vbNewLine + _
+		" 'jednostka_prec' = max(t_4.nDokladnosc) " + vbNewLine + _
+		" from n5gmstan as t_0 " + vbNewLine + _
+		" join vlist_n5produkt_listopakowania as t_1 on t_1.p_idobj = t_0.gms_pProd and t_1.c_idobj = t_0.gms_pOpak and t_1.coll_lp = 1 " + vbNewLine + _
+		" join n5jednostka as t_4 on t_4.idobj = t_1.c_pJednOpak " + vbNewLine + _
+		" where t_0.gms_pMag = %1		 " + vbNewLine + _
+		" group by t_1.p_strIndeks,t_1.p_idobj " + vbNewLine + _
+		" order by produkt_indeks " + vbNewLine ) _
+		(cstr(id_mag)).done()
+
+end function
+
+
+function bqry_stan_mag_for_magazyn_by_date_and_ilosc( byval id_mag , dDataOd , dDataDo)
+
+	dim numop_od,numop_do
+	dim pModUtil : set pModUtil = doc_.getmodule(60253)
+	if not pModUtil.convert_date_range_to_num_oper_range("ddatawyst between "+ trans_.afc.convert.date2SQL(dDataOd) +" and "+ trans_.afc.convert.date2SQL(dDataDo) +" ",numop_od,numop_do) then
+		numop_od = clng(0)
+		numop_do = clng(0)
+	end if
+
+	bqry_stan_mag_for_magazyn_by_date_and_ilosc = doc_.afc.convert.formatter( _
+		" select  " + vbNewLine + _
+		" 'produkt_indeks' = t_1.p_strIndeks, " + vbNewLine + _
+		" 'produkt_id' = t_1.p_idobj, " + vbNewLine + _
+		" 'produkt_nazwa' = max(t_1.p_strNazwa), " + vbNewLine + _		
+		" 'produkt_kod_kreskowy' = max(t_1.c_strEAN), " + vbNewLine + _
+		" 'produkt_krotnosc' = max(t_1.c_currKrotnosc), " + vbNewLine + _
+		" 'produkt_ilosc' = sum(t_0.gmo_curIlosc), " + vbNewLine + _
+		" 'jednostka' = max(t_4.strSkrot), " + vbNewLine + _
+		" 'jednostka_prec' = max(t_4.nDokladnosc) " + vbNewLine + _
+		" from n5gmop as t_0 " + vbNewLine + _
+		" join vlist_n5produkt_listopakowania as t_1 on t_1.p_idobj = t_0.gmo_pProd and t_1.c_idobj = t_0.gmo_pOpak and t_1.coll_lp = 1 " + vbNewLine + _
+		" join n5jednostka as t_4 on t_4.idobj = t_1.c_pJednOpak " + vbNewLine + _
+		" where t_0.gmo_pMag = %1		 " + vbNewLine + _
+		" and t_0.gmo_curIlosc > 0		 " + vbNewLine + _
+		" and t_0.gmo_nNumOp between %2 and %3	 " + vbNewLine + _
+		" group by t_1.p_strIndeks,t_1.p_idobj " + vbNewLine + _
+		" order by produkt_indeks " + vbNewLine ) _
+		(cstr(id_mag))(cstr(numop_od))(cstr(numop_do)).done()
+
+end function
+
+
+
+
+
+
+
+
+
+]]>
+</script>
+</config>
+<body></body>
+</page>

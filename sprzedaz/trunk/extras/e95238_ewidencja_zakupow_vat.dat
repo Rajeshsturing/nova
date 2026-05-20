@@ -1,0 +1,786 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+    2009-04-09 remont generalny obliczen
+    ponowne dostosowanie do jednego kursu na WNT
+-->
+<!--
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1250.h"
+
+#define RAPORT_TITLE Rejestr Zakupów VAT
+#define CTRLID_MAINTABLE				102
+#define GODZINA_WYDRUKU                 <% so.write cstr(FormatDateTime(Now(),3)) %>
+#define COUNTERS_COUNT	6
+
+#macro MONEY(_value_)					doc_.afc.display.money(_value_,"")
+-->
+<page style='36'>
+<config>
+<title>RAPORT_TITLE</title>
+<script>
+<![CDATA[
+VB_PRINT_LANDSCAPE_COMMON
+VB_PRINTPREV_LANDSCAPE_COMMON
+
+function c##CTRLID_MAINTABLE##_on_table_split(byref pClonedTable,byval xAreaX,byval yAreaY,byval xCount,byval yCount)
+	if yAreaY <> yCount then
+	dim oTB : set oTB = doc_.afc.new_tb(page_).attach(pClonedTable).section_foot
+		oTB.removeall
+		dim curArr(COUNTERS_COUNT)
+		dim iter
+		
+		
+		
+		for iter = 1 to COUNTERS_COUNT
+			curArr(iter) = ccur(0.0)
+		next
+		dim pRow 
+		dim curSumaWartoscNaStronie : curSumaWartoscNaStronie = ccur(0.0)
+		dim i:i = 1
+		for each pRow in pClonedTable.body
+		if not pRow.userprop is nothing then
+			for iter = 1 to COUNTERS_COUNT
+				if pRow.userprop.exists(iter) then
+					curArr(iter) = curArr(iter) + ccur(pRow.userprop(iter)) 
+				end if
+			next
+			i = i + 1
+		end if
+		next
+		
+		'podsumowanie na stronie
+			
+		with oTB.newrow.row
+			.border=0
+			.bold = true
+		end with
+		oTB.newcell
+		oTB.newcell.addtext "Na stronie"
+		
+
+		dim pLastRowUserProp : set pLastRowUserProp = pClonedTable.body.row(pClonedTable.body.count).userprop
+		
+		for iter = 1 to 5
+			oTB.newcell.addtext("")
+		next
+		
+		for iter = 1 to COUNTERS_COUNT
+			oTB.newcell.addtext(MONEY(curArr(iter))).cell.align=ALIGN_RIGHT
+		next
+    
+		'posumowanie narastajaco
+		with oTB.newrow.row
+			.border=0
+			.bold = true
+		end with
+		oTB.newcell
+		oTB.newcell.addtext "Narastająco"
+				
+		for iter = 1 to 5
+			oTB.newcell.addtext("")
+		next
+	
+		for iter = 1 to COUNTERS_COUNT
+			oTB.newcell.addtext(MONEY(ccur(pLastRowUserProp.prop(iter+6)))).cell.align=ALIGN_RIGHT
+		next
+	end if
+end function
+
+function on_page_split(byref pClonedPage,byval xAreaX,byval yAreaY,byval xCount,byval yCount)
+	pClonedPage.footer.removeall
+	dim strText
+	if yCount > 1 then
+		strText = page_.topelement.title + " -  strona " + cstr(yAreaY) + " z " + cstr(yCount) 
+	end if
+	pClonedPage.footer.addnew(0,-1).text = strText
+
+end function
+<%
+dim brutto, bez_odliczen, opod_netto, opod_vat, mieszane_netto, mieszane_vat
+
+brutto = ccur(0.0)
+bez_odliczen = ccur(0.0)
+opod_netto = ccur(0.0)
+opod_vat = ccur(0.0)
+mieszane_netto = ccur(0.0)
+mieszane_vat = ccur(0.0)
+
+
+dim ArrCurGlobSum(COUNTERS_COUNT)
+dim ArrCurSecSum(COUNTERS_COUNT)
+dim ArrCurBodyVal(COUNTERS_COUNT)
+dim g_arrCurRunningSum(COUNTERS_COUNT)
+
+sub reset_global_sums()
+	dim iter
+	for iter = 0 to ubound(ArrCurGlobSum)
+		ArrCurGlobSum(iter) = ccur(0.0)
+	next
+end sub
+
+sub reset_section_sums()
+	dim iter
+	for iter = 0 to ubound(ArrCurSecSum)
+		ArrCurSecSum(iter) = ccur(0.0)
+	next
+end sub
+
+sub update_sum(nIter,curVal)
+	ArrCurGlobSum(nIter) = ArrCurGlobSum(nIter) + curVal
+	ArrCurSecSum(nIter)  = ArrCurSecSum(nIter) + curVal
+end sub
+
+function query()
+dim pM60238 : set pM60238 = doc_.getmodule(60238)
+
+query = "select 'c_rej_nazwa'=t_1.strNazwa, 'c_rej_typ'=t_1.eTyp, 'c_datazak'=t_n5zakup.dDataZakupu," + _
+"'c_dataotrzy'=t_n5zakup.dDataOtrzym," + _
+"'c_datawyst'=t_n5zakup.dDataWyst," + _
+"'c_nrdok_obcy'=case ltrim(t_n5zakup.strNrDokObcy) when '' then t_n5zakup.strNrDok else t_n5zakup.strNrDokObcy end," + _
+"'c_nrdok'=case ltrim(t_n5zakup.strnrdok) when '' then t_n5zakup.strNrDokObcy else t_n5zakup.strNrDok end," +_
+"'c_4'=10176,'c_zakup_idobj'=t_n5zakup.IdObj," + _
+"'c_nip'=t_klient.strNIP," + _
+"'c_nazwa'=t_klient.strNazwa," + _
+"'c_8'=10108," + _
+"'typ_zakup'=t_n5zakup.eTypZakup," +_
+"'c_klient'=t_klient.IdObj," + _
+"'c_popzakup'=t_n5zakup.pPopZakup," + _
+"'c_SumaBrutto'=t_n5zakup.curSumaBrutto," + _
+"'opodatkowane'=t_n5zakup.eZwOpSprz," +_
+"'c_wart_wal'=t_n5zakup.curSumaWal, 'c_akcyza'=t_n5zakup.curSumaAkcyza, 'c_opl_zagr'=t_n5zakup.curSumaOplatyZagr, "+_
+" 'c_opl_kraj'=t_n5zakup.curSumaOplatyKraj, 'c_kurs_vat'=t_n5zakup.curKurs, "+_
+"'c_bez_odliczen'= " + pM60238.qryexpr_zakup_bez_odliczen("t_n5zakup") + "," + _
+"'c_opodatkowane_netto'=" + pM60238.qryexpr_zakup_netto("t_n5zakup",N5ZAKUP_TYPOPOD_OPODATK) + "," + _
+"'c_opodatkowane_vat'=" + pM60238.qryexpr_zakup_vat("t_n5zakup",N5ZAKUP_TYPOPOD_OPODATK) + "," + _
+"'c_mieszane_netto'=" + pM60238.qryexpr_zakup_netto("t_n5zakup",N5ZAKUP_TYPOPOD_MIESZANE) + "," + _
+"'c_mieszane_vat'=" + pM60238.qryexpr_zakup_vat("t_n5zakup",N5ZAKUP_TYPOPOD_MIESZANE) + _
+" from n5zakup as t_n5zakup" + _
+" inner join n5rejestrdok as t_1 on t_n5zakup.pRejestrDok = t_1.IdObj " + _
+" inner join n5klient as t_klient on t_n5zakup.pDostawca = t_klient.IdObj " + _
+" where %1 and %2 and %3 and %4 " + _
+#ifdef _PRINTY_LAND
+"and t_n5zakup.eTypZakup not in (N5ZAKUP_TYPZAKUP_PALIWO,N5ZAKUP_TYPZAKUP_SAMOCHOD_NO) " +_
+#endif
+" order by c_rej_nazwa,c_dataotrzy"
+end function
+%>
+<%dim nSectionPicCounter : nSectionPicCounter = 10000000%>
+function section_hideshow_hli(byref pHLI)
+doc_.afc.formsection.section_hideshow page_, pHLI.prop(100)
+end function
+
+<%
+private function getCurrentRKSId()
+	if trans_.isvar(GVAR_ROKKSIEG) then
+		getCurrentRKSId = trans_.var(GVAR_ROKKSIEG)
+	else
+		getCurrentRKSId = 0
+	end if
+end function
+
+
+function default_param()
+
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+
+	' data otrzymania
+	pParamArray.add doc_.afc.rap.param.new_date_range("Data otrzymania").bindexpr("t_n5zakup.dDataOtrzym")
+	
+	'data wystawienia
+	pParamArray.add doc_.afc.rap.param.new_date_range("Data wystawienia").bindexpr("t_n5zakup.dDataWyst")
+	
+  'nazwa rejestru
+	'pParamArray.add doc_.afc.rap.param.new_text("Nazwa rejestru").bindexpr("t_1.strNazwa")
+
+	'typ rejestru
+	dim pParamFactory2: set pParamFactory2= doc_.afc.rap.param
+	dim pParam2: Set pParam2= pParamFactory2.new_choice("Rejestr").bindexpr("t_1.idobj")
+	
+	doc_.afc.rap.param.init_on_query pParam2, trans_ , _
+		"select strNazwa , idobj from n5rejestrdok where (pRokKsieg=0 or pRokKsieg=" + cstr(getCurrentRKSId()) +_
+		") and eTyp in (N5REJESTRDOK_FAKT_ZAK,N5REJESTRDOK_WNT,N5REJESTRDOK_KOREKTA_WNT,N5REJESTRDOK_KOR_FAKT_ZAK,N5REJESTRDOK_FAKT_IMP,N5REJESTRDOK_KOR_FAKT_IMP,N5REJESTRDOK_FAKT_ZAK_RR,N5REJESTRDOK_KOR_FAKT_ZAK_RR,N5REJESTRDOK_IMPORT_USLUG,N5REJESTRDOK_KOR_IMPORT_USLUG) order by strNazwa "		
+																  
+	pParamArray.add pParam2
+
+	dim pParamFactory3: set pParamFactory3= doc_.afc.rap.param
+	dim pParam3: Set pParam3= pParamFactory3.new_choice("Okres VAT").bindexpr("t_n5zakup.pRozlVAT")
+	doc_.afc.rap.param.init_on_query pParam3, trans_ , _
+		"select 'bez odliczeń',0 union select ltrim(str(year(vat7_ddataod))) + '/' + substring(ltrim(str(100+month(vat7_ddataod))),2,2),idobj " +_
+		"from n5rozlvat where datediff(month,vat7_ddataod," + trans_.afc.convert.date2SQL(trans_.var(GVAR_TODAY)) + ") < 12 order by 1 desc"
+	pParamArray.add pParam3
+
+	set default_param = pParamArray
+end function
+%>
+
+<%
+function write_actual_param(byref pActualParam)
+	dim iter
+	dim bAnyWritten : bAnyWritten = false
+	if not pActualParam is nothing then
+		for iter = 0 to pActualParam.upperIndex
+			if pActualParam.value(iter).get_desc() <> "" then 
+				bAnyWritten = true
+				so.write "<t size='5' /><text fontsize='4'><![CD"+"ATA[" + pActualParam.value(iter).get_desc() + "]"+"]></text><br/>"
+			end if
+		next
+	end if
+	if not bAnyWritten then 
+		so.write "<t fontsize='4'>brak</t><br/>"
+	end if
+	so.write "<br/>"
+end function
+%>
+
+<% 
+private function get_adress_string(byval m_pObj)
+
+		dim strAdres
+
+		if m_pObj.strKod <> "" then
+			strAdres = strAdres + m_pObj.strKod
+		end if
+
+		strAdres = strAdres + " " + m_pObj.pMiejscowosc.strNazwa
+				
+		if m_pObj.strUlica <> "" then
+			strAdres = strAdres + ", ul. " + m_pObj.strUlica
+		end if
+
+		if m_pObj.strNrDomu <> "" then
+			strAdres = strAdres + " " + m_pObj.strNrDomu
+		end if
+
+		if m_pObj.strNrLokalu <> "" then
+			strAdres = strAdres + "/" + m_pObj.strNrLokalu
+		end if
+
+		get_adress_string = strAdres
+
+end function
+%>
+
+<%
+#ifdef _AMPLUS
+  dim curVatImpKor : curVatImpKor = ccur(0)  'suma vat dla sekcji rejestru korekt faktur importowych
+  dim nTypRej : nTypRej = clng(0)
+  dim bFvatImp : bFvatImp = true    'zaokrąglone podsumowanie całego raportu, gdy wybierzemy tylko rejestr faktur importowych
+#endif
+%>
+
+<%
+function body_row(byref pSection,byref pRec)
+  dim nOpodat: nOpodat = pRec("opodatkowane").value
+  ArrCurBodyVal(0) = trans_.afc.convert.round2(ccur(pRec("c_SumaBrutto")))
+  ArrCurBodyVal(1) = trans_.afc.convert.round2(ccur(pRec("c_bez_odliczen")))
+  ArrCurBodyVal(2) = trans_.afc.convert.round2(ccur(pRec("c_opodatkowane_netto")))
+  ArrCurBodyVal(3) = trans_.afc.convert.round2(ccur(pRec("c_opodatkowane_vat")))
+  ArrCurBodyVal(4) = trans_.afc.convert.round2(ccur(pRec("c_mieszane_netto")))
+  ArrCurBodyVal(5) = trans_.afc.convert.round2(ccur(pRec("c_mieszane_vat")))
+
+#ifndef _ABAKUS
+  if nOpodat = N5ZAKUP_TYPOPOD_OPODATK then
+    ArrCurBodyVal(0) = trans_.afc.convert.round2(ccur(pRec("c_opodatkowane_netto"))) + trans_.afc.convert.round2(ccur(pRec("c_opodatkowane_vat")))
+#ifdef ENABLE_DB14_A
+		if pRec("typ_zakup").value = N5ZAKUP_TYPZAKUP_ODLICZANE_75 then
+			ArrCurBodyVal(0) = ArrCurBodyVal(0) + ArrCurBodyVal(1)
+#ifdef _INTERCO			
+			ArrCurBodyVal(2) = trans_.afc.convert.round2(ccur(ArrCurBodyVal(2)/2))
+			ArrCurBodyVal(0) = trans_.afc.convert.round2(ccur(pRec("c_SumaBrutto")))
+#endif			
+		end if
+#endif
+  else
+    ArrCurBodyVal(0) = trans_.afc.convert.round2(ccur(pRec("c_mieszane_netto"))) + trans_.afc.convert.round2(ccur(pRec("c_mieszane_vat")))
+  end if
+#endif  
+	
+	'jesli korekta - odejmij oryginał
+	dim idPopZak : idPopZak = clng(pRec("c_popzakup"))
+  if idPopZak <> 0 then
+    dim pPopZakup : set pPopZakup = trans_.getobj(TYPEID_N5ZAKUP,idPopZak)
+    dim curDeltaVAT : curDeltaVAT = - pPopZakup.curVat23 - pPopZakup.curVat8 - pPopZakup.curVat5 - pPopZakup.curVat22 - pPopZakup.curVat17 - pPopZakup.curVat12 -_
+			 pPopZakup.curVat7 - pPopZakup.curVat3 - pPopZakup.curVat23oo
+    if pPopZakup.eTypZakup = N5ZAKUP_TYPZAKUP_SAMOCHOD_NO then
+      curDeltaVAT = trans_.afc.convert.round2(ccur(curDeltaVAT/2))
+    end if
+       
+    dim curDeltaNetto : curDeltaNetto = - pPopZakup.curNetto23 - pPopZakup.curNetto8 - pPopZakup.curNetto5 - pPopZakup.curNetto22 - pPopZakup.curNetto17 -_
+    pPopZakup.curNetto12 - pPopZakup.curNetto7 - pPopZakup.curNetto3 - pPopZakup.curNetto0 - pPopZakup.curNetto23oo      
+    
+    if pPopZakup.eTypZakup = N5ZAKUP_TYPZAKUP_SAMOCHOD_NO then
+      ArrCurBodyVal(0) = ArrCurBodyVal(0) - (curDeltaNetto + curDeltaVAT)
+    else
+      ArrCurBodyVal(0) = ArrCurBodyVal(0) - pPopZakup.curSumaBrutto
+    end if
+    if not pPopZakup.pRozlVat is nothing then
+				ArrCurBodyVal(1) = ArrCurBodyVal(1) - (pPopZakup.curNettoZw + pPopZakup.curNettoNp)
+    end if
+		
+    if pPopZakup.eZwOpSprz = 1 then 
+		  ArrCurBodyVal(2) = ArrCurBodyVal(2) + curDeltaNetto
+    else
+		  ArrCurBodyVal(4) = ArrCurBodyVal(4) + curDeltaNetto
+    end if
+			
+    if pPopZakup.eZwOpSprz = 1 then 
+	    ArrCurBodyVal(3) = ArrCurBodyVal(3) + curDeltaVAT
+    else
+	    ArrCurBodyVal(5) = ArrCurBodyVal(5) + curDeltaVAT
+    end if
+		set pPopZakup = nothing
+	end if
+		
+	dim iter	
+	
+	for iter = 0 to ubound(ArrCurBodyVal)
+		g_arrCurRunningSum(iter) = g_arrCurRunningSum(iter) + ArrCurBodyVal(iter)
+	next
+		
+	for iter = 0 to ubound(ArrCurBodyVal)
+		update_sum iter,trans_.afc.convert.round2(ArrCurBodyVal(iter))
+	next
+
+%>
+
+<tr fontsize='2' userprop='
+		vc1=<%so.write doc_.afc.convert.cur2sql(ArrCurBodyVal(0))%>
+	vc2=<%so.write doc_.afc.convert.cur2sql(ArrCurBodyVal(1))%>
+	vc3=<%so.write doc_.afc.convert.cur2sql(ArrCurBodyVal(2))%>
+	vc4=<%so.write doc_.afc.convert.cur2sql(ArrCurBodyVal(3))%>
+	vc5=<%so.write doc_.afc.convert.cur2sql(ArrCurBodyVal(4))%>
+	vc6=<%so.write doc_.afc.convert.cur2sql(ArrCurBodyVal(5))%>
+	vc7=<%so.write doc_.afc.convert.cur2sql(g_arrCurRunningSum(0))%>
+	vc8=<%so.write doc_.afc.convert.cur2sql(g_arrCurRunningSum(1))%>
+	vc9=<%so.write doc_.afc.convert.cur2sql(g_arrCurRunningSum(2))%>
+	vc10=<%so.write doc_.afc.convert.cur2sql(g_arrCurRunningSum(3))%>
+	vc11=<%so.write doc_.afc.convert.cur2sql(g_arrCurRunningSum(4))%>
+	vc12=<%so.write doc_.afc.convert.cur2sql(g_arrCurRunningSum(5))%>
+	
+	%>'  
+	<%
+	if pRapExec.RecNr mod 2 = 0 then
+	%>
+	 style='37' 
+	<%
+	end if
+	%>
+	bordercolor='black' >
+
+
+ 
+
+
+	<td align='right'>RXE_LP</td>
+	<td>		RXE_DATE(c_dataotrzy)	</td>
+	#ifdef _FRAM
+		<td>		RXE_DATE(c_dataWyst)	 </td>
+		<td>		RXE_AUTOTEXT_LINK_FORM_CCC(c_4,c_zakup_idobj,c_nrdok_obcy)	</td>
+	    <td>		RXE_AUTOTEXT_LINK_FORM_CCC(c_4,c_zakup_idobj,c_nrdok)	</td>
+    #else
+    	<td>		RXE_DATE(c_datazak)	 </td>
+#ifdef _DENIS
+		<td>		RXE_AUTOTEXT_LINK_FORM_CCC_EX(c_4,c_zakup_idobj,c_nrdok_obcy,"varFormUsage=USAGE_ZAK_EDIT_VAT")	</td>			
+#else	
+		<td>		RXE_AUTOTEXT_LINK_FORM_CCC(c_4,c_zakup_idobj,c_nrdok_obcy)	</td>
+#endif		
+    #endif
+	<td>		RXE_AUTOTEXT_LINK_FORM_CCC(c_8,c_klient,c_nip)	</td>
+	<td>		RXE_TEXT(c_nazwa)	</td>
+	
+	
+	<% 
+	dim klient  : set klient = trans_.getobj(TYPEID_N5KLIENT,clng(pRec("c_klient"))) 
+	dim strAdres : strAdres = get_adress_string(klient)
+	%>
+	
+	<td width='max'><text width='max'> <%so.write "<![CD"+"ATA["+ strAdres + "]"+"]>" %></text></td>	
+	<td align='right'>
+		RXE_MONEY_VAR(ArrCurBodyVal(0))
+	</td>
+	<td align='right'>
+		RXE_MONEY_VAR(ArrCurBodyVal(1))
+	</td>
+	<td align='right'>
+#ifdef _AMPLUS
+  <%
+  nTypRej = clng(pRec("c_rej_typ").value)
+  if nTypRej = N5REJESTRDOK_KOR_FAKT_IMP then
+  %>
+    RXE_MONEY_VAR(ArrCurBodyVal(0))
+  <%
+  else
+  %>
+		RXE_MONEY_VAR(ArrCurBodyVal(2))
+  <%
+  end if
+  %>
+#else
+		RXE_MONEY_VAR(ArrCurBodyVal(2))
+#endif	
+  </td>
+	<td align='right'>
+#ifdef _AMPLUS
+  <% 
+    if nTypRej = N5REJESTRDOK_FAKT_IMP then
+  %>
+    RXE_QUANTITY_VVV(ArrCurBodyVal(3),"",0)
+  <%
+    else
+      bFvatImp = false  
+      if nTypRej = N5REJESTRDOK_KOR_FAKT_IMP then
+  %>  
+		    RXE_QUANTITY_VVV(ccur(0),"",2)
+  <%  
+      else
+  %>  
+        RXE_MONEY_VAR(ArrCurBodyVal(3))
+  <%    
+      end if
+    end if
+  %>
+#else
+		RXE_MONEY_VAR(ArrCurBodyVal(3))
+#endif    
+	</td>
+	<td align='right'>
+		RXE_MONEY_VAR(ArrCurBodyVal(4))
+	</td>
+	<td align='right'>
+#ifdef _AMPLUS
+  <%
+    if nTypRej = N5REJESTRDOK_FAKT_IMP then
+  %>
+    RXE_QUANTITY_VVV(ArrCurBodyVal(5),"",0)
+  <%
+    else
+  %>  
+		RXE_MONEY_VAR(ArrCurBodyVal(5))    
+  <%
+    end if
+  %>
+#else
+		RXE_MONEY_VAR(ArrCurBodyVal(5))
+#endif 
+	</td>
+</tr>
+
+<%
+end function
+%>
+
+<%
+function body_header(byref pSection,byref pRec)
+
+
+dim iter
+for iter = 0 to 5
+	g_arrCurRunningSum(iter) = ccur(0.0)
+next
+%>
+<table border='1' width='min' name='CTRLID_MAINTABLE'>
+<thead>
+<tr style='21'>
+
+	<td width='min' rowspan='2'>		<t>LP</t></td>
+	<td width='min' rowspan='2'>		<text><![CDATA[Data otrzymania]]></text>	</td>
+	#ifdef _FRAM
+	    <td width='min' rowspan='2'>		<text><![CDATA[Data wystawienia]]></text>	</td>
+		<td width='min' rowspan='2'>		<text><![CDATA[Numer dokumentu obcy]]></text>	</td>
+	    <td width='min' rowspan='2'>		<text><![CDATA[Numer dokumentu własny]]></text>	</td>
+	#else
+	<td width='min' rowspan='2'>		<text><![CDATA[Data zakupu]]></text>	</td>
+	<td width='min' rowspan='2'>		<text><![CDATA[Numer dokumentu]]></text>	</td>
+	#endif
+	<td width='max' colspan='3'>		<text><![CDATA[Klient]]></text>	</td>
+		
+	<td width='min' rowspan='2'>		<text><![CDATA[Kwota brutto]]></text>	</td>
+	<td width='min' rowspan='2'>		<text><![CDATA[Bez odliczeń]]></text>	</td>
+	
+	<td width='min' colspan='2'>		<text><![CDATA[Zakupy opodatkowane związane z zakupem opodatkowanym]]></text>	</td>
+	<td width='min' colspan='2'>		<text><![CDATA[Zakupy opodatkowane związane z zakupem opodatkowanym i zwolnionym]]></text>	</td>
+	
+</tr>
+<tr style='21'>
+	<td width='min' ><text><![CDATA[NIP]]></text>	</td>
+	<td width='2800' ><text><![CDATA[Nazwa]]></text>	</td>
+	<td width='4000'><text><![CDATA[Adres]]></text>	</td>
+		
+	<td ><text><![CDATA[Netto]]></text>	</td>
+	<td ><text><![CDATA[VAT]]></text>	</td>
+	<td ><text><![CDATA[Netto]]></text>	</td>
+	<td ><text><![CDATA[VAT]]></text>	</td>
+
+</tr>
+</thead>
+<tbody>
+<%
+end function
+%>
+<%
+function body_footer(byref pSection)
+%>
+</tbody>
+<tfoot>
+	<tr style='21'>
+	    #ifdef _FRAM
+	    	<td style='37' colspan='8' width='min' align='right'> <text><![CDATA[Razem]]></text></td>
+	    #else
+	    	<td style='37' colspan='7' width='min' align='right'> <text><![CDATA[Razem]]></text></td>
+	    #endif
+		<td style='37' align='right'>
+			RXE_MONEY_VAR(ArrCurGlobSum(0))
+		</td>
+		<td style='37' align='right'>
+			RXE_MONEY_VAR(ArrCurGlobSum(1))
+		</td>
+		<td style='37' align='right'>
+#ifdef _AMPLUS
+      RXE_MONEY_VAR(ArrCurGlobSum(2) + curVatImpKor)
+#else
+			RXE_MONEY_VAR(ArrCurGlobSum(2))
+#endif		
+    </td>
+		<td style='37' align='right'>
+#ifdef _AMPLUS
+  <%
+    if bFvatImp then
+  %>
+    RXE_QUANTITY_VVV(ArrCurGlobSum(3) - curVatImpKor,"",0)
+  <%
+    else
+  %>  
+		RXE_MONEY_VAR(ArrCurGlobSum(3) - curVatImpKor)
+  <%
+    end if
+  %>
+#else
+		RXE_MONEY_VAR(ArrCurGlobSum(3))
+#endif
+		</td>
+		<td style='37' align='right'>
+			RXE_MONEY_VAR(ArrCurGlobSum(4))
+		</td>
+		<td style='37' align='right'>
+#ifdef _AMPLUS
+  <%
+    if bFvatImp then
+  %>
+    RXE_QUANTITY_VVV(ArrCurGlobSum(5),"",0)
+  <%
+    else
+  %>  
+		RXE_MONEY_VAR(ArrCurGlobSum(5))
+  <%
+    end if
+  %>
+#else
+		RXE_MONEY_VAR(ArrCurGlobSum(5))
+#endif
+		</td>
+	</tr>
+</tfoot>
+<tprevfoot>
+<!-- rezerwuj 2 wiersze na dynamiczną stopkę -->
+<tr style='27'><td><t>&nbsp;</t></td></tr>
+<tr style='27'><td><t>&nbsp;</t></td></tr>
+<tr style='27'><td><t>&nbsp;</t></td></tr>
+<tr style='27'><td><t>&nbsp;</t></td></tr>
+</tprevfoot> 
+</table>
+<%
+end function
+%>
+
+
+]]>
+</script>
+</config>
+<header>
+</header>
+<body>
+<p>
+#ifdef _FRAM
+
+<table fontsize='<%so.write CStr(3)%>'>	
+		<tbody >	
+			<tr>	
+				<td ><text bold='true' ><![CDATA[H_FIRMA_NAZWA]]></text></td>	
+				<td align='right'><t size='3'/><t><![CDATA[<% so.write util_.Firma_Miasto + " " + doc_.afc.display.fulldate(trans_.var(GVAR_TODAY)) %>]]></t></td>	
+			</tr>	
+			<tr>	
+				<td><t bold='true'><![CDATA[H_FIRMA_ULICA_NUMER]]></t></td>
+				<td align='right'><t size='3'>Godzina: </t><t size='3'><![CDATA[GODZINA_WYDRUKU]]></t></td>	
+			</tr>	
+			<% if util_.Firma.strPoczta="" or util_.Firma.pMiejscowosc.strNazwa=util_.Firma.strPoczta then %>	
+			<tr>	
+				<td><t bold='true'><![CDATA[H_FIRMA_KOD_MIASTO]]></t></td>	
+				<td/>	
+			</tr>	
+			<% else if util_.Firma.strPoczta<>util_.Firma.pMiejscowosc.strNazwa then	
+				if util_.Firma.strUlica <> "" then %>	
+			<tr>	
+				<td><t bold='true'><![CDATA[H_FIRMA_MIASTO]]></t></td>	
+				<td/>	
+			</tr>	
+				<%end if%> 	
+			<tr>	
+				<td><t bold='true'><![CDATA[H_FIRMA_KOD_POCZTA]]></t></td>	
+				<td/>	
+			</tr>	
+			<%	end if 	
+			end if
+			%>	
+			<%if clng(1)<>0 then %>
+			<tr>	
+				<td><t bold='true'><![CDATA[H_FIRMA_NIP]]></t></td>	
+				<td/>	
+			</tr>		
+			<%end if %>	
+		</tbody>	
+	</table>
+
+
+
+
+#else
+RAPORT_HEADER(3,1)
+#endif
+</p>
+
+<p><br/><br/><br/><text fontsize='7'><![CDATA[RAPORT_TITLE]]></text></p><br/><br/>
+<t fontsize='5' bold='true'>Kryteria selekcji:</t><br/>
+<%
+	reset_global_sums
+	dim pRapExec : set pRapExec = rapeng_.new_engine()
+	with pRapExec
+		.add_body_ex getref("body_header"),getref("body_footer"),getref("body_row")
+		.add_group_section 0,getref("section_header_1"),getref("section_footer_1")
+		
+		if .prepare("RAPORT_TITLE",default_param(),rapeng_.get_raport_param(),query()) then
+			rapeng_.write_actual_param so,rapeng_.get_raport_param()
+			
+			if not .perform then
+				so.write "<p style='21'><t>Brak danych spełniających podane kryteria</t></p>"
+			end if
+		end if
+	end with
+
+function section_footer_1(byref pSection)
+%>
+<tr fontsize='4'>
+	#ifdef _FRAM
+	<td style='37' colspan='8' />
+	#else
+	<td style='37' colspan='7' />
+	#endif
+
+	<td style='37' align='right'>
+		RXE_MONEY_VAR(ArrCurSecSum(0))
+	</td>
+	<td style='37' align='right'>
+		RXE_MONEY_VAR(ArrCurSecSum(1))
+	</td>
+	<td style='37' align='right'>
+#ifdef _AMPLUS
+  <%
+    if nTypRej = N5REJESTRDOK_KOR_FAKT_IMP then
+  %>
+		RXE_MONEY_VAR(ArrCurSecSum(2) + ArrCurSecSum(3))      
+  <%
+      curVatImpKor = ArrCurSecSum(3)
+      nTypRej = clng(0)
+    else
+  %>
+		RXE_MONEY_VAR(ArrCurSecSum(2))  
+  <%
+    end if
+  %>
+#else
+		RXE_MONEY_VAR(ArrCurSecSum(2))
+#endif    
+	</td>
+	<td style='37' align='right'>
+#ifdef _AMPLUS
+    <%
+      if nTypRej = N5REJESTRDOK_FAKT_IMP then    
+    %>
+        RXE_QUANTITY_VVV(ArrCurSecSum(3) - curVatImpKor,"",0)
+    <%
+      else
+    %>
+			  RXE_MONEY_VAR(ArrCurSecSum(3) - curVatImpKor)    
+    <%
+      end if
+    %>
+#else
+			RXE_MONEY_VAR(ArrCurSecSum(3))
+#endif
+	</td>
+	<td style='37' align='right'>
+		RXE_MONEY_VAR(ArrCurSecSum(4))
+	</td>
+	<td style='37' align='right'>
+#ifdef _AMPLUS
+    <%
+      if nTypRej = N5REJESTRDOK_FAKT_IMP then    
+    %>
+        RXE_QUANTITY_VVV(ArrCurSecSum(5),"",0)
+    <%
+        nTypRej = clng(0)
+      else
+    %>
+			  RXE_MONEY_VAR(ArrCurSecSum(5))    
+    <%
+      end if
+    %>
+#else
+			RXE_MONEY_VAR(ArrCurSecSum(5))
+#endif
+	</td>
+</tr>
+<tr border='0'>
+#ifdef _FRAM
+    <td colspan='14' />
+#else
+    <td colspan='13' />
+
+#endif
+</tr>
+<tr hide='true' userprop='propc_section_end="1"'>
+#ifdef _FRAM
+<td colspan='14' />
+#else
+<td colspan='13' />
+#endif
+</tr>
+<%
+end function
+
+function section_header_1(byref pSection,byref pRec)
+reset_section_sums
+%>
+<tr userprop='propc_section_start="1" propc_section_hidden="0" propc_section_req="0"' fontsize='4'>
+    #ifdef _FRAM
+	<td style='27' colspan='15'>
+	#else
+		<td style='27' colspan='13'>
+	#endif
+		<picture name='<%so.write cstr(nSectionPicCounter)%>' tip='Zwiń' ignoresysdisable='true' image='PICTURE_SMALL_MINUS' width='SIZE_FOR_PLUS' height='SIZE_FOR_PLUS' href='vs1022="section_hideshow_hli" vn100="<%so.write cstr(nSectionPicCounter)%>"'/>
+	RXE_AUTO_TEXT(c_rej_nazwa)
+</td>
+    
+</tr>
+<%
+nSectionPicCounter=nSectionPicCounter+1
+end function
+%>
+</body>
+<footer>
+</footer>
+</page>

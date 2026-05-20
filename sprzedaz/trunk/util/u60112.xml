@@ -1,0 +1,206 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#comment NX_READY
+#comment OBSOLETE part - check calls and delete this part
+
+#include "h1000.h"
+#include "h1200.h"
+
+-->
+<page>
+<config>
+<script>
+<!--
+	Wyślij stronę
+-->
+<![CDATA[
+
+'---------------------------------------------------
+' wyszukuje adresy mozliwych odbiorcow
+' zwraca nxarray z wybranymi adresami / obiektami
+' oObject
+'	- TYPEID_N5KLIENT
+'		szuka: klient, pracownik klienta, jo. klienta
+'   - TYPEID_N5PRACOWNIK_KLIENTA
+'		sprawdza
+'	- TYPEID_N5JOKLIENTA
+'		szuka w pracownikach klienta w tej. jo.
+'	- TYPEID_PRACOWNIK
+'		sprawdza
+'	- TYPEID_JO
+'		szuka w pracownikach   		
+'
+' oMRI - mail receipent info
+'---------------------------------------------------
+function new_mri(byval iTypeId,byval iIdObj,byval strAddress,byval strDisplay)
+	dim oMRI : set oMRI = nx_.new_bowi(iTypeId,iIdObj, _
+		strDisplay + " (" + strAddress + ")",strAddress)
+	set new_mri = oMRI
+end function 
+
+'----- dodaj unikalne MRI
+private sub add_unique_mri(byref oMRI,byref oNXArray)
+	dim oMRI2
+	for each oMRI2 in oNXArray
+		if oMRI2.m_iTypeId = oMRI.m_iTypeId and oMRI2.m_iIdObj = oMRI.m_iIdObj then
+			exit sub
+		end if
+	next
+	oNXArray.add oMRI
+end sub
+
+private sub lookup_n5klient_pracownik_receipent(byref pKlientPracownik,byref oNXArray)
+	if trim(pKlientPracownik.strEmail) <> "" then
+		add_unique_mri new_mri(pKlientPracownik.type,pKlientPracownik.idobj, _
+			pKlientPracownik.strEmail,pKlientPracownik.text), oNXArray
+	end if
+end sub
+
+private sub lookup_n5klient_jo_receipents(byref pKlientJO,byref oNXArray)
+	if trim(pKlientJO.strEmail) <> "" then
+		add_unique_mri new_mri(pKlientJO.type,pKlientJO.idobj,pKlientJO.strEmail,pKlientJO.text), _
+			oNXArray
+	end if
+	dim oCursor : set oCursor = trans_.createrawcursor(TYPEID_N5KLIENT_PRACOWNIK, _
+		"pJednOrgKlienta=" + cstr(pKlientJO.idobj),"strNazwisko","")
+	dim pKlientPracownik
+	for each pKlientPracownik in oCursor
+		lookup_n5klient_pracownik_receipent pKlientPracownik,oNXArray
+	next
+end sub
+
+private sub lookup_n5klient_receipents(byref pKlient,byref oNXArray)
+	if trim(pKlient.strEmail) <> "" then
+		add_unique_mri new_mri(pKlient.type,pKlient.idobj,pKlient.strEmail,pKlient.text), _
+			oNXArray
+	end if
+	dim oCursor : set oCursor = trans_.createrawcursor(TYPEID_N5KLIENT_PRACOWNIK, _
+		"pKlient=" + cstr(pKlient.idobj),"strNazwisko","")
+	dim pKlientPracownik
+	for each pKlientPracownik in oCursor
+		lookup_n5klient_pracownik_receipent pKlientPracownik,oNXArray
+	next
+
+	set oCursor = trans_.createrawcursor(TYPEID_N5_KLIENT_JEDN_ORG, _
+		"pKlient=" + cstr(pKlient.idobj),"strNazwa","")
+	dim pKlientJO
+	for each pKlientJO in oCursor
+		lookup_n5klient_jo_receipents pKlientJO,oNXArray
+	next		
+end sub
+
+private sub lookup_pracownik_receipent(byref pPracownik,byref oNXArray)
+	if trim(pPracownik.strEmail) <> "" then
+		add_unique_mri new_mri(pPracownik.type,pPracownik.idobj, _
+			pPracownik.strEmail,pPracownik.text), oNXArray
+	end if
+end sub
+
+private sub lookup_jo_receipents(byref pJO,byref oNXArray)
+	if trim(pJO.strEmail) <> "" then
+		add_unique_mri new_mri(pJO.type,pJO.idobj,pJO.strEmail,pJO.text), _
+			oNXArray
+	end if
+	dim oCursor : set oCursor = trans_.createrawcursor(TYPEID_N5PRACOWNIK, _
+		"pJednostkaOrg=" + cstr(pJO.idobj),"strNazwisko","")
+	dim pPracownik
+	for each pPracownik in oCursor
+		lookup_pracownik_receipent pPracownik,oNXArray
+	next
+end sub
+
+private sub lookup_wykonawca_receipents(byref pWykonawca,byref oNXArray)
+	lookup_possible_receipents pWykonawca.wrefObiekt,bUI
+end sub
+
+private sub lookup_uzytkownik_receipent(byref pUser,byref oNXArray)
+	if trim(pUser.strMail) <> "" then
+		add_unique_mri new_mri(pUser.type,pUser.idobj, _
+			pUser.strMail,pUser.text), oNXArray
+	end if
+	if not pUser.pWykonawca is nothing then
+		lookup_wykonawca_receipents pUser.pWykonawca,oNXArray
+	end if
+end sub
+
+function lookup_possible_receipents(byref oObject,byval bUI)
+	set lookup_possible_receipents = nothing
+	if oObject is nothing then
+		exit function
+	end if
+
+	dim oNXArray : set oNXArray = nx_.new_array()
+	'------- przygotuj liste posiadaczy adresu ---
+	select case oObject.type
+	case TYPEID_N5KLIENT 
+		lookup_n5klient_receipents oObject,oNXArray
+	case TYPEID_N5_KLIENT_JEDN_ORG
+		lookup_n5klient_jo_receipents oObject,oNXArray
+	case TYPEID_N5KLIENT_PRACOWNIK
+		lookup_n5klient_pracownik_receipent oObject,oNXArray
+	case TYPEID_N5PRACOWNIK
+		lookup_pracownik_receipent oObject,oNXArray
+	case TYPEID_N5JEDN_ORG
+		lookup_jo_receipents oObject,oNXArray
+	case TYPEID_N5WYKONAWCA
+		lookup_wykonawca_receipents oObject,oNXArray
+	case TYPEID_N5UZYTKOWNIK
+		lookup_uzytkownik_receipent oObject,oNXArray
+	end select
+	
+	set lookup_possible_receipents = oNXArray
+end function
+
+
+
+
+#ifdef INCLUDE_OBSOLETE
+#include "50226"
+
+'--------------------------------------------------------------------------
+'
+'	send_page
+'
+'	pPage - strona do wysłania
+'	nFormat - format w jakim należy zrobić kopię
+'	strRecipAddress - adres adresat
+'	strRecipName - nazwa adresata
+'	strSubject - temat
+'	
+'
+'	Wysyła stronę w podanym formacie (html, obiekt) do wskazanego odbiorcy
+'	do zalogowania się do e-maila używa bieżącego użytownika programu (GVAR_USER)
+'--------------------------------------------------------------------------
+function send_page(byref pPage,byval nFormat,byval strRecipAddress,byval strRecipName,byval strSubject)
+	send_page = false
+	
+	'wołaj generowanie strony
+	dim pSO : set pSO = doc_.createstreamobj
+	dim pPageModule : set pPageModule = doc_.getmodule(IDPAGE_HTMLCOPY)
+	pPageModule.export_page_as_html_with_data pSO,pPage
+
+	dim pNavoMapi
+	set pNavoMapi=new CNavoMAPI
+
+	if (not pNavoMapi.connect()) then
+		exit function
+	end if
+
+	dim mail
+	set mail = pNavoMapi.getMAIL()
+
+	'zaloguj się do poczty
+	mail.addrecip strRecipAddress,strRecipName
+	mail.addattachment strSubject+".htm",pSO
+	mail.send strSubject,"Załącznik zawiera informacje w postaci strony HTML oraz dane z możliwością wczytania do systemu NAVO Enterprise 2015",0
+
+	send_page = true
+end function
+#endif
+]]>
+</script>
+</config>
+	<body>
+		<t>Wyślij stronę</t>
+	</body>
+</page>

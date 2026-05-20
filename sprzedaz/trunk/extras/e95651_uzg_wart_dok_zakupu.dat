@@ -1,0 +1,580 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+
+<!--
+RAPTEMPLATE_OPERACJE_MAGAZYNOWE
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1231.h"
+#include "h1250.h"
+
+#define RAPORT_TITLE Uzgodnienia wartości dokumentów zakupu
+
+-->
+<page style='36'>
+<config>
+<title>RAPORT_TITLE</title>
+<script>
+<![CDATA[
+
+<%
+'liczba rekordów zapytania
+dim iRecCount, oRS
+dim iStyle : iStyle = 1
+dim iLp : iLp = 0
+
+'pojedyncze faktury
+dim m_idZak : set m_idZak = doc_.afc.new_navoarray()
+dim m_curWartZak : set m_curWartZak = doc_.afc.new_navoarray()
+dim m_curDekrZak : set m_curDekrZak = doc_.afc.new_navoarray()
+dim m_iShow : set m_iShow = doc_.afc.new_navoarray()
+
+'pojedyncze dokumenty magazynowe
+dim m_idDM : set m_idDM = doc_.afc.new_navoarray()
+dim m_curWartDM : set m_curWartDM = doc_.afc.new_navoarray()
+dim m_curDekrDM : set m_curDekrDM = doc_.afc.new_navoarray()
+
+'podsumowanie raportu
+dim sumRoznicaWart : sumRoznicaWart = ccur(0)
+dim sumRoznicaDekr : sumRoznicaDekr = ccur(0)
+
+function query()
+  'podzapytania pomocnicze
+  dim strSubQuery
+  
+  'tabela
+  strSubQuery = "create table porow_zak_pz_dekr " + vbNewLine +_
+                "( " + vbNewLine +_
+                "      idZak int not null, " + vbNewLine +_
+                "      idDM  int not null, " + vbNewLine +_
+                "      curSumZak decimal(14,2) not null, " + vbNewLine +_
+                "      curSumaDM decimal(14,2) not null, " + vbNewLine +_
+                "      curSumDekrZak decimal(14,2) not null, " + vbNewLine +_
+                "      curSumDekrDM decimal(14,2) not null " + vbNewLine +_
+                ")"
+  trans_.execsql strSubQuery
+  
+  'wartości z zakupów
+  strSubQuery = "insert into porow_zak_pz_dekr " + vbNewLine +_ 
+                "select vlz.p_idobj,0,sum(vlz.c_curWartNetto)-sum(isnull(kvlz.c_curWartNetto,0)),0,0,0 " + vbNewLine +_ 
+                "from vlist_n5zakup_listpozycje vlz " + vbNewLine +_ 
+                "  left outer join vlist_n5zakup_listpozycje kvlz on vlz.p_pPopZakup = kvlz.p_idobj and vlz.coll_lp = kvlz.coll_lp " + vbNewLine +_
+                "  inner join n5klient k on vlz.p_pdostawca = k.idobj " + vbNewLine +_
+                "  inner join n5rejestrdok r on vlz.p_prejestrdok = r.idobj " + vbNewLine +_
+                "where " + vbNewLine +_ 
+                "vlz.c_pProdukt not in (select idobj from n5produkt where (strindeks like 'KOSZT%' or eRodzaj <> 1)) " + vbNewLine +_
+                "and vlz.p_ddataotrzym [%1] and %2 and %3 " + vbNewLine +_
+                "group by vlz.p_idobj"
+  strSubQuery = rapeng_.query_apply_actual_param(strSubQuery, pParamArray)
+  'ReplaceQueryParam
+  strSubQuery = Replace(strSubQuery,"[(","")
+  strSubQuery = Replace(strSubQuery,")]","")
+  trans_.execsql strSubQuery
+  
+  'dekrety do zakupów
+  strSubQuery = "insert into porow_zak_pz_dekr " + vbNewLine +_ 
+                "select p_wrefdokzrod,0,0.0,0.0,sum(c_curWn-c_curMa),0.0 " + vbNewLine +_ 
+                "from vlist_n5dowodksieg_listdekret where p_wrefdokzrod in " + vbNewLine +_ 
+                "  (select idZak from porow_zak_pz_dekr) and p_wrefdokzrod_wrt = 10176 and " + vbNewLine +_ 
+                "  c_ddataksieg [%1] and c_pKonto in (select idobj from n5konto where %4) " + vbNewLine +_
+                "group by p_wrefdokzrod"
+  strSubQuery = rapeng_.query_apply_actual_param(strSubQuery, pParamArray)
+  'ReplaceQueryParam
+  strSubQuery = Replace(strSubQuery,"[(","")
+  strSubQuery = Replace(strSubQuery,")]","")  
+  trans_.execsql strSubQuery
+  
+  'wartości z PZ/ZD
+  strSubQuery = "insert into porow_zak_pz_dekr " + vbNewLine +_ 
+                "select (case when dm.wrefDokHandl in (select idZak from porow_zak_pz_dekr) then dm.wrefDokHandl else 0 end), " + vbNewLine +_
+                "dm.idobj,0,sum(gm.gmo_curWartosc),0, " + vbNewLine +_
+                "'dekr_mag'=isnull((select sum(c_curMa - c_curWn) from vlist_n5dowodksieg_listdekret " + vbNewLine +_ 
+                "           where p_wrefdokzrod = dm.idobj and p_wrefdokzrod_wrt = 10162 and " + vbNewLine +_ 
+                "           c_ddataksieg [%1] and c_pKonto in (select idobj from n5konto where %4) " + vbNewLine +_
+                "           group by p_wrefdokzrod),0) " + vbNewLine +_  
+                "from n5dokmag dm " + vbNewLine +_
+                "  inner join n5gmop gm on dm.nnumoper = gm.gmo_nnumop " + vbNewLine +_
+                "  inner join n5klient k on dm.pKlient = k.idobj " + vbNewLine +_
+                "  inner join n5rejestrdok r on dm.pRejestrDok = r.idobj " + vbNewLine +_
+                "where " + vbNewLine +_ 
+                "dm.ntypdok in (12,18,20) and gm.gmo_pProd not in " + vbNewLine +_ 
+                "  (select idobj from n5produkt where (strindeks like 'KOSZT%' or eRodzaj <> 1)) " + vbNewLine +_
+                "-- and filtry z raportu " + vbNewLine +_
+                "  and dm.dDataWyst [%1] and %2 and %3 " + vbNewLine +_ 
+                "group by dm.wrefDokHandl,dm.idobj " + vbNewLine +_
+                "order by dm.idobj"
+  strSubQuery = rapeng_.query_apply_actual_param(strSubQuery, pParamArray)
+  'ReplaceQueryParam
+  strSubQuery = Replace(strSubQuery,"[(","")
+  strSubQuery = Replace(strSubQuery,")]","")  
+  trans_.execsql strSubQuery
+  
+  'lista zakupów nie zgadzajacych sie
+  query = "select 'c_nrdok_zak'=isnull((select strnrdok from n5zakup where idobj = idzak),''),'c_idzak'=idZak,'c_iddm'=idDM, " + vbNewLine +_
+          "'c_data_otrzym'=isnull((select dDataOtrzym from n5zakup where idobj = idZak),''), " + vbNewLine +_
+          "'c_nrdok_mag'=isnull((select strNrDok from n5dokmag where idobj = idDM),''),'c_wart_zak'=sum(curSumZak), " + vbNewLine +_
+          "'c_data_wyst'=isnull((select dDataWyst from n5dokmag where idobj = idDM),''), " + vbNewLine +_
+          "'c_wart_mag'=sum(curSumaDM),'c_dekr_zak'=sum(curSumDekrZak),'c_dekr_mag'=sum(curSumDekrDM), " + vbNewLine +_
+          "'c_roznica_wart'=sum(curSumZak)-sum(curSumaDM),'c_roznica_dekr'=sum(curSumDekrZak)-sum(curSumDekrDM) " + vbNewLine +_ 
+          "from porow_zak_pz_dekr " + vbNewLine +_
+          "where idzak in (select idZak from porow_zak_pz_dekr group by idzak " + vbNewLine +_ 
+          "                having sum(curSumZak) <> sum(curSumaDM) or " + vbNewLine +_ 
+          "                sum(curSumDekrZak) <> sum(curSumDekrDM)) or idzak = 0 " + vbNewLine +_
+          "group by idZak,iddm " + vbNewLine +_
+          "order by 2,3"
+          
+  'liczba rekordów
+  set oRS = trans_.createadors(query)
+  iRecCount = oRS.RecordCount
+
+end function
+%>
+<%
+function default_param()
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+  pParamArray.add doc_.afc.rap.param.new_date_range("Analizowany okres").bindexpr("")
+  pParamArray.add doc_.afc.rap.param.new_text("Kontrahent").bindexpr("k.strSkrot")
+  dim pParamRej : set pParamRej = doc_.afc.rap.param.new_choice("Rejestr").bindexpr("r.idobj")
+	doc_.afc.rap.param.init_on_query pParamRej, trans_ ,_
+		"select strNazwa , idobj from n5rejestrdok where eTyp in (N5REJESTRDOK_FAKT_ZAK,N5REJESTRDOK_KOR_FAKT_ZAK,N5REJESTRDOK_FAKT_ZAK_RR," +_
+    "N5REJESTRDOK_KOR_FAKT_ZAK_RR,N5REJESTRDOK_FAKT_IMP,N5REJESTRDOK_KOR_FAKT_IMP,N5REJESTRDOK_WNT,N5REJESTRDOK_KOREKTA_WNT," +_
+    "N5REJESTRDOK__PZ,N5REJESTRDOK__ZD,N5REJESTRDOK__KWZ) order by strNazwa "
+	pParamArray.add pParamRej
+  pParamArray.add doc_.afc.rap.param.new_text("Symbol").bindexpr("strSymbol COLLATE latin1_general_cs_as")
+  
+	set default_param = pParamArray
+end function
+%>
+<%
+function write_actual_param(byref pActualParam)
+	dim iter
+	dim bAnyWritten : bAnyWritten = false
+	if not pActualParam is nothing then
+		
+		for iter = 0 to pActualParam.upperIndex
+			if pActualParam.value(iter).get_desc() <> "" then 
+				bAnyWritten = true
+				so.write "<t size='5' /><text fontsize='4'><![CD"+"ATA[" + pActualParam.value(iter).get_desc() + "]"+"]></text><br/>"
+			end if
+		next
+	end if
+	if not bAnyWritten then 
+		so.write "<t fontsize='4'>brak</t><br/>"
+	end if
+		so.write "<br/>"
+end function
+%>
+<%
+function body_row(byref pSection,byref pRec)
+  dim idZak, idDM
+  dim idPoz : idPoz = clng(-1)
+  idZak = clng(pRec("c_idzak").value)
+  idDM = clng(pRec("c_iddm").value)
+  
+  if idZak <> 0 and idDM = 0 then
+    m_idZak.add idZak
+    m_curWartZak.add ccur(pRec("c_wart_zak").value)
+    m_curDekrZak.add ccur(pRec("c_dekr_zak").value)
+    m_iShow.add clng(0)
+  else
+    if idZak = 0 and idDM <> 0 then
+      m_idDM.add idDM
+      m_curWartDM.add ccur(pRec("c_wart_mag").value)
+      m_curDekrDM.add ccur(pRec("c_dekr_mag").value)      
+    else
+    
+      'wyświetl tylko raz fakturę
+      idPoz = findIdZakup(idZak)
+      if idPoz >= clng(0) then
+         if m_iShow.value(idPoz) = clng(0) then
+            iLp = iLp + 1 
+            if iLP mod 2 = 0 then
+%>
+        <tr bordercolor='white'>  
+<%
+            else
+%>
+        <tr bordercolor='white' style='37'> 
+<%      
+            end if
+%>    
+          <td align='right'>
+            <text><% so.write cstr(iLP) %>&nbsp;</text>
+          </td>
+          <td>
+            RXE_TEXT_LINK_FORM_VCC(TYPEID_N5ZAKUP,c_idzak,c_nrdok_zak)  
+          </td>
+          <td>
+            RXE_DATE(c_data_otrzym)
+          </td>
+          <td align='right'>
+            <text><%so.write doc_.afc.display.quantity(m_curWartZak.value(idPoz),"",2)%></text>
+          </td>
+          <td align='right'>
+            <text><%so.write doc_.afc.display.quantity(m_curDekrZak.value(idPoz),"",2)%></text>
+          </td>
+<%         
+         else
+           if iLP mod 2 = 0 then
+%>
+          <tr bordercolor='white'>  
+<%
+           else
+%>
+          <tr bordercolor='white' style='37'> 
+<%      
+           end if
+%>       
+           <td colspan='5'></td>
+<%         
+         end if      
+      else
+          if iLP mod 2 = 0 then
+%>
+        <tr bordercolor='white'>  
+<%
+          else
+%>
+        <tr bordercolor='white' style='37'> 
+<%      
+          end if
+%>
+      <td align='right'>
+        <text><% so.write cstr(iLP) %>&nbsp;</text>
+      </td>
+      <td>
+        RXE_TEXT_LINK_FORM_VCC(TYPEID_N5ZAKUP,c_idzak,c_nrdok_zak)
+      </td>
+      <td>
+        RXE_DATE(c_data_otrzym)
+      </td>
+      <td align='right'>
+        RXE_QUANTITY_CVV(c_wart_zak,"",2)
+      </td>
+      <td align='right'>
+        RXE_QUANTITY_CVV(c_dekr_zak,"",2)
+      </td>
+<%
+      end if
+%>    
+      <td>
+        RXE_TEXT_LINK_FORM_VCC(TYPEID_N5DOKMAG,c_iddm,c_nrdok_mag)
+      </td>
+      <td>
+        RXE_DATE(c_data_wyst)
+      </td>
+      <td align='right'>
+        RXE_QUANTITY_CVV(c_wart_mag,"",2)
+      </td>
+      <td align='right'>
+        RXE_QUANTITY_CVV(c_dekr_mag,"",2)
+      </td>
+<% 
+      if idPoz >= clng(0) then
+         if m_iShow.value(idPoz) = clng(0) then
+           m_iShow.value(idPoz) = clng(1)
+           sumRoznicaWart = sumRoznicaWart + roznicaWart(idZak,"zakup")
+           sumRoznicaDekr = sumRoznicaDekr + roznicaWart(idZak,"dekret")        
+%>
+            <td align='right'>
+              <text><%so.write doc_.afc.display.quantity(roznicaWart(idZak,"zakup"),"",2)%></text>
+            </td>
+            <td align='right'>
+              <text><%so.write doc_.afc.display.quantity(roznicaWart(idZak,"dekret"),"",2)%></text>
+            </td>         
+<%         
+         else
+%>
+           <td colspan='2'></td>
+<%       
+         end if
+      else
+        sumRoznicaWart = sumRoznicaWart + ccur(pRec("c_roznica_wart").value)
+        sumRoznicaDekr = sumRoznicaDekr + ccur(pRec("c_roznica_dekr").value) 
+%>    
+        <td align='right'>
+          RXE_QUANTITY_CVV(c_roznica_wart,"",2)
+        </td>
+        <td align='right'>
+          RXE_QUANTITY_CVV(c_roznica_dekr,"",2)
+        </td>
+<%
+      end if
+%>      
+    </tr>
+<%
+  end if  
+end if
+end function
+
+'wypisuje na końcu body_row pojedyncze dokumenty magazynowe
+sub fillEmptyDokMag
+  dim iter, idDM
+  for iter = 0 to m_idDM.upperIndex
+      iLp = iLp + 1
+      if iLP mod 2 = 0 then
+%>
+  <tr bordercolor='white'>  
+<%
+      else
+%>
+  <tr bordercolor='white' style='37'> 
+<%      
+      end if
+    idDM = m_idDM.value(iter)
+    dim oDokMag : set oDokMag = trans_.getobj(TYPEID_N5DOKMAG,idDM)
+%>
+    <td align='right'>
+      <text><% so.write cstr(iLP) %>&nbsp;</text>
+    </td>
+    <td colspan='4'>
+      <text><%so.write "" %></text>
+    </td>
+    <td>						
+      <text href='<% so.write rapeng_.href_open_form_proxy(TYPEID_N5DOKMAG,oDokMag.IdObj) %>'>
+         <![CDATA[<%so.write cstr(oDokMag.strNrDok)%>]]>
+      </text>
+    </td>
+    <td>
+      <text><%so.write doc_.afc.display.fulldate(oDokMag.dDataWyst) %></text>
+    </td>
+    <td align='right'>
+      <text><%so.write doc_.afc.display.quantity(m_curWartDM.value(iter),"",2)%></text>
+    </td>
+    <td align='right'>
+      <text><%so.write doc_.afc.display.quantity(m_curDekrDM.value(iter),"",2)%></text>
+    </td>
+    <td align='right'>
+      <text><%so.write doc_.afc.display.quantity(-m_curWartDM.value(iter),"",2)%></text>
+    </td>
+    <td align='right'>
+      <text><%so.write doc_.afc.display.quantity(-m_curDekrDM.value(iter),"",2)%></text>
+    </td>               
+  </tr>
+<%
+      sumRoznicaWart = sumRoznicaWart - ccur(m_curWartDM.value(iter))
+      sumRoznicaDekr = sumRoznicaDekr - ccur(m_curDekrDM.value(iter))
+  next  
+end sub
+
+'wypisuje na końcu body_row faktury zakupu nie mające dokmag
+sub fillEmptyZakup
+  dim iter, idZak
+  for iter = 0 to m_idZak.upperIndex
+    if m_iShow.value(iter) = clng(0) then
+      iLp = iLp + 1
+      if iLP mod 2 = 0 then
+%>
+  <tr bordercolor='white'>  
+<%
+      else
+%>
+  <tr bordercolor='white' style='37'> 
+<%      
+      end if
+    idZak = m_idZak.value(iter)
+    dim oZakup : set oZakup = trans_.getobj(TYPEID_N5ZAKUP,idZak)
+%>
+    <td align='right'>
+      <text><% so.write cstr(iLP) %>&nbsp;</text>
+    </td>  
+    <td>						
+      <text href='<% so.write rapeng_.href_open_form_proxy(TYPEID_N5ZAKUP,oZakup.IdObj) %>'>
+         <![CDATA[<%so.write cstr(oZakup.strNrDok)%>]]>
+      </text>
+    </td>
+    <td>
+      <text><%so.write doc_.afc.display.fulldate(oZakup.dDataOtrzym) %></text>
+    </td>
+    <td align='right'>
+      <text><%so.write doc_.afc.display.quantity(m_curWartZak.value(iter),"",2)%></text>
+    </td>
+    <td align='right'>
+      <text><%so.write doc_.afc.display.quantity(m_curDekrZak.value(iter),"",2)%></text>
+    </td>   
+    <td colspan='4'>
+      <text><%so.write "" %></text>
+    </td>
+    <td align='right'>
+      <text><%so.write doc_.afc.display.quantity(m_curWartZak.value(iter),"",2)%></text>
+    </td>
+    <td align='right'>
+      <text><%so.write doc_.afc.display.quantity(m_curDekrZak.value(iter),"",2)%></text>
+    </td>               
+  </tr>
+<%
+      sumRoznicaWart = sumRoznicaWart + ccur(m_curWartZak.value(iter))
+      sumRoznicaDekr = sumRoznicaDekr + ccur(m_curDekrZak.value(iter))      
+    end if
+  next
+end sub
+
+'zamienia kolorowanie wiersza
+function zamien(byval iStyle)
+  if iStyle = 1 then
+    zamien = 2
+  else
+    zamien = 1
+  end if  
+end function
+
+'znajduje w tablicy indeks faktury zakupu bez dokmag
+function findIdZakup(byval idZak) : findIdZakup = clng(-1)
+  dim iter
+  for iter = 0 to m_idZak.upperIndex
+    if idZak = m_idZak.value(iter) then
+      findIdZakup = iter
+      exit function
+    end if
+  next
+end function
+
+'zwraca różnicę dla danego id zakupu
+function roznicaWart(byval idZak,byval strDok) : roznicaWart = ccur(0)
+  oRS.movefirst
+  do while not oRS.EOF
+    if idZak = oRS("c_idzak").value then 
+      if strDok = "zakup" then
+        roznicaWart = roznicaWart + ccur(oRS("c_roznica_wart").value)
+      else
+        roznicaWart = roznicaWart + ccur(oRS("c_roznica_dekr").value)
+      end if
+    end if
+    oRS.movenext
+  loop
+end function
+
+function body_header(byref pSection,byref pRec)
+%>
+<table border='1'>
+<thead>
+  <tr style='21' align='right'>
+    <td rowspan='2'>
+      <text>Lp</text>
+    </td>
+    <td colspan='4' align='center' width='8000'>
+      <text>DOKUMENT HANDLOWY</text>
+    </td>
+    <td colspan='4' align='center' width='8000'>
+      <text>DOKUMENT MAGAZYNOWY</text>
+    </td>
+    <td colspan='2' align='center' width='4000'>
+      <text>RÓŻNICA</text>
+    </td>  
+  </tr>
+  <tr style='21'>
+    <td width='2000'>
+      <text>Nr dokumentu zakupu</text>
+    </td>
+    <td width='2000'>
+      <text>Data otrzymania</text>
+    </td>
+    <td width='2000' align='right'>
+      <text>Wartość netto</text>
+    </td>
+    <td width='2000' align='right'>
+      <text>Wartość dekretu</text>
+    </td>
+    <td width='2000'>
+      <text>Nr dokumentu magazyn.</text>
+    </td>    
+    <td width='2000'>
+      <text>Data wystawienia</text>
+    </td>
+    <td width='2000' align='right'>
+      <text>Wartość magazynowa</text>
+    </td>
+    <td width='2000' align='right'>
+      <text>Wartość dekretu</text>
+    </td>    
+    <td width='2000' align='right'>
+      <text>Netto</text>
+    </td>
+    <td width='2000' align='right'>
+      <text>Dekretu</text>
+    </td>    
+  </tr>
+</thead>
+<tbody>
+<%
+end function
+%>
+<%
+function body_footer(byref pSection)
+  'wyświetl faktury zakupu bez dokmag
+  fillEmptyZakup
+  'wyświetla pojedyncze dokumenty magazynowe
+  fillEmptyDokMag  
+%>
+</tbody>
+<tfoot>
+  <tr style='21'>
+    <td colspan='9' align='right'>
+      <text>Razem&nbsp;</text>
+    </td>
+    <td align='right'>
+      <text><%so.write doc_.afc.display.quantity(sumRoznicaWart,"",2)%></text>
+    </td>
+    <td align='right'>
+      <text><%so.write doc_.afc.display.quantity(sumRoznicaDekr,"",2)%></text>
+    </td> 
+  </tr>
+</tfoot>
+
+</table>
+<%
+end function
+%>
+
+]]>
+</script>
+</config>
+<header>
+</header>
+<body>
+<p>
+RAPORT_HEADER(3,0)
+</p>
+
+<p>
+<t size='2'/>
+</p>
+
+<p><text fontsize='7'><![CDATA[RAPORT_TITLE]]></text></p><br/><br/>
+<%
+if not doc_.getmodule(60253).gm_ensure_accuracy_ui(true) then
+%>
+<p border='1' fontsize='5' forecolor='red' bold='true'><t>Uwaga! Niepoprawny stan magazynu</t></p><br/><br/>
+<%
+end if
+%>
+<t fontsize='5' bold='true'>Kryteria selekcji:</t><br/>
+<%
+dim pRapExec : set pRapExec = rapeng_.new_engine()
+with pRapExec
+	dim pParamArray : set pParamArray = default_param()
+	rapeng_.merge_params pParamArray,rapeng_.get_raport_param()
+	pRapExec.title = "RAPORT_TITLE"
+
+	if rapeng_.show_raport_param_dialog(pParamArray,"RAPORT_TITLE") <> 0 then
+		pRapExec.put_final_query query()
+		rapeng_.set_raport_param pParamArray
+    
+		dim pBody : set pBody = .add_body_ex(getref("body_header"),getref("body_footer"),getref("body_row"))
+
+		write_actual_param(rapeng_.get_raport_param())
+  end if 
+   
+	if not .perform then
+		so.write "<p style='21'><t>Brak danych spełniających podane kryteria</t></p>"
+	end if
+  
+  trans_.execsql "if exists (select * from sysobjects where name='porow_zak_pz_dekr') drop table porow_zak_pz_dekr"
+  
+end with
+
+%>
+</body>
+<footer>
+</footer>
+</page>

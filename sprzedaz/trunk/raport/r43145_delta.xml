@@ -1,0 +1,1598 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!-- 
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1200.h"
+#include "h1231.h"
+#include "h1220.h"
+#include "h1240.h"
+#include "h1222.h"
+#include "h1004.h"
+#include "h1232.h"
+#include "h1203.h"
+#include "h1228.h"
+#include "h1230.h"
+#include "h1233.h"
+
+#define OPTION_WZ				1
+#define OPTION_PZ				2
+#define OPTION_SPRZE_WZ			3
+#define OPTION_ZAKUP_PZ			4
+
+#define CTRLID_INX				10
+#define CTRLID_CENA				12
+#define CTRLID_DESTSTOCK		13
+#define CTRLID_RESULT_TABLE		14
+#define CTRLID_RESULT			15
+#define CTRLID_NARZEDZIA_TABLE  16
+#define CTRLID_TOOLS			17
+#define CTRLID_CHOOSE_MAGAZYN	18
+#define CTRLID_INDEX_STATIC		19
+
+#define CTRLID_REDIRECT_CHKBOX  105
+#define CTRLID_REDIRECT_ALL		106
+
+#define INT_CTRL				110
+
+#define DMF_CURSOR_MAG_ZRODLOWY	CURSOR_MAGAZYNY_PODSTAWOWE
+#define DMF_TITLE				Arkusz różnic
+-->
+<page>
+	<config>
+		<title>
+			DMF_TITLE
+		</title>
+		<script>
+			<![CDATA[
+
+#include "50637"
+
+dim g_ButtonActionArray : set g_ButtonActionArray = nx_.new_array()
+dim g_ButtonNameArray : set g_ButtonNameArray = nx_.new_array()
+dim g_ButtonSize : set g_ButtonSize = nx_.new_array()
+dim g_pPage
+
+'--------------------------------------------------------------------------------------------------------------
+' API do wolania z zewnatrz
+'--------------------------------------------------------------------------------------------------------------
+function configure_header()
+
+end function
+
+
+function configure_button(byval strNameButton, byref action,byval intSize)
+		
+			g_ButtonActionArray.add action
+			g_ButtonNameArray.add strNameButton
+			g_ButtonSize.add intSize
+	
+end function
+
+
+
+function add_action_hli(byref oHli)
+
+	'msgbox cStr(oHli.prop(100))
+	if g_ButtonNameArray(oHli.prop(100))<>"Anuluj" then 
+		g_ButtonActionArray(oHli.prop(100))(p_oAR)
+	else
+		g_ButtonActionArray(oHli.prop(100))()
+	end if
+	
+end function
+
+
+
+
+function build_buttons()
+
+		set pTBN = doc_.afc.new_tb(nothing).attach(page_.ctrl(CTRLID_RESULT))
+
+		pTBN.section_foot.removeall
+		pTBN.newrow
+		'pTBN.newcell.addtext("Akcje").cell.colspan = 7
+		'pTBN.cell.align=ALIGN_CENTER
+		'pTBN.cell.styleitem=STYLE_TABLE_HEADER
+		'pTBN.newrow.cell.colspan = 7
+		pTBN.row.styleitem=STYLE_TABLE_HEADER
+		'PTBN.cell.colspan = 7
+		
+		dim iter : iter=0
+		
+		for iter=0 to g_ButtonActionArray.upper_index
+		
+			set hli = doc_.createhli()
+			hli.prop(GVAR_FUNCTIONHLI)="add_action_hli"
+			hli.prop(100) = clng(iter)
+		
+		if g_ButtonNameArray(iter)="Anuluj" then
+		
+			'pTBN.newcell.addtext("").cell.width = clng(MAXIMIZE_SIZE)
+			'pTBN.newcell.addtext("").cell.width = clng(MAXIMIZE_SIZE)
+			pTBN.newcell.addctrl CTRL_TYPE_BUTTON, -1
+			pTBN.cell.colspan=12
+			pTBN.cell.align = ALIGN_RIGHT
+			pTBN.cell.width = clng(MAXIMIZE_SIZE) 
+			with pTBN.element
+				.styleitem = STYLE_BUTTON
+				.text = g_ButtonNameArray(iter)
+				.size = g_ButtonSize(iter)
+				set .hli = hli
+			end with
+			
+		else
+			pTBN.newcell.addctrl CTRL_TYPE_BUTTON, -1
+			
+			with pTBN.element
+				.styleitem = STYLE_BUTTON
+				.text = g_ButtonNameArray(iter)
+				.size = g_ButtonSize(iter)
+				set .hli = hli
+			end with
+			pTBN.newcell.cell.width = clng(5)
+		end if	
+		next
+	
+end function
+
+
+'--------------------------------------------------------------------------------------------------------------
+
+
+dim p_oAR
+dim p_oAR_sort
+dim pTB 
+dim pTBN
+dim hli
+dim pTBTools
+dim intOption : intOption=0
+dim intTypSortNazwa	: intTypSortNazwa=1	'sposob sotrowania po nazwie - 1-asc, 2-desc
+dim intTypSortIndeks : intTypSortIndeks=1	'sposob sortowania po indeksie - 1-asc, 2-desc
+dim ctrl_zaznacz1, ctrl_zaznacz2,ctrl_zaznacz3 'zaznaczenie w grupie 1(nie zrealizowane), 2(nadmiar), 3(pozycje zrealizowane)
+ctrl_zaznacz1=1
+ctrl_zaznacz2=0
+ctrl_zaznacz3=1
+
+function init(byref oAR, byref pPage)
+	set p_oAR = oAR
+	set g_pPage = pPage
+	ctrl_zaznacz1=1
+	ctrl_zaznacz2=0
+	ctrl_zaznacz3=1
+	
+	g_ButtonActionArray = null 
+	g_ButtonNameArray = null
+	g_ButtonSize = null
+
+	set g_ButtonActionArray = nx_.new_array()
+	set g_ButtonNameArray = nx_.new_array()
+	set g_ButtonSize = nx_.new_array()
+	
+	dim i : i = 0
+	
+	do while not p_oAR.get_pozycja(i) is nothing
+		if ((p_oAR.get_pozycja(i).strona) and (p_oAR.get_pozycja(i).ilosc<>0)) then
+			p_oAR.get_pozycja(i).druk = true
+		else
+			p_oAR.get_pozycja(i).druk = false
+		end if
+		i=i+1
+	loop
+	
+end function
+
+
+function refresh_arkusz()
+
+dim oAR : set oAR = nx_.slot0.new_dhm_diff()
+
+if (intOption=1) then
+	ar_zamowienie_dm oAR,g_pPage.root,true,1,false
+	set p_oAR=oAR
+end if
+
+if (intOption=2) then
+	ar_zamowienie_dm oAR,g_pPage.root,true,1,true
+	set p_oAR=oAR
+end if
+
+if (intOption=3) then
+	ar_sprzedaz_dm oAR,g_pPage.root,true,1,false
+	set p_oAR=oAR
+end if
+
+if (intOption=4) then
+	ar_zakup_dm oAR,g_pPage.root,true,1,true
+	set p_oAR=oAR
+end if
+fill_option()
+
+end function
+
+function sort_strNazwa(byref pHLI)
+
+	set p_oAR_sort =  nx_.slot0.new_dhm_diff()
+	dim strSposob,strIdobj,iter
+	iter=0
+	strIdobj=""
+	do while not p_oAR.get_pozycja(iter) is nothing
+		if  p_oAR.get_pozycja(iter).add_new then
+			strIdobj=strIdobj+cStr(p_oAR.get_pozycja(iter).id_produkt)+","
+		end if
+			iter=iter+1
+	loop
+
+	strIdobj=mid(strIdobj,1,len(strIdobj)-1)
+
+	if intTypSortNazwa=1 then
+		strSposob="asc"
+		intTypSortNazwa=2
+	else
+		strSposob="desc"
+		intTypSortNazwa=1
+	end if
+
+	dim strSQL
+	set strSQL=trans_.createadors("select 'idobj'=idobj from n5produkt where idobj in("+strIdobj+")"+_
+			"order by strNazwa "+strSposob)
+
+	iter=0
+	dim indeks_oAR
+
+	do while not strSQL.EOF
+		indeks_oAR=p_oAR.get_index(strSQL.fields("idobj"))
+		if  p_oAR.get_pozycja(indeks_oAR).add_new then
+			p_oAR.sortowanie iter,indeks_oAR
+			'p_oAR_sort.add_pozycja p_oAR.get_pozycja(indeks_oAR).strona, p_oAR.get_pozycja(indeks_oAR).id_produkt, p_oAR.get_pozycja(indeks_oAR).id_magazyn, p_oAR.get_pozycja(indeks_oAR).id_dostawcy, p_oAR.get_pozycja(indeks_oAR).cena, p_oAR.get_pozycja(indeks_oAR).ilosc, p_oAR.get_pozycja(indeks_oAR).max_magazyn, p_oAR.get_pozycja(indeks_oAR).int_druk
+			iter=iter+1
+		end if
+		strSQL.MoveNext
+		
+	loop
+		'set p_oAR = p_oAR_sort
+		fill_option()
+
+
+end function
+
+function sort_strIndeks(byref pHLI)
+
+	set p_oAR_sort =  nx_.slot0.new_dhm_diff()
+	dim strSposob,strIdobj,iter
+	iter=0
+	strIdobj=""
+	do while not p_oAR.get_pozycja(iter) is nothing
+		if  p_oAR.get_pozycja(iter).add_new then
+			strIdobj=strIdobj+cStr(p_oAR.get_pozycja(iter).id_produkt)+","
+		end if
+		iter=iter+1
+	loop
+
+	strIdobj=mid(strIdobj,1,len(strIdobj)-1)
+
+	if intTypSortIndeks=1 then
+		strSposob="asc"
+		intTypSortIndeks=2
+	else
+		strSposob="desc"
+		intTypSortIndeks=1
+	end if
+
+	dim strSQL
+	set strSQL=trans_.createadors("select 'idobj'=idobj from n5produkt where idobj in("+strIdobj+")"+_
+			"order by strIndeks "+strSposob)
+
+	iter=0
+	dim indeks_oAR
+	do while not strSQL.EOF
+		indeks_oAR=p_oAR.get_index(strSQL.fields("idobj"))
+		if  p_oAR.get_pozycja(indeks_oAR).add_new then
+			p_oAR.sortowanie iter,indeks_oAR
+			'p_oAR_sort.add_pozycja p_oAR.get_pozycja(indeks_oAR).strona, p_oAR.get_pozycja(indeks_oAR).id_produkt, p_oAR.get_pozycja(indeks_oAR).id_magazyn, p_oAR.get_pozycja(indeks_oAR).id_dostawcy, p_oAR.get_pozycja(indeks_oAR).cena, p_oAR.get_pozycja(indeks_oAR).ilosc, p_oAR.get_pozycja(indeks_oAR).max_magazyn, p_oAR.get_pozycja(indeks_oAR).int_druk
+			iter=iter+1
+		end if
+		strSQL.MoveNext
+		
+	loop
+		'set p_oAR = p_oAR_sort
+		fill_option()
+
+end function
+
+function choose_produkt_nazwa(byref pHLI)
+	
+	dim strSQL,strSQLMag,strSQLOpak
+	dim idMag : idMag= trans_.var(3)
+	dim pM43009 : set pM43009 = doc_.getmodule(43009)
+	pM43009.prepare_multi_selection TYPEID_N5PRODUKT, "Wybór produktu", "", "strNazwa"
+	dim oNXArray : set oNXArray = pM43009.run_multi_browser()
+	
+	if not oNXArray is nothing then
+		dim idProd,p
+		for each idProd in oNXArray
+		  'dodanie do arkusza z opcja m_bAdd=false gdyz sa to pozycje dodane przez uzytkownika i one nie beda brane przy sortowaniu
+		  
+			set strSQLMag=trans_.createadors("select 'c_ilosc_opak'=isnull(sum(t_0.gms_curIlosc),0) "+_
+			 "from n5gmstan as t_0  inner join n5magazyn as t_1 on t_0.gms_pMag = t_1.IdObj  "+_
+			 "inner join n5produkt as t_2 on t_0.gms_pProd = t_2.IdObj  "+_
+			 "inner join n5opakowanie_produktu as t_3 on t_0.gms_pOpak = t_3.IdObj  "+_
+			 "where (t_1.eTyp <> 2) and  (t_1.idobj ="+cstr(idMag)+")"+_
+			 "and (t_2.idobj = "+cstr(idProd)+")")
+			 
+			 if ((intOption = OPTION_WZ) or (intOption = OPTION_SPRZE_WZ))then
+					p_oAR.add_pozycja true,idProd,0,0,0,1,strSQLMag.fields("c_ilosc_opak"),1,false
+			 end if
+			 if ((intOption = OPTION_PZ) or (intOption = OPTION_ZAKUP_PZ)) then
+					set strSQLOpak=trans_.createadors("select 'curcena'=c_curcenanetto1 from vlist_n5produkt_listOpakowania "+_
+					"where c_erodzaj=1 and p_idobj="+cstr(idProd))
+					p_oAR.add_pozycja true,idProd,0,0,strSQLOpak.fields("curcena"),1,strSQLMag.fields("c_ilosc_opak"),1,false
+			 end if
+			 
+		next
+	end if
+
+	fill_option()
+	set choose_produkt_nazwa = oNXArray
+
+end function
+
+
+function choose_produkt_indeks(byref pHLI)
+
+	dim idMag : idMag= trans_.var(3)
+	dim strSQL,strSQLMag,strSQLOpak
+	dim pM43009 : set pM43009 = doc_.getmodule(43009)
+	pM43009.prepare_multi_selection TYPEID_N5PRODUKT, "Wybór produktu", "", "strIndeks"
+	dim oNXArray : set oNXArray = pM43009.run_multi_browser()
+	if not oNXArray is nothing then
+		dim idProd,p
+		for each idProd in oNXArray
+		  'dodanie do arkusza z opcja m_bAdd=false gdyz sa to pozycje dodane przez uzytkownika i one nie beda brane przy sortowaniu
+		  
+			set strSQLMag=trans_.createadors("select 'c_ilosc_opak'=isnull(sum(t_0.gms_curIlosc),0) "+_
+			 "from n5gmstan as t_0  inner join n5magazyn as t_1 on t_0.gms_pMag = t_1.IdObj  "+_
+			 "inner join n5produkt as t_2 on t_0.gms_pProd = t_2.IdObj  "+_
+			 "inner join n5opakowanie_produktu as t_3 on t_0.gms_pOpak = t_3.IdObj  "+_
+			 "where (t_1.eTyp <> 2) and  (t_1.idobj ="+cstr(idMag)+")"+_
+			 "and (t_2.idobj = "+cstr(idProd)+")")
+			 
+			 if ((intOption = OPTION_WZ) or (intOption = OPTION_SPRZE_WZ)) then
+					p_oAR.add_pozycja true,idProd,0,0,0,1,strSQLMag.fields("c_ilosc_opak"),1,false
+			 end if
+			 if ((intOption = OPTION_PZ) or (intOption = OPTION_ZAKUP_PZ)) then
+					set strSQLOpak=trans_.createadors("select 'curcena'=c_curcenanetto1 from vlist_n5produkt_listOpakowania "+_
+					"where c_erodzaj=1 and p_idobj="+cstr(idProd))
+					p_oAR.add_pozycja true,idProd,0,0,strSQLOpak.fields("curcena"),1,strSQLMag.fields("c_ilosc_opak"),1,false
+			 end if
+			 
+		next
+	end if
+
+	fill_option()
+	set choose_produkt_indeks = oNXArray
+
+end function
+
+
+function choose_magazyn(byref pHLI)
+
+	'pHLI.prop(110)
+	dim strSQL
+	dim pM43009 : set pM43009 = doc_.getmodule(43009)
+	pM43009.prepare_single_selection TYPEID_N5MAGAZYN, "Wybór magazynu", "eTyp=1", "strNazwa"
+	choose_magazyn = pM43009.run_browser()
+	set strSQL= trans_.createadors("select 'strMagazyn'=strNazwa from n5magazyn where idobj="+cStr(choose_magazyn))
+
+	if strSQL.BOF=false then
+		page_.ctrl(CTRLID_CHOOSE_MAGAZYN).value=cStr(strSQL.fields("strMagazyn"))
+		
+		dim i,strSQLMag
+		i=0
+
+		do while not p_oAR.get_pozycja(i) is nothing
+			
+			set strSQLMag=trans_.createadors("select 'c_ilosc_opak'=isnull(sum(t_0.gms_curIlosc),0) "+_
+			 "from n5gmstan as t_0  inner join n5magazyn as t_1 on t_0.gms_pMag = t_1.IdObj  "+_
+			 "inner join n5produkt as t_2 on t_0.gms_pProd = t_2.IdObj  "+_
+			 "inner join n5opakowanie_produktu as t_3 on t_0.gms_pOpak = t_3.IdObj  "+_
+			 "where (t_1.eTyp <> 2) and  (t_1.idobj ="+cstr(choose_magazyn)+")"+_
+			 "and (t_2.idobj = "+cstr(p_oAR.get_pozycja(i).id_produkt)+")")
+			 
+			p_oAR.get_pozycja(i).max_magazyn=strSQLMag.fields("c_ilosc_opak")			
+			i=i+1
+		loop
+		fill_option()	
+	else
+		choose_magazyn=clng(pHLI.prop(110))
+		trans_.var(3) = clng(choose_magazyn)
+		exit function
+	end if
+		
+	trans_.var(3) = clng(choose_magazyn)
+	
+end function
+
+
+function configure_tools()
+
+	dim eTypDok
+	set pTBTools = doc_.afc.new_tb(nothing).attach(page_.ctrl(CTRLID_NARZEDZIA_TABLE))
+	pTBTools.removeall
+	'pTBTools.newrow
+	'pTBTools.newcell.addtext("")
+	pTBTools.newrow
+	pTBTools.newcell.addtext("Magazyn").element.bold = true
+	pTBTools.cell.styleitem =STYLE_TABLE_HEADER
+	
+	if intOption = 4 then
+		eTypDok=7
+	end if
+	
+	if intOption = 3 then
+		eTypDok=1
+	end if
+	
+	if intOption = 2 then
+		eTypDok=34
+	end if
+	
+	if intOption = 1 then
+		eTypDok=33
+	end if
+	
+	dim oMag : set oMag = trans_.createadors("select 'nazwa'=m.strnazwa ,'indeks'=m.idobj from n5rejestrdok as r inner join n5magazyn as m on m.idobj=r.wrefParam2  where r.etyp="+cStr(eTypDok))
+	
+	if oMag.BOF then
+		trans_.var(3) = clng(0)
+	else
+		trans_.var(3) = clng(oMag.fields("indeks"))
+	end if
+	pTBTools.newrow
+	pTBTools.row.styleitem = STYLE_TABLE_BODY
+	pTBTools.newcell.addctrl CTRL_TYPE_EDIT, CTRLID_CHOOSE_MAGAZYN
+	with pTBTools.element
+		.value=cStr(oMag.fields("nazwa"))
+		.size=14
+	end with
+	pTBTools.addctrl CTRL_TYPE_PICTURE, -1
+	with pTBTools.element
+		.image=clng(PICTURE_CHOICE_N5MAGAZYN)
+		.width=Clng(HEIGHT_FOR_12PX)
+		.height=Clng(HEIGHT_FOR_12PX)
+		.tip="Wybór z listy"
+		set .hli= doc_.createhli()
+		.hli.prop(GVAR_FUNCTIONHLI) = "choose_magazyn"
+		.hli.prop(110) = clng(oMag.fields("indeks"))
+	end with
+		
+end function
+
+
+
+'----------------------------------------------------
+'konfiguracja checbox, zaznaczenie
+'----------------------------------------------------
+function config_listings(byval ctr1, byval ctr2, byval ctr3 )
+
+	if ctr1 then
+		page_.ctrl(20).value="1"
+	else
+		page_.ctrl(20).value="0"
+	end if
+	if ctr2 then
+		page_.ctrl(21).value="1"
+	else
+		page_.ctrl(21).value="0"
+	end if
+	
+	if ctr3 then
+		page_.ctrl(22).value="1"	
+	else
+		page_.ctrl(22).value="0"
+	end if
+end function
+
+'----------------------------------------------------
+'konfiguracja checbox, wspawienie odpowiedniego tesktu 
+'----------------------------------------------------
+
+function config_listings_text(byval text1, byval text2, byval text3)
+
+	page_.ctrl(200).text=text1
+	page_.ctrl(201).text=text2
+	page_.ctrl(202).text=text3
+	'page_.ctrl(1112)
+	'		set hli = doc_.createhli()
+	'		hli.prop(GVAR_FUNCTIONHLI)="add_action_hli"
+	'		hli.prop(100) = clng(iter)	
+			
+end function
+
+
+'----------------------------------------------------
+'wyznaczenie ktore roznice maja byc wyswietlane na podstwie zaznaczonych checbox
+'----------------------------------------------------
+
+function fill_option()
+
+	if ((page_.ctrl(20).value) and (page_.ctrl(21).value) and (page_.ctrl(22).value)) then
+				header(intOption)
+				fill_all 1
+				fill_all 2
+				fill_all 3
+				exit function
+	end if
+
+	if ((page_.ctrl(20).value) and ( not page_.ctrl(21).value) and (not page_.ctrl(22).value)) then
+				header(intOption)
+				fill_all 1
+				exit function
+	end if
+
+	if ((not page_.ctrl(20).value) and (page_.ctrl(21).value) and (not page_.ctrl(22).value)) then
+				header(intOption)
+				fill_all 2
+				exit function
+	end if
+
+	if ((not page_.ctrl(20).value) and (not page_.ctrl(21).value) and (page_.ctrl(22).value)) then
+				header(intOption)
+				fill_all 3
+				exit function
+	end if
+
+	if ((page_.ctrl(20).value) and (page_.ctrl(21).value) and (not page_.ctrl(22).value)) then
+				header(intOption)
+				fill_all 1
+				fill_all 2
+				exit function
+	end if
+
+	if ((not page_.ctrl(20).value) and (page_.ctrl(21).value) and (page_.ctrl(22).value)) then
+				header(intOption)
+				fill_all 2
+				fill_all 3
+				exit function
+	end if
+
+	if ((page_.ctrl(20).value) and (not page_.ctrl(21).value) and (page_.ctrl(22).value)) then
+				header(intOption)
+				fill_all 1 
+				fill_all 3
+				exit function
+	end if
+
+	if ((not page_.ctrl(20).value) and (not page_.ctrl(21).value) and (not page_.ctrl(22).value)) then
+				header(intOption)
+				build_buttons()
+				exit function
+	end if
+
+end function
+
+
+function c##CTRLID_REDIRECT_ALL##_ongetdata(byref oCtrl)
+
+	c##CTRLID_REDIRECT_ALL##_ongetdata = true
+	
+end function
+
+function c##CTRLID_REDIRECT_ALL##_ondataentered(byref oCtrl, byval newValue):c##CTRLID_REDIRECT_ALL##_ondataentered = true
+
+	dim intoption,bflags
+	dim i,j
+	i=0
+	intoption=oCtrl.userprop(102)
+	
+	if intoption=1 then
+		do while not p_oAR.get_pozycja(i) is nothing
+	
+				if ((p_oAR.get_pozycja(i).strona) and (p_oAR.get_pozycja(i).ilosc<>0)) then
+					if cCur(newValue)= 1 then
+						p_oAR.get_pozycja(i).druk=true
+					else
+						p_oAR.get_pozycja(i).druk=false
+					end if
+				end if
+			i=i+1
+		loop
+		'fill_option()
+		ctrl_zaznacz1=newValue
+	end if
+	if intoption=2 then
+	
+		do while not p_oAR.get_pozycja(i) is nothing
+		
+				if ((not p_oAR.get_pozycja(i).strona) and (p_oAR.get_pozycja(i).ilosc<>0)) then			
+					if cCur(newValue)= 1 then
+						p_oAR.get_pozycja(i).druk=true
+					else
+						p_oAR.get_pozycja(i).druk=false
+					end if
+				end if
+			i=i+1	
+		loop
+		'fill_option()
+		ctrl_zaznacz2=newValue
+	end if
+	if intoption=3 then
+	
+		do while not p_oAR.get_pozycja(i) is nothing
+
+			if ((p_oAR.get_pozycja(i).strona) and (p_oAR.get_pozycja(i).ilosc=0)) then
+				
+				bflags=1
+				j=0
+				do while not p_oAR.get_pozycja(j) is nothing
+					if ((j<>i) and (p_oAR.get_pozycja(i).strona <> p_oAR.get_pozycja(j).strona) and (p_oAR.get_pozycja(i).id_produkt=p_oAR.get_pozycja(j).id_produkt)) then
+						bflags=0
+						exit do	
+					end if
+					j=j+1
+				loop	
+					if bflags then
+						if cCur(newValue)= 1 then
+							p_oAR.get_pozycja(i).druk=true
+						else
+							p_oAR.get_pozycja(i).druk=false
+						end if
+					end if
+				end if
+			i=i+1
+		loop
+		'fill_option()
+	ctrl_zaznacz3=newValue
+	end if
+	
+	dim oRow : set oRow = oCtrl.parent.parent
+	set oRow = oRow.nextelement
+	do while not oRow is nothing
+
+		if not oRow.userprop is nothing then
+			if oRow.userprop.exists(50) then
+				if oRow.userprop.prop(50) = clng(intoption) then
+					oRow.cell(3).element(1).value = newValue
+				end if
+			end if
+		end if
+
+		set oRow = oRow.nextelement
+	loop
+	'oCtrl.value=newValue
+	
+end function
+
+
+function c20_ongetdata(byref oCtrl): c20_ongetdata=true	
+end function
+
+function c20_ondataentered(byref oCtrl, byval newValue)	
+
+	fill_option()
+	c20_ondataentered=true
+
+end function
+
+function c21_ongetdata(byref oCtrl): c21_ongetdata=true	
+end function
+
+function c21_ondataentered(byref oCtrl, byval newValue)	
+
+	fill_option()
+	c21_ondataentered=true
+
+end function
+
+function c22_ongetdata(byref oCtrl): c22_ongetdata=true	
+end function
+
+function c22_ondataentered(byref oCtrl, byval newValue)	
+
+	fill_option()
+	c22_ondataentered=true
+
+end function
+
+
+
+function c##CTRLID_INDEX_STATIC##_ondataentered(pCtrl, varValue):c##CTRLID_INDEX_STATIC##_ondataentered = true
+end function
+
+
+function c##CTRLID_INDEX_STATIC##_ongetdata(pCtrl):c##CTRLID_INDEX_STATIC##_ongetdata = true
+	'pCtrl.value = cStr(44)
+end function
+
+function c##CTRLID_INDEX_STATIC##_oncmdlist(pCtrl,pCmdList)
+
+if (pCtrl.userprop(100) > -1) then
+	if not pCtrl.userprop(102) then
+		dim pHli:set pHli = doc_.createhlistr("varFunctionHLI='delete_row' vn1='"+cstr(pCtrl.userprop(100)) + "' vn2='" + cstr(pCtrl.userprop(101)) + "' vn3='" + cstr(pCtrl.userprop(102)) + "'")
+		pCmdList.addcommand "Usuń wiersz",pHli
+	end if
+end if
+end function
+
+
+
+function c##CTRLID_INX##_ondataentered(pCtrl, varValue):c##CTRLID_INX##_ondataentered = true
+
+	dim idobj_produktu,bLeft,bAdd
+	idobj_produktu=pCtrl.userprop(100)
+	bLeft = pCtrl.userprop(101)
+	bAdd = pCtrl.userprop(102)
+	dim indeks
+	
+	indeks=p_oAR.get_indeks(idobj_produktu,bLeft,bAdd)
+	
+	if ((p_oAR.get_pozycja(indeks).max_magazyn < cCur(varValue)) and ((intOption=1) or (intOption=3) ) ) then
+		pCtrl.value = cCur(p_oAR.get_pozycja(indeks).max_magazyn)
+		p_oAR.get_pozycja(indeks).int_druk = cCur(varValue)
+	else
+		pCtrl.value = varValue
+		p_oAR.get_pozycja(indeks).int_druk = cCur(varValue)
+	end if
+	
+end function
+
+
+function c##CTRLID_INX##_ongetdata(pCtrl):c##CTRLID_INX##_ongetdata = true
+	'pCtrl.value = cStr(44)
+end function
+
+function c##CTRLID_INX##_oncmdlist(pCtrl,pCmdList)
+
+if (pCtrl.userprop(100) > -1) then
+	if not pCtrl.userprop(102) then
+		dim pHli:set pHli = doc_.createhlistr("varFunctionHLI='delete_row' vn1='"+cstr(pCtrl.userprop(100)) + "' vn2='" + cstr(pCtrl.userprop(101)) + "' vn3='" + cstr(pCtrl.userprop(102)) + "'")
+		pCmdList.addcommand "Usuń wiersz",pHli
+	end if
+end if
+end function
+
+
+																									
+function c##CTRLID_REDIRECT_CHKBOX##_ongetdata(byref oCtrl)											
+																									
+	c##CTRLID_REDIRECT_CHKBOX##_ongetdata = true													
+																									
+end function																						
+																									
+function c##CTRLID_REDIRECT_CHKBOX##_ondataentered(byref oCtrl, byval newValue)						
+																									
+	dim idobj_produktu,bLeft,bAdd																	
+	idobj_produktu=oCtrl.userprop(100)																
+	bLeft = oCtrl.userprop(101)																		
+	bAdd = oCtrl.userprop(102)																		
+																									
+	dim indeks																						
+	indeks=p_oAR.get_indeks(idobj_produktu,bLeft,bAdd)												
+																									
+	if (newValue=0) then																			
+		p_oAR.get_pozycja(indeks).druk = false														
+	else																							
+		p_oAR.get_pozycja(indeks).druk = true														
+	end if																							
+																									
+	c##CTRLID_REDIRECT_CHKBOX##_ondataentered = true												
+																									
+end function																						
+
+
+function c##CTRLID_REDIRECT_CHKBOX##_oncmdlist(pCtrl,pCmdList)
+
+if (pCtrl.userprop(100) > -1) then
+	if not pCtrl.userprop(102) then
+		dim pHli:set pHli = doc_.createhlistr("varFunctionHLI='delete_row' vn1='"+cstr(pCtrl.userprop(100)) + "' vn2='" + cstr(pCtrl.userprop(101)) + "' vn3='" + cstr(pCtrl.userprop(102)) + "'")
+		pCmdList.addcommand "Usuń wiersz",pHli
+	end if
+end if
+end function
+
+
+function c##CTRLID_CENA##_ondataentered(pCtrl, varValue):c##CTRLID_CENA##_ondataentered = true
+																							
+	dim idobj_produktu,bLeft,bAdd																
+	idobj_produktu=pCtrl.userprop(100)															
+	bLeft = pCtrl.userprop(101)																	
+	bAdd = pCtrl.userprop(102)																	
+	dim indeks																					
+																										
+	indeks=p_oAR.get_indeks(idobj_produktu,bLeft,bAdd)											
+																								
+	pCtrl.value = varValue																		
+	p_oAR.get_pozycja(indeks).cena = cCur(varValue)												
+																								
+end function																					
+																								
+																								
+function c##CTRLID_CENA##_ongetdata(pCtrl):c##CTRLID_CENA##_ongetdata = true					
+	'pCtrl.value = cStr(44)																		
+end function
+
+
+
+function c##CTRLID_CENA##_oncmdlist(pCtrl,pCmdList)
+
+if (pCtrl.userprop(100) > -1) then
+	if not pCtrl.userprop(102) then
+		dim pHli:set pHli = doc_.createhlistr("varFunctionHLI='delete_row' vn1='"+cstr(pCtrl.userprop(100)) + "' vn2='" + cstr(pCtrl.userprop(101)) + "' vn3='" + cstr(pCtrl.userprop(102)) + "'")
+		pCmdList.addcommand "Usuń wiersz",pHli
+	end if
+end if
+
+end function
+
+
+function delete_row(hli)
+dim idobj_produktu : idobj_produktu = hli.prop(1)
+dim bstrona : bstrona = hli.prop(2)
+dim bAddNew : bAddNew = hli.prop(3)
+dim indeks																					
+																										
+indeks=p_oAR.get_indeks(idobj_produktu,bstrona,bAddNew)		
+p_oAR.remove_pozycja(indeks)
+fill_option()
+end function
+
+
+function minimum(byval curWal1, byval curWal2)
+	
+	if (curWal1 < curWal2) then
+		minimum	= curWal1
+	else
+		minimum = curWal2
+	end if
+	
+end function
+
+
+'----------------------------------------------------
+'funckja naglowka tabeli
+'----------------------------------------------------
+
+
+function header(byval int_option)
+
+	set pTB = doc_.afc.new_tb(nothing).attach(page_.ctrl(CTRLID_RESULT_TABLE))
+	pTB.section_head.removeall
+	pTB.newrow
+	pTB.newcell.addtext("Strona").element.bold = true
+	pTB.newcell.addtext("Indeks produktu").element.bold = true
+	with pTB.element
+		set .hli= doc_.createhli()
+		.hli.prop(GVAR_FUNCTIONHLI) = "sort_strIndeks"
+	end with
+
+
+	pTB.newcell.addtext("Produkt/Opakowanie").element.bold = true
+	with pTB.element
+		set .hli= doc_.createhli()
+		.hli.prop(GVAR_FUNCTIONHLI) = "sort_strNazwa"
+	end with
+	
+	if ((int_option = OPTION_WZ) or (int_option = OPTION_SPRZE_WZ)) then
+		pTB.newcell.addtext("Różnica").element.bold = true
+		pTB.newcell.addtext("Ilość na magazynie").element.bold = true
+	end if
+	if ((int_option = OPTION_PZ) or (int_option = OPTION_ZAKUP_PZ)) then
+		pTB.newcell.addtext("Różnica").element.bold = true
+	end if
+	
+	intOption = int_option
+	pTB.newcell.cell.colspan=1
+	pTB.element.bold=true
+	pTB.addtext ("Ilość")
+	
+	pTB.element.size = clng(9)
+	if ((int_option = OPTION_PZ) or (int_option = OPTION_ZAKUP_PZ)) then
+	pTB.newcell.addtext("Cena jed.").element.bold = true
+	end if
+	pTB.section_body.removeall
+	
+end function
+
+'----------------------------------------------------
+'wypalnianie tabeli roznic na podstawie zaznaczonych opcji - 1-nadmiar po lewej, 2-nadmiar po prawej, 3-czesc wspolna
+'----------------------------------------------------
+
+function fill_all(byref option_v)
+
+		dim oProd 
+		dim i
+		dim j
+		dim bflags
+		dim pHli
+		dim intDokladnosc
+	
+'wypelnij pozycjami zgodnymi
+
+dim curIloscRoznicowa
+
+if option_v=3 then
+
+	i=0
+	
+	pTB.newrow
+	pTB.newcell
+	'pTB.addctrl(CTRL_TYPE_CHECKBOX,-1).element.border = 0
+	'pTB.element.customredirect = clng(CTRLID_REDIRECT_ALL)
+	'pTB.element.transfer = page_.createtransfer("custom")
+	'					
+	'	set pHli = doc_.createhli()
+	'	pHli.prop(102) = clng(3)
+	'	set pTB.element.userprop = pHli
+	'	
+	pTB.addctrl CTRL_TYPE_STATIC, -1'.text = "  Pozycje zrealizowane"
+	with pTB.element
+		.text = "      Pozycje zrealizowane"
+		.fontsize=3
+		'.fontname="Verdana"
+		.bold=false
+	'	.value=cStr(ctrl_zaznacz3)
+	end with
+	
+	if ((intOption = OPTION_WZ) or (intOption = OPTION_SPRZE_WZ)) then
+		pTB.cell.colspan=6
+	else
+		pTB.cell.colspan=6
+	end if
+	pTB.cell.styleitem=STYLE_TABLE_BODY
+	pTB.cell.align=ALIGN_LEFT
+	do while not p_oAR.get_pozycja(i) is nothing
+	'p_oAR.get_pozycja(i).druk=false
+	set oProd = trans_.createadors("select 'nazwa'=prod.strnazwa, 'indeks'=prod.strindeks,'idobj'=prod.idobj, "+_
+		"'dokladnosc'=jedn.nDokladnosc, 'skrot'=jedn.strskrot ,'cena'=v.c_curcenanetto1, "+_
+		"'waluta'=wal.strskrot, 'jedw'=wal.ndokladnosc from n5produkt as prod  "+_
+		"inner join n5jednostka as jedn on jedn.idobj=prod.pJednostkaEwid "+_
+		"inner join vlist_n5produkt_listOpakowania as v on v.p_idobj=prod.idobj "+_
+		"inner join n5jednostka as wal on wal.idobj=v.c_pwaluta "+_
+		"where prod.idobj="+cstr(p_oAR.get_pozycja(i).id_produkt))
+	
+	
+	if (cCur(oProd.fields("dokladnosc"))=5) then
+		intDokladnosc=4
+	else
+		intDokladnosc=cCur(oProd.fields("dokladnosc"))
+	end if
+	
+	pTB.newrow
+	pTB.row.backcolor = rgb(251,247,64)
+	'pTB.row.bordercolor=RGB(10, 10, 155)
+		if ((p_oAR.get_pozycja(i).strona) and (p_oAR.get_pozycja(i).ilosc=0)) then
+			
+			bflags=1
+			j=0
+			do while not p_oAR.get_pozycja(j) is nothing
+				if ((j<>i) and (p_oAR.get_pozycja(i).strona <> p_oAR.get_pozycja(j).strona) and (p_oAR.get_pozycja(i).id_produkt=p_oAR.get_pozycja(j).id_produkt)) then
+					bflags=0
+					exit do	
+				end if
+				j=j+1
+			loop	
+			if bflags then
+						
+					'odznaczenie drukowania-tych pozycji juz nie mozna wypelniac na dokumentach	
+					p_oAR.get_pozycja(i).druk=false
+					
+					pTB.newcell.addtext("lewa")
+					'pTB.newcell.addtext oProd.fields("indeks")
+					
+					pTB.NewCell.AddCtrl CTRL_TYPE_STATICEX, -1
+					pTB.element.text = oProd.fields("indeks")
+					pTB.element.customredirect = clng(CTRLID_INDEX_STATIC)
+					pTB.element.transfer = page_.createtransfer("custom")
+					
+					set pHli = doc_.createhli()
+					pHli.prop(100) = clng(oProd.fields("idobj"))
+					pHli.prop(101) = clng(p_oAR.get_pozycja(i).strona)
+					pHli.prop(102) = clng(p_oAR.get_pozycja(i).add_new)
+					set pTB.element.userprop = pHli
+					
+					
+					dim oBtnHLI : set oBtnHLI = doc_.createhli()
+					
+					pTB.newcell.addtext cStr(oProd.fields("nazwa"))
+					pTB.cell.width=clng(100)
+					pTB.cell.keepline = true
+					'pTB.addctrl(CTRL_TYPE_CHECKBOX,-1).element.border = 0
+					'pTB.element.customredirect = clng(CTRLID_REDIRECT_CHKBOX)
+					'pTB.element.transfer = page_.createtransfer("custom")
+					
+					'set pHli = doc_.createhli()
+					'pHli.prop(100) = clng(oProd.fields("idobj"))
+					'pHli.prop(101) = clng(p_oAR.get_pozycja(i).strona)
+					'pHli.prop(102) = clng(p_oAR.get_pozycja(i).add_new)
+					'set pTB.element.userprop = pHli
+					
+				'	pTB.element.addnew(CTRL_TYPE_STATICEX, -1).text = oProd.fields("nazwa")
+				'	pTB.element.width=clng(5450)
+				'	if p_oAR.get_pozycja(i).druk then
+				'		pTB.element.value = "1"
+				'	else
+				'		pTB.element.value = "0"
+					'end if
+					
+					
+					'set pTB.row.userprop = doc_.createhli()
+					'with pTB.row.userprop
+					'	.prop(50) = clng(3)
+					'end with
+					
+					if ((intOption = 1) or (intOption = 3)) then
+						pTB.newcell.addtext cStr(trans_.afc.convert.roundn(p_oAR.get_pozycja(i).ilosc,intDokladnosc))+" "+oProd.fields("skrot")
+						PTB.cell.align = ALIGN_RIGHT
+						pTB.newcell.addtext cStr(trans_.afc.convert.roundn(p_oAR.get_pozycja(i).max_magazyn,intDokladnosc))+" "+oProd.fields("skrot")
+						PTB.cell.align = ALIGN_RIGHT
+					end if
+					
+					if ((intOption = 2) or (intOption = 4)) then
+						pTB.newcell.addtext cStr(trans_.afc.convert.roundn(p_oAR.get_pozycja(i).ilosc,intDokladnosc))+" "+oProd.fields("skrot")
+						pTB.cell.align = ALIGN_RIGHT
+					end if
+					
+					if ((intOption = OPTION_WZ) or (intOption = OPTION_SPRZE_WZ)) then
+							curIloscRoznicowa = minimum(cCur(trans_.afc.convert.roundn(p_oAR.get_pozycja(i).int_druk,intDokladnosc)), cCur(trans_.afc.convert.roundn(p_oAR.get_pozycja(i).max_magazyn,intDokladnosc)))
+					else
+							curIloscRoznicowa = cCur(trans_.afc.convert.roundn(p_oAR.get_pozycja(i).int_druk,intDokladnosc))
+					end if
+					
+					p_oAR.get_pozycja(i).int_druk=curIloscRoznicowa
+					
+					pTB.newcell.addctrl CTRL_TYPE_CURRENCY , -1
+					with pTB.element
+						.size=10
+						.value = curIloscRoznicowa
+						.precision=oProd.fields("dokladnosc")-1
+						.unit=oProd.fields("skrot")
+						.customredirect = clng(CTRLID_INX)
+						.transfer = page_.createtransfer("custom")
+						.readonly=true
+					end with
+					set pHli = doc_.createhli()
+					pHli.prop(100) = clng(oProd.fields("idobj"))
+					pHli.prop(101) = clng(p_oAR.get_pozycja(i).strona)
+					pHli.prop(102) = clng(p_oAR.get_pozycja(i).add_new)
+					set pTB.element.userprop = pHli
+					
+					pTB.cell.align=ALIGN_RIGHT
+
+					if ((intOption = OPTION_PZ) or (intOption = OPTION_ZAKUP_PZ)) then
+						pTB.newcell.addctrl CTRL_TYPE_CURRENCY , -1
+						with pTB.element
+							.size=10
+							.value = cCur(trans_.afc.convert.roundn(p_oAR.get_pozycja(i).cena,intDokladnosc))
+							.precision=oProd.fields("jedw")-1
+							.unit=oProd.fields("waluta")
+							.customredirect = clng(CTRLID_CENA)
+							.transfer = page_.createtransfer("custom")
+						end with
+						set pHli = doc_.createhli()
+						pHli.prop(100) = clng(oProd.fields("idobj"))
+						pHli.prop(101) = clng(p_oAR.get_pozycja(i).strona)
+						pHli.prop(102) = clng(p_oAR.get_pozycja(i).add_new)
+						set pTB.element.userprop = pHli
+						
+						pTB.cell.align=ALIGN_RIGHT
+					end if
+			end if
+		end if
+	i=i+1
+	loop
+end if
+
+'wypelnij pozycjami tylko po prawej stronie gdzie ilosc>0
+if option_v=2 then
+	
+	i=0
+	
+	pTB.newrow
+	pTB.newcell
+	pTB.addctrl(CTRL_TYPE_CHECKBOX,-1).element.border = 0
+		pTB.element.customredirect = clng(CTRLID_REDIRECT_ALL)
+		pTB.element.transfer = page_.createtransfer("custom")
+						
+		set pHli = doc_.createhli()
+		pHli.prop(102) = clng(2)
+		set pTB.element.userprop = pHli
+		
+	pTB.element.addnew(CTRL_TYPE_STATIC, -1).text = "Pozycje nadmiarowe"
+	with pTB.element
+		.fontsize=6
+		.fontname="Verdana"
+		.bold=true
+		.value=cStr(ctrl_zaznacz2)
+	end with
+	
+	if ((intOption = OPTION_WZ) or (intOption = OPTION_SPRZE_WZ)) then
+		pTB.cell.colspan=6
+	else
+		pTB.cell.colspan=6
+	end if
+	pTB.cell.styleitem=STYLE_TABLE_BODY
+	pTB.cell.align=ALIGN_LEFT
+	
+	
+	do while not p_oAR.get_pozycja(i) is nothing
+	'p_oAR.get_pozycja(i).druk=false
+	set oProd = trans_.createadors("select 'nazwa'=prod.strnazwa, 'indeks'=prod.strindeks,'idobj'=prod.idobj, "+_
+		"'dokladnosc'=jedn.nDokladnosc, 'skrot'=jedn.strskrot ,'cena'=v.c_curcenanetto1, "+_
+		"'waluta'=wal.strskrot, 'jedw'=wal.ndokladnosc from n5produkt as prod  "+_
+		"inner join n5jednostka as jedn on jedn.idobj=prod.pJednostkaEwid "+_
+		"inner join vlist_n5produkt_listOpakowania as v on v.p_idobj=prod.idobj "+_
+		"inner join n5jednostka as wal on wal.idobj=v.c_pwaluta "+_
+		"where prod.idobj="+cstr(p_oAR.get_pozycja(i).id_produkt))
+
+	if (cCur(oProd.fields("dokladnosc"))=5) then
+		intDokladnosc=4
+	else
+		intDokladnosc=cCur(oProd.fields("dokladnosc"))
+	end if
+
+
+	pTB.newrow
+		pTB.row.backcolor = rgb(253,251,147)
+
+		if ((not p_oAR.get_pozycja(i).strona) and (p_oAR.get_pozycja(i).ilosc<>0)) then
+		
+			'p_oAR.get_pozycja(i).druk=false
+			
+			pTB.newcell.addtext("prawa")
+		
+			'pTB.newcell.addtext oProd.fields("indeks")
+			pTB.NewCell.AddCtrl CTRL_TYPE_STATICEX, -1
+			pTB.element.text = oProd.fields("indeks")
+			pTB.element.customredirect = clng(CTRLID_INDEX_STATIC)
+			pTB.element.transfer = page_.createtransfer("custom")
+			
+			set pHli = doc_.createhli()
+			pHli.prop(100) = clng(oProd.fields("idobj"))
+			pHli.prop(101) = clng(p_oAR.get_pozycja(i).strona)
+			pHli.prop(102) = clng(p_oAR.get_pozycja(i).add_new)
+			set pTB.element.userprop = pHli
+			
+			
+			pTB.newcell
+			pTB.cell.keepline = false
+			pTB.cell.width=clng(100)
+			pTB.addctrl(CTRL_TYPE_CHECKBOX,-1).element.border = 0
+			pTB.element.customredirect = clng(CTRLID_REDIRECT_CHKBOX)
+			
+			pTB.element.transfer = page_.createtransfer("custom")
+			set pHli = doc_.createhli()
+			pHli.prop(100) = clng(oProd.fields("idobj"))
+			pHli.prop(101) = clng(p_oAR.get_pozycja(i).strona)
+			pHli.prop(102) = clng(p_oAR.get_pozycja(i).add_new)
+			set pTB.element.userprop = pHli
+			
+			pTB.element.addnew(CTRL_TYPE_STATICEX, -1).text = oProd.fields("nazwa")
+			pTB.element.width=clng(5450)
+			if p_oAR.get_pozycja(i).druk then
+				pTB.element.value = "1"
+			else
+				pTB.element.value = "0"
+			end if
+			
+								set pTB.row.userprop = doc_.createhli()
+					with pTB.row.userprop
+						.prop(50) = clng(2)
+					end with
+			
+			if ((intOption = 1) or (intOption = 3)) then
+					pTB.newcell.addtext cStr(trans_.afc.convert.roundn(p_oAR.get_pozycja(i).ilosc,intDokladnosc))+" "+oProd.fields("skrot")
+					PTB.cell.align = ALIGN_RIGHT
+					pTB.newcell.addtext cStr(trans_.afc.convert.roundn(p_oAR.get_pozycja(i).max_magazyn,intDokladnosc))+" "+oProd.fields("skrot")
+					PTB.cell.align = ALIGN_RIGHT
+			end if	
+			
+		    if ((intOption = 2) or (intOption = 4)) then
+					pTB.newcell.addtext cStr(trans_.afc.convert.roundn(p_oAR.get_pozycja(i).ilosc,intDokladnosc))+" "+oProd.fields("skrot")
+					PTB.cell.align = ALIGN_RIGHT
+			end if
+				
+				
+				if ((intOption = OPTION_WZ) or (intOption = OPTION_SPRZE_WZ)) then
+							curIloscRoznicowa = minimum(cCur(trans_.afc.convert.roundn(p_oAR.get_pozycja(i).int_druk,intDokladnosc)), cCur(trans_.afc.convert.roundn(p_oAR.get_pozycja(i).max_magazyn,intDokladnosc)))
+				else
+							curIloscRoznicowa = cCur(trans_.afc.convert.roundn(p_oAR.get_pozycja(i).int_druk,intDokladnosc))
+				end if
+			
+			p_oAR.get_pozycja(i).int_druk=curIloscRoznicowa
+			pTB.newcell.addctrl CTRL_TYPE_CURRENCY , -1
+					with pTB.element
+						.size=10
+						.value = curIloscRoznicowa
+						.precision=oProd.fields("dokladnosc")-1
+						.unit=oProd.fields("skrot")
+						.customredirect = clng(CTRLID_INX)
+						.transfer = page_.createtransfer("custom")
+					end with
+			set pHli = doc_.createhli()
+					pHli.prop(100) = clng(oProd.fields("idobj"))
+					pHli.prop(101) = clng(p_oAR.get_pozycja(i).strona)
+					pHli.prop(102) = clng(p_oAR.get_pozycja(i).add_new)
+					set pTB.element.userprop = pHli		
+			pTB.cell.align=ALIGN_RIGHT
+
+			if ((intOption = OPTION_PZ) or (intOption = OPTION_ZAKUP_PZ)) then
+					pTB.newcell.addctrl CTRL_TYPE_CURRENCY , -1
+					with pTB.element
+						.size=10
+						.value = cCur(trans_.afc.convert.roundn(p_oAR.get_pozycja(i).cena,intDokladnosc))
+						.precision=oProd.fields("jedw")-1
+						.unit=oProd.fields("waluta")
+						.customredirect = clng(CTRLID_CENA)
+						.transfer = page_.createtransfer("custom")
+					end with
+					set pHli = doc_.createhli()
+					pHli.prop(100) = clng(oProd.fields("idobj"))
+					pHli.prop(101) = clng(p_oAR.get_pozycja(i).strona)
+					pHli.prop(102) = clng(p_oAR.get_pozycja(i).add_new)
+					set pTB.element.userprop = pHli
+					
+					pTB.cell.align=ALIGN_RIGHT
+			end if
+
+		end if
+		i=i+1
+	loop
+end if
+
+'wypelnij pozycjami tylko po lewej stronie gdzie ilosc>0
+if option_v=1 then 
+	
+	i=0
+	
+	pTB.newrow
+	pTB.newcell
+	pTB.addctrl(CTRL_TYPE_CHECKBOX,-1).element.border = 0
+		pTB.element.transfer = page_.createtransfer("custom")
+		pTB.element.customredirect = clng(CTRLID_REDIRECT_ALL)
+								
+		set pHli = doc_.createhli()
+		pHli.prop(102) = clng(1)
+		set pTB.element.userprop = pHli
+		
+	pTB.element.addnew(CTRL_TYPE_STATIC, -1).text = "Pozycje do zrealizowania"
+	with pTB.element
+		.fontsize=6
+		.fontname="Verdana"
+		.bold=true
+		.value=cStr(ctrl_zaznacz1)
+	end with
+	
+	if ((intOption = OPTION_WZ) or (intOption = OPTION_SPRZE_WZ)) then
+		pTB.cell.colspan=6
+	else
+		pTB.cell.colspan=6
+	end if
+	pTB.cell.styleitem=STYLE_TABLE_BODY
+	pTB.cell.align=ALIGN_LEFT
+	
+	do while not p_oAR.get_pozycja(i) is nothing
+	'p_oAR.get_pozycja(i).druk=false
+	set oProd = trans_.createadors("select 'nazwa'=prod.strnazwa, 'indeks'=prod.strindeks,'idobj'=prod.idobj, "+_
+		"'dokladnosc'=jedn.nDokladnosc, 'skrot'=jedn.strskrot ,'cena'=v.c_curcenanetto1, "+_
+		"'waluta'=wal.strskrot, 'jedw'=wal.ndokladnosc from n5produkt as prod  "+_
+		"inner join n5jednostka as jedn on jedn.idobj=prod.pJednostkaEwid "+_
+		"inner join vlist_n5produkt_listOpakowania as v on v.p_idobj=prod.idobj "+_
+		"inner join n5jednostka as wal on wal.idobj=v.c_pwaluta "+_
+		"where prod.idobj="+cstr(p_oAR.get_pozycja(i).id_produkt))
+		
+	
+	if (cCur(oProd.fields("dokladnosc"))=5) then
+		intDokladnosc=4
+	else
+		intDokladnosc=cCur(oProd.fields("dokladnosc"))
+	end if
+	
+	pTB.newrow
+	if (p_oAR.get_pozycja(i).add_new) then
+		pTB.row.backcolor = rgb(254,253,211)
+	else
+		pTB.row.backcolor = rgb(247,134,137)
+	end if
+	
+		if ((p_oAR.get_pozycja(i).strona) and (p_oAR.get_pozycja(i).ilosc<>0)) then
+			'p_oAR.get_pozycja(i).druk=true
+			pTB.newcell.addtext("lewa")
+			'pTB.newcell.addctrl 5555, -1
+			'pTB.newcell.addtext oProd.fields("indeks")
+			
+			pTB.NewCell.AddCtrl CTRL_TYPE_STATICEX, -1
+			pTB.element.text = oProd.fields("indeks")
+			pTB.element.customredirect = clng(CTRLID_INDEX_STATIC)
+			pTB.element.transfer = page_.createtransfer("custom")
+			set pHli = doc_.createhli()
+			pHli.prop(100) = clng(oProd.fields("idobj"))
+			pHli.prop(101) = clng(p_oAR.get_pozycja(i).strona)
+			pHli.prop(102) = clng(p_oAR.get_pozycja(i).add_new)
+			set pTB.element.userprop = pHli
+			
+			
+			
+			pTB.newcell
+			pTB.cell.keepline = false
+			pTB.cell.width=clng(100)
+			pTB.addctrl(CTRL_TYPE_CHECKBOX,-1).element.border = 0
+			
+			pTB.element.customredirect = clng(CTRLID_REDIRECT_CHKBOX)
+			pTB.element.transfer = page_.createtransfer("custom")
+			
+			set pHli = doc_.createhli()
+			pHli.prop(100) = clng(oProd.fields("idobj"))
+			pHli.prop(101) = clng(p_oAR.get_pozycja(i).strona)
+			pHli.prop(102) = clng(p_oAR.get_pozycja(i).add_new)
+			set pTB.element.userprop = pHli
+			
+			pTB.element.addnew(CTRL_TYPE_STATICEX,-1).text =oProd.fields("nazwa")
+			pTB.element.width=clng(5450)
+			if p_oAR.get_pozycja(i).druk then
+				pTB.element.value = "1"
+			else
+				pTB.element.value = "0"
+			end if
+			
+			set pTB.row.userprop = doc_.createhli()
+					with pTB.row.userprop
+						.prop(50) = clng(1)
+					end with
+			if ((intOption = 1) or (intOption = 3)) then
+					pTB.newcell.addtext cStr(trans_.afc.convert.roundn(p_oAR.get_pozycja(i).ilosc,intDokladnosc))+" "+oProd.fields("skrot")
+					PTB.cell.align = ALIGN_RIGHT
+					pTB.newcell.addtext cStr(trans_.afc.convert.roundn(p_oAR.get_pozycja(i).max_magazyn,intDokladnosc))+" "+oProd.fields("skrot")
+					PTB.cell.align = ALIGN_RIGHT
+			end if	
+			
+			if ((intOption = 2) or (intOption = 4)) then
+					pTB.newcell.addtext cStr(trans_.afc.convert.roundn(p_oAR.get_pozycja(i).ilosc,intDokladnosc))+" "+oProd.fields("skrot")
+					PTB.cell.align = ALIGN_RIGHT
+			end if
+			
+			if ((intOption = OPTION_WZ) or (intOption = OPTION_SPRZE_WZ)) then
+					curIloscRoznicowa = minimum(cCur(trans_.afc.convert.roundn(p_oAR.get_pozycja(i).int_druk,intDokladnosc)), cCur(trans_.afc.convert.roundn(p_oAR.get_pozycja(i).max_magazyn,intDokladnosc)))
+			else
+					curIloscRoznicowa = cCur(trans_.afc.convert.roundn(p_oAR.get_pozycja(i).int_druk,intDokladnosc))
+			end if
+			
+			p_oAR.get_pozycja(i).int_druk=curIloscRoznicowa
+			pTB.newcell.addctrl CTRL_TYPE_CURRENCY , -1
+					with pTB.element
+						.size=10
+						.value = curIloscRoznicowa
+						.precision=oProd.fields("dokladnosc")-1
+						.unit=oProd.fields("skrot")
+						.customredirect = clng(CTRLID_INX)
+						.transfer = page_.createtransfer("custom")
+					end with
+				set pHli = doc_.createhli()
+				pHli.prop(100) = clng(oProd.fields("idobj"))
+				pHli.prop(101) = clng(p_oAR.get_pozycja(i).strona)
+				pHli.prop(102) = clng(p_oAR.get_pozycja(i).add_new)
+				set pTB.element.userprop = pHli
+			pTB.cell.align=ALIGN_RIGHT
+
+
+			if ((intOption = OPTION_PZ) or (intOption = OPTION_ZAKUP_PZ)) then
+				pTB.newcell.addctrl CTRL_TYPE_CURRENCY , -1
+					with pTB.element
+						.size=10
+						.value = cCur(trans_.afc.convert.roundn(p_oAR.get_pozycja(i).cena,intDokladnosc))
+						.precision=oProd.fields("jedw")-1
+						.unit=oProd.fields("waluta")
+						.customredirect = clng(CTRLID_CENA)
+						.transfer = page_.createtransfer("custom")
+					end with
+					set pHli = doc_.createhli()
+					pHli.prop(100) = clng(oProd.fields("idobj"))
+					pHli.prop(101) = clng(p_oAR.get_pozycja(i).strona)
+					pHli.prop(102) = clng(p_oAR.get_pozycja(i).add_new)
+					set pTB.element.userprop = pHli
+					
+					pTB.cell.align=ALIGN_RIGHT
+			end if
+
+		end if
+		i=i+1
+	loop
+	
+	'miejsce na dodanie nowych pozycji
+	
+	pTB.newrow
+	pTB.row.backcolor = rgb(254,253,211)
+
+		
+			
+			pTB.newcell.addtext("lewa")
+			pTB.newcell
+			pTB.addctrl CTRL_TYPE_PICTURE, -1
+			with pTB.element
+				.image=clng(PICTURE_CHOICE_N5PRODUKT)
+				.width=Clng(HEIGHT_FOR_12PX)
+				.height=Clng(HEIGHT_FOR_12PX)
+				.tip="Wybór z listy"
+				set .hli= doc_.createhli()
+				.hli.prop(GVAR_FUNCTIONHLI) = "choose_produkt_indeks"
+				.hli.prop(110) = clng(1)
+			end with
+
+			
+			pTB.newcell
+			pTB.cell.keepline = false
+			pTB.cell.width=clng(100)
+			'PICTURE_CHOICE_N5PRODUKT
+			
+			pTB.addctrl CTRL_TYPE_PICTURE, -1
+			with pTB.element
+				.image=clng(PICTURE_CHOICE_N5PRODUKT)
+				.width=Clng(HEIGHT_FOR_12PX)
+				.height=Clng(HEIGHT_FOR_12PX)
+				.tip="Wybór z listy"
+				set .hli= doc_.createhli()
+				.hli.prop(GVAR_FUNCTIONHLI) = "choose_produkt_nazwa"
+				.hli.prop(110) = clng(1)
+			end with
+
+			'pTB.addctrl(CTRL_TYPE_CHECKBOX,-1).element.border = 0
+			
+			'pTB.element.customredirect = clng(CTRLID_REDIRECT_CHKBOX)
+			'pTB.element.transfer = page_.createtransfer("custom")
+			
+			'set pHli = doc_.createhli()
+			'pHli.prop(100) = clng(0)
+			'pHli.prop(101) = clng(0)
+			'set pTB.element.userprop = pHli
+			
+			'pTB.element.addnew(CTRL_TYPE_STATICEX,-1).text =""
+			'pTB.element.width=clng(5450)
+			'pTB.element.value = "1"
+						
+			'		set pTB.row.userprop = doc_.createhli()
+			'		with pTB.row.userprop
+			'			.prop(50) = clng(1)
+			'		end with
+			if ((intOption = 1) or (intOption = 3)) then
+					pTB.newcell.addtext cStr("")
+					PTB.cell.align = ALIGN_RIGHT
+					pTB.newcell.addtext cStr("")
+					PTB.cell.align = ALIGN_RIGHT
+			end if	
+			
+			if ((intOption = 2) or (intOption = 4)) then
+					pTB.newcell.addtext cStr("")
+					PTB.cell.align = ALIGN_RIGHT
+			end if
+			
+		
+			
+			pTB.newcell.addctrl CTRL_TYPE_CURRENCY , -1
+					with pTB.element
+						.size=10
+						.value = cCur(0.0)
+						.precision=2
+						.unit=""
+						.customredirect = clng(CTRLID_INX)
+						.transfer = page_.createtransfer("custom")
+					end with
+				set pHli = doc_.createhli()
+				pHli.prop(100) = clng(0)
+				pHli.prop(101) = clng(0)
+				set pTB.element.userprop = pHli
+			pTB.cell.align=ALIGN_RIGHT
+
+
+			if ((intOption = OPTION_PZ) or (intOption = OPTION_ZAKUP_PZ)) then
+				pTB.newcell.addctrl CTRL_TYPE_CURRENCY , -1
+					with pTB.element
+						.size=10
+						.value = cCur(0.0)
+						.precision=2
+						.unit=""
+						.customredirect = clng(CTRLID_CENA)
+						.transfer = page_.createtransfer("custom")
+					end with
+					set pHli = doc_.createhli()
+					pHli.prop(100) = clng(-1)
+					pHli.prop(101) = clng(-1)
+					set pTB.element.userprop = pHli
+					
+					pTB.cell.align=ALIGN_RIGHT
+			end if
+
+	
+	
+	
+	
+end if
+	
+end function
+
+
+
+]]>
+		</script>
+	</config>
+	<body>
+		<table name='CTRLID_RESULT' border='0'>
+			<thead border='0'>
+				<tr rowspan='3' style='STYLE_TABLE_HEADER'>
+					<td colspan='17'>
+						<t>Pokaż</t>
+					</td>
+				</tr>
+				<tr backcolor='white' >
+					<td colspan='2' width='max'>
+						<checkbox name='c20'  border='0' checked='true'>
+							<t name='t200' >Nadmiar po lewej</t>
+							<transfer mode='custom'>
+							</transfer>
+						</checkbox>
+				</td>
+					<td width='max' colspan='3'>
+						<checkbox name='c21'  border='0' checked='true'>
+							<t name='t201' >Nadmiar po prawej</t>
+							<transfer mode='custom'>
+							</transfer>
+						</checkbox>
+				</td>
+					<td width='max' colspan='4'>
+						<checkbox name='22 ' border='0' checked='true'>
+							<t name='t202' >Pozycje zgodne</t>
+							<transfer mode='custom'>
+							</transfer>
+						</checkbox>
+					</td>
+					
+					<td align='right' colspan='7' width='max'>
+						<picture name='1112' image='80139' tip='Odśwież'  href='varFunction="refresh_arkusz"'></picture>
+					</td>
+				</tr>
+				<tr rowspan='3' backcolor='white'>
+					<td colspan='17'>
+						<t></t>
+					</td>
+				</tr>
+				</thead>
+					<tbody>
+						<tr>
+							<td width='min' colspan='1'>
+								<table  border='0' name='CTRLID_NARZEDZIA_TABLE'>
+									<thead style='STYLE_TABLE_HEADER'>
+										
+										<tr backcolor='white' rowspan='3' name='CTRLID_TOOLS' width='120' >
+										</tr>
+									</thead>
+									<tbody></tbody>
+									<tfooter></tfooter>
+								</table>
+							</td>
+							<td backcolor='white' colspan='1'>
+								<t>&nbsp;</t>
+							</td>
+
+							<td width='max' colspan='12'>
+								<table border='1' name='CTRLID_RESULT_TABLE'>
+									<thead style='STYLE_TABLE_HEADER'>
+										<tr >
+										</tr>
+									</thead>
+									<tbody backcolor='white'>
+									</tbody>
+									<tfooter style='STYLE_TABLE_BODY' border='0'>
+									</tfooter>
+								</table>
+							</td>
+						</tr>
+						<tr backcolor='white' >
+							<td colspan='7'>
+								<t>&nbsp;</t>
+							</td>
+						</tr>
+						</tbody>
+					<tfooter backcolor='white' border='0' colspan='7'>
+					</tfooter>	
+			</table>
+	</body>
+</page>
+

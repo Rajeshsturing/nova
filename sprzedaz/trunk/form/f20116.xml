@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+REV:KB:20030131
+
+#include "h1000.h"
+#include "h1200.h"
+#include "h1220.h"
+#include "h1222.h"
+
+
+#define CTRLID_RADIO				1
+#define CTRLID_EDIT_NADGRUPA		2
+#define CTRLID_DOSTAWCA				3
+#define CTRLID_WYBOR_TOWARU			4
+
+
+#define FORM_SPAN		 2
+#define RCELL_SPAN		 1
+
+-->
+<page style='STYLE_PAGE'>
+<!--
+Grupa produktów
+GA5 FILE
+-->
+<config>
+	<title>
+Grupa produktów 
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+<typeid>TYPEID_N5GRUPAPRODUKTOW</typeid>
+<script>
+  <![CDATA[
+'nx_trace
+#include "50519"
+
+#include "50200"
+
+
+QVX_HIERARCHY_CHOICE(CTRLID_RADIO,CTRLID_EDIT_NADGRUPA,pGrupaNadrzedna)
+
+QVE_REF_OPEN_FORM(CTRLID_DOSTAWCA,grp_pDostawca)
+
+function price_rule_dlg()
+	dim oPage : set oPage = doc_.getpagehli("varCmd=CMD_OPEN_WIZARD_PAGE varDestPage=DIALOG_PRICE_RULES")
+	oPage.set_rzc page_.root.grp_strRZC
+	if oPage.domodalauto() <> 1 then
+		exit function
+	end if
+	page_.root.grp_strRZC = oPage.get_rzc()
+end function
+
+function update_prices()
+  if not doc_.getmodule(60253).gm_ensure_accuracy_ui(true) then
+    exit function
+  end if 
+
+  NX_TRACE_START_STREAM("Aktualizacja cen dla grupy " + page_.root.strNazwa + " i podgrup",nothing)
+    
+	dim utilProdHierarchy : set utilProdHierarchy = doc_.getmodule(60246)
+	
+	dim pProdHierarchy : set pProdHierarchy = utilProdHierarchy.new_prod_hierarchy()
+	pProdHierarchy.fill_on_grupa_idobj page_.root.idobj
+	dim strSQL : strSQL = "select 'idobj'=p_idobj from vlist_n5produkt_listopakowania where " +_
+	" left(c_opak_strRZC,1) in ('1','2') and " +_
+	" p_pGrupaProd in (select tmp_group_idobj from #tmp_prod_hierarchy) order by p_strNazwa"
+	dim pPerf : set pPerf = doc_.performing("Aktualizacja cen...")
+
+	dim oRS : set oRS = trans_.createadors(strSQL)
+	
+	do while not oRS.eof
+		dim oProdukt : set oProdukt = trans_.getobj(TYPEID_N5PRODUKT,clng(oRS("idobj")))
+		oProdukt.n5produkt_update_prices
+		oRS.movenext
+	loop
+	trans_.saveobjects
+	set pProdHierarchy = nothing
+	set utilProdHierarchy = nothing
+	set pPerf = nothing
+
+	NX_TRACE_SHOW_LOG(0)
+end function
+
+#ifdef _ABAKOSTEEL
+function c##CTRLID_WYBOR_TOWARU##_ongetdata(byref oCtrl) : c##CTRLID_WYBOR_TOWARU##_ongetdata = true
+  select case page_.root.grp_strUwagi
+    case ""
+      oCtrl.value = clng(1)  
+    case "1"
+      oCtrl.value = clng(2)
+  end select
+end function
+
+function c##CTRLID_WYBOR_TOWARU##_ondataentered(byref oCtrl, byval newValue) : c##CTRLID_WYBOR_TOWARU##_ondataentered = true
+  select case newValue
+    case clng(1)
+      page_.root.grp_strUwagi = ""
+    case clng(2)
+      page_.root.grp_strUwagi = "1"
+  end select
+end function
+#endif
+
+]]></script>
+</config>
+<header>
+</header>
+<body>
+
+  XFBEGIN
+  XFREQNAZWA
+#ifdef ENABLE_DB11_C
+  XFOPTEDITFIELD(Indeks,30,grp_strIndeks)
+#endif
+
+  QXX_HIERARCHY_CHOICE(bez grupy nadrzędnej,grupa nadrzędna,CTRLID_RADIO,CTRLID_EDIT_NADGRUPA,30,PICTURE_CHOICE_N5GRUPAPRODUKTOW,pGrupaNadrzedna,strNazwa,1,2)
+  QXR_SEPARATOR(FORM_SPAN)
+#ifdef ENABLE_DB13
+  QXR_SEPARATOR_DARK(FORM_SPAN, Ustawienia widoczności)
+  <tr>
+    <td>
+      <t>Publiczna</t>
+    </td>
+    <td>QXE_CHECK1_FIELD_NO_BRDR(-1,,grp_cPublic)</td>
+  </tr>
+  QXR_EDIT_FIELD(Nazwa publiczna,-1,48,grp_strPublicName,RCELL_SPAN)
+  QXR_SEPARATOR_DARK(FORM_SPAN,)
+#endif
+  QXR_EDIT_REF(Jednostka miary,-1,4,PICTURE_CHOICE_N5JEDNOSTKA,grp_pJednostkaEwid,strSkrot,CRSR_N5JEDNOSTKA_WG_NAZWY_JEDN_MIARY,1)
+  QXR_EDIT_REF_OPEN(Dostawca,CTRLID_DOSTAWCA,-1,40,PICTURE_CHOICE_N5KLIENT,grp_pDostawca,strNAzwa,CRSR_DEFAULT,1)
+#ifdef ENABLE_DB11_B
+  QXR_INT_FIELD(Data ważności,-1,4,grp_iDataWaznosci,1)
+#endif
+#ifdef ENABLE_DB11_C
+  XFOPTREF(Pracownik dedykowany,PICTURE_CHOICE_N5PRACOWNIK,30,grp_pPracownik,strNazwisko,1)
+#endif
+#ifdef _ABAKOSTEEL
+<tr>
+	QXC_LABEL(Wybór towarów,1)
+	<td>
+		<radio name='CTRLID_WYBOR_TOWARU' colspan='2' style='STYLE_TABLE_BODY'>
+			<transfer mode='custom'>
+			</transfer>
+			<t>lista</t>
+			<t>macierz</t>
+		</radio>
+	</td>
+</tr>
+#endif
+
+
+  QXR_SEPARATOR(FORM_SPAN)
+  <tr>
+    <td colspan='2' keepline='true'>
+		QXE_BUTTON(-1,0,Reguły aktualizacji cen,varFunction="price_rule_dlg")
+		QXE_BUTTON(-1,0,Aktualizuj ceny,varFunction="update_prices")
+	</td>
+</tr>
+
+XFEND
+
+</body>
+<footer>
+</footer>
+</page>

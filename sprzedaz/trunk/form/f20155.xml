@@ -1,0 +1,312 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+
+PAGE_FORM_SCHEMAT_DEKRETACJI
+
+Schemat dekretacji
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1201.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1200.h"
+#include "h1222.h"
+#include "h1232.h"
+
+#define CTRLID_PARSED_CELL		1
+
+#ifdef APPCONFIG_PKPIR
+#define SHOW_LISTA_DZIENNIKOW		1
+#define TXT_TITLE Wzór zapisu 
+#define TXT_REJESTR Rejestr dokumentów
+#define TXT_TWORZ		Twórz dowody w księdze
+#else
+#if appvar_rejestr_typ = N5REJESTRDOK_DZIENNIK_NORM || appvar_rejestr_typ = N5REJESTRDOK_DZIENNIK_BO || appvar_rejestr_typ = N5REJESTRDOK_DZIENNIK_BZ || appvar_rejestr_typ = N5REJESTRDOK_DZIENNIK_BZ_OSTAT
+#define TXT_TITLE Automat przeksięgowań
+#define TXT_REJESTR Dziennik
+#define SHOW_LISTA_DZIENNIKOW		0
+#else
+#define TXT_TITLE Schemat dekretacji 
+#define TXT_REJESTR Rejestr dokumentów
+#define SHOW_LISTA_DZIENNIKOW		1
+#define TXT_TWORZ		Twórz dowody w dzienniku
+#endif
+#endif
+-->
+<page style='STYLE_PAGE'>
+<config>
+	<title>
+	TXT_TITLE
+
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+<typeid>TYPEID_N5SCHEMATDEKR</typeid>
+<script><![CDATA[
+
+#include "50222"
+#include "50200"
+#include "50560"
+
+'messagebox
+#include "50122"
+#include "50101"
+
+function fopen
+#ifdef _ABAKUS
+	if HARUI_FREE(UAR_OGRANICZONY_DOSTEP_DANE_KLIENTA) then
+    fopen = false
+    exit function
+  end if
+#endif 
+	if not std_fopen() then
+		fopen = false
+		exit function
+	end if
+
+	section_fopen THIS_FILE
+end function
+
+function set_as_default
+	if not fsave() then
+		exit function
+	end if
+
+	set page_.root.pRejestrDok.pDefSchematdekr = page_.root
+
+	if not fsave() then
+		exit function
+	end if
+
+	trans_.message 7000 , 0 , "Ustawiono schemat jako domyslny dla rejestru " + page_.root.pRejestrDok.text	
+end function
+
+
+
+function fclose()
+	section_fclose THIS_FILE
+	fclose = true
+end function
+
+function parsecode
+	page_.ctrl(CTRLID_PARSED_CELL).removeall
+
+	dim pRE : set pRE = new RegExp
+	pRE.IgnoreCase = true
+	pRE.Global = true
+
+	dim arrLines : arrLines = split(page_.root.strVBCode,vbLf)
+	dim iter
+
+	'1-st pattern
+	pRE.Pattern = "^\s*.dekret\s+([^,]+),([^,]+),([^,]+),([^,]+)\s*$"
+	for iter = 0 to ubound(arrLines)
+		page_.ctrl(CTRLID_PARSED_CELL).addnew(CTRL_TYPE_STATICEX,-1).text = _
+			pRE.replace(arrLines(iter),"<dekret>($1,$2,$3,$4)</dekret>")
+		page_.ctrl(CTRLID_PARSED_CELL).addnew CTRL_TYPE_BREAKLINE,-1
+	
+	'dim pMatches : set pMatches = pRE.execute(page_.root.strVBCode)
+	'dim pMatch
+	'for each pMatch in pMatches
+		'msgbox "match=[" + pMatch.value + "]"
+	'	dim pSubMatch
+	'	for each pSubMatch in pMatch.Submatches
+			'msgbox "submatch={" + pSubMatch + "}"
+	'	next
+	'next
+	next
+end function
+
+
+
+
+
+'a) "Skopiuj do innego rejestru" - ma proponować listę rejestrów tego samego typu co rejestr w ktorym jest schemat (poza nim oczywiscie) - po wybraniu wystarczy message box jesli sie udalo.
+function copy_to
+	'sprawdz czy zapisane
+	if not check_if_saved then		
+		exit function
+	end if	
+
+	dim org_rejestr:org_rejestr = trans_.var(APPVAR_REJESTR_DOKUMENTOW)
+	dim rootid:rootid = page_.root.idobj
+	dim oNXArrayRej : set oNXArrayRej = nx_fire_multi_choice_list(TYPEID_N5REJESTRDOK,"Wybierz docelowe rejestry dokumentów","idobj<>"+CStr(page_.root.pRejestrDok.idobj) +" and eTyp = " + CStr(page_.root.pRejestrDok.eTyp))
+	if oNXArrayRej is nothing then
+		exit function
+	end if
+	dim iter
+	for iter = 0 to oNXArrayRej.count - 1
+		dim rejestr : rejestr = clng(oNXArrayRej(iter))
+
+		dim pSubTrans:set psubTrans = trans_.createsubtran()		
+			trans_.var(APPVAR_REJESTR_DOKUMENTOW) = clng(rejestr)
+			dim source:set source = trans_.getobj(TYPEID_N5SCHEMATDEKR,rootid)
+			dim idDestSchemat : idDestSchemat = trans_.findobjid(TYPEID_N5SCHEMATDEKR, _
+				"pRejestrDok=" + cstr(rejestr) + " and strNazwa='" + _
+				trans_.afc.convert.DoubleApostrophe(source.strNazwa) + "'")
+			
+			dim schemat
+			if idDestSchemat = 0 then
+				set schemat = trans_.newobj(TYPEID_N5SCHEMATDEKR)
+			else
+				set schemat = trans_.getobj(TYPEID_N5SCHEMATDEKR,idDestSchemat)
+			end if
+			
+			source.n5schematdekr_copy_to schemat
+			if not trans_.saveobjects then
+				MessageBox "Nie udało sie skopiowac schematu dekretacji", "Schematy dekretacji", vbOKOnly, vbInformation
+				exit function
+			end if
+			set schemat = nothing
+		set pSubTrans = nothing
+	next
+	trans_.var(APPVAR_REJESTR_DOKUMENTOW) = clng(org_rejestr)
+	
+	MessageBox "Schematy zostały skopiowane", "Schematy dekretacji", vbOKOnly, vbInformation
+end function
+
+
+function check_if_saved():check_if_saved = false
+
+	'sprawdz czy zapisane
+	if page_.root.isnew() then
+		trans_.message 1002 , 0 , "Dokument musi byc najpierw zapisany"
+		exit function
+	end if
+
+	if trans_.isdirty() then
+		trans_.message 1002 , 0 , "Dokument musi byc najpierw zapisany"
+		exit function
+	end if
+
+	check_if_saved = true
+end function
+
+
+function create_copy
+	if not check_if_saved then		
+		exit function
+	end if
+
+	dim rootid:rootid = page_.root.idobj
+	dim pSubTrans:set psubTrans = trans_.createsubtran()
+		dim hli:set hli = doc_.getmodule(60129).prepare_form_open_command(TYPEID_N5SCHEMATDEKR , 0 , USAGE_EDIT)
+		if hli is nothing then
+			exit function
+		end if 
+		dim form : set form = doc_.getpagehli(hli)
+		if not form is nothing then
+			dim source:set source = trans_.getobj(TYPEID_N5SCHEMATDEKR,rootid)
+			source.n5schematdekr_copy_to form.root
+			form.root.strNazwa = ""
+			form.domodalauto			
+		end if
+		
+	set pSubTrans = nothing		
+
+end function
+
+
+
+function schemat_replace()
+	dim util:set util = doc_.getmodule(60291)
+	dim co
+	dim naco
+	if util.replace (co , naco ) <> 0 then
+		page_.root.strVBCode = replace (page_.root.strVBCode , co , naco )
+	end if
+end function
+
+
+
+
+
+]]></script>
+</config>
+<header>
+</header>
+<body>
+
+QXF_BEGIN
+	<tr>
+		<td width='max'>
+			QXE_LABEL(TXT_REJESTR)
+		</td>	
+		QXC_TEXT_REF(-1,25,pRejestrDok,strNazwa,25)
+	</tr>
+	QXR_EDIT_FIELD_REQ(Nazwa,-1,40,strNazwa,1)
+
+QXS_BEGIN_REQ(4,Opis,2)
+	<tr>
+		QXC_MULTILINE_FIELD(-1,max,HEIGHT_FOR_MULTILINE,strOpis,2)
+	</tr>
+QXS_END_REQ(4)
+
+QXS_BEGIN_REQ(5,Wzory,2)
+<tr>
+	<td font='Courier New CE' fontsize='3' width='max' colspan='2' >
+		QXE_MULTILINE_FIELD(-1,20000,9000,strVBCode)
+	</td>
+</tr>
+
+<tr style='STYLE_ROW_BTN'>
+	<td width='min' colspan='2' keepline='true'>			
+		QXE_BUTTON(-1,10,Zamień,varFunction=schemat_replace)
+	</td>
+</tr>
+
+#ifdef _DEBUG
+<tr>
+	<td>
+		<button href='varFunction="parsecode"'>Parse</button>
+	</td>
+</tr>
+<tr>
+	<td backcolor='yellow' name='CTRLID_PARSED_CELL' colspan='2' />
+</tr>
+#endif
+QXS_END_REQ(2)
+
+#if SHOW_LISTA_DZIENNIKOW  = 1
+QXR_EDIT_REF(TXT_TWORZ,-1,40,PICTURE_CHOICE_N5REJESTRDOK,pDziennik,strNazwa,CRSR_N5REJESTRDOK_DZIENNIKI,1)
+#endif
+
+	<tr>
+		<td width='min'>
+			<t>Status</t>
+		</td>
+		<td>
+			<radio colspan='2'>
+				<transfer mode='edit_field'>
+					<field>eAktywny</field>
+				</transfer>
+				
+				<t>Aktywny</t>
+				<t>Nieaktywny</t>
+			</radio>
+		</td>
+	</tr>
+
+
+
+	<tr style='STYLE_ROW_BTN'>
+		<td width='min' colspan='2' keepline='true'>			
+			QXE_BUTTON(-1,10,Ustaw jako domyślny,varFunction=set_as_default)
+			QXE_BUTTON(-1,10,Skopiuj do innego rejestru,varFunction=copy_to)
+			QXE_BUTTON(-1,10,Utwórz kopie,varFunction=create_copy)
+		</td>
+	</tr>	
+
+
+QXF_END
+
+
+</body>
+<footer>
+</footer>
+</page>

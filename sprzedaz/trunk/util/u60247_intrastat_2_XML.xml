@@ -1,0 +1,510 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1231.h"
+#include "h1220.h"
+#include "h1240.h"
+
+
+	Ekport instrastat'u do XML
+  
+#define INTRASTAT_PRZYWOZ	1
+#define INTRASTAT_WYWOZ		2  
+-->
+<page>
+<config>
+<script>
+<![CDATA[
+
+dim g_error:g_error = ""
+dim nTyp: nTyp = INTRASTAT_PRZYWOZ  'domyślnie przywóz P
+
+function export_intrastat_2_xml (byref pIstat ,byval bKorekta,byval m_ArrayNrZmianNaPoz):set export_intrastat_2_xml = nothing
+	DEBUG_MESSAGE("THIS_FILE + export_intrastat_2_xml")
+	dim so:set so = doc_.createstreamobj()	
+
+  'numer własny
+  dim strNrWlasny
+#ifdef _AMPLUS
+  strNrWlasny = right(cstr(year(trans_.var(GVAR_TODAY))),2) + "IST" + "AMPLUS"
+#else
+  strNrWlasny = get_nr_wlasny(pIstat)
+#endif
+  dim pPerf : set pPerf = doc_.performing("Trwa generowanie dokumentu...")
+  nTyp = pIstat.istt_eTypDekl
+
+	'najpierw nagłówek
+	so.write "<?xml version=""1.0"" encoding=""WINDOWS-1250"" ?> " + vbNewLine
+	so.write vbTab + "<ns1:IST xmlns:ns1=""http://www.mf.gov.pl/xsd/Intrastat/IST.xsd"" xmlns:ns2=""http://www.mf.gov.pl/xsd/aesais/typy"" xmlns:ns3=""http://www.w3.org/2000/09/xmldsig#"">" + vbNewLine
+  so.write vbTab + vbTab + "<ns1:Deklaracja  NrWlasny=""" + strNrWlasny + """ UC=""" + get_kod_izby_celnej(pIstat) + """ Typ=""" + get_typ(pIstat) + """ Rodzaj=""" + get_rodzaj(pIstat) + """ Rok=""" + get_rok(pIstat) + """ Miesiac=""" + get_miesiac(pIstat) + """ Numer=""" + get_numer(pIstat) + """ Wersja=""" + get_wersja(pIstat) + """ LacznaWartoscFaktur=""" + get_wartosc(pIstat) + """ LacznaLiczbaPozycji=""" + get_pozycje(pIstat) + """ Miejscowosc=""" + get_miejscowosc(pIstat) + """ Data=""" + get_data(pIstat) + """>" + vbNewLine
+
+	so.write vbTab + vbTab + vbTab + "<ns1:PodmiotZobowiazany Nazwa=""" + get_podmiot (pIstat) + """ UlicaNumer=""" + get_ulica_nr (pIstat) + """ KodPocztowy=""" + get_kod_poczta (pIstat) + """ Miejscowosc=""" + get_miejscowosc_podmiot (pIstat) + """ Nip=""" + get_nip (pIstat) + """ Regon=""" + get_regon (pIstat) + """ />" + vbNewLine
+
+	if pIstat.istp_strNazwaPlatnik <> "" then
+		so.write vbTab + vbTab + vbTab + "<ns1:Zglaszajacy Nazwa=""" +  get_nazwa_zglaszajacy(pIstat) + """ UlicaNumer=""" +  get_ulica_zglaszajacy(pIstat) + """ KodPocztowy=""" +  get_kod_p_zglaszajacy(pIstat) + """ Miejscowosc=""" +  get_miejscowosc_zglaszajacy(pIstat) + """ Nip=""" +  get_nip_zglaszajacy(pIstat) + """ Regon=""" +  get_regon_zglaszajacy(pIstat) + """ />" + vbNewLine
+	end if
+
+#ifdef _METROX
+  dim oRS: set oRS = nothing
+  if nTyp = INTRASTAT_WYWOZ then
+    dim strSQL: strSQL = guery_for_wywoz(pIstat)
+    set oRS = trans_.createadors(strSQL)
+  end if
+#endif
+
+	dim pos,iter
+	iter = 1
+	for each pos in pIstat.istt_pozistat
+#ifdef _METROX
+		if bKorekta = true then
+			export_pos_istat_2_xml_ex so , pos , m_ArrayNrZmianNaPoz(iter-1), oRS
+		else
+			export_pos_istat_2_xml_ex so , pos , iter, oRS
+		end if
+#else
+		if bKorekta = true then
+			export_pos_istat_2_xml so , pos , m_ArrayNrZmianNaPoz(iter-1)
+		else
+			export_pos_istat_2_xml so , pos , iter
+		end if
+#endif    
+		iter = iter + 1
+	next
+
+	so.write vbTab + vbTab + vbTab + "<ns1:Wypelniajacy NazwiskoImie=""" + get_wyp_nazwisko_imie(pIstat) + """ Telefon=""" + get_wyp_telefon(pIstat) + """ Faks=""" + get_wyp_fax(pIstat) + """ Email=""" + get_wyp_email(pIstat) + """/>" + vbNewLine
+
+	so.write vbTab + vbTab + "</ns1:Deklaracja>"
+	so.write vbTab + "</ns1:IST>"
+  set pPerf = nothing
+	set export_intrastat_2_xml = so
+
+end function
+
+function funSQLwyznaczAktKorekDoZakupu(byval zak_sprz)
+dim strSQL: strSQL = "if exists (select * from sysobjects where name='find_pierwsza_fakt')   " + vbNewLine + _
+" drop function find_pierwsza_fakt "
+trans_.execsql strSQL 
+
+'zrobic to podspodem jako string a nastepnie zrobic replaca na zak_sprz i uruchomic jako .execsql
+strSQL = "  create function dbo.find_pierwsza_fakt(@idobjWej int)   " + vbNewLine + _
+" returns varchar(96) " + vbNewLine + _
+" with encryption " + vbNewLine + _
+" as " + vbNewLine + _
+" begin " + vbNewLine + _
+"	declare @zm int " + vbNewLine + _
+"	set @zm = @idobjWej  " + vbNewLine + _
+"    while @zm <> 0 " + vbNewLine + _
+"        begin " + vbNewLine + _
+"			set @zm = (select idobj from n5" + zak_sprz + " where ppop"+usunNazPopSprz(zak_sprz)+"=@idobjWej) " + vbNewLine + _
+"			if @zm <> 0 " + vbNewLine + _
+"			 set @idobjWej  = @zm " + vbNewLine + _
+"        end " + vbNewLine + _
+"    return isnull(@idobjWej ,0)  " + vbNewLine + _
+" end   "
+trans_.execsql strSQL
+end function
+
+function guery_for_wywoz(byref pIstat)
+funSQLwyznaczAktKorekDoZakupu("sprzedaz")
+guery_for_wywoz = trans_.afc.convert.Formatter( _
+	" select " + vbNewLine + _
+	" min(produkty.p_idobj) as prod_id ,  " + vbNewLine + _
+	" 1 as opak_lp ,  " + vbNewLine + _
+#ifdef _CONTRANS
+  " 'suma_opak'=sum(case left(jedn.strSkrot,len(jedn.strSkrot)-1 )    " + vbNewLine + _
+  " when '10' then ((sprzedaz.c_curIloscOpak)*10)          " + vbNewLine + _
+  " when '100' then ((sprzedaz.c_curIloscOpak)*100)        " + vbNewLine + _
+  " when '1000' then ((sprzedaz.c_curIloscOpak)*1000)      " + vbNewLine + _
+  " else                  " + vbNewLine + _
+  "  (sprzedaz.c_curIloscOpak)     " + vbNewLine + _
+  " end                   " + vbNewLine + _
+  " ),                    " + vbNewLine + _  
+#else
+  " sum(sprzedaz.c_curIloscOpak) as suma_opak ,  " + vbNewLine + _
+#endif
+	" sum (sprzedaz.c_curWartNetto) as suma_netto , " + vbNewLine + _
+#ifdef _AMPLUS
+	" sum(rou##nd(sprzedaz.c_curIloscOpak*c_curCenaBrutto6,0))  as suma_wagi ,  " + vbNewLine + _
+#else
+	" sum(rou##nd(sprzedaz.c_curIloscOpak*c_curWagaNetto,0))  as suma_wagi ,  " + vbNewLine + _
+#endif  
+	" max(isnull(pcn_strKod,'')) as kod, " + vbNewLine + _
+	" p_prod_pKodCelny as id_pcn, " +_
+	" max(isnull(t_kraj_p.strSkrot,'')) as kraj_p, " +_
+	" max(t_kraj_d.strSkrot) as kraj_d, " +_
+#ifdef _METROX 	
+	" t_klient.strNIP as NIP " +_
+#else
+	" max(t_klient.strNIP) as NIP " +_
+#endif
+	" from n5sprzedaz as sprzedaz_ost " + vbNewLine + _
+	" left join vlist_n5sprzedaz_listpozycje as sprzedaz on (sprzedaz.p_idobj = dbo.find_pierwsza_fakt(sprzedaz_ost.idobj)) " + vbNewLine + _
+	" join vlist_n5produkt_listOpakowania as produkty on sprzedaz.c_pProdukt = produkty.p_idobj and sprzedaz.c_pOpak = produkty.c_idobj " + vbNewLine + _
+	" join n5klient t_klient on sprzedaz.p_pKlient = t_klient.idobj " + vbNewLine + _
+#ifdef _CONTRANS
+  " join n5produkt prod	on sprzedaz.c_pprodukt = prod.idobj " + vbNewLine + _
+  " join n5jednostka jedn	on prod.pJednostkaEwid = jedn.idobj " + vbNewLine + _  
+#endif
+	" join n5kraj t_kraj_d on t_klient.pKraj = t_kraj_d.idobj " + vbNewLine + _
+	" left outer join n5kraj t_kraj_p on produkty.p_prod_pKrajPoch = t_kraj_p.idobj " + vbNewLine + _
+	" left outer join n5kodpcn on p_prod_pKodCelny = n5kodpcn.idobj " +_
+	" where sprzedaz_ost.pPopSprzed = 0 " + vbNewLine + _
+	" and sprzedaz.p_pRejestrDok in (select idobj from n5rejestrdok where eTyp in (N5REJESTRDOK_WDT,N5REJESTRDOK_KOREKTA_WDT) ) " + vbNewLine + _
+	" and sprzedaz_ost.dDataWyst between %1 and %2 " + vbNewLine + _
+	" and produkty.p_eRodzaj = N5PRODUKT_TOWAR " + vbNewLine + _
+#ifdef _METROX
+	" group by t_klient.strNIP,p_prod_pKodCelny,p_prod_pKrajPoch,t_kraj_d.idobj order by kod,kraj_p")(trans_.afc.convert.date2SQL(pIstat.istt_dDataOd))(trans_.afc.convert.date2SQL(pIstat.istt_dDataDo)).Done()
+#else  
+	" group by p_prod_pKodCelny,p_prod_pKrajPoch,t_kraj_d.idobj order by kod,kraj_p")(trans_.afc.convert.date2SQL(pIstat.istt_dDataOd))(trans_.afc.convert.date2SQL(pIstat.istt_dDataDo)).Done()
+#endif
+end function
+
+function usunNazPopSprz(byval strNazwa)
+	if strNazwa = "sprzedaz" then
+	 usunNazPopSprz = "sprzed"
+	else
+		usunNazPopSprz = "zakup"
+	end if
+end function
+
+function sprCzyJestDekl():sprCzyJestDekl=true
+end function
+
+function change_char_spec(byval strZamien)
+	change_char_spec=replace(replace(replace(replace(replace(strZamien,"&","&amp;"),">","&gt;"),"""","&quot;"),"'","&apos;"),"<","&lt;")
+end function
+
+function export_pos_istat_2_xml(byref so , byval pos , byval iter)
+  export_pos_istat_2_xml_ex so, pos, iter, nothing
+end function
+
+function export_pos_istat_2_xml_ex (byref so , byval pos , byval iter, byref oRS)
+  dim strKrajPoch: strKrajPoch = trim(get_pos_kraj_pochodzenia(pos))
+  dim strKodTowarowy: strKodTowarowy = trim(get_pos_kod(pos))
+  if strKrajPoch <> "" then
+    strKrajPoch = "KrajPochodzenia="""+strKrajPoch+""""
+  end if
+  if strKodTowarowy <> "" then
+    strKodTowarowy = "KodTowarowy="""+strKodTowarowy+""""
+  end if
+  
+if sprCzyJestDekl then
+#ifdef _METROX
+  if nTyp = clng(2) then
+    so.write "<ns1:Towar PozId="""+cstr(iter)+""" OpisTowaru="""+change_char_spec(get_pos_nazwa(pos))+""" KrajPrzeznaczeniaWysylki="""+change_char_spec(get_pos_kraj(pos))+""" RodzajTransakcji="""+get_pos_rodzaj(pos)+""" " + strKrajPoch + " " + strKodTowarowy + " IdKontrahenta="""+get_id_kont(pos,oRS)+""" MasaNetto="""+get_pos_masa(pos)+""" IloscUzupelniajacaJm="""+get_pos_iloscUzupel(pos)+""" WartoscFaktury="""+get_pos_wartosc(pos)+""" />" + vbNewLine
+  else
+    so.write "<ns1:Towar PozId="""+cstr(iter)+""" OpisTowaru="""+change_char_spec(get_pos_nazwa(pos))+""" KrajPrzeznaczeniaWysylki="""+change_char_spec(get_pos_kraj(pos))+""" RodzajTransakcji="""+get_pos_rodzaj(pos)+""" " + strKrajPoch + " " + strKodTowarowy + " MasaNetto="""+get_pos_masa(pos)+""" IloscUzupelniajacaJm="""+get_pos_iloscUzupel(pos)+""" WartoscFaktury="""+get_pos_wartosc(pos)+""" />" + vbNewLine
+  end if
+#else
+  so.write "<ns1:Towar PozId="""+cstr(iter)+""" OpisTowaru="""+change_char_spec(get_pos_nazwa(pos))+""" KrajPrzeznaczeniaWysylki="""+change_char_spec(get_pos_kraj(pos))+""" RodzajTransakcji="""+get_pos_rodzaj(pos)+""" " + strKrajPoch + " " + strKodTowarowy + " MasaNetto="""+get_pos_masa(pos)+""" IloscUzupelniajacaJm="""+get_pos_iloscUzupel(pos)+""" WartoscFaktury="""+get_pos_wartosc(pos)+""" />" + vbNewLine
+#endif  
+else  
+  so.write "<ns1:Towar PozId="""+cstr(iter)+""" OpisTowaru="""+change_char_spec(get_pos_nazwa(pos))+""" KrajPrzeznaczeniaWysylki="""+change_char_spec(get_pos_kraj(pos))+""" RodzajTransakcji="""+get_pos_rodzaj(pos)+""" " + strKrajPoch + " " + strKodTowarowy + " MasaNetto="""+get_pos_masa(pos)+""" WartoscFaktury="""+get_pos_wartosc(pos)+""" />" + vbNewLine
+end if
+end function
+
+function is_error (text , desc)
+	if text = "" then
+		trans_.message 1002 , 0 , "Pole """ + desc + """ jest puste"
+	end if
+end function
+
+function get_pos_nazwa(pos)
+	get_pos_nazwa = pos.pistt_strOpisTowar
+	is_error get_pos_nazwa , "Nazwa produktu"
+end function
+
+
+function get_pos_kraj(pos)
+	get_pos_kraj = pos.pistt_strKodKrajuD
+	is_error get_pos_kraj , "Kod kraju dostawcy"
+end function
+
+
+function get_pos_rodzaj(pos)
+	get_pos_rodzaj = pos.pistt_strKodRTransakcji
+end function
+
+
+function get_pos_kraj_pochodzenia(pos)
+	get_pos_kraj_pochodzenia = pos.pistt_strKodKrajuP
+	is_error get_pos_kraj_pochodzenia , "Kod kraju przeznaczenia"
+end function
+
+function get_pos_kod(pos)
+	get_pos_kod = pos.pistt_strKodTowaru
+	is_error get_pos_kod , "Kod towaru"
+end function
+
+function get_id_kont(pos,oRS): get_id_kont = ""
+  if not oRS is nothing then
+    get_id_kont = get_id_klient(pos, oRS)
+  end if
+end function
+
+function get_id_klient(pos, oRS): get_id_klient = ""
+  oRS.movefirst
+  do while not oRS.EOF
+    if pos.pistt_pProdukt.IdObj = oRS("prod_id").value and pos.pistt_curIloscUJM = ccur(oRS("suma_opak").value) and _
+       pos.pistt_curWarFak = trans_.afc.convert.roundn(ccur(oRS("suma_netto").value),0) and _
+       pos.pistt_strKodTowaru = cstr(oRS("kod").value) and _
+		   pos.pistt_strKodKrajuP = cstr(oRS("kraj_p").value) and _
+		   pos.pistt_strKodKrajuD = cstr(oRS("kraj_d").value) then
+         get_id_klient = oRS("NIP").value
+         exit function
+    end if
+    oRS.movenext
+  loop
+end function
+
+function get_pos_masa(pos)
+	get_pos_masa = cstr(pos.pistt_curMasaNet)
+end function
+
+function get_pos_wartosc(pos)
+	get_pos_wartosc = cstr(pos.pistt_curWarFak)
+end function
+
+function get_pos_iloscUzupel(pos)
+  get_pos_iloscUzupel = cstr(pos.pistt_curIloscUJM)
+  is_error get_pos_iloscUzupel , "Ilość w uzupałniającej jednostce miary"
+end function
+
+
+
+
+function get_nr_wlasny (istat)
+	get_nr_wlasny = cstr(istat.idobj)
+end function
+
+function get_kod_izby_celnej (istat)
+	get_kod_izby_celnej = istat.istt_strKodIzCel
+	if Len(get_kod_izby_celnej) > 6 then
+		get_kod_izby_celnej = Left(get_kod_izby_celnej,6)
+	end if
+	is_error get_kod_izby_celnej , "Kod izby celnej"
+end function
+
+
+
+function get_typ(pIstat)
+	select case pIstat.istt_eTypDekl
+		case 1
+			get_typ = "P"		
+		case 2
+			get_typ = "W"		
+	end select
+end function
+
+
+function get_rodzaj(pIstat)
+	select case pIstat.istt_eRodzDekl
+		case 1
+			get_rodzaj = "D"
+		case 2
+			get_rodzaj = "K"
+		case 3
+			get_rodzaj = "P"
+	end select
+end function
+
+function get_rok(pIstat)
+	get_rok = cstr(year(pIstat.istt_dDataOd))
+end function
+
+function get_miesiac(pIstat)
+  if Len(cstr(month(pIstat.istt_dDataOd))) = clng(1) then
+    get_miesiac = "0" + cstr(month(pIstat.istt_dDataOd))
+  else
+	  get_miesiac = cstr(month(pIstat.istt_dDataOd))
+  end if  
+end function
+
+function get_numer(pIstat)
+	get_numer = cstr(pIstat.istt_lNrZglosz)
+	is_error get_numer , "Numer zgłoszenia"
+end function
+
+function get_wersja(pIstat)
+	get_wersja = cstr(pIstat.istt_lNrWersji)
+	is_error get_wersja , "Numer wersji"
+end function
+
+function get_wartosc(pIstat)
+	get_wartosc = cstr(pIstat.istt_curWarFakt)
+end function
+
+function get_pozycje(pIstat)
+	get_pozycje = cstr(pIstat.istt_pozistat.count())
+end function
+
+function get_miejscowosc(pIstat)
+	get_miejscowosc = pIstat.istt_strMiastoSkl
+	is_error get_miejscowosc , "Miejscowosc złożenia"
+end function
+
+function get_data(pIstat)
+  dim strMiesiac : strMiesiac = cstr(month(pIstat.istt_dDataSkl))
+  dim strDzien : strDzien = cstr(day(pIstat.istt_dDataSkl))
+  if Len(strMiesiac) = clng(1) then
+    strMiesiac = "0" + strMiesiac
+  end if
+  if Len(strDzien) = clng(1) then
+    strDzien = "0" + strDzien
+  end if
+	get_data = cstr(year(pIstat.istt_dDataSkl)) + "-" + strMiesiac + "-" + strDzien
+end function
+
+
+
+function get_podmiot (pIstat) 
+	get_podmiot = pIstat.istt_strNazwaPlatnik
+	get_podmiot = format_2_xml ( get_podmiot )
+	is_error get_podmiot , "Nazwa płatnika"
+end function
+
+
+function format_2_xml (byval napis)
+	napis = replace (napis , """" , "'")
+	napis = replace (napis , "<" , "[")
+	napis = replace (napis , ">" , "]")
+	napis = replace (napis , ">" , "]")
+	napis = replace (napis , "&" , " and ")
+	format_2_xml = napis
+end function
+
+
+
+function get_ulica_nr (pIstat)
+	get_ulica_nr = pIstat.istt_strUlicaPlatnik + " " + cstr(pistat.istt_strNrDomuPlatnik)
+	if pistat.istt_strNrLokaluPlatnik <> "" then
+		get_ulica_nr = get_ulica_nr + "/" + pistat.istt_strNrLokaluPlatnik
+	end if
+end function
+
+
+function get_kod_poczta (pIstat)
+	get_kod_poczta = pIstat.istt_strKodPlatnik
+	is_error get_kod_poczta , "Kod pocztowy płatnika"
+end function
+
+
+
+function get_miejscowosc_podmiot (pIstat)
+	get_miejscowosc_podmiot = pIstat.istt_strMiejscowoscPlatnik	
+	is_error get_miejscowosc_podmiot , "Miejsocwosć płatnika"
+end function
+
+
+
+function get_nip (pIstat)
+	get_nip = Replace(pIstat.istt_strNIPPlatnik,"-","")	
+	is_error get_nip , "Nip płatnika"
+end function
+
+
+function get_regon (pIstat)
+	get_regon = pIstat.istt_strREGONPlatnik
+  if Len(pIstat.istt_strREGONPlatnik) = clng(9) then
+    get_regon = pIstat.istt_strREGONPlatnik + "00000"
+  end if
+	is_error get_regon , "Regona płatnika"
+end function
+
+
+
+
+function get_nazwa_zglaszajacy(pIstat)
+	get_nazwa_zglaszajacy = pIstat.istp_strNazwaPlatnik 	
+end function
+
+
+function get_ulica_zglaszajacy(pIstat)
+	get_ulica_zglaszajacy = pIstat.istp_strUlicaPlatnik
+end function
+
+
+function get_kod_p_zglaszajacy(pIstat)
+	get_kod_p_zglaszajacy = pIstat.istp_strKodPlatnik
+end function
+
+
+function get_miejscowosc_zglaszajacy(pIstat)
+	get_miejscowosc_zglaszajacy = pIstat.istp_strMiejscowoscPlatnik
+end function
+
+function get_nip_zglaszajacy(pIstat)
+	get_nip_zglaszajacy = Replace(pIstat.istp_strNIPPlatnik,"-","")	
+end function
+
+
+function get_regon_zglaszajacy(pIstat)
+	get_regon_zglaszajacy = pIstat.istp_strREGONPlatnik
+  if Len(pIstat.istp_strREGONPlatnik) = clng(9) then
+    get_regon_zglaszajacy = pIstat.istp_strREGONPlatnik + "00000"
+  end if  
+end function
+
+
+
+
+
+
+function get_wyp_nazwisko_imie(pIstat)
+	get_wyp_nazwisko_imie = pIstat.istt_strImieSkl + " " + pIstat.istt_strNazwiskoSkl
+	is_error get_wyp_nazwisko_imie , "Wypełniający"
+end function
+
+
+function get_wyp_telefon(pIstat)
+	get_wyp_telefon = pIstat.istt_strTelSkl	
+	is_error get_wyp_telefon , "Telefon wypełanijącego"
+end function
+
+
+function get_wyp_fax(pIstat)
+	get_wyp_fax = pIstat.istt_strFaxSkl
+end function
+
+
+function get_wyp_email(pIstat)
+	get_wyp_email = pIstat.istt_strEmailSkl 	
+end function
+
+
+#ifdef _AMPLUS
+function save_2_file(byref pIstat, byval dData , byref stream )
+	dim strFolderName
+  dim strRok : strRok = cstr(year(dData))
+  dim strMies : strMies = cstr(month(dData))
+  if Len(strMies) = 1 then
+    strMies = "0" + strMies
+  end if
+  dim nazwa_dok : nazwa_dok = get_typ(pIstat) + strRok + strMies + get_numer(pIstat) + get_wersja(pIstat)
+	strFolderName = doc_.getmodule(60226).create_get_folder("Intrastat", nazwa_dok , false)
+	if strFolderName <> "" then		
+		stream.save strFolderName
+		trans_.message 1002 , 0 , "Zapisano jako " + strFolderName
+	end if
+end function
+#else
+function save_2_file(byval nazwa_dok , byref stream )
+	dim strFolderName
+	strFolderName = doc_.getmodule(60226).create_get_folder("Intrastat", nazwa_dok , false)
+	if strFolderName <> "" then		
+		stream.save strFolderName
+		trans_.message 1002 , 0 , "Zapisano jako " + strFolderName
+	end if
+end function
+#endif
+
+
+
+
+]]>
+</script>
+</config>
+<body></body>
+</page>

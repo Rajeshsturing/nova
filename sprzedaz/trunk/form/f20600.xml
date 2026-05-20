@@ -1,0 +1,597 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!-- 
+
+// plug_docconfig
+// USEAGE :
+//	selection_mode :
+//	"DEFAULT" zaznaczono pole "Domyślnie"
+//	"" zaznaczono pole "Pytaj za każdym razem"
+//	"HPXXX" wybrana drukarka
+//
+// function plug_docconfig(byref docconfig,byRef selection_mode)
+// 		dim page:set page = doc_.getpagehli("varCmd=CMD_OPEN_RECORD_PAGE varDestPage=...")
+// 		page.LoadFromDocConfig(docconfig,selection_mode)
+// 		page.domodalauto()
+//		selection_mode = page.GetSelectionMode()
+// 	end function
+//
+//
+
+' BEZ TEGO NIE CHODZI
+#include "h1000.h"
+
+'PROPC_CTRL_ID
+#include "h1240.h"
+
+'Ok Cancel Buttons
+#include "h1224.h" 
+
+' radio do wyboru drukarki
+#define CHOOSE_PRINTER				10
+#define CHOOSE_PRINTER_EDIT			11
+#define CHOOSE_PRINTER_BUTTON		12
+
+#define RADIO_OPTION_DEFAULT		1
+#define RADIO_OPTION_EDIT			2
+#define RADIO_OPTION_ASK_EVERY_TIME 3
+
+#define CHOOSE_ORIENTATION			13
+#define CHOOSE_QUALITY				14
+#define CHOOSE_LICZBA_KOPII			15
+
+' format papieru
+#define CHOOSE_FORMAT				16
+#define CHOOSE_FORMAT_WIDTH			17
+#define CHOOSE_FORMAT_LENGTH		18
+
+#define CHOOSE_COLORMODE			19
+#define CHOOSE_COLORMODE_OPTION_BW	3
+
+#define BOOL_GRAYSCALE				20
+ #define BOOL_PRINT_BACKGROUND		21
+
+' do kontrolek
+'1 - "Domyślny"
+'2 -
+#define PAGE_FORMAT_OPTION1 A4
+'3 -
+#define PAGE_FORMAT_OPTION2 A5 
+'4 -
+#define PAGE_FORMAT_OPTION3 B5 
+'5 -
+#define PAGE_FORMAT_OPTION4 Koperta 1 
+'6 -
+#define PAGE_FORMAT_OPTION5 Koperta 2 
+'7 -
+#define PAGE_FORMAT_OPTION_CUSTOM 7
+
+-->
+
+<page width='min' style='STYLE_OPTION_PAD' style='STYLE_PAGE'>
+<config>
+	<startpos>center</startpos>
+	<title>
+	Opcje wydruku
+	#ifdef _DEBUG
+		[THIS_FILE]
+	#endif
+	</title>
+<script>
+<![CDATA[
+
+' messageBoxEx
+#include "50122"
+
+dim DocConfigCopy          ' kopia referencji
+
+' Przy otwarciu dialogu jest to domyślna drukarka lub wybrana przez użytkownika
+' Przy wybieraniu drukarki staje się drukarką wybraną z listy
+' Przy zapisaniu opcji z dialogu wartość zależy od pola w radio 
+' "DEFAULT" : domyślna drukarka
+' "" : zawsze pytaj
+' "HPXXX" : drukarka z listy
+dim SelectedPrinter		   
+dim OriginalSelectedPrinter ' kopia wartości podanej
+
+' dodaje element do listy 
+sub AddListItem(ByRef pSO,ByVal caption, ByVal id)
+	pSO.write "<tr><td>"
+	pSO.write "<t href='varFunctionHLI = ""result_back"" propc_ctrl_id = " + Cstr(id) + "'>"
+	pSO.write caption + vbNewLine
+	pSO.write "</t></td></tr>" + vbNewLine
+end sub
+
+' tworzy dialog z listą do wyboru
+function SelectItemFromStringList(ByRef stringlist,ByVal caption)
+	dim pSO
+	set pSO=doc_.createstreamobj()
+
+	pSO.write "<?xml version=""1.0"" encoding=""windows-1250"" ?>"
+	pSO.write "<page style='STYLE_PAGE'>" + vbNewLine
+
+	pSO.write "<config>" + vbNewLine
+	pSO.write "<title>" + caption + "</title>"
+	pSO.write "<script>" + vbNewLine
+
+	pSO.write "function result_back(byref pHli)" + vbNewLine
+	pSO.write "	page_.result=pHli.prop(" + CStr(PROPC_CTRL_ID) + ")" + vbNewLine
+	pSO.write "	page_.goback" + vbNewLine
+	pSO.write "end function" + vbNewLine
+
+	pSO.write "</script>" + vbNewLine
+	pSO.write "</config>" + vbNewLine
+	
+	pSO.write "<body>" + vbNewLine
+	pSO.write "<t/><br/>"
+
+	pSO.write "<table style='STYLE_TABLE_BODY'>" + vbNewLine
+	pSO.write "<tbody>" + vbNewLine
+
+	dim id 
+	for id = 0 to ubound(stringlist)
+		AddListItem pSO, stringlist(id), id + 1
+	next
+		
+	pSO.write "</tbody>" + vbNewLine
+	pSO.write "</table>" + vbNewLine
+
+	pSO.write "</body>" + vbNewLine
+	pSO.write "</page>" + vbNewLine
+
+	dim pHli
+	set pHli=doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE")
+	set pHli.prop(GVAR_DESTPAGE)=pSO.getstream()
+	
+	dim pPage
+	set pPage=doc_.getpagehli(pHli)
+
+	SelectItemFromStringList = 0
+	if (not pPage is nothing) then
+		SelectItemFromStringList = pPage.domodalauto()
+	end if
+	
+end function
+
+function GetPrinterNameList()
+	Dim oPrinting : set oPrinting = doc_.system.activex("navoperif.printing")
+	GetPrinterNameList = Split(oPrinting.printers, vbTab)
+end function
+
+function UpdatePrinterNameEdit()
+	
+	dim control : set control = page_.ctrl(CHOOSE_PRINTER_EDIT)
+	
+	dim printers : printers = GetPrinterNameList()
+
+	dim iter
+	for iter = 0 to ubound(printers) 
+		if SelectedPrinter = printers(iter) then
+			control.text = SelectedPrinter
+			exit function
+		end if
+	next 
+
+	SelectedPrinter = GetDefaultPrinterName()
+	control.text = GetDefaultPrinterName()
+
+end function
+
+' pokazuje dialog wyboru drukarki z listy
+sub SelectPrinterFromList
+	' get list of printers
+
+	dim printers : printers = GetPrinterNameList()
+
+	dim result : result = SelectItemFromStringList(printers,"Wybierz drukarkę")
+	if result > 0 then
+		SelectedPrinter = printers(result - 1)
+		UpdatePrinterNameEdit()
+	else
+		SelectPrinterFromList = SelectedPrinter
+	end if
+	
+end sub
+
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'''''''''   Zdarzenia (kliknięcia / zmiany wyboru) ''''''''
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+
+function UpdateAllOnChoosePrinterChange(byval newValue)
+
+	dim disabled : disabled = true
+	if newValue = RADIO_OPTION_EDIT then
+		disabled = false
+	end if
+	
+	' jeśli opcja "WYBIERZ" to włącz przycisk i edit
+	page_.ctrl(CHOOSE_PRINTER_EDIT).disable = disabled
+	page_.ctrl(CHOOSE_PRINTER_BUTTON).disable = disabled
+
+	' pozostałe kontrolki radio
+	' Jeśli ma się pytać za każdym razem o drukarkę to nie ma 
+	' sensu udostępniać opcji, o które i tak będzie się później pytał
+	
+	disabled = false
+	if newvalue = RADIO_OPTION_ASK_EVERY_TIME then
+		disabled = true
+	end if
+
+	page_.ctrl(CHOOSE_ORIENTATION).disable = disabled
+	page_.ctrl(CHOOSE_QUALITY).disable = disabled
+	page_.ctrl(CHOOSE_LICZBA_KOPII).disable = disabled
+
+	page_.ctrl(CHOOSE_FORMAT).disable = disabled
+	EnableChooseFormatRadioOptions not disabled
+
+	EnableChooseColorModeRadio not disabled
+
+	page_.ctrl(BOOL_PRINT_BACKGROUND).disable = disabled
+end function
+
+function c##CHOOSE_PRINTER##_ondataentered(oCtrl, newValue)	: c##CHOOSE_PRINTER##_ondataentered = true
+	UpdateAllOnChoosePrinterChange(newValue)
+end function
+
+' empty
+function c##CHOOSE_PRINTER##_ongetdata(byref oCtrl): c##CHOOSE_PRINTER##_ongetdata=true
+end function
+
+function EnableChooseFormatRadioOptions(byval enabled)
+	dim disabled : disabled = true
+	dim control : set control = page_.ctrl(CHOOSE_FORMAT)
+
+	if not control.disable then
+		if control.value = PAGE_FORMAT_OPTION_CUSTOM then
+			disabled = not enabled
+		end if
+	end if
+
+	page_.ctrl(CHOOSE_FORMAT_WIDTH).disable = disabled
+	page_.ctrl(CHOOSE_FORMAT_LENGTH).disable = disabled
+end function
+
+' Format papieru - 	opcje do rozmiarów dostępne gdy zaznaczono "Inne"
+function c##CHOOSE_FORMAT##_ondataentered(oCtrl, newValue)	: c##CHOOSE_FORMAT##_ondataentered = true
+	dim disabled : disabled = true
+	if not oCtrl.disable then
+		if newValue = PAGE_FORMAT_OPTION_CUSTOM then
+			disabled = false
+		end if
+	end if
+
+	EnableChooseFormatRadioOptions(not disabled)
+end function
+
+'empty
+function c##CHOOSE_FORMAT##_ongetdata(byref oCtrl): c##CHOOSE_FORMAT##_ongetdata=true
+end function
+
+sub EnableChooseColorModeRadio(byval enabled)
+	dim control : set control = page_.ctrl(CHOOSE_COLORMODE)
+	dim disabled : disabled = not enabled
+	dim subcontrols_disabled : subcontrols_disabled = true
+
+	if not disabled then
+		if control.value = CHOOSE_COLORMODE_OPTION_BW then
+			subcontrols_disabled = false
+		end if
+	end if
+	
+	control.disable = disabled
+	page_.ctrl(BOOL_GRAYSCALE).disable = subcontrols_disabled
+end sub
+
+' kiedy kontrola "odcienie szarości" jest dostępna
+function c##CHOOSE_COLORMODE##_ondataentered(oCtrl, newValue) : c##CHOOSE_COLORMODE##_ondataentered = true
+	dim disabled : disabled = true
+	if not oCtrl.disable then
+		if newValue = CHOOSE_COLORMODE_OPTION_BW then
+			disabled = false
+		end if
+	end if
+	page_.ctrl(BOOL_GRAYSCALE).disable = disabled
+end function
+
+' empty
+function c##CHOOSE_COLORMODE##_ongetdata(byref oCtrl): c##CHOOSE_COLORMODE##_ongetdata=true
+end function
+
+function GetDefaultPrinterName
+	Dim oPrinting 
+	set oPrinting = doc_.system.activex("navoperif.printing")
+	GetDefaultPrinterName = oPrinting.defaultprinter
+end function
+
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'''''''''			FORMAT PAPIERU	 ''''''''''''''''''''''''''''
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+
+' w docconfig jest numer stałej z DEVMODE (API)
+
+const DM_DEFAULT =				   -1 'default
+const DMPAPER_A4 =                 9  ' A4 210 x 297 mm                
+const DMPAPER_A5 =                 11  ' A5 148 x 210 mm                
+const DMPAPER_B5 =                 13  ' B5 (JIS) 182 x 257 mm          
+const DMPAPER_ENV_DL =             27  ' Envelope DL 110 x 220mm        
+const DMPAPER_ENV_10 =             20  ' Envelope #10 4 1/8 x 9 1/2     
+const PAPER_CUSTOM =			   0 ' use specified
+
+dim format_types  
+set format_types = doc_.afc.new_navoarray()
+format_types.Add DM_DEFAULT 
+format_types.Add DMPAPER_A4
+format_types.Add DMPAPER_A5
+format_types.Add DMPAPER_B5
+format_types.Add DMPAPER_ENV_DL
+format_types.Add DMPAPER_ENV_10
+format_types.Add PAPER_CUSTOM
+
+' docconfig.paper_format -> radio.value
+function FormatIDToRadioSelection(byval formatid)
+	FormatIDToRadioSelection = 0 ' nie odnaleziono - nie zaznaczaj nic
+	dim i
+	for i = 0 to format_types.Count() - 1 
+		if CLng(format_types.Value(i)) = CLng(formatid) then
+			FormatIDToRadioSelection = i + 1
+			exit function
+		end if
+	next
+end function
+
+' radio.value -> docconfig.paper_format
+function GetSelectedFormatID()
+	dim radio_selection 
+	radio_selection = page_.ctrl(CHOOSE_FORMAT).value
+	GetSelectedFormatID = format_types.Value(radio_selection - 1)
+end function
+
+function GetSelectionFromPrinterName(ByVal printer_name)
+	if printer_name = "DEFAULT" then
+		GetSelectionFromPrinterName = RADIO_OPTION_DEFAULT
+	elseif printer_name = "" then
+		GetSelectionFromPrinterName = RADIO_OPTION_ASK_EVERY_TIME
+	else 
+		GetSelectionFromPrinterName = RADIO_OPTION_EDIT
+	end if
+end function
+
+function GetPrinterIndexFromSelection(ByVal radio_selection)
+	if radio_selection = RADIO_OPTION_DEFAULT then
+		GetPrinterIndexFromSelection = "DEFAULT"
+	elseif radio_selection = RADIO_OPTION_ASK_EVERY_TIME then
+		GetPrinterIndexFromSelection = ""
+	else
+		if SelectedPrinter = "" then
+			GetPrinterIndexFromSelection = GetDefaultPrinterName()
+		else 
+			GetPrinterIndexFromSelection = SelectedPrinter
+		end if
+	end if
+end function
+
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'''''''' LoadFromDocConfig - wczytuje ustawienia z podanego obiektu '''''
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+
+' trzeba zawołać z zewnątrz przed domodalauto, żeby przekazać ustawienia domyślne
+function LoadFromDocConfig( ByRef docconfig, ByRef selection_mode )
+
+	set DocConfigCopy = docconfig 'remember for SaveToDocConfig
+	
+	SelectedPrinter = selection_mode
+	OriginalSelectedPrinter = selection_mode
+
+	UpdatePrinterNameEdit()
+	
+	dim value : value = CLng(GetSelectionFromPrinterName(selection_mode))
+	page_.ctrl(CHOOSE_PRINTER).value = value
+	page_.ctrl(CHOOSE_COLORMODE).value = CLng(docconfig.colormode + 1)
+	UpdateAllOnChoosePrinterChange(value)
+	
+	page_.ctrl(CHOOSE_ORIENTATION).value = CLng(docconfig.orientation + 1)
+	page_.ctrl(CHOOSE_QUALITY).value = CLng(docconfig.quality + 1)
+	page_.ctrl(CHOOSE_LICZBA_KOPII).value = CLng(docconfig.copies)
+
+	page_.ctrl(CHOOSE_FORMAT).value = CLng(FormatIDToRadioSelection(docconfig.paperformat))
+	page_.ctrl(CHOOSE_FORMAT_WIDTH).value = CCur(docconfig.width/1000)
+	page_.ctrl(CHOOSE_FORMAT_LENGTH).value = CCur(docconfig.length/1000)
+
+	if docconfig.monograyscale then
+		page_.ctrl(BOOL_GRAYSCALE).value = "1"
+	else
+		page_.ctrl(BOOL_GRAYSCALE).value = "0"
+	end if
+	if docconfig.printbackground then
+		page_.ctrl(BOOL_PRINT_BACKGROUND).value = "1"
+	else
+		page_.ctrl(BOOL_PRINT_BACKGROUND).value = "0"
+	end if
+end function
+
+function GetSelectionMode()
+	GetSelectionMode = OriginalSelectedPrinter
+end function
+
+function SaveToDocConfig()
+	SaveToDocConfig = false
+
+	SelectedPrinter = GetPrinterIndexFromSelection(page_.ctrl(CHOOSE_PRINTER).value)
+	OriginalSelectedPrinter = SelectedPrinter
+
+	DocConfigCopy.orientation = page_.ctrl(CHOOSE_ORIENTATION).value - 1
+	DocConfigCopy.quality = page_.ctrl(CHOOSE_QUALITY).value - 1
+	DocConfigCopy.copies = page_.ctrl(CHOOSE_LICZBA_KOPII).value
+
+	' najpierw width i length, potem dopiero paperformat
+	' bo ustawianie width i length przełącza paperformat
+	DocConfigCopy.width = CLng(page_.ctrl(CHOOSE_FORMAT_WIDTH).value * 1000.0)
+	DocConfigCopy.length = CLng(page_.ctrl(CHOOSE_FORMAT_LENGTH).value * 1000.0)
+	DocConfigCopy.paperformat = GetSelectedFormatID()
+
+	DocConfigCopy.colormode = page_.ctrl(CHOOSE_COLORMODE).value - 1
+	DocConfigCopy.monograyscale = (page_.ctrl(BOOL_GRAYSCALE).value = "1")
+	DocConfigCopy.printbackground = (page_.ctrl(BOOL_PRINT_BACKGROUND).value = "1")
+ 
+	SaveToDocConfig = true	
+end function
+
+function fsave()
+	dim bResult
+	bResult = SaveToDocConfig()
+	if bResult then
+		fsave = true
+		page_.goback
+	else
+		fsave = false
+	end if
+end function
+
+function fok()
+	if not fsave() then
+		fok = false
+	else
+		fok = true
+		page_.goback
+	end if
+end function
+
+function fcancel()
+	page_.goback
+	fcancel = true
+end function
+
+]]>
+</script>
+</config>
+<body>
+
+<table border='0'>
+
+	<thead></thead>
+	<tbody>
+		<!-- RADIO - WYBÓR DRUKARKI -->
+		<tr><td colspan='3'><text> Drukarka:</text></td></tr>
+		<tr><td colspan='3'><radio name='c##CHOOSE_PRINTER'> 
+			<transfer mode='custom'/>
+			<t> Domyślna </t>
+			<table border='0'>
+				<tbody>
+					<tr>
+						<td><edit disable='true' name='c##CHOOSE_PRINTER_EDIT' size='20'> ABCD </edit></td>
+						<td width='10'>	
+							<button disable='true' name='c##CHOOSE_PRINTER_BUTTON' href='varFunction=SelectPrinterFromList' width='min' > 
+								Wybierz ... 
+							</button>	
+						</td>
+					</tr>
+				</tbody>
+			</table>
+
+			<t> Pytaj za każdym razem </t>
+		</radio></td></tr>
+					
+	<!-- ODSTĘP --><tr><td><t/></td></tr>
+
+			<tr>
+				<td width='200'>
+					<table border='0'>
+						<tbody>
+
+							<!-- RADIO - ORIENTACJA -->
+							<tr><td><text> Orientacja papieru: </text></td></tr>
+							<tr><td><radio name='c##CHOOSE_ORIENTATION'> 
+								<t> Domyślnie </t>
+								<t> Pionowa </t>
+								<t> Pozioma </t>
+							</radio></td></tr>
+
+							<!-- ODSTĘP --><tr><td><t/></td></tr>
+
+							<!-- RADIO - JAKOŚĆ WYDRUKU -->
+							<tr><td><text> Jakość wydruku </text></td></tr>
+							<tr><td><radio name='c##CHOOSE_QUALITY'> 
+								<t> Domyślna </t>
+								<t> Wysoka </t>
+								<t> Średnia </t>
+								<t> Niska </t>
+								<t> Robocza </t>
+							</radio></td></tr>
+
+							<!-- ODSTĘP -->	<tr><td><t/></td></tr>
+
+							<!-- Liczba Kopii -->
+							<tr><td> <t> Liczba kopii : </t> <intedit name='c##CHOOSE_LICZBA_KOPII'/> </td></tr>
+						</tbody>
+					</table>
+				</td>
+				<td> <t> </t></td>
+				<td>
+					<table border='0'>
+						<tbody>
+							<!-- RADIO - Format papieru -->
+							<tr><td><text> Format papieru </text></td></tr>
+							<tr><td><radio name='c##CHOOSE_FORMAT'> 
+							<transfer mode='custom'/>
+							<t> Domyślny </t>
+							<t> PAGE_FORMAT_OPTION1 </t>
+							<t> PAGE_FORMAT_OPTION2 </t>
+							<t> PAGE_FORMAT_OPTION3 </t>
+							<t> PAGE_FORMAT_OPTION4 </t>
+							<t> PAGE_FORMAT_OPTION5 </t>
+
+							<table border='0'>
+								<tbody>
+									<tr><td><t> Inny : </t></td></tr>
+									<tr>
+										<td><t> szerokość w cm: </t></td>
+										<td><curredit disable='1' precision='1' unit='cm' name='CHOOSE_FORMAT_WIDTH'/> </td>
+									</tr>
+
+									<tr>
+										<td><t> wysokość w cm: </t>	</td> 
+										<td> <curredit disable='1' precision='1' unit='cm' name='CHOOSE_FORMAT_LENGTH'/> </td>
+									</tr>
+								</tbody>
+							</table>
+							</radio></td></tr>
+
+							<!-- ODSTĘP -->	<tr><td><t/></td></tr>
+
+							<!-- RADIO - Ustawienia kolorów -->
+							<tr><td><t> Ustawienia kolorów </t></td></tr>
+							<tr>
+								<td>
+									<radio name='c##CHOOSE_COLORMODE'>
+									<transfer mode='custom'/>
+									<t> Domyślnie </t>
+									<t> Wydruk kolorowy </t>
+									<p border='0'>
+											<t> Wydruk czarno-biały </t>
+											<checkbox name='c##BOOL_GRAYSCALE' border='0'> 
+												<t> Odcienie szarości </t>
+											</checkbox>
+									</p>			
+									</radio>
+								</td>
+							</tr>
+
+
+							<!-- CHECK - odcienie szarości -->
+							<tr>
+								<td>
+									<checkbox name='c##BOOL_PRINT_BACKGROUND'> 
+										<t> Drukuj tło </t> 
+									</checkbox>
+								</td>
+							</tr>
+						</tbody>
+					</table>
+				</td>
+			</tr>
+	</tbody>
+</table>
+
+XFDIALOGBUTTONS
+	
+</body>
+</page>

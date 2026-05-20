@@ -1,0 +1,654 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1201.h"
+#include "h1220.h"
+#include "h1222.h"
+#include "h1224.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1200.h"
+
+
+#define SPRZ_COLNR_DOSTEPNOSC		6
+#define SPRZ_COLNR_ZAM				7
+#define SPRZ_COLNR_MAG				3
+#define SPRZ_COLNR_CUSTOM			8
+#define SPRZ_COLNR_MAXSTAN			9
+#define SPRZ_COLNR_STAN_MAG_PROD	10
+
+
+
+
+-->
+<page style='STYLE_PAGE'>
+
+
+<config>
+
+	<title>	
+	#ifdef _DEBUG
+	[THIS_FILE]
+	#endif
+	</title>
+
+<script><![CDATA[
+
+
+'choose_typ_rejestru_restrict
+#include "50112"
+'choose_rejestr_dok
+#include "50517"
+
+'CProgressPage
+#include "50632"
+
+
+'selectFile
+#include "50123"
+
+'fire_choice....
+#include "50200"
+
+'CADOExportManager
+#include "50613"
+
+
+function get_rs (byval idEE)
+	set get_rs	= trans_.createadors("select c_pdet_pWyrob , c_pdet_pOpak , count(*) as ilosc from vlist_n5doketyk_doet_listPozycje where p_idobj = " + cstr(idEE)+ " group by c_pdet_pWyrob , c_pdet_pOpak")
+end function
+
+
+function utworz_dok_mag_internal(byref pObj,byval strDMFiltr , byref strNrDokMag)
+
+	dim rs:set rs = get_rs ( pObj.idobj )
+	dim uwagi:uwagi = pObj.text
+
+
+'nowa transakcja!!!
+dim pNewTrans:set pNewTrans = trans_.createsubtran()
+
+
+	dim nRejTyp
+	dim idRejestr
+	dim pDokMag
+
+	dim strRejTypes:
+	if strDMFiltr <> "" then
+		strRejTypes = strDMFiltr'"N5REJESTRDOK__WZ;N5REJESTRDOK__RW;N5REJESTRDOK__PZ;N5REJESTRDOK__PW;N5REJESTRDOK__PP;N5REJESTRDOK__MP;N5REJESTRDOK__IP"
+	else
+		strRejTypes = "N5REJESTRDOK__WZ;N5REJESTRDOK__RW;N5REJESTRDOK__PZ;N5REJESTRDOK__PW;N5REJESTRDOK__PP;N5REJESTRDOK__MP;N5REJESTRDOK__IP"
+	end if
+	
+	nRejTyp = choose_typ_rejestru_restrict(strRejTypes , true)	
+	idRejestr = choose_rejestr_dok(cstr(nRejTyp), true , "Wybierz rejestr dokumentów")
+	if nRejTyp > 0 and idRejestr > 0 then
+		trans_.var(APPVAR_REJESTR_TYP) = nRejTyp
+		trans_.var(APPVAR_REJESTR_DOKUMENTOW) = idRejestr
+	else
+		'utworz_dokmag_z_dokhandl = false
+		exit function
+	end if
+
+	if not doc_.getmodule(60226).ensure_create_dm_rights(nRejTyp) then
+		exit function
+	end if
+
+	dim pDMForm
+	set pDMForm = doc_.getmodule(60129).prepare_form_open_command(TYPEID_N5DOKMAG,0,0)
+	if pDMForm is nothing then
+		exit function
+	end if
+	dim pDM
+	set pDM = doc_.getpagehli(pDMForm)
+	if pDM is nothing then
+		exit function
+	end if
+	pDM.enableedit = true
+
+	fill_dokmag_by_rs pDM.root , rs , uwagi	
+	
+	pDM.domodalauto()
+
+	if not pDM.root.isnew then
+		strNrDokMag = cstr(pDM.root.idobj)
+	end if
+
+set pNewTrans = nothing	
+	
+end function
+
+
+function fill_dokmag_by_rs ( byref dok_mag , byref rs , byval uwagi)
+
+	dim new_elem
+	while not rs.eof
+		set new_elem = dok_mag.listPozycje.addnew()
+		set new_elem.pProdukt = trans_.getobj(TYPEID_N5PRODUKT,clng(rs("c_pdet_pWyrob")) )
+		set new_elem.pOpak = new_elem.pProdukt.listOpakowania.get(new_elem.pProdukt.listOpakowania.findonid(clng(rs("c_pdet_pOpak"))))
+		new_elem.curIloscOpak = ccur(rs("ilosc"))
+		rs.movenext
+	wend
+
+	if dok_mag.strUwagi = "" then
+		dok_mag.strUwagi = "Wypełniono z ewidencji etykiet nr " + uwagi
+	else
+		dok_mag.strUwagi = dok_mag.strUwagi + vbNewLine + "Wypełniono z ewidencji etykiet nr " + uwagi
+	end if
+
+end function
+
+
+
+
+
+
+function generuj_plik_knudsen(byval pObj , byref strFileName)
+
+	dim stream:set stream = doc_.createstreamobj()
+	dim elem,num,inx
+	for each elem in pObj.doet_listPozycje
+		decode_nr_etykiety elem.pdet_strNrDok , inx , num , true
+		stream.write """" + inx +  """," + cstr(num) + vbNewLine
+	next  
+	
+
+	dim strFolderName	
+	strFolderName = doc_.getmodule(60226).create_get_folder("Ewdiencja etykiet", pObj.doet_strNrDok , false)
+	if strFolderName <> "" then		
+		strFolderName = replace (strFolderName,".xml",".txt")
+		stream.save strFolderName
+		trans_.message 1002 , 0 , "Zapisano jako " + strFolderName
+		strFileName = strFolderName
+	end if
+
+end function
+
+'dekodowanie z numeryu etykiety na indkes i nnr kolejny
+function decode_nr_etykiety (byref etykieta , byref inx , byref num , byval silent)
+#ifdef _COLLECTOR_TEST
+	inx = etykieta
+	exit function
+#endif
+
+	dim pos
+	'sprobuj z Y
+	pos = InStrRev(etykieta , "Y")
+	
+	'sprobuj z X
+	if pos <= 0 then
+		pos = InStrRev(etykieta , "X")
+	end if
+
+	if pos > 0 then
+		inx = cstr(mid(etykieta,1,pos-1))
+		num = clng(mid(etykieta,pos+1,len(etykieta)-pos+1))
+	end if
+
+	'ewentualnie poprawka kodu
+	if not silent then
+		if inx = "" or num = "" then
+			dim dialog:set dialog = doc_.getmodule(60248)
+			dialog.popraw_dane etykieta , inx , num , "Żle zdekodowane części etykiety - indeks produktu lub numer etykiety"
+		end if
+	end if
+
+end function
+
+
+
+function ewidetyk_from_collector ( byref pObj)
+
+	dim collector_tab
+	set collector_tab = trans_.afc.new_navoarray()
+
+	dim pM60224 : set pM60224 = doc_.getmodule(60224)
+	dim pM60277EDI : set pM60277EDI = doc_.getmodule(60277)
+
+	dim pTransfer : set pTransfer = pM60224.new_Cipher_CPT_711_720_Transfer()
+
+	dim strRecordData
+	dim nRecordNr : nRecordNr = 0
+	dim answer:answer = -100
+
+	dim strKod,curIlosc,curCena,strNazwa,curKrotnosc,strData
+	dim so
+
+#ifdef _TEST
+	set so = doc_.createstreamobj()
+#endif
+
+	if pTransfer.begin_receive() then
+
+		dim pPP : set pPP = new CProgressPage
+		pPP.init "Pobieranie danych z kolektora"		
+		do while pTransfer.receive(nRecordNr,strRecordData)							
+#ifdef _TEST
+			so.write "Kolektor: proba pobrania danych: " + strRecordData + vbNewLine
+#endif
+		
+			if not pM60224.crack_cipher_record(strRecordData,strKod, curCena,curIlosc,strNazwa) then
+				exit function
+			end if
+
+#ifdef _TEST
+			so.write "Kolektor: pobrane dane: " + strRecordData +  vbNewLine
+#endif
+
+			collector_tab.add strRecordData
+			
+			pPP.update "Wczytano rekord nr " + cstr(nRecordNr)
+
+			if pPP.is_broken() then
+				exit function
+			end if
+
+			nRecordNr = nRecordNr + 1
+
+		loop
+
+		pTransfer.end_receive
+		set pPP = nothing
+
+	end if
+
+#ifdef _TEST
+	so.write vbNewLine
+	so.write vbNewLine
+	so.write vbNewLine
+#endif
+	
+	dim iter,inx , num , produkt_id , new_elem
+	for iter = 0 to collector_tab.UpperIndex
+#ifdef _TEST
+		so.write vbNewLine
+#endif
+		'rozbijamy wczytany rekord na kod kreskowy i inne niepotrzebne pierdoły , 
+#ifdef _TEST
+		so.write "Tablica: parsowanie danych: " + collector_tab.value(iter) + vbNewLine
+#endif
+		strKod = ""
+		inx = ""
+		num = ""
+		pM60224.crack_cipher_record collector_tab.value(iter) , strKod, curCena,curIlosc,strNazwa
+
+#ifdef _TEST
+		so.write "Tablica: znaleziony numer etykiety: " + strKod + vbNewLine
+#endif
+
+		'rozbijam kod kreskowy na indeks produktu i numer etykiety
+		decode_nr_etykiety strKod , inx , num , false
+
+#ifdef _TEST
+		so.write "Tablica: zdekodowany indeks produktu i kolejny numer: " + cstr(inx) + " , " + cstr(num) + vbNewLine
+#endif
+
+		'szukam czy etykieta nie zostala juz wprowadzona na dokument
+		
+		if not find_etykieta_on_dok(strKod,pObj,so) then
+#ifdef _TEST
+	so.write "Dokument: szukanie duplikatu: false"  + vbNewLine
+#endif
+			'jesli nie to szukam produktu
+			produkt_id = find_by_inx ( strKod , inx , num , false)
+			if produkt_id > 0 then
+
+				'sprawdzenie czy mozna wczytac biezaca etykiete
+				if find_etykieta_on_dok_org ( encode_to_nr_etykiety(strKod) , pObj ) then
+	#ifdef _TEST
+					so.write "Dokument: znaleziono produkt"  + vbNewLine
+					so.write "Dokument: wstawianie pozycji"  + vbNewLine
+	#endif
+					set new_elem = pObj.doet_listPozycje.addnew()
+					set new_elem.pdet_pWyrob = trans_.getobj(TYPEID_N5PRODUKT , produkt_id)
+					new_elem.pdet_strNrDok = encode_to_nr_etykiety(strKod)
+				else					
+#ifdef _TEST
+					so.write "Dokument: brak etykiety w tworzeniu"  + vbNewLine
+#endif
+					trans_.message 1002 , 0 , "Etykieta o numerze" + strKod + " nie została nigdy wydana/wytworzona"
+				end if
+			else
+#ifdef _TEST
+				so.write "Dokument: brak produktu"  + vbNewLine
+#endif
+				trans_.message 1002 , 0 , "Brak produktu o indeksie " + inx + ". Pomijam pozycje o kodzie " + strKod 
+			end if				
+		else
+#ifdef _TEST
+			so.write vbTab + "Dokument: szukane duplikatu: true"  + vbNewLine
+#endif
+			trans_.message 1002 , 0 , "Etykieta o numerze " + strKod + " została juz wczytana. Pomijam ją."
+		end if
+		
+	next
+
+#ifdef _TEST
+	so.save "c:\test.txt"
+#endif
+
+end function
+
+
+
+
+function find_etykieta_on_dok_org(strKod , pObj):find_etykieta_on_dok_org = true
+	'dokument to zdanie etykiet- zatem szukamy oryginału w tworzeniu
+	if pObj.doet_eTypOper = N5DOKETYK_TYP_ZDANIE then
+		dim rs:set rs = trans_.createadors("select p_idobj from vlist_n5doketyk_doet_listPozycje where p_doet_eTypOper=N5DOKETYK_TYP_WYDANIE and c_pdet_strNrDok like '" + strKod + "'" )
+		if rs.eof then
+			find_etykieta_on_dok_org = false	
+		end if
+	end if
+end function
+
+
+
+
+
+
+
+function find_etykieta_on_dok(byval strKod , byval pObj , byref so):find_etykieta_on_dok = false
+#ifdef _TEST
+	so.write "Dokument: szukam duplikatu: " + strKod + vbNewLine
+#endif
+	dim elem,iter
+	iter = 0
+	for each elem in pObj.doet_listPozycje
+		iter = iter + 1
+#ifdef _TEST
+	so.write vbTab + "Dokument: porównuje pozycje "+ cstr(iter)+" : " + UCASE(strKod) + " = " + UCASE(elem.pdet_strNrDok) + vbNewLine
+#endif
+		
+		if UCASE(elem.pdet_strNrDok) = UCASE(strKod) then
+			find_etykieta_on_dok = true
+			trans_.message 1002 , 0 , "Znaleziono kod " + strKod + " na pozycji " + cstr(iter)
+			exit function	
+		end if
+	next
+end function
+
+
+function encode_to_nr_etykiety(byval strKod)
+	encode_to_nr_etykiety = UCASE(strKod)
+end function
+
+function find_by_inx ( byref strKod , byref inx , byref num , byval silent ): find_by_inx = 0
+	find_by_inx = trans_.FindObjId(TYPEID_N5PRODUKT, "strIndeks like '" + trans_.afc.convert.DoubleApostrophe(replace(inx," ",""))  + "'")
+	if not silent and inx<>"" and find_by_inx = 0 then
+		'mozliwe ze kolektor przeklamal indeks - trzeba poprawic dane
+		if strKod <> "" and num <> "" then
+			dim dialog:set dialog = doc_.getmodule(60248)
+			if dialog.popraw_dane ( strKod , inx , cstr(num) , "Brak produktu o zczytanym indeksie" ) then
+				find_by_inx = trans_.FindObjId(TYPEID_N5PRODUKT, "strIndeks like '" + trans_.afc.convert.DoubleApostrophe(replace(inx," ",""))  + "'")
+			end if
+		end if
+	end if
+
+end function
+
+'--------------------------------------------------------------
+'parsuje plik wejsciowy (XLS) i zwraca kolekcje rekordow typu 'knudsen'
+function from_knudsen_file_xls(byval strXLSFileName)
+		dim oProgress: set oProgress = doc_.performing ("Trwa wczytywanie pliku ...... ")
+    set from_knudsen_file_xls = nothing
+    dim pExportManager : set pExportManager = new CADOExportManager
+  	if not pExportManager.connectExcel(strXLSFileName) then
+      exit function
+    end if
+		dim oRecords: set oRecords = doc_.afc.new_navoarray()
+    dim oRS : set oRS = pExportManager.getConnection().execute( "select * from [cutting_list$]" )
+    do while not oRS.EOF
+			dim strColInx : strColInx=""
+			dim strColQty:strColQty=""
+			if not IsNull(oRS(0).Value) then
+				strColInx=cstr(oRS(0).Value)
+			end if
+			if not IsNull(oRS(4).Value) then
+				strColQty=cstr(oRS(4).Value)
+			end if
+
+		'	trans_.message 0,0,strColinx + "," +strColQty
+			dim dummy:dummy = ""
+		
+			dim oKnudsenRecord : set oKnudsenRecord = new CKnudsenFileRecord
+			with oKnudsenRecord
+				if IsNumeric(strColQty) then
+					.m_nIloscZam = ccur(strColQty)
+				end if
+				.m_nStanMag = ccur(0)
+				.m_idProd = find_by_inx(dummy , strColInx , dummy, true)
+			end with
+			if oKnudsenRecord.m_nIloscZam >= 0 then
+				trans_.message 1002 , 0 , "Pomijam dodatnia ilość dla produktu o indeksie " + strColInx + ", pomijam wiersz pliku"
+			else
+				if oKnudsenRecord.m_idProd > 0 then
+					trans_.message 1002 , 0 , "Wczytuję produkt o indeksie: " + strColInx + ", ilość zamówiona: " + cstr(oKnudsenRecord.m_nIloscZam)
+					oRecords.add oKnudsenRecord
+				else
+					trans_.message 1002 , 0 , "Brak produktu o indeksie " + strColInx + ", pomijam wiersz pliku"
+				end if
+			end if
+			oRS.MoveNext
+		loop
+		set from_knudsen_file_xls = oRecords
+end function
+
+'--------------------------------------------------------------
+'parsuje input stream (plik TXT) i zwraca kolekcje rekordow typu 'knudsen'
+function from_knudsen_file(byref aRecords , byref input_stream)
+	dim strPath
+	if input_stream is nothing then
+		set from_knudsen_file = nothing
+		exit function
+	end if
+	'wczytaj calosc
+	dim strLines : strLines = input_stream.getstring()
+	'podziel na linie
+	aRecords.Separate strLines,vbNewLine
+	'tablica wynikow
+	dim records:set records = doc_.afc.new_navoarray()
+	'parsuj
+	parse_knudsen_array aRecords , records
+	'zwroc wyniki
+	set from_knudsen_file = records
+end function
+
+
+'"1104-273","273","","Cardiff fodskammel l‘der/skai oxe/",-7,3 
+'a) indeks produktu
+'b) kolor (ignorujemy)
+'c) (ignorujemy)
+'d) nazwa (ignorujemy)
+'e) ilość zamówiona
+'f) stan magazynu (Dania)
+function parse_knudsen_array (byval aRawRecords , byref aParsedeRecords)
+	dim iter,record,pos,pRecord,perf,inx
+	set perf = doc_.performing ("Trwa wczytywanie pliku ...... ")
+	for iter = 0 to aRawRecords.UpperIndex()
+		record = aRawRecords.value(iter)
+		if Ubound(split(record,""",")) > 1 then
+			set pRecord = new CKnudsenFileRecord			
+			'pobieramy stam magazynu - od konca szukam przecuinka i obcinam to
+			pos = InStrRev(record , ",")			
+			pRecord.m_nIloscZam = ccur(replace(mid(record,pos+1,len(record)-pos+1),".",","))
+			record = left(record , pos -1 )
+
+			'pobieramy ilosc zamowiona - od konca szukam przecuinka i obcinam to
+			pos = InStrRev(record , ",")			
+			pRecord.m_nStanMag = ccur(replace(mid(record,pos+1,len(record)-pos+1),".",","))
+			record = left(record , pos -1 )
+
+			'a teraz indeks produktu - szukamy od początku przecinka i to jest napis do tego miejsca
+			pos = InStr(record , ",")
+			inx = replace(mid(record,1,pos-1),"""","")
+			dim dummy:dummy = ""
+			pRecord.m_idProd = find_by_inx(dummy , inx , dummy, true)
+
+			if pRecord.m_idProd > 0 then
+				trans_.message 1002 , 0 , "Produkt: " + cstr(pRecord.m_idProd) + ", stan magazynu: " + cstr(pRecord.m_nStanMag) + ", ilość zamówiona: " + cstr(pRecord.m_nIloscZam)
+				aParsedeRecords.add pRecord
+			else
+				trans_.message 1002 , 0 , "Brak produktu o indeksie " + inx + ", pomijam wiersz pliku"
+			end if			
+			
+		end if
+	next
+	set perf = nothing
+end function
+
+
+class CKnudsenFileRecord
+	public m_idProd
+	public m_nStanMag
+	public m_nIloscZam
+end class
+
+
+dim g_pDHMTransporterModule
+dim g_pDHMBalanceModule
+
+
+function knudsen_file_2_dhm_balance(byval aKnudsenRecords)
+	set g_pDHMBalanceModule = doc_.getmodule(60261) 
+	dim pDHMBalance:set pDHMBalance = g_pDHMBalanceModule.new_dhm_balance()
+	dim iter,new_pos,prod
+	for iter = 0 to aKnudsenRecords.UpperIndex()
+		set new_pos = pDHMBalance.addnew_pos()
+		set prod = trans_.getobj(TYPEID_N5PRODUKT , clng(aKnudsenRecords.value(iter).m_idProd))
+		new_pos.m_idProd = aKnudsenRecords.value(iter).m_idProd		
+		new_pos.m_idOpak = prod.listopakowania.get(1).idobj
+		new_pos.m_strProdNazwa = prod.strNazwa
+		new_pos.m_strProdInx = prod.strIndeks
+		new_pos.m_nPrecision = prod.pJednostkaEwid.nDokladnosc - 1
+		new_pos.m_strUnit = prod.pJednostkaEwid.strSkrot		
+
+		new_pos.m_curValue(SPRZ_COLNR_MAG) = aKnudsenRecords.value(iter).m_nStanMag
+		new_pos.m_curValue(SPRZ_COLNR_ZAM) = aKnudsenRecords.value(iter).m_nIloscZam
+		new_pos.m_curValue(SPRZ_COLNR_MAXSTAN) = prod.listopakowania.get(1).curIloscMin
+
+	next
+	set knudsen_file_2_dhm_balance = pDHMBalance
+end function
+
+
+function knudsen_file_2_dhm_transporter(byval aKnudsenRecords)
+	'trzymam globalnie zeby "znac klase"
+	set g_pDHMTransporterModule = doc_.getmodule(60226)
+	dim pDHMTransporter:set pDHMTransporter = g_pDHMTransporterModule.new_dhm_transporter()
+	dim iter,new_pos
+	for iter = 0 to aKnudsenRecords.UpperIndex()
+		set new_pos = pDHMTransporter.addnew_pos()
+		new_pos.m_idProd = aKnudsenRecords.value(iter).m_idProd		
+		new_pos.m_curIloscDostepna = aKnudsenRecords.value(iter).m_nStanMag
+		new_pos.m_curIlosc = aKnudsenRecords.value(iter).m_nIloscZam
+	next
+	set knudsen_file_2_dhm_transporter = pDHMTransporter
+end function
+
+function zamowienie_from_knudsen_file ( byref pZamowienie , byref pPage , byref pInputStream, byval strPath)
+
+	dim records:set records = doc_.afc.new_navoarray()
+	dim parsed_records
+  
+	if right(lcase(strPath), 3)="xls" then
+		set parsed_records = from_knudsen_file_xls(strPath)
+	else
+		set parsed_records = from_knudsen_file( records , pInputStream )
+	end if
+
+	'dim transporter:set transporter = knudsen_file_2_dhm_transporter(parsed_records)
+
+	dim balance:set balance = knudsen_file_2_dhm_balance(parsed_records)
+
+	'mamy wypelniony to sobie edytujemy
+	'balance
+
+	dim mag_prod:mag_prod = fire_choice_list_disable_add(TYPEID_N5MAGAZYN ,"Wybierz magazyn wyrobów gotowych","","","","")
+	if mag_prod > 0 then
+		dim perf:set perf = doc_.performing("Trwa pobieranie stanów magazynowych....")
+		g_pDHMBalanceModule.get_stany_magazynowe balance , mag_prod		
+		set perf = nothing
+	end if
+
+	mag_prod = fire_choice_list_disable_add(TYPEID_N5MAGAZYN ,"Wybierz magazyn produkcyjny","","","","")
+	if mag_prod > 0 then
+		set perf = doc_.performing("Trwa pobieranie stanów na magazynie produkcyjnym ....")
+		g_pDHMBalanceModule.get_stany_magazynowe_ex balance , mag_prod , SPRZ_COLNR_STAN_MAG_PROD
+		set perf = nothing
+	end if
+
+	if g_pDHMBalanceModule.edit_dhm_balance ( balance ) then
+		g_pDHMBalanceModule.dhm_balance_2_zamowienie balance , pZamowienie , SPRZ_COLNR_CUSTOM 
+	end if
+
+end function
+
+
+
+sub plug_etykiety_podsumowanie (byref pContainer , byval obj )
+
+
+	pContainer.removeall
+	dim pPlugInTable : set pPlugInTable = pContainer.addnew(CTRL_TYPE_TABLE,-1)
+	'pPlugInTable.border = 0
+	dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(pPlugInTable)
+
+	pTB.newrow
+	pTB.row.styleitem = STYLE_TABLE_HEADER
+	pTB.row.border = 0
+	pTB.newcell.addtext("Indeks").element.bold = true	
+	pTB.newcell.addtext("Nazwa").element.bold = true	
+	pTB.newcell.cell.align = ALIGN_RIGHT
+	pTB.addtext("Ilość").element.bold = true
+
+
+
+	dim oSet , etykieta , curOld
+	Set oSet = CreateObject("Scripting.Dictionary")
+
+	for each etykieta in obj.doet_listPozycje
+		if not oSet.exists(cstr(etykieta.pdet_pWyrob.idobj)) then
+				oSet.Add cstr(etykieta.pdet_pWyrob.idobj) , ccur(1)
+			else
+				curOld = oSet.Item(cstr(etykieta.pdet_pWyrob.idobj))
+				oSet.Remove (cstr(etykieta.pdet_pWyrob.idobj))
+				oSet.Add cstr(etykieta.pdet_pWyrob.idobj), ccur(1) + curOld
+			end if		
+	next
+
+
+	dim arr:arr = oSet.Keys
+	dim iter,s , msg , id , prod , ilosc
+	msg = ""
+	For  iter= 0 To oSet.Count -1
+		set prod = trans_.getobj(TYPEID_N5PRODUKT,clng(arr(iter)))
+		ilosc = oSet.Item(arr(iter))
+
+		pTB.newrow.newcell.addtext prod.strIndeks
+		pTB.newcell.addtext prod.strNazwa
+		pTB.newcell.cell.align = ALIGN_RIGHT
+		pTB.cell.styleitem = STYLE_OPTION_PAD		
+		pTB.addtext trans_.afc.display.quantity(ilosc, prod.pJednostkaEwid.strSkrot,prod.pJednostkaEwid.nDokladnosc - 1 )
+
+	Next
+
+
+
+end sub
+
+
+
+
+]]></script>
+
+</config>
+<body>
+
+
+</body>
+</page>

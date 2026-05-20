@@ -1,0 +1,372 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+RAPTEMPLATE_MAG_DOKUMENTY_WARTOSC
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1240.h"
+#include "h1231.h"
+#include "h1250.h"
+
+#if appvar_rejestr_typ = N5REJESTRDOK__PZ
+#define RAPORT_TITLE Przychody na magazyn - dokumenty
+#define CONDITION_SIGN	>
+#else
+#define RAPORT_TITLE Rozchody z magazynu - dokumenty
+#define CONDITION_SIGN	<
+#endif
+
+#ifdef APPCONFIG_GM_RAPORT_BY_DATE
+#define OKRES_NROPMAG_WHERE			%3
+#endif
+
+'APPVAR_REJESTR_TYP == N5REJESTRDOK__PZ	=> przychody, w przeciwnym razie rozchody
+-->
+<page style='36'>
+<config>
+<title>RAPORT_TITLE</title>
+<script>
+<![CDATA[
+<%
+
+function query()
+	query = _
+	"select 'c_mag_nazwa'=max(t_mag.strNazwa),'c_idmag'=t_op.gmo_pMag,'c_op_nr'=t_op.gmo_nNumOp,"+_
+	"'wartDok'=isnull((select sum(abs(t_op2.gmo_curWartosc)) from n5gmop  t_op2 where t_op2.gmo_nnumop=t_op.gmo_nNumOp and t_op2.gmo_curIlosc CONDITION_SIGN 0.0),0), " +_
+	" 'c_nrdok'=max(v_dok.p_strNrDok),'c_typeid'=TYPEID_N5DOKMAG,'c_iddok'=max(v_dok.p_idobj),'c_datawyst'=max(v_dok.p_dDataWyst), " +_
+	" 'c_wart'= sum(abs(t_op.gmo_curWartosc))" +_
+	" from vlist_n5dokmag_listPozycje v_dok " +_
+	" inner join n5gmop  t_op on t_op.gmo_nLP = v_dok.coll_lp and t_op.gmo_nnumop=v_dok.p_nNumOper " +_
+	" inner join n5produkt prod on v_dok.c_pprodukt=prod.idobj " +_
+	" inner join n5magazyn as t_mag on t_op.gmo_pMag = t_mag.IdObj " +_
+#ifdef _IOW
+	" left outer join n5kwalifikator as t_kwali on v_dok.p_pkwalifikatorex = t_kwali.Idobj " +_
+	" where %1 and %2 and ILOSC_WHERE and OKRES_NROPMAG_WHERE and %TYPPRO% and %5 " +_  
+#else  
+	" where %1 and %2 and ILOSC_WHERE and OKRES_NROPMAG_WHERE and %TYPPRO%" +_
+#endif  
+	" group by t_op.gmo_nNumOp,t_op.gmo_pMag " +_
+	" union all " +_
+	"select 'c_mag_nazwa'=max(t_mag.strNazwa),'c_idmag'=t_op.gmo_pMag,'c_op_nr'=t_op.gmo_nNumOp,"+_
+	"'wartDok'=isnull((select sum(abs(t_op2.gmo_curWartosc)) from n5gmop  t_op2 where t_op2.gmo_nnumop=t_op.gmo_nNumOp and t_op2.gmo_curIlosc CONDITION_SIGN 0.0),0), " +_
+	" 'c_nrdok'=max(t_dok.strNrDok),'c_typeid'=TYPEID_N5REALPROD,'c_iddok'=max(v_dok.p_idobj),'c_datawyst'=max(v_dok.p_dDataWyst), " +_
+	" 'c_wart'=sum(abs(t_op.gmo_curWartosc))  " +_
+	"from vlist_n5realprod_listPozycje v_dok " +_
+	"inner join n5gmop t_op on t_op.gmo_nLP = v_dok.coll_lp and t_op.gmo_nnumop=v_dok.p_nNumOper  " +_
+	"inner join n5produkt prod on v_dok.c_pprodukt=prod.idobj  " +_
+	" inner join n5realprod t_dok on t_op.gmo_nnumop = t_dok.nnumoper " +_
+	" inner join n5magazyn as t_mag on t_op.gmo_pMag = t_mag.IdObj " +_
+#ifdef _IOW
+	" left outer join n5kwalifikator as t_kwali on v_dok.p_pkwalifikatorex = t_kwali.Idobj " +_
+	" where %1 and %2 and ILOSC_WHERE and OKRES_NROPMAG_WHERE and %TYPPRO% and %5 " +_
+#else
+	" where %1 and %2 and ILOSC_WHERE and OKRES_NROPMAG_WHERE and %TYPPRO%" +_
+#endif  
+	" group by t_op.gmo_nNumOp,t_op.gmo_pMag " +_
+	" order by c_mag_nazwa,c_op_nr"
+end function
+%>
+<%
+'' jest używane poza default_param()
+dim RaportOkresParam
+
+function default_param()
+	dim pParamArray : set pParamArray = doc_.afc.new_navoarray()
+	pParamArray.add doc_.getmodule(43025).new_filtr_magazyn("t_mag.idobj","N5TYPMAG_PODSTAWOWY,N5TYPMAG_ZWROTY,N5TYPMAG_PRODUKCJAWTOKU,N5TYPMAG_REZERWACJE")
+
+	dim pParamFactory2: set pParamFactory2= doc_.afc.rap.param
+	
+	dim pParam2: Set pParam2= pParamFactory2.new_choice("Rejestr").bindexpr("v_dok.p_pRejestrDok")
+	dim strRejPrzychody
+	strRejPrzychody = "N5REJESTRDOK__PZ,N5REJESTRDOK__ZZ,N5REJESTRDOK__PW,N5REJESTRDOK__RP,N5REJESTRDOK__PP,N5REJESTRDOK__MM,N5REJESTRDOK__MP,N5REJESTRDOK__IP,N5REJESTRDOK__REALPROD,N5REJESTRDOK_REZERWACJE,N5REJESTRDOK_ZAK_REZERWACJI,N5REJESTRDOK__KWZ"
+	dim strRejRozchody
+	strRejRozchody = "N5REJESTRDOK__WZ,N5REJESTRDOK__ZD,N5REJESTRDOK__RW, N5REJESTRDOK__RP,N5REJESTRDOK__PP,N5REJESTRDOK__MM,N5REJESTRDOK__MR,N5REJESTRDOK__IR,N5REJESTRDOK__REALPROD,N5REJESTRDOK_REZERWACJE,N5REJESTRDOK_ZAK_REZERWACJI,N5REJESTRDOK__KWZ"
+	dim strQryRej
+	strQryRej = "select strNazwa , idobj from n5rejestrdok where eTyp in ("
+	if trans_.var(APPVAR_REJESTR_TYP) = N5REJESTRDOK__PZ then
+		strQryRej = strQryRej + strRejPrzychody
+	else
+		strQryRej = strQryRej + strRejRozchody
+	end if
+	strQryRej = strQryRej + ") " + strIdRokKsieg + " order by strNazwa "
+	doc_.afc.rap.param.init_on_query pParam2, trans_ ,strQryRej
+	pParamArray.add pParam2
+
+	set RaportOkresParam = doc_.afc.rap.param.new_date_range("Analizowany okres"). _
+#ifdef APPCONFIG_GM_RAPORT_BY_DATE
+		bindexpr("v_dok.p_dDataWyst")
+#else
+		bindexpr("")
+#endif
+	pParamArray.add RaportOkresParam
+	
+	
+	set pParamTypPro = doc_.afc.rap.param.new_choice("Typ produktu")
+	with pParamTypPro
+		.multiple = true
+
+		.names.add "Materialy"
+		.values.add 1
+		.selected.add True
+
+		.names.add "Wyrób"
+		.values.add 2
+		.selected.add True
+
+		.names.add "Półprodukt"
+		.values.add 3
+		.selected.add True
+
+		.names.add "Towar"
+		.values.add 4
+		.selected.add True
+
+
+	end with
+	pParamArray.add pParamTypPro
+  
+#ifdef _IOW
+	dim pParam3: Set pParam3 = pParamFactory2.new_choice("Oznaczenie dokumentu").bindexpr("isnull(t_kwali.idobj,0)")
+	doc_.afc.rap.param.init_on_query pParam3, trans_ ,_
+		"select strNazwa , idobj , 0 from n5kwalifikator union select '<brak>' , 0 , 1 order by 3 , 1 "
+	pParamArray.add pParam3
+#endif  
+	
+	set default_param = pParamArray
+end function
+%>
+<%
+function section_header_1(byref pSection,byref pRec)
+%>
+<tr userprop='propc_section_start="1" propc_section_hidden="0" propc_section_req="0"' fontsize='4'>
+	<td style='27' colspan='7'>
+		<picture name='<%so.write cstr(nSectionPicCounter)%>' tip='Zwiń' ignoresysdisable='true' image='PICTURE_SMALL_MINUS' width='SIZE_FOR_PLUS' height='SIZE_FOR_PLUS' href='vs1022="section_hideshow_hli" vn100="<%so.write cstr(nSectionPicCounter)%>"'/>
+	RXE_AUTO_TEXT(c_mag_nazwa)
+</td>
+</tr>
+
+<%
+nSectionPicCounter=nSectionPicCounter+1
+end function
+%>
+<%
+function section_footer_1(byref pSection)
+%>
+<tr hide='true' userprop='propc_section_end="1"'><td colspan='6' /></tr>
+<tr fontsize='4'>
+	<td style='27' colspan='5' />
+	<td style='27' align='right'>
+		RXE_MONEY_VAR(pSection.counter(0).result)
+	</td>
+	<td style='27' align='right'>
+		RXE_MONEY_VAR(pSection.counter(1).result)
+	</td>	
+</tr>
+<tr border='0'><td colspan='7' /></tr>
+<%
+end function
+%>
+<%
+function body_row(byref pSection,byref pRec)
+if pRapExec.RecNr mod 2 = 0 then
+%>
+<tr bordercolor='white'>
+<%
+else
+%>
+<tr bordercolor='white' style='37'>
+<%
+end if
+%>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+	<td align='right'>RXE_LP</td>
+	<td align='right'>
+		RXE_T(c_op_nr)
+	</td>
+	<td>
+		RXE_DATE(c_datawyst)
+	</td>
+	<td>
+		RXE_T_LINK_FORM_CCC(c_typeid,c_iddok,c_nrdok)
+	</td>
+	<td align='right'>
+		RXE_QUANTITY_CVV(c_wart,"",2)
+	</td>
+	<!-- luki -->
+	<td align='right'>
+		RXE_QUANTITY_CVV(wartDok,"",2)
+	</td>	
+</tr><%
+end function
+%>
+<%
+function body_header(byref pSection,byref pRec)
+%>
+<table border='1'>
+<thead>
+<tr style='21'>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+	<td width='min'><t>LP</t></td>
+	<td width='min'>
+		<text><![CDATA[Numer operacji]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Data wystawienia]]></text>
+	</td>
+	<td width='max'>
+		<text><![CDATA[Numer dokumentu]]></text>
+	</td>
+	<td width='min'>
+		<text><![CDATA[Wartość]]></text>
+	</td>
+	<!-- luki -->
+	<td width='min'>
+		<text><![CDATA[Wartość dokumentu]]></text>
+	</td>	
+</tr>
+</thead>
+<tbody>
+<%
+end function
+%>
+<%
+function body_footer(byref pSection)
+%>
+</tbody>
+<tfoot>
+<tr style='21'>
+	<td style='27' colspan='5' />
+	<td style='27' align='right'>
+		RXE_MONEY_VAR(pRapExec.body.counter(0).result)
+	</td>
+	<td style='27' align='right'>
+		RXE_MONEY_VAR(pRapExec.body.counter(1).result)
+	</td>	
+</tr>
+</tfoot>
+</table>
+<%
+end function
+%>
+<%dim nSectionPicCounter : nSectionPicCounter = 10000000%>
+function section_hideshow_hli(byref pHLI)
+doc_.afc.formsection.section_hideshow page_, pHLI.prop(100)
+end function
+]]>
+</script>
+</config>
+<header>
+</header>
+<body>
+<p>
+RAPORT_HEADER(3,0)
+</p>
+
+<p>
+<t size='2'/>
+</p>
+
+<p><text fontsize='7'><![CDATA[RAPORT_TITLE]]></text></p><br/><br/>
+<%
+dim pParamTypPro
+if not doc_.getmodule(60253).gm_ensure_accuracy_ui(true) then
+%>
+<p border='1' fontsize='5' forecolor='red' bold='true'><t>Uwaga! Niepoprawny stan magazynu</t></p><br/><br/>
+<%
+end if
+%>
+<t fontsize='5' bold='true'>Kryteria selekcji:</t><br/>
+<%
+  dim strIdRokKsieg: strIdRokKsieg = ""
+#ifdef _ALMA_TREND
+	strIdRokKsieg = doc_.getmodule(60106).GetIdRokKsieg()
+#endif 
+  
+dim pRapExec : set pRapExec = rapeng_.new_engine()
+with pRapExec
+	.add_body_ex (getref("body_header"),getref("body_footer"),getref("body_row")).add_sumator("c_wart").add_sumator("wartdok")
+	.add_group_section (0,getref("section_header_1"),getref("section_footer_1")).add_sumator("c_wart").add_sumator("wartdok")
+if .prepare("RAPORT_TITLE",default_param(),rapeng_.get_raport_param(),query()) then
+%>
+<%
+dim strTypPro
+		
+		dim strTypPro1 : strTypPro1 = "(prod.eRodzaj=1 and prod.prod_cWyrob='0' and prod.prod_cSurowiec='1')" 
+		dim strTypPro2 : strTypPro2 = "(prod.eRodzaj=1 and prod.prod_cWyrob='1' and prod.prod_cSurowiec='0')"
+		dim strTypPro3 : strTypPro3 = "(prod.eRodzaj=1 and prod.prod_cWyrob='1' and prod.prod_cSurowiec='1')"
+		dim strTypPro4 : strTypPro4 = "(prod.eRodzaj=1 and prod.prod_cWyrob='0' and prod.prod_cSurowiec='0')"
+		strTypPro = "((1=2)"
+		
+	if pParamTypPro.selected.value(0) then		
+			strTypPro = strTypPro +" or "+ strTypPro1
+	end if
+	if pParamTypPro.selected.value(1) then	
+			strTypPro = strTypPro +" or "+ strTypPro2
+	end if
+	if pParamTypPro.selected.value(2) then
+			strTypPro = strTypPro +" or "+ strTypPro3
+	end if		
+	if pParamTypPro.selected.value(3) then
+			strTypPro = strTypPro +" or "+ strTypPro4
+	end if
+	if pParamTypPro.selected.value(4) then
+		if (pParamTypPro.selected.value(0) or pParamTypPro.selected.value(1) or pParamTypPro.selected.value(2) or pParamTypPro.selected.value(3)) then
+			strTypPro = "("+strTypPro+ ")" +" and "+"(prod.eRodzaj<>1)"
+		else
+			strTypPro = "(prod.eRodzaj<>1)"
+		end if
+	end if
+	strTypPro = strTypPro + ")"
+		.ReplaceQueryParam "%TYPPRO%",strTypPro
+		
+	dim nropmag_str : nropmag_str = write_actual_param(rapeng_.get_raport_param())
+#ifndef APPCONFIG_GM_RAPORT_BY_DATE
+	'' drobna modyfikacja zapytania - parametr nropmag
+	.ReplaceQueryParam "OKRES_NROPMAG_WHERE",nropmag_str
+#endif
+	if trans_.var(APPVAR_REJESTR_TYP) = N5REJESTRDOK__PZ then
+		.ReplaceQueryParam "ILOSC_WHERE","t_op.gmo_curIlosc > 0.0"
+	else
+		.ReplaceQueryParam "ILOSC_WHERE","t_op.gmo_curIlosc < 0.0"
+	end if
+	if not .perform then
+		so.write "<p style='21'><t>Brak danych spełniających podane kryteria</t></p>"
+	end if
+%>
+<%
+end if
+end with
+%>
+<%
+function write_actual_param(byref pActualParam)
+	write_actual_param = "0=1" 
+
+	dim iter
+	dim bAnyWritten : bAnyWritten = false
+
+	if not pActualParam is nothing then
+		
+		
+		dim nDummy1,nDummy2	
+		write_actual_param = "t_op.gmo_nNumOp " + doc_.getmodule(43025).rap_param_date_range_2_gm_num_oper_where(RaportOkresParam,nDummy1,nDummy2)
+		
+		for iter = 0 to pActualParam.upperIndex
+			if pActualParam.value(iter).get_desc() <> "" then 
+				bAnyWritten = true
+				so.write "<t size='5' /><text fontsize='4'><![CD"+"ATA[" + pActualParam.value(iter).get_desc() + "]"+"]></text><br/>"
+			end if
+		next
+	end if
+
+	if not bAnyWritten then 
+		so.write "<t fontsize='4'>brak</t><br/>"
+	end if
+
+	so.write "<br/>"
+end function
+%>
+</body>
+<footer>
+</footer>
+</page>

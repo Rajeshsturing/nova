@@ -1,0 +1,700 @@
+<?xml version = "1.0" encoding = "windows-1250" ?>
+<!--
+Sposób wyszukiwania
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1240.h"
+#include "h1200.h"
+#include "h1201.h"
+#include "h1220.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1222.h"
+
+#define CTRLID_ORDER_GROUP	404
+#define CTRLID_ORDER_LINK	405
+#define CTRLID_SUMUJ		505
+
+-->
+<page style = 'STYLE_PAGE'>
+<config>
+<typeid>TYPEID_SEARCHTYPE</typeid>
+<script><![CDATA[
+
+#include "50203"
+#include "50202"
+#include "50101"
+#include "50122"
+
+#include "50518"
+#include "50101"
+
+dim g_strAdditinalScript		'dodatkowy skrypt
+dim g_strAdditinalFopenInstr	'dodatkowe instrukcje w fopen
+dim g_strAdditionalPageScript	'dodatkowy fragment strony
+dim g_pAdditionalCtrl			'tablica dodatkowych kontrolek
+dim g_strAdditionalWhereResults 'dodatkowa czesc where do wyswietlania wynikow "Pokaz" itd.
+
+
+dim bTabs:bTabs = true
+function make_tabs(byval bMake )
+	bTabs = bMake
+end function
+
+function setAdditionalScript(byval strNewScript)
+	g_strAdditinalScript = strNewScript
+end function
+
+function setAdditionalWhereResults(byval strNewAdditionalWhere)
+	g_strAdditionalWhereResults = strNewAdditionalWhere
+end function
+
+function addAdditionalFopenInstr(byval strNewFopenLine)
+	g_strAdditinalFopenInstr = g_strAdditinalFopenInstr + strNewFopenLine
+end function
+
+function setAdditionalFopenInstr(byval strNewFopenScript)
+	g_strAdditinalFopenInstr = strNewFopenScript
+end function
+
+function setAdditionalPageScript(byval strNewPageScr)
+	g_strAdditionalPageScript = strNewPageScr
+end function
+
+function setAdditionalCtrl(byref pCtrls)
+	set g_pAdditionalCtrl = pCtrls
+end function
+
+function fopen()
+#ifdef _ABAKUS
+	if HARUI_FREE(UAR_OGRANICZONY_DOSTEP_DANE_KLIENTA) then
+    fopen = false
+    exit function
+  end if
+#endif 
+
+	g_strAdditinalScript = ""
+	g_strAdditinalFopenInstr = ""
+	g_strAdditionalWhereResults = ""
+	g_strAdditionalPageScript = ""
+	set g_pAdditionalCtrl = nothing
+	set pfnOnPrepareRap = nothing
+
+	if not std_fopen() then
+		fopen = false
+		exit function
+	end if	
+
+	select case page_.root.cKind 
+	case "S"
+		page_.topelement.title = doc_.stdobjdef.getobjdef(page_.root.ResultTypeId).HumanName + _
+		" - Sposób wyszukiwania"
+	case "R"
+		page_.topelement.title = doc_.stdobjdef.getobjdef(page_.root.ResultTypeId).HumanName + _
+		" - Raport"
+	case "B"
+		page_.topelement.title = doc_.stdobjdef.getobjdef(page_.root.ResultTypeId).HumanName + _
+		" - Konfiguracja przegl¹darki"
+
+		if not page_.cursoriter is nothing then
+			page_.root.ignore=true
+			std_flast()
+			page_.cmdenabled CMD_NEWFORM, false
+		end if
+	case "F"
+		page_.topelement.title = doc_.stdobjdef.getobjdef(page_.root.ResultTypeId).HumanName + _
+		" - Konfiguracja wyszukiwarki"
+
+		if not page_.cursoriter is nothing then
+			page_.root.ignore=true
+			std_flast()
+			page_.cmdenabled CMD_NEWFORM, false
+		end if
+
+	end select
+
+	section_fopen THIS_FILE
+	fopen = true
+end function
+
+
+' show report
+function on_report()
+#ifdef _DEBUG
+	dim pM60115 : set pM60115 = doc_.getmodule(60115)
+	dim oNXRapDef : set oNXRapDef = pM60115.nx_load_raport_definition(page_.root)
+	dim pSOTemp : set pSOTemp= doc_.createstreamobj()
+	oNXRapDef.create_template nx_.apprep,0,pSOTEmp
+	pSOTemp.save "c:\temp\nxraptemp.asp"
+#endif
+	make_report page_.root.IdObj
+end function
+
+'--------------------------------------------------------------------------
+function c11_ongetdata(ctrl,row)
+	if page_.root.listFilter.exists(row) then
+		dim oElem
+		set oElem = page_.root.listFilter.get(row)
+		if not oElem is nothing then
+			ctrl.text = oElem.SearchTypeItem_compose_name()
+		end if
+	else
+		ctrl.text = ""
+	end if
+end function
+
+function podpo_composepath(hli)
+	dim row: row = clng(hli.prop(PROPC_ROW))
+
+	dim pPM: set pPM = doc_.getmodule(60113)
+	dim strComposedPath
+	
+	pPM.setShowSelfReference(true)
+	pPM.setShowNameForWildReference(false)
+
+	pPM.SetPathBuilder doc_.afc.rap.new_path(page_.root.ResultTypeId)
+	if pPM.select_object_field() = 0 then
+		exit function
+	end if
+	strComposedPath = pPM.GetPathBuilder().root.serialize(1)
+
+	dim pSTOI
+	if page_.root.listFilter.exists(row) then
+		set pSTOI = page_.root.listFilter.get(row)
+	else
+		set pSTOI = page_.root.listFilter.addnew()
+	end if
+	pSTOI.ComposedPath = strComposedPath
+end function
+
+
+function c1012_ongetdata(ctrl,row)
+	if page_.root.listOrder.exists(row) then
+		dim pRow
+		set pRow = page_.root.listOrder.get(row)
+		if not pRow is nothing then
+			ctrl.text = pRow.SearchTypeItem_compose_name()
+		end if
+	else
+		ctrl.text = ""
+	end if
+end function
+
+function podpo_composeorderpath(hli)
+	dim row: row = clng(hli.prop(PROPC_ROW))
+
+	dim pPM: set pPM = doc_.getmodule(60113)
+	dim strComposedPath
+	pPM.setShowSelfReference(false)
+	pPM.setShowNameForWildReference(false)
+
+
+	pPM.SetPathBuilder doc_.afc.rap.new_path(page_.root.ResultTypeId)
+	if pPM.select_object_field() = 0 then
+		exit function
+	end if
+	strComposedPath = pPM.GetPathBuilder().root.serialize(1)
+
+	dim pSTOI
+	if page_.root.listOrder.exists(row) then
+		set pSTOI = page_.root.listOrder.get(row)
+	else
+		set pSTOI = page_.root.listOrder.addnew()
+	end if
+	pSTOI.ComposedPath = strComposedPath
+end function
+
+
+function c2012_ongetdata(ctrl,row)
+	if page_.root.listColumn.exists(row) then
+		dim pRow
+		set pRow = page_.root.listColumn.get(row)
+		if not pRow is nothing then
+			ctrl.text = pRow.SearchTypeItem_compose_name()
+		end if
+	else
+		ctrl.text = ""
+	end if
+end function
+
+function podpo_composecolpath(hli)
+	dim row: row = clng(hli.prop(PROPC_ROW))
+
+	dim pPM: set pPM = doc_.getmodule(60113)
+	dim strComposedPath
+	pPM.setShowSelfReference(false)
+	pPM.setShowNameForWildReference(true)
+
+	pPM.ShowList
+
+	pPM.SetPathBuilder doc_.afc.rap.new_path(page_.root.ResultTypeId)
+	if pPM.select_object_field() = 0 then
+		exit function
+	end if
+	strComposedPath = pPM.GetPathBuilder().root.serialize(1)
+
+	dim pSTOI
+	if page_.root.listColumn.exists(row) then
+		set pSTOI = page_.root.listColumn.get(row)
+	else
+		set pSTOI = page_.root.listColumn.addnew()
+	end if
+	
+	pSTOI.ComposedPath = strComposedPath
+end function
+
+
+function c##CTRLID_ORDER_GROUP##_ongetdata(pCtrl,row): c##CTRLID_ORDER_GROUP##_ongetdata=true
+	if page_.root.listOrder.exists(row) then
+		dim pSTOI : set pSTOI = page_.root.listOrder.get(row)
+		pCtrl.value = pSTOI.cGroup
+		pCtrl.disable = false
+	else
+		pCtrl.disable = true
+		pCtrl.value = "0"
+	end if
+end function
+
+function c##CTRLID_ORDER_GROUP##_ondataentered(ctrl, row, value)
+	dim pSTOI
+	if page_.root.listOrder.exists(row) then
+		set pSTOI = page_.root.listOrder.get(row)
+	else
+		set pSTOI = page_.root.listOrder.AddNew()
+	end if
+	pSTOI.cGroup = value
+	if value = "0" then
+		pSTOI.cLink = "0"
+	end if
+	c##CTRLID_ORDER_GROUP##_ondataentered = true 
+end function
+
+function c##CTRLID_ORDER_LINK##_ongetdata(pCtrl,row): c##CTRLID_ORDER_LINK##_ongetdata=true
+	if page_.root.listOrder.exists(row) then
+		dim pSTOI : set pSTOI = page_.root.listOrder.get(row)
+		pCtrl.value = pSTOI.cLink
+		pCtrl.disable = (pSTOI.cGroup <> "1")
+	else
+		pCtrl.disable = true
+		pCtrl.value = "0"
+	end if
+end function
+
+function c##CTRLID_ORDER_LINK##_ondataentered(ctrl, row, value)
+	dim pSTOI
+	if page_.root.listOrder.exists(row) then
+		set pSTOI = page_.root.listOrder.get(row)
+	else
+		set pSTOI = page_.root.listOrder.AddNew()
+	end if
+	pSTOI.cLink = value
+	if value = "1" then
+		pSTOI.cGroup = "1"
+	end if
+	c##CTRLID_ORDER_LINK##_ondataentered = true 
+end function
+
+function c##CTRLID_SUMUJ##_ongetdata(pCtrl,row): c##CTRLID_SUMUJ##_ongetdata=true
+	if page_.root.listColumn.exists(row) then
+		dim pSTOI : set pSTOI = page_.root.listColumn.get(row)
+		pCtrl.value = pSTOI.cGroup
+		dim pPathCracker : set pPathCracker = doc_.afc.rap.new_path_cracker(pSTOI.ComposedPath)
+		pCtrl.disable = (pPathCracker.RaportType <> RAPT_CURRENCY and pPathCracker.RaportType <> RAPT_QTY)
+	else
+		pCtrl.disable = true
+		pCtrl.value = "0"
+	end if
+end function
+
+function c##CTRLID_SUMUJ##_ondataentered(ctrl, row, value)
+	if page_.root.listColumn.exists(row) then
+		page_.root.listColumn.get(row).cGroup = value
+	else
+		page_.root.listColumn.AddNew().cGroup = value
+	end if
+	c##CTRLID_SUMUJ##_ondataentered = true 
+end function
+
+'-------------------------------------------------------------
+'
+' Funkcja zwraca TypeId wskazywanego obiektu z composed path pochodz¹cego
+' z obiektu SearchType
+'
+'-------------------------------------------------------------
+function getLastTypeidFromSticp(szCompPath)
+	if UBound(split(szCompPath,")"))>0 then
+		getLastTypeidFromSticp = clng(0)
+	else
+		dim a: a = split(szCompPath,";")
+		getLastTypeidFromSticp = clng(a(ubound(a)-1))
+	end if
+end function
+
+
+
+function to2chars(nmb) :to2chars = CStr("00")
+	if CLng(nmb)<10 then 
+		to2chars = "0"+CStr(nmb)
+	else
+		to2chars = CStr(nmb)
+	end if
+end function
+
+function setNotifyRaportObject(byref pfnOnPrepareRaport)
+	set pfnOnPrepareRap = pfnOnPrepareRaport
+end function
+
+
+dim pfnOnPrepareRap
+
+
+'
+' Funkcja wywo³uje filtr do raportu i nastêpnie generuje dla podanych kryteriów raport
+'
+' Parametry:
+' [in] pSearchTypeObj - obiekt typu TYPEID_SEARCHTYPE okreœlaj¹cy raport
+'
+function make_report(ByVal ST_IdObj)
+	dim pSearchTypeObj : set pSearchTypeObj = trans_.getobj(TYPEID_SEARCHTYPE ,ST_IdObj)
+	if pSearchTypeObj is nothing then
+		exit function
+	end if
+	
+	' sprawdzamy, czy da siê zapisaæ obiekt. Jeœli nie, to jest on niepoprawny - raportu nie bêdzie
+	if not pSearchTypeObj.SearchType_BefInsUpd() then
+		exit function
+	end if
+	
+	dim pRapDef: set pRapDef = trans_.afc.rap.new_rd(pSearchTypeObj.ResultTypeId)
+	pRapDef.LoadSearchType pSearchTypeObj
+	asp_raport_rapdef pRapDef
+end function
+
+function on_choicelist()
+	if not page_.root.SearchType_BefInsUpd() then
+		exit function
+	end if
+	dim strChoiceListName
+	if InputTextBox ("Nazwa listy wyboru","Podaj nazwê dla tworzonej listy wyboru", 0 ,strChoiceListName) = 0 then
+		exit function
+	end if
+	dim pPM: set pPM = doc_.getmodule(60114)
+	dim strButtons: strButtons = "Wype³nij liste"
+	dim strColumns, strJoin, strWhere, strOrderBy, strGroupBy, strDescription, strIds	
+
+	' pobierz kryteria wyszukiwania
+	dim nRes: nRes = pPM.get_search_filter_result(page_.root, strButtons, strColumns, strJoin, strWhere, strOrderBy, strGroupBy, strDescription, strIds)
+
+	if nRes<>1 then exit function
+	
+	dim ResTypeID:ResTypeID = page_.root.ResultTypeId
+		
+	dim pTrans:set pTrans = trans_.createsubtran()
+		trans_.var(APPVAR_CHOICELIST_TYPEID) = ResTypeID
+		dim pChoiceList:set pChoiceList = trans_.newobj(TYPEID_CHOICELIST)
+		pChoiceList.strNazwa = strChoiceListName
+		dim pCursor,pElem,pCr : set pCursor = trans_.createrawcursor (ResTypeID, strWhere,strOrderBy, doc_.getmodule(60115).trim_first_join(strJoin) )
+
+		for each pCr in pCursor
+			set pElem = pChoiceList.listElement.addnew()
+			pElem.IdElement = pCr.IdObj				
+		next
+
+		if not trans_.saveobjects then
+			MessageBox "Nie uda³o siê zapisaæ listy." , "Lista wyboru", vbOKOnly, vbInformation
+		else
+			MessageBox "Zapisano listê wyboru." , "Lista wyboru", vbOKOnly, vbInformation
+		end if
+
+	set pTrans = nothing
+end function
+
+function c40_ongetdata(byref oCtrl): c40_ongetdata = true
+	oCtrl.value = cstr(page_.root.nIsSecurity)
+end function
+
+function c40_ondataentered(byref oCtrl, byval newValue)
+	page_.root.nIsSecurity = clng(newValue)
+	c40_ondataentered = true
+end function
+
+#include "50222"
+
+function fclose
+section_fclose THIS_FILE
+end function
+
+
+
+
+]]></script>
+</config>
+<header>
+</header>
+<body>
+
+<table style = 'STYLE_TABLE'>
+<thead>
+
+</thead>
+<tbody>
+
+#if appvarSearchKind = "R" || appvarSearchKind = "S"
+<tr>
+	<td width = 'min'>
+		<t bold = 'true'>
+		#if appvarSearchKind = "S"
+			Nazwa sposobu wyszukiwania
+		#else
+			#if appvarSearchKind = "R"
+				Nazwa raportu
+			#endif
+		#endif
+		</t>
+	</td>
+	<td colspan = '2'>
+		<edit name = 'e3' size = '48' style = 'STYLE_CTRL'>
+			<transfer mode = 'edit_field'>
+				<field>Nazwa</field>
+			</transfer>
+		</edit>
+	</td>
+	<td>
+		<t size='2'/>		
+		<checkbox name = 'c40'><t>Ochrona</t>
+			<transfer mode = 'custom'>				
+			</transfer>
+		</checkbox>
+	</td>
+</tr>
+#endif
+
+
+XFREQMULTILINEFIELD(34,Opis,4,Opis)
+
+#if appvarSearchKind = "R" || appvarSearchKind = "S" || appvarSearchKind = "F"
+
+<tr>
+	<td colspan = '4'>
+		<grid name = 'g5'>
+			<transfer mode = 'grid_list'>
+				<field>listFilter</field>
+			</transfer>
+			<thead>
+				<tr style = 'STYLE_TABLE_HEADER'>
+
+					<td width = 'min'><t bold = 'true'>LP</t></td>
+
+					<td colspan = '3'><t bold = 'true'>
+#if appvarSearchKind = "F"
+					Przeszukiwane pola
+#else
+					Kryteria selekcji
+#endif
+					</t></td>
+				</tr>
+			</thead>
+			<tbody>
+				<tr style = 'STYLE_TABLE_BODY'>
+
+					<td>
+						<t align = 'right'>0
+							<transfer mode = 'row_nr' />
+						</t>
+					</td>
+
+					<td colspan='3'>
+						<picture image='PICTURE_CHOOSE_CRITERIA' href='varFunctionHLI="podpo_composepath"'/>
+						<text name='e11' size='64'>
+							<transfer mode='row_custom' />
+						</text>
+					</td>
+
+				</tr>
+			</tbody>
+			<tfooter/>
+		</grid>
+	</td>
+</tr>
+#endif
+#if appvarSearchKind <> "F"
+<tr>
+	<td colspan = '4'>
+		<grid name = 'g6'>
+			<transfer mode = 'grid_list'>
+				<field>listOrder</field>
+			</transfer>
+			<thead>
+				<tr  style = 'STYLE_TABLE_HEADER'>
+					<td width = 'min'><t bold = 'true'>LP</t></td>
+					#if appvarSearchKind = "S" || appvarSearchKind = "B"
+					<td colspan = '2'><t bold = 'true'>Uporz¹dkowanie</t></td>
+					#else
+						#if appvarSearchKind = "R"
+						<td><t bold = 'true'>Uporz¹dkowanie</t></td>
+						<td><t bold = 'true'>Grupowanie</t></td>
+						<td><text bold = 'true'>Aktywne ³¹cze</text></td>
+						#endif
+					#endif
+					#if appvarSearchKind = "R" || appvarSearchKind = "S"
+						<td><t bold = 'true'>Malej¹co</t></td>
+					#endif
+				</tr>
+			</thead>
+			<tbody>
+				<tr style = 'STYLE_TABLE_BODY'>
+
+					<td>
+						<t align = 'right'>0
+							<transfer mode = 'row_nr' />
+						</t>
+					</td>
+
+					#if appvarSearchKind = "S" || appvarSearchKind = "B"
+
+					<td colspan = '2'>
+						<picture image = 'PICTURE_CHOOSE_SORT'  href = 'varFunctionHLI = "podpo_composeorderpath"'/>
+						<text name = 'e1012' size = '64'>
+							<transfer mode = 'row_custom'>
+							</transfer>
+						</text>
+					</td>
+
+					#else
+					#if appvarSearchKind = "R"
+
+					<td>
+						<picture image = 'PICTURE_CHOOSE_SORT'  href = 'varFunctionHLI = "podpo_composeorderpath"'/>
+						<text name = 'e1012' size = '64'>
+							<transfer mode = 'row_custom'>
+							</transfer>
+						</text>
+					</td>
+
+					<td>
+						<checkbox name='CTRLID_ORDER_GROUP' border='0'>
+							<t/>
+							<transfer mode='row_custom' />
+						</checkbox>
+					</td>
+					<td>
+						<checkbox name='CTRLID_ORDER_LINK' border='0'>
+							<t/>
+							<transfer mode='row_custom' />
+						</checkbox>
+					</td>
+
+					#endif
+					#endif
+
+					#if appvarSearchKind = "R" || appvarSearchKind = "S"
+						<td>
+							<checkbox border='0'>
+								<t/>
+								<transfer mode = 'row_edit_field'>
+									<field>cDesc</field>
+								</transfer>
+							</checkbox>
+						</td>
+					#endif
+				</tr>
+			</tbody>
+			<tfooter/>
+		</grid>
+	</td>
+</tr>
+#endif
+
+#if appvarSearchKind = "R" || appvarSearchKind = "B"
+<tr>
+	<td colspan = '4'>
+		<grid name = 'g7'>
+			<transfer mode = 'grid_list'>
+				<field>listColumn</field>
+			</transfer>
+			<thead>
+				<tr style='STYLE_TABLE_HEADER'>
+
+					<td width = 'min'><t bold='true'>LP</t></td>
+
+					<td colspan='2'><t bold='true'>Kolumny</t></td>
+
+#if appvarSearchKind = "R" || appvarSearchKind = "B"
+					<td><text bold = 'true'>Aktywne ³¹cze</text></td>
+#endif
+#if appvarSearchKind = "R" 
+					<td><text bold='true'>Sumuj</text></td>
+#endif
+				</tr>
+			</thead>
+			<tbody>
+				<tr style = 'STYLE_TABLE_BODY'>
+
+					<td>
+						<t align = 'right'>0
+							<transfer mode = 'row_nr' />
+						</t>
+					</td>
+
+					<td colspan = '2'>
+						<picture image = 'PICTURE_CHOOSE_COLUMN'  href = 'varFunctionHLI = "podpo_composecolpath"'/>
+						<text name='e2012' size='64'>
+							<transfer mode='row_custom' />
+						</text>
+					</td>
+
+#if appvarSearchKind = "R" || appvarSearchKind = "B"
+					<td>
+						<checkbox name = 'e2022' border='0'>
+							<t/>
+							<transfer mode = 'row_edit_field'>
+								<field>cLink</field>
+							</transfer>
+						</checkbox>
+					</td>
+#endif
+#if appvarSearchKind = "R" 
+					<td>
+						<checkbox name='CTRLID_SUMUJ' border='0'>
+							<t/>
+							<transfer mode = 'row_custom' />
+						</checkbox>
+					</td>
+#endif
+				</tr>
+			</tbody>
+			<tfooter/>
+		</grid>
+	</td>
+</tr>
+#endif
+
+
+</tbody>
+<tfooter>
+
+</tfooter>
+</table>
+
+
+#if appvarSearchKind = "R"	
+<table>
+<tbody>
+<tr><td><t></t></td></tr>
+<tr style = 'STYLE_ROW_BTN'>
+<td>
+		XF_BUTTON(varFunction = "on_report",Generuj raport)
+		XF_BUTTON(varFunction = "on_choicelist",Zapisz jako lista wyboru)
+</td>
+</tr>
+</tbody>
+</table>
+#endif
+
+
+
+</body>
+<footer>
+</footer>
+</page>

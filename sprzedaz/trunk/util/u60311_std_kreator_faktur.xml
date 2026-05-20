@@ -1,0 +1,282 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1001.h"
+#include "h1004.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1240.h"
+#include "h1201.h"
+
+#define PAGE_FORM_WIZZARD_FAK_STEP1		20346
+#define PAGE_FORM_WIZZARD_FAK_STEP2		20347
+#define PAGE_FORM_WIZZARD_FAK_STEP3		20348
+#define PAGE_FORM_WIZZARD_FAK_STEP4		20353
+
+#define ITER	10
+
+-->
+<page>
+<config>
+<title>Kreator faktur abonamentowych</title>
+<script>
+<!--
+PAGE_FORM_WIZZARD_FAK
+-->
+<![CDATA[
+#include "50209"
+#include "50122"
+#include "50203"
+
+'harui
+#include "50101"
+#include "50517"
+
+class CKraetorFaktur
+	public m_nDest ' odczytywane z radio (czy raport czy lista)
+	public m_nTypeID ' typ obiektów
+	public m_nIdObj	' idobj listy albo raportu
+	public m_strName ' nazwa listy albo raportu
+	public m_strWhere ' where dla tworzonego kursora
+	public m_pCursor
+	public fak
+	public count
+	public fak_idobj
+
+	public print_pp
+	public print_fak
+
+
+	public result_dok_type
+
+end class
+
+dim pParamClass
+
+function fopen()
+	if HARUI(UAR_CMDID(CMDID_WIZZARD_FAKTURY_ABONAMENTOWE)) then
+		run_this	'uruchom modul automatycznie
+	end if
+	fopen=false
+end function
+
+function run_this()
+	dim pWizzard
+	set pParamClass = new CKraetorFaktur
+
+	pParamClass.m_nDest = clng(1)
+	pParamClass.m_nTypeID = TYPEID_N5KLIENT
+	set pParamClass.fak = nothing
+	pParamClass.result_dok_type = TYPEID_N5SPRZEDAZ
+	pParamClass.print_pp = "0"
+	pParamClass.print_fak = "0"
+
+	set pWizzard=CWizzard(false)
+	pWizzard.add_container pParamClass
+	pWizzard.add_step PAGE_FORM_WIZZARD_FAK_STEP1
+#ifndef _SECURITY
+	pWizzard.add_step PAGE_FORM_WIZZARD_FAK_STEP2
+#endif
+	pWizzard.add_step PAGE_FORM_WIZZARD_FAK_STEP4
+	pWizzard.add_step PAGE_FORM_WIZZARD_FAK_STEP3
+
+
+
+	pWizzard.run
+end function
+
+function onPageEnter(pWizzardPage)
+	select case ( pWizzardPage.m_nPage )
+		case PAGE_FORM_WIZZARD_FAK_STEP1:
+		case PAGE_FORM_WIZZARD_FAK_STEP2:
+		case PAGE_FORM_WIZZARD_FAK_STEP3:
+	end select
+end function
+
+function onPageExit(pWizzardPage)
+	onPageExit=PAGE_DEFAULT
+	select case ( pWizzardPage.m_nPage )
+		case PAGE_FORM_WIZZARD_FAK_STEP1:
+			if pWizzardPage.m_pPage.is_empty() then
+				MessageBox "Nic nie wybrano" , "Kreator faktur abonamentowych" , vbOkOnly, vbInformation
+				onPageExit = PAGE_DONOTEXIT
+			else
+				select case pParamClass.m_nDest
+					case 3:			
+						'uruchom raport i pobierz z niego czesci 
+						'zapytania
+						dim pRaport:set pRaport = trans_.getobj(TYPEID_SEARCHTYPE,pParamClass.m_nIdObj)
+						if pRaport is nothing then
+							onPageExit = PAGE_DONOTEXIT
+							exit function
+						end if
+						dim pPM: set pPM = doc_.getmodule(60114)
+						dim strButtons: strButtons = "Zastosuj raport"
+						dim strColumns, strDescription, strIds
+
+						dim strJoin, strWhere, strOrderBy, strGroupBy
+
+						if (pPM.get_search_filter_result(pRaport, _
+						strButtons, strColumns, _
+						strJoin, _
+						strWhere, _
+						strOrderBy, _
+						strGroupBy, _
+						strDescription, strIds)<>1) then
+							MessageBox "Musisz podać kryteria raportu i następnie go zastosować." , "Nie zastosowano raportu.", vbOKOnly, vbInformation
+							onPageExit=PAGE_DONOTEXIT
+							exit function
+						end if						
+						pParamClass.m_strWhere = strWhere
+
+					case 2:
+						dim pList:set pList = trans_.getobj(TYPEID_CHOICELIST,pParamClass.m_nIdObj)
+						if pList is nothing then
+							onPageExit = PAGE_DONOTEXIT
+							exit function
+						end if
+						dim elem
+						pParamClass.m_strWhere = " idobj=0 "
+						for each elem in pList.listElement
+							pParamClass.m_strWhere = pParamclass.m_strWhere + " or idobj=" + cstr(elem.idElement)
+						next
+					case 1:
+						pParamClass.m_strWhere = " eAktywny=1 "																								
+				end select
+			end if
+		case PAGE_FORM_WIZZARD_FAK_STEP2:
+			if pWizzardPage.m_pPage.is_empty() then
+				MessageBox "Nic nie wybrano" , "Kreator faktur abonamentowych" , vbOkOnly, vbInformation
+				onPageExit = PAGE_DONOTEXIT
+			end if
+		case PAGE_FORM_WIZZARD_FAK_STEP3:
+	end select
+end function
+
+function onPageInit(pWizzardPage)
+	select case ( pWizzardPage.m_nPage )
+		case PAGE_FORM_WIZZARD_FAK_STEP1:
+		case PAGE_FORM_WIZZARD_FAK_STEP2:
+		case PAGE_FORM_WIZZARD_FAK_STEP3:
+	end select
+end function
+
+function onWizzardComplete(pWizzardPage)
+
+	dim module2:set module2 = doc_.getmodule(60153)
+
+	dim elem,new_dok,iter,res
+
+	res = true
+	iter = 0
+	dim iter2:iter2 = 1
+
+	dim komunikat,page
+
+	dim cur_user:set cur_user = getCurrentUser()
+
+
+#ifdef _SECURITY
+	trans_.var(APPVAR_REJESTR_DOKUMENTOW) = clng(choose_rejestr_dok(cstr(N5REJESTRDOK_FAKT_SP),true, "Wybierz rejestr faktur"))
+#else
+	trans_.var(APPVAR_REJESTR_DOKUMENTOW) = pParamClass.fak.pRejestrDok.idobj
+#endif
+
+	komunikat = "Trwa tworzenie faktur - " + cstr(0) + " do " + cstr(min(ITER , pParamClass.count) )  + " z " + cstr(pParamClass.count)
+	dim perf : set perf = doc_.performing(komunikat)
+
+
+	for each elem in pParamClass.m_pCursor
+		
+		dim pFakturaSzablon
+#ifdef _SECURITY
+		dim pSzablonyKlientaCursor
+		set pSzablonyKlientaCursor = trans_.createrawcursor(TYPEID_N5SPRZEDAZ, _
+			"pKlient=" + cstr(elem.idobj) + " and strExtra1='SZABLON'", "strNrDok", "")
+		for each pFakturaSzablon in pSzablonyKlientaCursor
+#else
+		set pFakturaSzablon = trans_.getobj(TYPEID_N5SPRZEDAZ,pParamClass.fak_idobj) 
+#endif
+			set new_dok = trans_.newobj(TYPEID_N5SPRZEDAZ)
+			new_dok.n5sprzedaz_copy_from_org pFakturaSzablon
+
+
+			set new_dok.pFaktura = nothing
+			set new_dok.pKlient = elem
+			set new_dok.pUzytRej = cur_user
+			new_dok.dDataSprzed = getCurrentDate()
+			new_dok.dDataWyst = getCurrentDate()
+
+
+			if pParamClass.print_fak = "1" then
+'				set perf = nothing
+				module2.print_dok new_dok , 0
+'				doc_.performing(komunikat)
+			end if
+
+			if pParamClass.print_pp = "1" then			
+'				set perf = nothing
+				module2.print_pp new_dok , 0
+'				doc_.performing(komunikat)
+			end if
+			
+
+			iter = iter + 1
+			if iter = ITER then			
+
+				if not trans_.save then
+					MessageBox "Działanie kreatora zakończyło się niepowodzeniem - nie udał się zapis danych lub został on anulowany" , "Kreator faktur abonamentowych" , vbOkOnly, vbInformation
+					onWizzardComplete = false
+					set perf = nothing
+					exit function
+				end if
+
+				'set perf = nothing						
+
+				komunikat = "Trwa tworzenie faktur - " + cstr(ITER*iter2) + " do " + cstr(min(ITER*(iter2+1) , pParamClass.count) ) + " z " + cstr(pParamClass.count)
+				perf.text = komunikat
+
+				iter2 = iter2 + 1
+
+				iter = 0
+
+			end if
+#ifdef _SECURITY
+		next
+#endif
+	next
+
+	set perf = nothing
+
+	if MessageBox ("Stworzono faktury - czy napewno chcesz je zapisać?", "Kreator faktur abonamentowych", vbYesNo, vbQuestion) = vbYes then		
+		set perf = doc_.performing("Trwa zapis danych")
+		res=trans_.saveobjects()
+		set perf = nothing	
+	else
+		trans_.discard
+		res=false
+	end if
+	
+		
+
+	if res then
+		MessageBox "Działanie kreatora zakończyło się pomyślnie" , "Kreator faktur abonamentowych" , vbOkOnly, vbInformation
+	else
+		MessageBox "Działanie kreatora zakończyłe się niepowodzeniem - nie udał się zapis danych lub został on anulowany" , "Kreator faktur abonamentowych" , vbOkOnly, vbInformation
+	end if
+
+	onWizzardComplete=res
+end function
+
+#include "50126"
+
+
+]]>
+</script>
+</config>
+<body></body>
+</page>

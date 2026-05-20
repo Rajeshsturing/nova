@@ -1,0 +1,376 @@
+#include "h1000.h"
+#include "h1001.h"
+#include "h1002.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1200.h"
+#include "h1201.h"
+#include "h1220.h"
+#include "h1240.h"
+
+<?xml version="1.0" encoding="windows-1250" ?>
+<page style='STYLE_PAGE'>
+<config>
+
+	<title>
+	Konfiguracja paska szybkiego dostępu
+	#ifdef _DEBUG
+		[THIS_FILE]
+	#endif
+	</title>
+
+	<startpos>topleft</startpos>
+
+<script>
+<![CDATA[
+
+'--------------------------------------------------------------------------
+' (c) NAVO 2003 Ltd.
+' Spikowski Piotr
+'
+' Konfiguracja paska szybkiego dostępu
+'--------------------------------------------------------------------------
+
+'MessageBox...
+#include "50122"
+'view_message
+#include "50516"
+'fire_choice_list
+#include "50200"
+'isOutlookBarVisible
+#include "50129"
+
+'setuserprofileByID
+#include "50203"
+
+'menu_insert2table
+#include "50635"
+
+#include "50628"
+
+#define TABLE_MENU_ROOT		100
+
+dim g_pOutlookBar	'Reprezentuje wszystkie opcjie outlookbar'a
+set g_pOutlookBar = nothing
+
+dim g_bCurrentUser	'Czy edycja odbywa sie dla aktualnie zalogowanego
+g_bCurrentUser = true
+
+function fopen(): fopen = false
+
+	'Strone konfiguracji outlookbar'a można uruchomić
+	'tylko jeden raz
+	if (trans_.isvar(GVAR_SETUP_OUTLOOKBAR)) then
+		if (trans_.var(GVAR_SETUP_OUTLOOKBAR)=1) then
+			view_message 6289, 0
+			exit function
+		end if
+	end if
+
+	trans_.var(GVAR_SETUP_OUTLOOKBAR) = CLng(1)
+
+	'Konfiguracja outlookbar'a odbywa się przy otwartym
+	'okienku outlookbar'a. Wymuszamy pojawienie się tego
+	'okienka jeżeli nie jest aktualnie widoczne
+	showOutlookBar
+
+	'Wstawiamy do naszej strony menu rezprezentowane przez
+	'poszczegolne wiersze tabelki
+	menu2table
+
+	'Ustawiamy zmienna ktora jest kolekcja opcji
+	'dostepnych na toolbar'ze
+	set g_pOutlookBar = new COutlookBar
+
+	if (trans_.isvar(GVAR_MODALRES4)) then
+		'Jeżeli konfiguracja ma się odbywac dla innego user'a
+		'niz aktualnie zalogowany to bedzie ta zmienna
+		'Wtedy ustawiamy ta informacje do klasy odpowiedzialnej
+		'za konfiguracje itd.
+		g_pOutlookBar.setUser trans_.var(GVAR_MODALRES4)
+		g_bCurrentUser = (CLng(trans_.var(GVAR_MODALRES4)) = CLng(trans_.var(GVAR_USER)))
+	end if
+
+	'Uruchomienie w trybie z możliwością edycji pozycji
+	g_pOutlookBar.EditMode
+
+	'Wczytaj wszystkie zapisane dla danego uzytkownika
+	'opcje menu
+	g_pOutlookBar.load
+
+	'Rysujemy wszystkie aktualnie dostepne opcje
+	'naszego outlookbar'a (załadowane)
+	g_pOutlookBar.Render
+
+	fopen = true
+end function
+
+function fclose()
+
+	'Wychodząc automatycznie zapisujemy wprowadzone
+	'zmiany.
+	if (not g_pOutlookBar.save()) then
+		view_message 6289, 0
+	else
+		view_message 4117, 0
+	end if
+
+	'Przed wyjściem przywracamy orginalny stan outlookbar'a
+	'tzn. chowamy go gdy był ukryty i nic nie robimy gdy
+	'był pokazany
+	LoadToolbar
+
+	'Gdy edycja odbywała się dla aktualnego użytkownika
+	if (g_bCurrentUser) then
+	
+		'Jeżeli nie pokazał się pasek s.d. to odpowiedni
+		'komunikat czy go pokazac skoro byl konfigurowany
+		if (not isOutlookBarVisible()) then
+			if MessageBoxAndForget("Dokonałeś konfiguracji paska szybkiego dostępu jednak w preferencjach programu nie zaznaczyłeś by ten pasek pokazywać. Chcesz go wyświetlać od tego momentu?", "Pasek szybkiego dostępu nie jest widoczny", vbYesNo, vbQuestion, USERPROF_SHOW_OUTLOOKBAR)=vbYes then
+				'Pokazuj pasek szybkiego dostępu
+				showOutlookBar
+				'Zapisz ustawienia
+				SaveToolbar
+				
+				'Teraz to naprawde zapisz. Rezultat nas nie interesi
+				trans_.saveobjects
+			end if
+		end if
+
+	end if
+
+	'Jezeli jest on pokazany to renderujemy ale 
+	'nie w trybie edycyjnym i tylko dla aktualnie
+	'zalogowanego użytkownika
+	if (isOutlookBarVisible()) then
+
+		if (not g_bCurrentUser) then
+			'Jeżeli edycja nie odbywała się dla aktualnie 
+			'zalogowanego użytkownika to ładujemy dla 
+			'naszego wszystko jeszcze raz
+			
+			'Ustawiamy zmienna ktora jest kolekcja opcji
+			'dostepnych na toolbar'ze tak by wszystko wyczyscic
+			set g_pOutlookBar = new COutlookBar
+
+			'Wczytaj wszystkie zapisane dla danego uzytkownika
+			'opcje menu
+			g_pOutlookBar.load
+
+		end if
+		
+		'Przejście do trybu roboczego
+		g_pOutlookBar.WorkingMode
+
+		'Gdy nie ma opcji na outlookbar'ze dodaj specjalny skrot 
+		'umozliwiajacy konfiguracje paska szybkiego dostepu
+		g_pOutlookBar.AddExtraTemporaryOption
+
+		'Rysujemy wszystkie aktualnie dostepne opcje
+		'naszego outlookbar'a (załadowane)
+		g_pOutlookBar.Render
+	end if
+
+	'Konfiguracja juz nie jest uruchomiona
+	trans_.var(GVAR_SETUP_OUTLOOKBAR) = CLng(0)
+
+	fclose = true
+end function
+
+'--------------------------------------------------------------------------
+' Kopiuj odpowiednie pozycje menu na nasza strone tzn. wstawiaj pozycje
+' menu na strone
+'--------------------------------------------------------------------------
+private function menu2table()
+	menu_insert2table TABLE_MENU_ROOT, _
+		"Tej pozycji menu nie można dodawać na pasek szybkiego dostępu", _
+		"Kliknij aby dodać pozycję menu na pasek szybkiego dostępu"
+end function
+
+'--------------------------------------------------------------------------
+' User zaznacza, który element chce aktualnie edytować
+'--------------------------------------------------------------------------
+function toolbar_selectitem(byref pHli)
+	'Zaznacz odpowiednia pozycje
+	g_pOutlookBar.selectItem CLng(pHli.prop(100))
+	'Przerysuj wszystko
+	g_pOutlookBar.render
+end function
+
+'--------------------------------------------------------------------------
+' Zmienia lub dodaje pozycję na pasku szybkiego dostępu
+'--------------------------------------------------------------------------
+function menu_addchangeitem(byref pHli)
+	dim pSelectedItem
+	set pSelectedItem = g_pOutlookBar.getSelectedItem()
+
+	if (pSelectedItem is nothing) then
+		MessageBox "Przed wykonaniem tej operacji musisz zaznaczyć na pasku szybkiego dostępu jaki element menu chcesz zmienić. Zrobisz to klikając na odpowiednią pozycję menu znajdującą się na pasku szybkiego dostępu.", "Nie zaznaczono elementu", vbOKOnly, vbInformation
+		exit function
+	end if
+
+	'Sutawiamy wybraną pozycję
+	pSelectedItem.m_bEmpty = false
+	pSelectedItem.m_nPictureID = pHli.prop(101)
+	pSelectedItem.m_strName = pHli.prop(100)
+	pSelectedItem.m_nCommandIID = pHli.prop(102)
+
+	dim pStatic
+	set pStatic = page_.ctrl(CLng(pHli.prop(103)))
+	set pSelectedItem.m_pHLI = pStatic.userprop
+
+	'Rysujemy wszystkie aktualnie dostepne opcje
+	'naszego outlookbar'a (załadowane)
+	g_pOutlookBar.Render
+end function
+
+function setup_startup_command(byref pHli)
+	setuserprofileByID USERPROF_STARTING_CMDID, cstr(pHli.prop(102)), cLng(trans_.var(GVAR_USER))
+	if trans_.saveobjects() then
+		page_.goback
+	end if
+end function
+
+'--------------------------------------------------------------------------
+' Przesuń zaznaczoną pozycję menu do góry
+'--------------------------------------------------------------------------
+function menu_moveup(byref pHli)
+
+	dim pSelectedItem
+	set pSelectedItem = g_pOutlookBar.getSelectedItem()
+
+	if (pSelectedItem is nothing) then
+		MessageBox "Przed wykonaniem tej operacji musisz zaznaczyć na pasku szybkiego dostępu jaki element menu chcesz zmienić. Zrobisz to klikając na odpowiednią pozycję menu znajdującą się na pasku szybkiego dostępu.", "Nie zaznaczono elementu", vbOKOnly, vbInformation
+		exit function
+	end if
+
+	if (pSelectedItem.m_nPosition<2) then
+		'Nie ma już gdzie przesuwać
+		exit function
+	end if
+
+	pSelectedItem.swap g_pOutlookBar.getItemAtPosition(pSelectedItem.m_nPosition - 1)
+
+	'Rysujemy wszystkie aktualnie dostepne opcje
+	'naszego outlookbar'a (załadowane)
+	g_pOutlookBar.Render
+
+end function
+
+'--------------------------------------------------------------------------
+' Przesuń zaznaczoną pozycję menu do dołu
+'--------------------------------------------------------------------------
+function menu_movedown(byref pHli)
+	dim pSelectedItem
+	set pSelectedItem = g_pOutlookBar.getSelectedItem()
+
+	if (pSelectedItem is nothing) then
+		MessageBox "Przed wykonaniem tej operacji musisz zaznaczyć na pasku szybkiego dostępu jaki element menu chcesz zmienić. Zrobisz to klikając na odpowiednią pozycję menu znajdującą się na pasku szybkiego dostępu.", "Nie zaznaczono elementu", vbOKOnly, vbInformation
+		exit function
+	end if
+
+	if (pSelectedItem.m_nPosition>(OUTLOOKBAR_MAX_OPTIONS-1)) then
+		'Nie ma już gdzie przesuwać
+		exit function
+	end if
+
+	pSelectedItem.swap g_pOutlookBar.getItemAtPosition(pSelectedItem.m_nPosition + 1)
+
+	'Rysujemy wszystkie aktualnie dostepne opcje
+	'naszego outlookbar'a (załadowane)
+	g_pOutlookBar.Render
+end function
+
+'--------------------------------------------------------------------------
+' Wyczyść zaznaczoną pozycję menu
+'--------------------------------------------------------------------------
+function menu_clear(byref pHli)
+	dim pSelectedItem
+	set pSelectedItem = g_pOutlookBar.getSelectedItem()
+
+	if (pSelectedItem is nothing) then
+		MessageBox "Przed wykonaniem tej operacji musisz zaznaczyć na pasku szybkiego dostępu jaki element menu chcesz zmienić. Zrobisz to klikając na odpowiednią pozycję menu znajdującą się na pasku szybkiego dostępu.", "Nie zaznaczono elementu", vbOKOnly, vbInformation
+		exit function
+	end if
+
+	pSelectedItem.m_bEmpty = true
+	pSelectedItem.m_nPictureID = 0
+	pSelectedItem.m_strName = ""
+	set pSelectedItem.m_pHLI = nothing
+	pSelectedItem.m_nCommandIID = 0
+
+	'Rysujemy wszystkie aktualnie dostepne opcje
+	'naszego outlookbar'a (załadowane)
+	g_pOutlookBar.Render
+end function
+
+'--------------------------------------------------------------------------
+' Kopiuj ustawienia outlookbar'a z szablonu uzytkownika
+'--------------------------------------------------------------------------
+function outlookbar_fromUser()
+	dim nChoice
+	nChoice = fire_choice_list(TYPEID_N5UZYTKOWNIK, "Wybór szablonu uzytkownika", "strNazwa", "eAktywny=N5UZYTKOWNIK_SZABLON", "", "")
+
+	if (nChoice>0) then
+
+		dim strOptions
+		strOptions = getuserprofileByID(USERPROF_OUTLOOKBAR_CONFIG, nChoice)
+
+		if (strOptions="") then
+			MessageBox "Szablon tego użytkownika nie ma zdefiniowanych pozycji menu na pasku szybkiego dostępu.", "Brak zdefiniowanego menu", vbOKOnly, vbInformation
+			exit function
+		end if
+	
+		'Ustawiamy ponownie zmienna ktora jest kolekcja opcji
+		'dostepnych na toolbar'ze by wyczyscic wszystkie 
+		'dokonane ustawienia do tego momentu
+		set g_pOutlookBar = new COutlookBar
+
+		'Uruchomienie w trybie z możliwością edycji pozycji
+		g_pOutlookBar.EditMode
+
+		'Wczytaj opcje od innego uzytkownika
+		g_pOutlookBar.load_options strOptions
+
+		'Rysujemy wszystkie aktualnie dostepne opcje
+		'naszego outlookbar'a (załadowane)
+		g_pOutlookBar.Render
+		
+	end if
+
+end function
+
+]]>
+</script>
+</config>
+
+<body>
+
+	<picture image='PICTURE_ARROW_UP'  href='varFunctionHLI="menu_moveup"' tip="Przesuń do góry pozycję menu na pasku szybkiego dostępu"/>
+	<picture image='PICTURE_ARROW_DOWN'  href='varFunctionHLI="menu_movedown"' tip="Przesuń do dołu pozycję menu na pasku szybkiego dostępu"/>
+	<picture image='PICTURE_REMOVE_ITEM'  href='varFunctionHLI="menu_clear"' tip="Wyczyść pozycję menu na pasku szybkiego dostępu"/>
+	<br/>
+
+	<table border='1'>
+		<tbody>
+			<tr style='STYLE_DESC_ROW'>
+				<td>
+					<t>Pozycje menu</t>
+				</td>
+			</tr>
+			<tr>
+				<td>
+					<table name='t##TABLE_MENU_ROOT' border='0'>
+						<tbody>
+						</tbody>
+					</table>
+				</td>
+			</tr>
+		</tbody>
+	</table>
+
+	<button style='STYLE_BUTTON' href='varFunction=outlookbar_fromUser' tip='Kopiuj ustawienia paska szybkiego dostępu z szablonu użytkownika'>z szablonu</button>
+
+</body>
+
+</page>

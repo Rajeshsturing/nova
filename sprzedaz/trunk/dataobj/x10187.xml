@@ -1,0 +1,327 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+
+#include "h1000.h" 
+#include "h1200.h" 
+#include "h1231.h" 
+#include "h1203.h" 
+#include "h1229.h" 
+#include "h1240.h" 
+
+prefix: zlp_
+-->
+<class>
+	<identifier>TYPEID_N5ZLECPROD</identifier>
+	<table>n5zlecprod</table>
+	<humanname>Zlecenie produkcyjne</humanname>
+	<idobj/>
+	
+	XDF_NRDOK
+
+	<embedded>
+		<name>dDataWyst</name>
+		<sqltype>SQLdate</sqltype>
+		<humanname>Data wystawienia</humanname>
+	</embedded>
+	<ref>
+		<name>pUzytRej</name>
+		<humanname>Uzytkownik rejestrujący</humanname>
+		<typeid>TYPEID_N5UZYTKOWNIK</typeid>
+	</ref>
+	<embedded>
+		<name>strUwagi</name>
+		<sqltype>SQLvc512</sqltype>
+		<humanname>Uwagi</humanname>
+	</embedded>
+	
+	XDF_REJDOWSCHEM
+	
+	<ref>
+		<name>pZadanie</name>
+		<humanname>Zadanie</humanname>
+		<typeid>TYPEID_N5ZADANIE</typeid>
+		<optional/>
+	</ref>
+
+	<ref>
+		<name>pKlient</name>
+		<humanname>Klient</humanname>
+		<typeid>TYPEID_N5KLIENT</typeid>
+		<optional/>
+	</ref>
+	<ref>
+		<name>pKlient_JO</name>
+		<humanname>Jednostka organizacyjna klienta</humanname>
+		<typeid>TYPEID_N5_KLIENT_JEDN_ORG</typeid>
+		<optional/>
+	</ref>
+	<ref>
+		<name>pZamowienie</name>
+		<humanname>Zamówienie</humanname>
+		<typeid>TYPEID_N5ZAMOWIENIE</typeid>
+		<optional/>
+	</ref>
+
+	<list>
+		<name>listPozycje</name>
+		<humanname>Pozycje zlecenia</humanname>
+		<typeid>TYPEID_N5POZZLECPROD</typeid>
+	</list>
+
+	XDF_EXTRAS
+
+	<ref>
+		<name>pNadZlec</name>
+		<humanname>Zlecenie nadrzędne</humanname>
+		<typeid>TYPEID_N5ZLECPROD</typeid>
+		<optional/>
+	</ref>
+	<embedded>
+		<name>dDataReal</name>
+		<sqltype>SQLdate</sqltype>
+		<humanname>Termin realizacji</humanname>
+		<nonempty/>
+	</embedded>
+
+	<!-- DB9 -->
+  XDF_OSTMODYF(zlp_)
+
+#ifdef ENABLE_DB11
+  <enum>
+    <name>zlp_eStatus</name>
+    <humanname>Status</humanname>
+    <item>symulacja</item>
+    <!-- przyjete do realizacji i zaplanowane -->
+    <item>zaakceptowane</item> 
+    <item>zrealizowane</item>
+    <item>wstrzymane</item>
+    <item>anulowane</item>
+    <item>inny</item>
+#ifdef _FRAM    
+    <optional/>
+#endif
+  </enum>
+#endif
+<cursors>
+	DEFAULT_CURSOR(wg numeru zlecenia,strNrDok)
+  <cursor>
+    <identifier>CRSR_PO_REJESTRZE_DOKUMENTOW</identifier>
+    <humanname>Wg rejestru</humanname>
+    <join></join>
+    <where>pRejestrDok=appvar_rejestr_dokumentow</where>
+    <orderby>dDataWyst</orderby>
+  </cursor>
+</cursors>
+
+<script>
+<![CDATA[
+function n5zlecprod_as_text()
+    n5zlecprod_as_text=this_.strNrDok
+end function
+
+'GetCurrentUser
+#include "50203"
+
+
+'make_dk_*
+#include "L50214.NXB"
+
+
+'getCurrentRKS
+#include "50120"
+
+
+
+function n5zlecprod_pNadZlec_change(oldval)
+	n5zlecprod_pNadZlec_change = true
+	if not this_.pNadZlec is nothing then
+		set this_.pKlient = this_.pNadZlec.pKlient	
+		if not this_.pNadZlec.pZamowienie is nothing then
+			set this_.pZamowienie = this_.pNadZlec.pZamowienie
+		end if
+	end if
+end function
+
+function n5zlecprod_initnew()
+
+	set this_.pRejestrDok =  trans_.getobj(TYPEID_N5REJESTRDOK,trans_.var(APPVAR_REJESTR_DOKUMENTOW) )
+	set this_.pSchematDekr = this_.pRejestrDok.pDefSchematdekr
+	set this_.pUzytRej = GetCurrentUser()
+	set this_.zlp_pUzytModyf = this_.pUzytRej
+  
+#ifdef ENABLE_DB11
+#ifndef _FRAM
+	this_.zlp_eStatus = clng(N5ZLECPRODS_SYMULACJA)
+#endif
+#endif
+
+	n5zlecprod_initnew = true
+end function
+
+function n5zlecprod_GenerateNextNum(): n5zlecprod_GenerateNextNum = false
+	dim strNrDok
+	if ((this_.strNrDok="") and (not this_.pRejestrDok is nothing)) then
+		if this_.pRejestrDok.n5rejestrdok_GenerateNextNum(strNrDok) then
+			this_.strNrDok =  strNrDok
+		else
+			n5zlecprod_GenerateNextNum = false
+			exit function
+		end if
+	end if
+	n5zlecprod_GenerateNextNum = true
+end function
+
+function n5zlecprod_check()
+	n5zlecprod_check = true
+end function
+
+
+function n5zlecprod_checkDate()
+#ifdef APPCONFIG_ZLECPROD_CHECKDATE_FALSE
+  n5zlecprod_checkDate = getCurrentRKS().n5rokksieg_checkdate_ext( this_.dDataWyst, false ) and this_.pRejestrDok.n5rejestrdok_checkdate (this_.dDataWyst)
+#else
+	n5zlecprod_checkDate = getCurrentRKS().n5rokksieg_checkdate( this_.dDataWyst ) and this_.pRejestrDok.n5rejestrdok_checkdate (this_.dDataWyst)
+#endif  
+end function
+
+function n5zlecprod_befins(): n5zlecprod_befins = false
+
+	if (not n5zlecprod_checkDate()) then
+		exit function
+	end if
+
+
+	if (not n5zlecprod_check()) then
+		exit function
+	end if
+
+	n5zlecprod_befins = n5zlecprod_GenerateNextNum()
+
+	if n5zlecprod_befins then
+		set this_.pDowodKsieg = make_dk_insert(this_.get_this(),this_.pSchematDekr,n5zlecprod_befins)
+	end if
+
+end function
+
+function n5zlecprod_befupd(): n5zlecprod_befupd = false
+	
+	if (not n5zlecprod_checkDate()) then
+		exit function
+	end if
+
+	if (not n5zlecprod_check()) then
+		exit function
+	end if
+
+	n5zlecprod_befupd = n5zlecprod_GenerateNextNum()
+
+	if n5zlecprod_befupd then
+		set this_.zlp_pUzytModyf = GetCurrentUser()
+		set this_.pDowodKsieg = make_dk_update(this_.get_this(),this_.pDowodKsieg,this_.pSchematDekr,n5zlecprod_befupd)
+	end if
+
+end function
+
+function n5zlecprod_befdel()
+	n5zlecprod_befdel = make_dk_delete(this_.get_this(),this_.pDowodKsieg) and n5zlecprod_checkDate()
+end function
+
+function n5zlecprod_realizuj()
+	'REV:KB:TODO: Leszek: dodać potrzebne parametry lub lepiej obiekt pomocniczy (klasa VBS)
+	'i zrobić realizację
+	'na pewno potrzebne:
+	'[out] pRP
+	'[out] pPP
+	'[out] pGMOperationHolder (to co napełniane do GM bezpośrednio) - obiekt VBS
+	'[in] pRejestrRP
+	'[in] pRejestrPP
+	'...???
+	'
+end function
+
+function n5zlecprod_undo_realizuj()
+	'REV:KB:TODO: Leszek: cofnięcie realizacji
+end function
+
+function n5zlecprod_kalkulacja()
+	'REV:KB:TODO: Leszek: wyliczenie wartości zlecenia wg aktualnych danych
+	'jeśli to samo co realizuj, ale bez zapisu - wywalić tę funkcję
+end function
+
+
+VDF_PREJESTRDOK_DISABLE_CHANGE(n5zlecprod)
+
+
+
+
+
+function n5zlecprod_fill_from_zamowienie(byref pZam):n5zlecprod_fill_from_zamowienie = false
+
+	set this_.pKlient = pZam.pKlient
+	set this_.pKlient_JO = pZam.pKlient_JO
+	
+	this_.dDataReal = pZam.dDataReal
+
+
+	set this_.pZamowienie = pZam
+	dim pozycja,nowa_pozycja
+	for each pozycja in pZam.listPozycje
+		if pozycja.pProdukt.eRodzaj = N5PRODUKT_TOWAR and pozycja.curIloscOpakPoz > 0 and pozycja.pProdukt.prod_cWyrob = "1"  then
+			set nowa_pozycja = this_.listPozycje.addnew()
+			nowa_pozycja.n5pozzlecprod_fill_from_pozzam(pozycja)
+			n5zlecprod_fill_from_zamowienie = true
+		else
+
+			if pozycja.pProdukt.eRodzaj <> N5PRODUKT_TOWAR then
+				trans_.message 1002 , 0 , "Pomijam pozycją zamówienia (usługa) "
+			else
+				if pozycja.pProdukt.prod_cWyrob <> "1" then
+					trans_.message 1002 , 0 , "Pomijam pozycją zamówienia (nie jest wyrobem) "
+				else
+					if pozycja.curIloscOpakPoz = 0 then
+						trans_.message 1002 , 0 , "Pomijam pozycją zamówienia (ilość pozostała do realizacji to 0) "
+					end if
+				end if
+			end if					
+
+		end if
+	next
+end function
+
+
+
+
+
+function n5zlecprod_fill_from_dokhandl(byval idDokHandl , byval nTypeDokHandl):n5zlecprod_fill_from_dokhandl = false
+
+	#ifdef _DEBUG
+	trans_.message 1002 , 0 , "DEBUG: n5zlecprod_fill_from_dokhandl"
+	#endif
+
+	dim pDokHandl:set pDokHandl = trans_.getobj(nTypeDokHandl,idDokHandl)
+	if pDokHandl is nothing then
+		exit function
+	end if
+
+	select case pDokHandl.type
+		case TYPEID_N5ZAMOWIENIE
+			n5zlecprod_fill_from_dokhandl = this_.n5zlecprod_fill_from_zamowienie(pDokHandl)
+		case else
+			#ifdef _DEBUG
+			trans_.message 1002 , 0 , "DEBUG: n5zlecprod_fill_from_dokhandl: nie znam funckji cywpełniającej dla tego typu dokumentu handlowego:" + cstr(pDokHandl.type)
+			#endif
+			exit function
+	end select
+
+end function
+
+
+
+
+]]>
+</script>
+	
+	
+	
+	
+</class>

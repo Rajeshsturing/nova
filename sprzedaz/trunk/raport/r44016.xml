@@ -1,0 +1,1444 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+
+#comment version: 2024-10-07
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1004_cmdid.h"
+#include "h1200.h"
+#include "h1220.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1240.h"
+#include "h1250_raport_macros.h"
+#include "50519"
+
+#define CREATOR_TITLE  Import wyciągów bankowych
+
+#define CTRLID_ROW_BUTTONS        101
+#define CTRLID_RESULT_TABLE       102
+#define CTRLID_ACTION_TABLE       103
+#define CTRLID_PODMIOT            104
+#define CTRLID_TRANSAKCJA         105
+#define CTRLID_REJESTR_DOKUMENTOW 106
+#define CTRLID_BANK_ACCOUNT       107
+#define CTRLID_SCHEMAT_DEKR       108
+#define CTRLID_SALDO							109
+
+#define PROP_ROW_IDENT          201
+#define PROP_REC_NUM            202
+
+#comment Kolejne numery kolumn na raporcie
+#define KOL_DATA_OPERACJI         2
+#define KOL_KONTRAHENT            3
+#define KOL_OPIS                  4
+#define KOL_NR_DOK								5
+#define KOL_KWOTA                 6
+#define KOL_KWOTA_VAT							7
+#define KOL_PODMIOT               8
+#define KOL_TRANSAKCJA            9
+#define KOL_SCHEMAT               10
+#define KOL_ACTIONS               11
+
+#macro QXC_NR_RACHUNKU_LINE(_field_nr_)	\
+If iNr = _field_nr_ And pFirma.strRachunek##_field_nr_ <> "" Then	\
+	GetNrRachunku = pFirma.strRachunek##_field_nr_	\
+	If Len(GetNrRachunku) = 28 Then					\
+		GetNrRachunku = Mid(GetNrRachunku, 3) \
+    End If		\
+	Exit Function	\
+End If
+
+
+#define CTRLID_START_DATE					501
+#define CTRLID_END_DATE					502
+
+-->
+<page style ='STYLE_PAGE'>
+  <config>
+      <title>
+  CREATOR_TITLE
+  #ifdef _DEBUG
+  [THIS_FILE]
+  #endif
+  </title>
+      <script>
+          <![CDATA[
+
+#include "50518"
+#include "50211" 
+#include "50200"
+#include "50122"
+#include "50101"
+#include "50226"
+
+'choose_rejestr_dok
+#include "50517"
+
+'cButton,cDrawReport
+#include "50526"
+
+'rejestr dokumentów dla płatności
+dim g_idRejestr: g_idRejestr = clng(0)
+dim g_oRejestr: set g_oRejestr = nothing
+'rodzaj płatności: 1 - Bank; 2 - Kasa; domyślnie Bank
+dim g_iRodzajPlat: g_iRodzajPlat = 1
+'waluta rejestru
+dim g_pWalPodm: set g_pWalPodm = nothing
+dim g_strSkrot: g_strSkrot = "PLN"
+
+'tablica z danymi o płatnościach
+dim g_oRecArray : set g_oRecArray = nx_.new_array()
+
+'checkbox czy zapisywać nr kont
+dim g_strBankAccount: g_strBankAccount = "1"
+'saldo początkowe i końcowe
+dim g_curSaldoStart: g_curSaldoStart = ccur(-1)
+dim g_curSaldoEnd: g_curSaldoEnd = ccur(-1)
+
+'-----------------
+'rekord zaznaczony
+'-----------------
+class cPlatnoscModel
+
+  public p_dDataOper
+  public p_strKontrahent
+  public p_strKontrahentData
+  public p_strKodRach
+  public p_curKwotaPodm
+  public p_wrefPodmiot
+  public p_listTransakcjaID
+  public p_strOpis
+  public p_pFormPlatnosc
+  public p_bSaved
+  public p_nRowIdent
+  public p_listSymbolTrans
+  public p_idSchematDekr
+  public p_strSchematDekr
+  public p_curVAT
+  public p_strNrDok
+  public p_strNrRef
+  public p_strKodRachVAT
+  public p_IdPlatnosc
+  public p_listKwotaTrans
+
+  'nxm-only
+  public new_bank_account
+  public new_tax_id
+
+
+  public sub class_initialize()
+    p_dDataOper = trans_.afc.globals.nulldate()
+    p_strKontrahent = ""
+    p_strKontrahentData = ""
+    p_strKodRach = ""
+    p_curKwotaPodm = CCur(0)    
+    set p_wrefPodmiot = nothing
+    set p_listTransakcjaID = nx_.new_array()
+    p_strOpis = ""
+    set p_pFormPlatnosc = nothing
+    p_bSaved = false
+    p_nRowIdent = clng(0)
+    set p_listSymbolTrans = nx_.new_array()
+    p_idSchematDekr = clng(0)
+    p_strSchematDekr = ""
+    p_curVAT = CCur(0)
+    p_strNrDok = ""
+    p_strNrRef = ""
+    p_strKodRachVAT = ""
+    p_IdPlatnosc = clng(0)
+    set p_listKwotaTrans = nx_.new_array()
+
+    new_bank_account = ""
+    new_tax_id = ""
+  end sub
+
+  public sub class_terminate()   'OK
+    set p_wrefPodmiot = nothing
+    set p_listTransakcjaID = nothing
+    set p_pFormPlatnosc = nothing
+    set p_listSymbolTrans = nothing
+    set p_listKwotaTrans = nothing
+  end sub
+
+end class
+
+
+dim g_dtStartDate
+dim g_dtEndDate
+
+'-----------------------------------------------
+'standardowa funkcja wolana przy otwarciu strony
+'-----------------------------------------------
+function fopen : fopen = false
+    g_dtStartDate = trans_.var(GVAR_TODAY)
+	g_dtEndDate = trans_.var(GVAR_TODAY)
+    
+  if not HARUI(CMDID_RAPORT_IMPORT_WYCIAGOW_BANKOWYCH) then
+    trans_.message 7000, 0, "Nie posiadasz uprawnień do kreatora importu wyciągów bankowych."
+    exit function
+  end if
+  
+  'inicjalizacja obiektów dla rysowania wyników
+  initialObjectsDraw
+  
+  fRefresh
+
+  fopen = true
+end function
+
+'------------------------------------------------
+'standardowa funkcja wolana na przycisk 'odswiez'
+'------------------------------------------------
+function fRefresh
+
+  'Parametry domyślne
+  'ustawienie rejestru dokumentów (Bank/Kasa)
+  g_idRejestr = choose_rejestr_dok("N5REJESTRDOK_BANKOWY",true,"Wybierz rejestr dokumentów")
+  if g_idRejestr = 0 then
+		trans_.message 7000, 0, "Nie wybrano rejestru dokumentów"
+    exit function
+  else
+    set g_oRejestr = trans_.getobj(TYPEID_N5REJESTRDOK,g_idRejestr)
+    if not g_oRejestr is nothing then
+      'ustawienie rodzaju płatności
+      if g_oRejestr.eTyp = clng(N5REJESTRDOK_BANKOWY) then
+        'Bank
+        g_iRodzajPlat = 1
+      else
+        'Kasa
+        g_iRodzajPlat = 2
+      end if
+      'ustawienie waluty (domyślnie waluta rejestru)
+      if not g_oRejestr.wrefParam1 is nothing then
+        set g_pWalPodm = trans_.getobj(TYPEID_N5JEDNOSTKA,g_oRejestr.wrefParam1.idobj)
+        g_strSkrot = g_pWalPodm.strSkrot
+      end if      
+    end if  
+  end if
+  
+  'wyczyść listę z danymi i napełnij od nowa
+  set g_oRecArray = nx_.new_array()
+  
+  fillResults
+end function
+
+'--------------------
+'wypelnianie wynikami
+'--------------------
+function fillResults()
+  dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(page_.ctrl(CTRLID_RESULT_TABLE)).removeall
+  
+  'nagłówek strony
+  drawButtons
+  drawHeader pTB
+    
+  if g_oRecArray.count > 0 then  
+    'numery kolejnych rekordów
+    dim iRecNr : iRecNr = 1
+    dim iter
+    for iter = 0 to g_oRecArray.upper_index
+      'if not g_oRecArray(iter).p_bSaved then
+        buildRekord g_oRecArray(iter), pTB, iRecNr
+      'end if
+      iRecNr = iRecNr + 1
+    next
+    
+    'przycisk
+    drawActionTable
+  else
+    pTB.newrow
+    pTB.row.fontsize = 4
+    pTB.newcell.addtext "Naciśnij przycisk Wczytaj, aby pobrac dane z pliku."
+    pTB.cell.colspan = 11
+  end if
+           
+end function
+
+'----------------
+'przycisk Wczytaj
+'----------------
+sub drawButtons
+  dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(page_.ctrl(CTRLID_ROW_BUTTONS)).removeall
+  
+  pTB.newrow.newcell
+  'pTB.row.border = 1
+  pTB.cell.align = ALIGN_LEFT
+  
+  drawButton pTB, "Wczytaj z pliku", 12, "Wczytuje wyciąg z pliku", "read_statement_from_file", 0, 0
+
+#ifdef APPCONFIG_PAYMENT_GATEWAYS
+
+    drawButton pTB, "Stripe", 12, "Wczytuje wyciąg ze Stripe", "read_stripe", 0, 0
+    drawButton pTB, "PayPal", 12, "Wczytuje wyciąg z PayPal", "read_paypal", 0, 0
+    drawButton pTB, "Przelewy24", 12, "Wczytuje wyciąg z Przelewy24", "read_przelewy24", 0, 0
+    drawButton pTB, "DHL", 12, "Wczytuje pobrania z DHL", "read_dhl", 0, 0
+
+    pTB.newcell
+	pTB.addctrl CTRL_TYPE_STATIC, -1
+	with pTB.element
+        .text = "Data początkowa"
+	end with
+	
+	pTB.addctrl CTRL_TYPE_DATE, -1
+    with pTB.element
+      .forecolor = BLACK_COLOR
+      .customredirect = clng(CTRLID_START_DATE)
+      .transfer = page_.createtransfer("custom")
+    end with  
+    pTB.cell.align = ALIGN_LEFT
+	
+	pTB.newcell
+	pTB.addctrl CTRL_TYPE_STATIC, -1
+	with pTB.element
+        .text = "Data końcowa"
+	end with
+	pTB.addctrl CTRL_TYPE_DATE, -1
+	with pTB.element
+      .forecolor = BLACK_COLOR
+      .customredirect = clng(CTRLID_END_DATE)
+      .transfer = page_.createtransfer("custom")
+    end with  
+    pTB.cell.align = ALIGN_LEFT
+#endif
+	
+end sub
+
+function c##CTRLID_START_DATE##_ongetdata(byref oCtrl) : c##CTRLID_START_DATE##_ongetdata = true
+    oCtrl.value = g_dtStartDate
+end function
+
+function c##CTRLID_START_DATE##_ondataentered(byref oCtrl, byval newValue) : c##CTRLID_START_DATE##_ondataentered = true
+  g_dtStartDate = newValue
+end function
+
+function c##CTRLID_END_DATE##_ongetdata(byref oCtrl) : c##CTRLID_END_DATE##_ongetdata = true
+    oCtrl.value = g_dtEndDate
+end function
+
+function c##CTRLID_END_DATE##_ondataentered(byref oCtrl, byval newValue) : c##CTRLID_END_DATE##_ondataentered = true
+  g_dtEndDate = newValue
+end function
+'---------------------------
+'wczytaj dane o płatnościach
+'---------------------------
+function read_statement_from_file(pHLI)
+  'wczytanie pliku .xml
+	dim strPath, strMask
+	
+	strMask = "*.sta|*.mt940|*.mt940x|*.txt|*.emt"
+
+	strPath = lcase(SelectFile("c:\", strMask, ""))
+    
+	if (strPath = "") then
+        trans_.message 7000, 0, "Nie wybrano pliku"
+        exit function
+	end if
+  
+  'wyczyść listę z danymi i napełnij od nowa
+  set g_oRecArray = nx_.new_array()
+  
+  'odczytaj dane z pliku
+  'parseBank strPath
+  
+    dim strTypeStatement : strTypeStatement = "PL_MBANK_MT940"
+    
+	if right(strPath, 6) = "mt940x" then
+            strTypeStatement = "PL_SANTANDER_MT940x"
+        else
+            if right(strPath, 5) = "mt940" then
+                strTypeStatement = "PL_SANTANDER_MT940"
+            else
+                if right(strPath, 3) = "sta" then
+                #ifdef _INTERCO	  
+                    strTypeStatement = "PL_ING_MT940"
+                #endif
+                #ifdef _ABAKUS	  
+                    strTypeStatement = "PL_ALIOR_MT940"
+                #endif
+                #ifdef _GLOBTECHNIC	  
+                    strTypeStatement = "PL_MBANK_MT940"
+                #endif
+            else
+                strTypeStatement = "PL_MBANK_MT940"
+            end if
+        end if
+    end if
+  
+  reconcile_statement strTypeStatement, strPath
+  
+  fillResults
+end function
+
+function read_stripe(oHLI)
+    set g_oRecArray = nx_.new_array()
+
+    reconcile_statement "STRIPE", "stripe"
+
+    fillResults
+end function
+
+function read_paypal(oHLI)
+    set g_oRecArray = nx_.new_array()
+
+    reconcile_statement "PAYPAL", "paypal"
+
+    fillResults
+end function
+
+function read_przelewy24(oHLI)
+    set g_oRecArray = nx_.new_array()
+
+    reconcile_statement "PL_PRZELEWY24", "przelewy24"
+
+    fillResults
+end function
+
+function read_dhl(oHLI)
+    dim strPath : strPath = lcase(SelectFile("c:\", "*.xlsx", ""))
+    
+    if (strPath = "") then
+        trans_.message 7000, 0, "Nie wybrano pliku"
+        exit function
+    end if
+  
+    'wyczyść listę z danymi i napełnij od nowa
+    set g_oRecArray = nx_.new_array()
+ 
+    reconcile_statement "DHL_COD", strPath
+ 
+    fillResults
+	
+end function
+
+function reconcile_statement(byval strFormat, byval strPath)
+    
+    'payment reconcilation results
+    dim rsPRR : set rsPRR = doc_.nxm_net_.reconcile_payments(strFormat, strPath, g_dtStartDate, g_dtEndDate, CStr(g_idRejestr))
+    
+    while not rsPRR.EOF
+        dim oPlat: set oPlat = new cPlatnoscModel
+        oPlat.p_dDataOper = CDate(rsPRR.fields("date").value)
+
+        oPlat.p_strKontrahent = rsPRR.fields("other_side_name").value
+        oPlat.p_strKontrahentData = rsPRR.fields("other_side_data").value
+
+        oPlat.p_strKodRach = rsPRR.fields("other_side_account").value
+        oPlat.p_curKwotaPodm = ccur(rsPRR.fields("amount").value)
+        oPlat.p_curVAT = ccur(rsPRR.fields("vat_amount").value)
+        
+        oPlat.p_strOpis = rsPRR.fields("description").value
+        oPlat.p_strNrDok = rsPRR.fields("doc_number").value
+        oPlat.p_strNrRef = CStr(g_idRejestr) + "-" + rsPRR.fields("reference_number").value
+        
+        oPlat.p_strKodRachVAT = rsPRR.fields("other_side_account").value
+        
+        if rsPRR.fields("existing_payment_id").value <> Empty then
+            oPlat.p_IdPlatnosc = clng(rsPRR.fields("existing_payment_id").value)
+			oPlat.p_bSaved = true
+        else
+            oPlat.p_IdPlatnosc = clng(0)
+			oPlat.p_bSaved = false
+        end if 
+
+        dim idFinTrans : idFinTrans = clng(0)
+
+        if oPlat.p_IdPlatnosc > clng(0) then
+            'ustaw schemat dekretacji
+            dim oPlatnosc: set oPlatnosc = trans_.getobj(TYPEID_N5PLATNOSC, oPlat.p_IdPlatnosc)
+            if not oPlatnosc.pSchematDekr is nothing then
+                oPlat.p_idSchematDekr = oPlatnosc.pSchematDekr.IdObj
+                oPlat.p_strSchematDekr = oPlatnosc.pSchematDekr.strNazwa
+            end if
+			
+			'ustaw istniejace infomacje
+            set oPlat.p_wrefPodmiot = oPlatnosc.wrefPodmiot
+			idFinTrans = oPlatnosc.listPozycje.get(1).pTransakcja.IdObj
+        end if
+        
+
+        if rsPRR.fields("fintrans_id").value <> Empty then
+            idFinTrans = clng(rsPRR.fields("fintrans_id").value)
+        end if
+
+        oPlat.new_bank_account = rsPRR.fields("new_bank_account").value
+        oPlat.new_tax_id = rsPRR.fields("new_tax_id").value
+
+        if idFinTrans > clng(0) then
+            dim oFinTrans : set oFinTrans = trans_.getobj(TYPEID_N5TRANSAKCJA, idFinTrans)
+                
+            oPlat.p_listTransakcjaID.add idFinTrans
+		    oPlat.p_listSymbolTrans.add oFinTrans.strSymTrans	
+		    oPlat.p_listKwotaTrans.add oPlat.p_curKwotaPodm
+        end if
+
+        if not isPrzeksiegowanieVAT(oPlat.p_strKodRachVAT) then				
+            if rsPRR.fields("party_id").value <> Empty and rsPRR.fields("party_type").value <> Empty then
+                set oPlat.p_wrefPodmiot = trans_.getobj(clng(rsPRR.fields("party_type").value), clng(rsPRR.fields("party_id").value))
+            end if        
+          
+            g_oRecArray.Add oPlat
+        else
+#ifdef _DEBUG
+            trans_.message 1002, 0, "DEBUG: Pomijam operację przeksięgowania dla: " + oPlat.p_strOpis
+#endif				
+        end if
+
+  	    rsPRR.MoveNext
+    wend
+
+    reconcile_statement = true
+end function
+
+
+'-------------------------------------------------------
+'zwraca true gdy wystąpi błąd podaczas wykonania serwisu
+'-------------------------------------------------------
+function IsServiceError(byref nxm_features, byref error_desc)
+  select case nxm_features.last_error_code
+    case "000"
+      error_desc = ""
+      IsServiceError = false
+      exit function
+    case "CORE.E300"
+      error_desc = "Nie posiadasz odpowiedniej licencji do wykonania żądanej operacji"      
+    case else
+      error_desc = nxm_features.last_error_description
+  end select
+  IsServiceError = true
+end function
+
+'-----------------------------------------------
+'sprawdza czy operacja nie jest przeksięgowaniem VAT
+'-----------------------------------------------
+function isPrzeksiegowanieVAT(byval strKodRachVAT): isPrzeksiegowanieVAT = false
+	dim nRachBankowy: nRachBankowy = 0
+	if not g_oRejestr.rejdok_pRejestrDok is nothing then
+		if g_oRejestr.rejdok_pRejestrDok.eTyp = N5REJESTRDOK_BANKOWY_VAT and g_oRejestr.rejdok_pRejestrDok.rejdok_iNrRachBank > 0 then
+			isPrzeksiegowanieVAT = (strKodRachVAT = GetNrRachunku(g_oRejestr.rejdok_pRejestrDok.rejdok_iNrRachBank))
+		end if
+	end if
+end function
+
+'-------------------------------------------------------------------------
+'pobiera nr rachunku na podstawie iNr => radiobutton z formularza rejestru
+'-------------------------------------------------------------------------
+function GetNrRachunku(byval iNr): GetNrRachunku = ""
+	dim pFirma: set pFirma = getCurrentFirma()
+	QXC_NR_RACHUNKU_LINE(1)
+	QXC_NR_RACHUNKU_LINE(2)
+	QXC_NR_RACHUNKU_LINE(3)
+	QXC_NR_RACHUNKU_LINE(4)
+	QXC_NR_RACHUNKU_LINE(5)
+	QXC_NR_RACHUNKU_LINE(6)
+	QXC_NR_RACHUNKU_LINE(7)
+	QXC_NR_RACHUNKU_LINE(8)
+	QXC_NR_RACHUNKU_LINE(9)
+	QXC_NR_RACHUNKU_LINE(10)
+end function
+
+'------------------------------
+'wyszukuje kod przelewu z opisu
+'------------------------------
+function findKodPrzelewu(byref strOpis): findKodPrzelewu = ""
+  dim tab: tab = Split(strOpis, " ")
+  dim iter
+  for iter = 0 to UBound(tab)		
+    if len(tab(iter)) = 11 and mid(tab(iter),4,1) = "-" and mid(tab(iter),8,1) = "-" then
+      if isNumeric(replace(tab(iter),"-","")) then
+        findKodPrzelewu = tab(iter)
+        exit function
+      end if
+    end if
+  next
+end function
+
+'---------------
+'naglówek tabeli
+'---------------
+function drawHeader(byval pTB)
+  pTB.newrow
+  pTB.row.styleitem = STYLE_TABLE_HEADER
+  pTB.row.fontsize = 4
+  g_oDrawRep.drawCellHead pTB, 1, "LP", 500, "", 1, 1, false
+  g_oDrawRep.drawCellHead pTB, KOL_DATA_OPERACJI, "Data operacji", 1000, "", 1, 1, false
+  g_oDrawRep.drawCellHead pTB, KOL_KONTRAHENT, "Kontrahent", 5000, "", 1, 1, false
+  g_oDrawRep.drawCellHead pTB, KOL_OPIS, "Opis", 4000, "", 1, 1, false
+  g_oDrawRep.drawCellHead pTB, KOL_NR_DOK, "Nr dokumentu", 3000, "", 1, 1, false
+  g_oDrawRep.drawCellHead pTB, KOL_KWOTA, "Kwota", 2000, "", 1, 1, false
+  g_oDrawRep.drawCellHead pTB, KOL_KWOTA_VAT, "Kwota VAT", 2000, "", 1, 1, false
+  g_oDrawRep.drawCellHead pTB, KOL_PODMIOT, "Podmiot", 4000, "", 1, 1, false
+  g_oDrawRep.drawCellHead pTB, KOL_TRANSAKCJA, "Transakcja", 4000, "", 1, 1, false
+  g_oDrawRep.drawCellHead pTB, KOL_SCHEMAT, "Schemat dekretacji", 4000, "", 1, 1, false  
+  g_oDrawRep.drawCellHead pTB, KOL_ACTIONS, "", 2000, "", 1, 1, false  
+end function
+
+'-------------------------
+'wypisanie jednego rekordu
+'-------------------------
+function buildRekord(byref oPlatnosc, byref pTB, byval nLP)
+ 
+  pTB.newrow
+  'ustawienie właściwości dla wiersza
+  'właściwości całego wiersza
+  pTB.row.fontsize = 3  
+  dim crColor: crColor = setRowStyle(nLP)
+  pTB.row.styleitem = crColor
+  dim nInx: nInx = nLP - 1
+	
+	'przy pnownym wczytaniu zapisanej płatności koloruj wiersz na żółto
+	if oPlatnosc.p_IdPlatnosc > clng(0) then
+		pTB.row.styleitem = STYLE_TABLE_INFO
+	end if
+  
+  set pTB.row.userprop = doc_.createhli()
+  pTB.row.userprop.prop(PROP_ROW_IDENT) = pTB.row.ident
+  pTB.row.userprop.prop(PROP_REC_NUM) = nInx
+  oPlatnosc.p_nRowIdent = pTB.row.ident
+  
+  g_oDrawRep.drawCell pTB, cstr(nLP), "Verdana", ALIGN_RIGHT, 0, 0, ""
+  g_oDrawRep.drawCellDate pTB, 0, oPlatnosc.p_dDataOper, "Verdana", crColor
+  
+  dim strKontrahent : strKontrahent = oPlatnosc.p_strKontrahent
+  if oPlatnosc.p_strKontrahentData <> Empty then
+    strKontrahent = strKontrahent + " (" + oPlatnosc.p_strKontrahentData + ")"
+  end if
+  
+  g_oDrawRep.drawCell pTB, AddSpace(strKontrahent, 24), "Verdana", ALIGN_LEFT, 0, 0, ""
+  
+  if oPlatnosc.new_tax_id <> Empty then
+    pTB.element.forecolor = RGB(56, 163, 165)
+    drawButton pTB, "Dodaj", 1, "Dodaje nowego kontrahenta", "AddNewBusinessEntityByTax", pTB.row.ident, nInx
+	 
+    pTB.cell.align = clng(ALIGN_LEFT)
+  end if
+
+  g_oDrawRep.drawCell pTB, AddSpace(oPlatnosc.p_strOpis,20), "Verdana", ALIGN_LEFT, 0, 0, ""
+  g_oDrawRep.drawCell pTB, oPlatnosc.p_strNrDok, "Verdana", ALIGN_LEFT, 0, 0, ""
+  g_oDrawRep.drawCellCur  pTB, 0, oPlatnosc.p_curKwotaPodm, "Verdana", 2, 12, g_strSkrot, crColor
+  g_oDrawRep.drawCellCur  pTB, 0, oPlatnosc.p_curVAT, "Verdana", 2, 10, g_strSkrot, crColor
+  pTB.newcell
+
+  g_oDrawRep.drawPictureSize pTB, PICTURE_WYBOR, "Wybór podmiotu", "std_choice_wildref_hli", nInx, WIDTH_FOR_12PX
+  g_oDrawRep.drawEdit pTB, CTRLID_PODMIOT, 32, 0, "", WHITE_COLOR
+  pTB.cell.keepline = true
+  pTB.newcell
+
+  g_oDrawRep.drawPictureSize pTB, PICTURE_CHOICE_N5TRANSAKCJA, "Wybór transakcji", "std_choice_trans_list", nInx, WIDTH_FOR_12PX
+  g_oDrawRep.drawEdit pTB, CTRLID_TRANSAKCJA, 20, 0, "", WHITE_COLOR
+  pTB.cell.keepline = true
+  pTB.newcell
+  
+g_oDrawRep.drawPicture  pTB, PICTURE_CHOICE_N5SCHEMATDEKR, "Wybór schematu", "choose_schemat_dekr", nInx
+  g_oDrawRep.drawEdit pTB, CTRLID_SCHEMAT_DEKR, 20, 0, "", WHITE_COLOR
+  pTB.cell.keepline = true  
+  pTB.newcell
+
+  drawButton pTB, "Przypisz", 1, "Przypisuje od najstarszej nierozliczonej transakcji", "setTrans", pTB.row.ident, nInx
+  drawButton pTB, "Edytuj", 1, "Otwiera formularz płatnosci", "editForm", pTB.row.ident, nInx
+  
+    if oPlatnosc.p_curKwotaPodm = oPlatnosc.p_curVAT then
+        drawButton pTB, "Tylko VAT MPP", 1, "Otwiera formularz płatnosci wypelniony rozliczeniem VAT", "editFormVAT", pTB.row.ident, nInx
+    end if
+
+end function
+
+sub drawButton(byref pTB, byval strName, byval nSize, byval strTip, byval strFunName, byval idProp1, byval idProp2)
+  pTB.addctrl CTRL_TYPE_BUTTON, -1
+  with pTB.element
+    set .hli = doc_.createhli()
+    .hli.prop(GVAR_FUNCTIONHLI) = strFunName
+    .hli.prop(PROP_ROW_IDENT) = CLng(idProp1)
+    .hli.prop(PROP_REC_NUM) = CLng(idProp2)
+    .text = strName
+    .size = nSize
+    .tip = strTip
+    .styleitem = STYLE_BUTTON
+  end with
+  pTB.cell.keepline = true
+  pTB.cell.align = ALIGN_CENTER     
+end sub
+
+'-------------------------------------------
+'Dodaje spacje do string wg zadanej gługości
+'-------------------------------------------
+function AddSpace(byval strText, byval iLiczZnak) : AddSpace = strText
+	if Len(strText) > 0 then
+		dim tab: tab = Split(strText, " ")
+		dim iter, i
+		dim spacja: spacja = chr(32)
+		for iter = 0 to UBound(tab)
+			if Len(tab(iter)) > iLiczZnak then
+				dim count: count = Int(Len(tab(iter)) / iLiczZnak)
+				dim strResult: strResult = ""
+				for i = 0 to count
+					dim strPart: strPart = Mid(tab(iter),(i*iLiczZnak)+1,iLiczZnak) + spacja
+					strResult = strResult + strPart
+				next
+				tab(iter) = trim(strResult)
+			end if
+		next
+		AddSpace = Join(tab," ")
+	end if
+end function
+
+'--------------------------------------------
+'ustawia kolor dla wiersza w zależności od LP
+'--------------------------------------------
+function setRowStyle(iLP)
+  if iLP mod 2 = 0 then
+	  setRowStyle = STYLE_ROW_EVEN
+  else
+    setRowStyle = clng(-1)
+  end if   
+end function
+
+'------------
+'tabela akcji
+'------------
+sub drawActionTable
+  dim pTB : set pTB = doc_.afc.new_tb(nothing).attach(page_.ctrl(CTRLID_ACTION_TABLE)).removeall
+  'przyciski
+  pTB.newrow.newcell
+  
+  'checkbox 
+  dim pCheckBox
+  pTB.addctrl CTRL_TYPE_CHECKBOX,-1
+  set pCheckBox = pTB.element
+  with pCheckBox
+    .customredirect = clng(CTRLID_BANK_ACCOUNT)
+    .transfer = page_.createtransfer("custom")
+    .border = 0
+  end with
+  pTB.element.addnew(CTRL_TYPE_STATIC, -1).text = "Zapamietuj rachunki bankowe kontrahenta"
+  
+  g_oDrawRep.drawButton pTB, "Zapisz", 8, "Zapisuje kolejne płatności", "savePlatnosc", 0  
+  pTB.cell.align = ALIGN_LEFT
+end sub 
+
+'---------------------------------------------------------------------
+'-----  funkcje do wyboru podmiotu transakcji (Opcje dodatkowe)  -----
+'---------------------------------------------------------------------
+function std_choice_wildref_hli(hli)
+	dim strOrders: strOrders = "strNazwa;strNazwisko;strNazwa"
+	dim strWheres: strWheres = "eAktywny=1;eAktywny=1"
+  dim nInx: nInx = cstr(hli.prop(100))
+
+  dim nTypeID : nTypeID = 0
+	dim nObjectId : nObjectId = wildref_choose(strOrders, strWheres, nTypeID)
+  
+  'ustaw obiekt
+  if nObjectId > 0 and nTypeID > 0 then
+    set g_oRecArray(nInx).p_wrefPodmiot = trans_.getobj(nTypeID,nObjectId)
+  end if
+end function
+
+function wildref_choose(byval strFields, byval strWheres, byref nTypeID) : wildref_choose = 0
+
+  'tabela z typami podmiotów
+  dim pWildrefTypeId : set pWildrefTypeId = trans_.afc.new_navoarray()
+  pWildrefTypeId.Separate "TYPEID_N5KLIENT;TYPEID_N5PRACOWNIK;TYPEID_N5INSTYTUCJA;TYPEID_N5BANK;TYPEID_N5FIRMA", ";"
+
+  'tabela z nazwami pól
+	dim pFieldsArray : set pFieldsArray = trans_.afc.new_navoarray()	
+	pFieldsArray.Separate strFields, ";"
+
+  'dodatkowe parametry
+	dim pWhereArray : set pWhereArray = trans_.afc.new_navoarray()
+	pWhereArray.Separate strWheres, ";"
+	
+	dim pM43009 : set pM43009 = doc_.getmodule(43009)
+	dim pTranslate : set pTranslate = doc_.getmodule(60130)
+
+	dim i: i = 0
+	while (pWildrefTypeId.Value(i) > 0)
+
+		dim strWhere: strWhere = ""
+		if (i <= pWhereArray.UpperIndex()) then
+			strWhere = pWhereArray.Value(i)
+		end if
+
+		dim strField: strField = ""
+		if (i <= pFieldsArray.UpperIndex()) then
+			strField = pFieldsArray.Value(i)
+		end if
+
+		dim strTitle : strTitle = pTranslate.TypeId2ChoiceObj(pWildrefTypeId.Value(i))
+		pM43009.prepare_automatic pWildrefTypeId.Value(i), strTitle, strWhere, ""
+		pM43009.set_options true,false
+		i = i + 1
+	wend
+
+	pM43009.switch_current_context 0
+	wildref_choose = pM43009.run_browser()
+	
+  nTypeID =  pM43009.result_typeid()
+	
+end function
+
+'------------------------------------------
+'-----  funkcja do wyboru transakcji  -----
+'------------------------------------------
+function std_choice_trans_list(hli)
+  std_choice_trans_list = 0
+  dim nInx: nInx = cstr(hli.prop(100))
+  
+	if not g_oRecArray(nInx).p_wrefPodmiot is nothing then
+    dim m_wrefPodmiot: set m_wrefPodmiot = g_oRecArray(nInx).p_wrefPodmiot
+    dim m_curKwotaPodm: m_curKwotaPodm = g_oRecArray(nInx).p_curKwotaPodm
+		dim strWhere : strWhere = ""
+    dim strWhereTransType
+	  
+	  if m_curKwotaPodm > ccur(0.0) then
+		  trans_.var(APPVAR_TRANSAKCJA_KWOTA_WN) = m_curKwotaPodm
+	  else
+		  trans_.var(APPVAR_TRANSAKCJA_KWOTA_MA) = - m_curKwotaPodm
+	  end if
+
+		select case m_wrefPodmiot.type
+		case TYPEID_N5KLIENT
+			trans_.var(GVAR_CURRENT_CUSTOMER) = clng(m_wrefPodmiot.idobj)
+		case TYPEID_N5PRACOWNIK
+			trans_.var(GVAR_CURRENT_EMPLOYEE) = clng(m_wrefPodmiot.idobj)
+		case TYPEID_N5BANK
+			trans_.var(GVAR_CURRENT_BANK) = clng(m_wrefPodmiot.idobj)
+		case TYPEID_N5INSTYTUCJA
+			trans_.var(GVAR_CURRENT_INSTYTUCJA) = clng(m_wrefPodmiot.idobj)
+		end select
+    
+    'budowanie where
+    if m_curKwotaPodm < 0 then
+		  strWhereTransType = "(eTyp= 1)"
+	  elseif m_curKwotaPodm > 0 then
+		  strWhereTransType = "(eTyp= 2)"
+	  else
+		  strWhereTransType = "(1=1)"
+	  end if
+
+	  if strWhere <> "" then
+		  strWhere = strWhere + " and " + strWhereTransType
+	  else
+		  strWhere = strWhereTransType
+	  end if
+
+	  if not m_wrefPodmiot is nothing then
+		  if strWhere <> "" then
+			  strWhere = strWhere + " and "
+		  end if
+
+		  dim strWarunek
+  	  strWarunek =  "(curWn <> curMa) and (IdObj not in (select pTransakcja from n5sprzedaz where pRejestrDok in (select IdObj from n5rejestrdok where eTyp in (N5REJESTRDOK_DOSTAWA,N5REJESTRDOK_KOR_DOSTAWA)))) and "
+
+	    strWhere = strWhere + doc_.afc.convert.Formatter(strWarunek + " (wrefPodmiot_wrt=%1) and (wrefPodmiot=%2) ") _
+			  .add(cstr(m_wrefPodmiot.type)).add(cstr(m_wrefPodmiot.idobj)).done()
+	  end if
+
+    dim pM43009 : set pM43009 = doc_.getmodule(43009)
+	  pM43009.prepare_single_selection TYPEID_N5TRANSAKCJA, "Wybór transakcji", strWhere, "strSymTrans"
+	  dim idTrans : idTrans = pM43009.run_browser()
+    if idTrans > 0 then
+      dim oTrans: set oTrans = trans_.getobj(TYPEID_N5TRANSAKCJA, idTrans)
+      set g_oRecArray(nInx).p_listTransakcjaID = nx_.new_array()
+      set g_oRecArray(nInx).p_listSymbolTrans = nx_.new_array()
+      set g_oRecArray(nInx).p_listKwotaTrans = nx_.new_array()
+      
+	  g_oRecArray(nInx).p_listTransakcjaID.add idTrans 
+      g_oRecArray(nInx).p_listSymbolTrans.add oTrans.strSymTrans
+      g_oRecArray(nInx).p_listKwotaTrans.add ccur(m_curKwotaPodm)
+    end if
+    trans_.var(GVAR_CURRENT_CUSTOMER) = clng(0)
+		trans_.var(GVAR_CURRENT_EMPLOYEE) = clng(0)
+		trans_.var(GVAR_CURRENT_BANK) = clng(0)
+		trans_.var(GVAR_CURRENT_INSTYTUCJA) = clng(0)
+	  trans_.var(APPVAR_TRANSAKCJA_KWOTA_WN) = ccur(0.0)
+	  trans_.var(APPVAR_TRANSAKCJA_KWOTA_MA) = ccur(0.0)    
+	end if
+  
+end function
+
+'-------------------------------------------------
+'wybór schematu dekretacji dla dokumentu w wierszu
+'-------------------------------------------------
+function choose_schemat_dekr(hli)
+  dim nInx: nInx = cstr(hli.prop(100))
+  if nInx > -1 then  
+    trans_.var(APPVAR_REJESTR_DOKUMENTOW) = clng(g_idRejestr)
+
+    dim nIdSchemat
+    nIdSchemat = std_choice_field_crsr_cust("", "strNazwa", CRSR_SCHEMAT_AKTYWNY_PO_REJESTRACH, TYPEID_N5SCHEMATDEKR)
+    
+    if nIdSchemat > 0 then
+      g_oRecArray(nInx).p_idSchematDekr = clng(nIdSchemat)
+      g_oRecArray(nInx).p_strSchematDekr = trans_.getobj(TYPEID_N5SCHEMATDEKR,clng(nIdSchemat)).strNazwa
+    end if     
+    
+    trans_.var(APPVAR_REJESTR_DOKUMENTOW) = clng(0)
+  end if
+end function
+
+'-------------------------
+'wybór schematu dekretacji
+'-------------------------
+function std_choice_field_crsr_cust(byval strTitle,byval strMatchField,byval idCursor,byval idRefTypeId) : std_choice_field_crsr_cust = 0
+
+	dim pCursDef : set pCursDef = doc_.stdobjdef.getobjdef(idRefTypeId).cursor(idCursor)
+
+	dim strWhere : strWhere = trans_.applyvars(pCursDef.where)
+	dim strOrder : strOrder = trans_.applyvars(pCursDef.orderby)
+	dim strJoin : strJoin = trans_.applyvars(pCursDef.join)
+	
+	dim idChoice
+  idChoice = fire_choice_list(idRefTypeId,strTitle,strMatchField,strWhere,strOrder,strJoin)
+
+	std_choice_field_crsr_cust = idChoice
+end function
+
+'------------------------------
+'funkcja tworząca faktury z WZ
+'------------------------------
+function savePlatnosc(pHLI): savePlatnosc = false
+  dim nInx
+  for nInx = 0 to g_oRecArray.upper_index
+	
+    if not positionIsValid(g_oRecArray, nInx) then
+	
+	#ifndef _GLOBTECHNIC
+        exit function
+    #endif
+	
+	else
+        'pomiń płantości zapisane ręcznie
+        if not g_oRecArray(nInx).p_bSaved then
+          set g_oRecArray(nInx).p_pFormPlatnosc = nothing
+          set g_oRecArray(nInx).p_pFormPlatnosc = createPlatnoscForm(g_oRecArray(nInx), false, false, false)
+          if g_oRecArray(nInx).p_pFormPlatnosc.root.wrefPodmiot.type <> TYPEID_N5BANK then
+            if g_strBankAccount = "1" then
+    #ifdef _ABAKOSTEEL		
+            if replaceAccount(g_oRecArray(nInx).p_pFormPlatnosc.root.wrefPodmiot, g_oRecArray(nInx).p_strKodRach) then
+                g_oRecArray(nInx).p_pFormPlatnosc.root.wrefPodmiot.strRachunek1 = g_oRecArray(nInx).p_strKodRach
+            end if
+    #else		  
+            if g_oRecArray(nInx).p_pFormPlatnosc.root.wrefPodmiot.type <> TYPEID_N5FIRMA then
+                g_oRecArray(nInx).p_pFormPlatnosc.root.wrefPodmiot.strRachunek1 = g_oRecArray(nInx).p_strKodRach
+            end if
+    #endif		  
+            end if
+          end if
+          if not g_oRecArray(nInx).p_pFormPlatnosc.std_fsave_external_with_saveobjects() then
+            exit function
+          end if      
+          g_oRecArray(nInx).p_bSaved = not g_oRecArray(nInx).p_pFormPlatnosc.root.isnew()      
+        end if
+    
+        'koloruj zapisane płatności
+        if g_oRecArray(nInx).p_bSaved then
+          dim oRow: set oRow = page_.ctrl(g_oRecArray(nInx).p_nRowIdent)
+          oRow.styleitem = STYLE_TABLE_INFO
+        end if  
+		
+		set g_oRecArray(nInx).p_pFormPlatnosc = nothing
+    end if
+    next  
+
+    savePlatnosc = true
+  
+end function
+
+'-----------------------------------------------
+'sprawdza czy podmienić rachunek na przychodzący
+'-----------------------------------------------
+function replaceAccount(byref oPodmiot, byref strKodRach): replaceAccount = false
+    if oPodmiot.type <> TYPEID_N5FIRMA then
+        if oPodmiot.strRachunek1 <> strKodRach and oPodmiot.strRachunek2 <> strKodRach and oPodmiot.strRachunek3 <> strKodRach then
+            replaceAccount = true
+        end if
+    end if
+end function
+
+'--------------------------------------------------
+'sprawdza czy na pozycji są ustawione wymagane dane
+'--------------------------------------------------
+function positionIsValid(byref oRec, byref nInx)
+
+	positionIsValid = (not oRec(nInx).p_wrefPodmiot is nothing)
+	if not positionIsValid then
+#ifndef _GLOBTECHNIC
+		trans_.message 7000, 0, "Proszę wskazać kontrahenta dla pozycji " + CStr(nInx + 1)
+#endif
+		exit function
+	end if
+	
+	positionIsValid = (oRec(nInx).p_listTransakcjaID.upper_index > -1)
+	if not positionIsValid then
+#ifndef _GLOBTECHNIC
+		trans_.message 7000, 0, "Proszę wskazać transakcję dla pozycji " + CStr(nInx + 1)
+#endif
+		exit function			
+	end if	
+end function
+
+'---------------------------------------------------
+'Przypisuje od najstarszej nierozliczonej transakcji
+'---------------------------------------------------
+function setTrans(pHLI)
+  dim nInx: nInx = pHli.prop(PROP_REC_NUM)
+  if g_oRecArray(nInx).p_wrefPodmiot is nothing then
+    trans_.message 7000, 0, "Proszę wskazać kontrahenta dla danej pozycji"
+    exit function
+  end if
+  
+  set g_oRecArray(nInx).p_pFormPlatnosc = nothing
+  set g_oRecArray(nInx).p_pFormPlatnosc = createPlatnoscForm(g_oRecArray(nInx), false, true, false)
+  set g_oRecArray(nInx).p_pFormPlatnosc = nothing
+
+end function
+
+function AddNewBusinessEntityByTax(byref oHLI)
+    
+	dim nInx: nInx = oHLI.prop(PROP_REC_NUM)
+	dim oPlatnosc : set oPlatnosc = g_oRecArray(nInx)
+
+    dim hli: set hli = doc_.createhli()
+	hli.prop(2) = clng(0)
+	hli.prop(3) = trim(oPlatnosc.new_tax_id)
+	hli.prop(4) = clng(1)
+	hli.prop(5) = clng(N5KLIENT_FIRMA)
+	
+	doc_.getmodule(60106).FindInGUS(hli)
+    dim idKontra : idKontra = trans_.findobjid(TYPEID_N5KLIENT, "strNIP='" + trim(oPlatnosc.new_tax_id) + "'")
+	if idKontra > 0 then
+	    set oPlatnosc.p_wrefPodmiot = trans_.getobj(TYPEID_N5KLIENT, idKontra)
+	    oPlatnosc.new_tax_id = Empty
+    end if
+	
+end function
+
+function editFormVAT(byref oHLI)
+  dim nInx: nInx = oHLI.prop(PROP_REC_NUM)
+  dim oRow : set oRow = page_.ctrl(oHLI.prop(PROP_ROW_IDENT))
+
+  set g_oRecArray(nInx).p_pFormPlatnosc = nothing
+  set g_oRecArray(nInx).p_pFormPlatnosc = createPlatnoscForm(g_oRecArray(nInx), true, false, true)
+
+    if not g_oRecArray(nInx).p_pFormPlatnosc.root.isnew() then
+        g_oRecArray(nInx).p_bSaved = true
+        'koloruj na żółto zapisane płatności
+        oRow.styleitem = STYLE_TABLE_INFO
+  end if
+  set g_oRecArray(nInx).p_pFormPlatnosc = nothing
+
+end function
+'---------------------------
+'Otwiera formularz płatnosci
+'---------------------------
+function editForm(pHLI)
+  dim nInx: nInx = pHli.prop(PROP_REC_NUM)
+  if g_oRecArray(nInx).p_wrefPodmiot is nothing then
+    trans_.message 7000, 0, "Proszę wskazać kontrahenta dla danej pozycji"
+    exit function
+  end if
+
+  dim oRow : set oRow = page_.ctrl(pHLI.prop(PROP_ROW_IDENT))
+  
+  set g_oRecArray(nInx).p_pFormPlatnosc = nothing
+  set g_oRecArray(nInx).p_pFormPlatnosc = createPlatnoscForm(g_oRecArray(nInx), true, false, false)
+  
+  'aktualizuj obiekt w przypadku ręcznego ustawienia transakcji na pozycji
+  set g_oRecArray(nInx).p_listTransakcjaID = nx_.new_array()
+  set g_oRecArray(nInx).p_listSymbolTrans = nx_.new_array()
+  set g_oRecArray(nInx).p_listKwotaTrans = nx_.new_array()
+  dim oPoz
+  for each oPoz in g_oRecArray(nInx).p_pFormPlatnosc.root.listPozycje
+    if not oPoz.pTransakcja is nothing then
+      dim oTrans: set oTrans = trans_.getobj(TYPEID_N5TRANSAKCJA, oPoz.pTransakcja.IdObj)
+      g_oRecArray(nInx).p_listTransakcjaID.add oTrans.IdObj
+      g_oRecArray(nInx).p_listSymbolTrans.add oTrans.strSymTrans
+      g_oRecArray(nInx).p_listKwotaTrans.add oPoz.curPozKwotaPodm
+    end if
+  next 
+  
+  if not g_oRecArray(nInx).p_pFormPlatnosc.root.isnew() then
+    'aktualizuj nr konta
+    if g_oRecArray(nInx).p_pFormPlatnosc.root.wrefPodmiot.type <> TYPEID_N5BANK and g_oRecArray(nInx).p_pFormPlatnosc.root.wrefPodmiot.type <> TYPEID_N5FIRMA then
+      if trim(g_oRecArray(nInx).p_pFormPlatnosc.root.wrefPodmiot.strRachunek1) <> g_oRecArray(nInx).p_strKodRach and g_strBankAccount = "1" then
+        g_oRecArray(nInx).p_pFormPlatnosc.root.wrefPodmiot.strRachunek1 = g_oRecArray(nInx).p_strKodRach
+        trans_.saveobjects()
+      end if    
+    end if
+    
+    g_oRecArray(nInx).p_bSaved = true
+    'koloruj na żółto zapisane płatności
+    oRow.styleitem = STYLE_TABLE_INFO
+  end if
+  
+  set g_oRecArray(nInx).p_pFormPlatnosc = nothing
+end function
+
+'--------------------------
+'utwórz formularz płatności
+'--------------------------
+function createPlatnoscForm(byref oPlatnoscModel, byval bShowModal, byval bPrzypisz, byval bSamVAT)
+  set createPlatnoscForm = nothing
+  dim iter
+   
+  dim pOpenFormKWBR : set pOpenFormKWBR = nothing
+  dim pFormPlatnosc : set pFormPlatnosc = nothing
+
+  trans_.var(APPVAR_REJESTR_TYP) = g_iRodzajPlat
+  trans_.var(GVAR_CURSOR) = clng(0)
+  if pOpenFormKWBR is nothing then
+    if LicUMUI(EB_MOD_MASK_FINANSE or EB_MOD_MASK_HANDEL) then
+		  set pOpenFormKWBR = prepare_foc_obj_with_rej(oPlatnoscModel.p_IdPlatnosc,0,PAGE_FORM_PLATNOSCI,CLng(g_iRodzajPlat),TYPEID_N5PLATNOSC)
+	  end if
+    if pOpenFormKWBR is nothing then			
+        exit function
+    end if
+    'skopiuj niektóre zmienne 
+    if trans_.isvar(GVAR_CURSOR) then
+      pOpenFormKWBR.prop(GVAR_CURSOR) = trans_.var(GVAR_CURSOR)
+    end if
+      
+    if pOpenFormKWBR is nothing then
+      exit function
+    end if
+  end if
+
+  if pFormPlatnosc is nothing then
+    set pFormPlatnosc = doc_.getpagehli(pOpenFormKWBR)
+    if pFormPlatnosc is nothing then
+      exit function
+    end if
+  end if  
+
+	if oPlatnoscModel.p_IdPlatnosc = clng(0) then
+		if not fill_from_model(pFormPlatnosc.root,oPlatnoscModel) then
+			trans_.message 7000, 0, "Nie udało się utworzyć dokumentu płatności"
+			exit function
+		end if
+  
+		'przypisz automatycznie transakcje wg FIFO
+		if bPrzypisz then
+			dim pModule : set pModule = doc_.getmodule(60270)
+			pModule.pl_auto_assign_transaction pFormPlatnosc.root,""
+			
+			'wyczyść pozycje przy ponownym przypisaniu
+			set oPlatnoscModel.p_listTransakcjaID = nx_.new_array()
+			set oPlatnoscModel.p_listSymbolTrans = nx_.new_array()
+			set oPlatnoscModel.p_listKwotaTrans = nx_.new_array()
+  
+			dim oPoz
+			for each oPoz in pFormPlatnosc.root.listPozycje
+				if not oPoz.pTransakcja is nothing then
+					oPlatnoscModel.p_listTransakcjaID.add oPoz.pTransakcja.IdObj
+					oPlatnoscModel.p_listSymbolTrans.add oPoz.pTransakcja.strSymTrans
+					oPlatnoscModel.p_listKwotaTrans.add oPoz.curPozKwotaPodm
+				end if
+			next  
+		end if
+		
+		if bSamVAT then
+		    if pFormPlatnosc.root.listPozycje.exists(1) then
+			    dim oSamVATPoz : set oSamVATPoz = pFormPlatnosc.root.listPozycje.get(1)
+				if not oSamVATPoz.pTransakcja is nothing then
+				    dim curTrnKurs : curTrnKurs = oSamVATPoz.pTransakcja.trn_curKurs
+					
+					if curTrnKurs <> ccur(0.0) then
+				        oSamVATPoz.curPozKursPodm = trans_.afc.convert.roundn(ccur(1) / curTrnKurs, 4)
+					end if
+					
+				    oSamVATPoz.curPozKursEwid = curTrnKurs
+				end if
+				oSamVATPoz.pplat_curVAT = oSamVATPoz.curPozKwotaPodm
+			end if
+		end if
+	else
+		if oPlatnoscModel.p_idSchematDekr > clng(0) then
+			set pFormPlatnosc.root.pSchematDekr = trans_.getobj(TYPEID_N5SCHEMATDEKR,clng(oPlatnoscModel.p_idSchematDekr))
+		end if
+	end if
+  
+  if bShowModal then
+    pFormPlatnosc.domodalauto
+  end if
+
+  set createPlatnoscForm = pFormPlatnosc  
+end function
+
+'--------------------------------------
+'ustawienie rejestru dla nowego obiektu
+'--------------------------------------
+function prepare_foc_obj_with_rej(byval idObject,byval eUsage,byval nDestPage, byval strRejType, byval nTypeId)
+
+	dim idCursor : idCursor = 0
+	'gdzies ginie kursor
+	if trans_.isvar(GVAR_CURSOR) then
+		idCursor = trans_.var(GVAR_CURSOR)
+	end if
+
+	set prepare_foc_obj_with_rej = nothing
+	
+	'utwórz hyperlinka z częścią stałą
+	dim pFOC_HLI
+	set pFOC_HLI = doc_.createhlistr("varCmd=CMD_OPEN_RECORD_PAGE varDestPage=" + cstr(nDestPage) + " varObject=" + cstr(idObject))
+
+	'nowy dokument - pytamy się o typ lub używamy ze zmiennej środowiskowej
+	pFOC_HLI.prop(APPVAR_REJESTR_TYP) = trans_.getobj(TYPEID_N5REJESTRDOK,g_idRejestr).eTyp
+	pFOC_HLI.prop(APPVAR_REJESTR_DOKUMENTOW) = g_idRejestr
+	pFOC_HLI.prop(APPVAR_DZIENNIK_DK) = g_idRejestr
+
+	'przypisujemy tylko gdy zniknął
+	if idCursor > 0 and not trans_.isvar(GVAR_CURSOR) then
+		trans_.var(GVAR_CURSOR) = clng(idCursor)
+	end if
+
+	set prepare_foc_obj_with_rej = pFOC_HLI
+end function
+
+'-----------------------------------------------
+'wypełnia dokument płatności odpowiednimi polami
+'-----------------------------------------------
+function fill_from_model(byref pPlatnosc, byval oPlatnoscModel) : fill_from_model = true
+  
+  'data z formularza
+  pPlatnosc.dDataOper = oPlatnoscModel.p_dDataOper
+
+  set pPlatnosc.wrefPodmiot = oPlatnoscModel.p_wrefPodmiot
+  pPlatnosc.curKwotaPodm = oPlatnoscModel.p_curKwotaPodm
+  pPlatnosc.plat_curVAT = oPlatnoscModel.p_curVAT
+  'pPlatnosc.curKursEwid = oPlatnoscModel.p_curKursEwid      
+  pPlatnosc.strOpis = left(oPlatnoscModel.p_strOpis,128)
+  pPlatnosc.plat_strNrRef = oPlatnoscModel.p_strNrRef
+  pPlatnosc.eStatus = clng(N5PLATNOSC_ZREALIZOWANA)
+  if oPlatnoscModel.p_idSchematDekr > clng(0) then
+    set pPlatnosc.pSchematDekr = trans_.getobj(TYPEID_N5SCHEMATDEKR,clng(oPlatnoscModel.p_idSchematDekr))
+  end if
+
+  dim pPozPlatnosc, iter
+  for iter = 0 to oPlatnoscModel.p_listTransakcjaID.upper_index
+    set pPozPlatnosc = pPlatnosc.listPozycje.addnew()
+    set pPozPlatnosc.pTransakcja = trans_.getobj(TYPEID_N5TRANSAKCJA, oPlatnoscModel.p_listTransakcjaID(iter))
+    pPozPlatnosc.curPozKwotaPodm = ccur(oPlatnoscModel.p_listKwotaTrans(iter))
+  next	
+end function
+
+'----------------------------------
+'zwraca opis dla symbolu transakcji
+'----------------------------------
+function getSymTrans(byref listTransakcja)
+  getSymTrans = ""
+  dim iter
+  for iter = 0 to listTransakcja.upper_index
+    getSymTrans = getSymTrans + listTransakcja(iter) + ", "
+  next
+  if Len(getSymTrans) > 2 then
+    getSymTrans = Mid(getSymTrans,1,Len(getSymTrans)-2)
+  end if
+end function
+
+'-------------------
+'wyszukanie podmiotu
+'-------------------
+function findPodmiot(byval strValue)
+  set findPodmiot = nothing
+  dim strSQL
+  strSQL = "select Idobj,TYPEID_N5KLIENT from n5klient where strNazwa = '" + strValue + "' union " + vbNewLine +_
+           "select IdObj,TYPEID_N5PRACOWNIK from n5pracownik where strNazwisko = '" + strValue + "' union " + vbNewLine +_
+           "select IdObj,TYPEID_N5INSTYTUCJA from n5instytucja where strNazwa = '" + strValue + "' union " + vbNewLine +_
+           "select IdObj,TYPEID_N5BANK from n5bank where strNazwa = '" + strValue + "' union " + vbNewLine +_
+           "select IdObj,TYPEID_N5FIRMA from n5firma where strNazwa = '" + strValue + "'"
+  dim oRS: set oRS = trans_.createadors(strSQL)
+  if not oRS.EOF then
+    set findPodmiot = trans_.getobj(clng(oRS(1).value),clng(oRS(0).value))
+  end if
+end function
+
+'---------------------
+'wyszukanie transakcji
+'---------------------
+function findTransBySymbol(byval strValue)
+  findTransBySymbol = trans_.findobjid(TYPEID_N5TRANSAKCJA,"strSymTrans = '" + trim(strValue) + "'")
+end function
+
+'------------------------------------------------------
+'wyszukanie schematu dekretacji na podstawie jego nazwy
+'------------------------------------------------------
+function getIdSchematByName(byref strNazwa)
+	getIdSchematByName = trans_.findobjid(TYPEID_N5SCHEMATDEKR,"strNazwa = '" + strNazwa + "' and pRejestrDok = " + cstr(g_idRejestr) + " and eAktywny=1")
+end function
+
+function c##CTRLID_PODMIOT##_ongetdata(oCtrl): c##CTRLID_PODMIOT##_ongetdata = true
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+    dim nInx: nInx = oRow.userprop.prop(PROP_REC_NUM)
+    if not g_oRecArray(nInx).p_wrefPodmiot is nothing then
+      if g_oRecArray(nInx).p_wrefPodmiot.type = TYPEID_N5PRACOWNIK then
+        oCtrl.value = g_oRecArray(nInx).p_wrefPodmiot.strNazwisko
+      else
+        oCtrl.value = g_oRecArray(nInx).p_wrefPodmiot.strNazwa
+      end if
+    else
+	    oCtrl.value = ""
+    end if
+  end if
+end function
+
+function c##CTRLID_PODMIOT##_ondataentered(oCtrl,value): c##CTRLID_PODMIOT##_ondataentered = true
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+    dim nInx: nInx = oRow.userprop.prop(PROP_REC_NUM)
+    if nInx > -1 then
+      'opcja wklejenia podmiotu
+      set g_oRecArray(nInx).p_wrefPodmiot = findPodmiot(value)
+    end if
+  end if  
+end function
+
+function c##CTRLID_TRANSAKCJA##_ongetdata(oCtrl): c##CTRLID_TRANSAKCJA##_ongetdata = true
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+    dim nInx: nInx = oRow.userprop.prop(PROP_REC_NUM)
+    if g_oRecArray(nInx).p_listSymbolTrans.upper_index > -1 then
+      oCtrl.value = getSymTrans(g_oRecArray(nInx).p_listSymbolTrans)
+    else
+	    oCtrl.value = ""
+    end if
+  end if
+end function
+
+function c##CTRLID_TRANSAKCJA##_ondataentered(oCtrl,value): c##CTRLID_TRANSAKCJA##_ondataentered = true
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+    dim nInx: nInx = oRow.userprop.prop(PROP_REC_NUM)
+    if nInx > -1 then
+      dim idTrans: idTrans = findTransBySymbol(value)
+      if idTrans > clng(0) then
+        dim oTrans: set oTrans = trans_.getobj(TYPEID_N5TRANSAKCJA, idTrans)
+        g_oRecArray(nInx).p_listTransakcjaID.add idTrans 
+        g_oRecArray(nInx).p_listSymbolTrans.add oTrans.strSymTrans        
+      else
+        set g_oRecArray(nInx).p_listTransakcjaID = nx_.new_array()
+        set g_oRecArray(nInx).p_listSymbolTrans = nx_.new_array()
+      end if
+    end if
+  end if
+end function
+
+function c##CTRLID_REJESTR_DOKUMENTOW##_ongetdata(byref pCtrl): c##CTRLID_REJESTR_DOKUMENTOW##_ongetdata = true
+  if not g_oRejestr is nothing then
+    pCtrl.text = "- bieżący rejestr dokumentów: " + g_oRejestr.strNazwa
+    exit function
+  end if
+  pCtrl.text = ""
+end function
+
+function c##CTRLID_SALDO##_ongetdata(byref pCtrl): c##CTRLID_SALDO##_ongetdata = true
+	pCtrl.text = ""
+	if g_curSaldoStart <> ccur(-1) and g_curSaldoEnd <> ccur(-1) then
+    pCtrl.text = "Saldo początkowe: " + doc_.afc.display.money(g_curSaldoStart,"") + "   " + "Saldo końcowe: " + doc_.afc.display.money(g_curSaldoEnd,"")
+	end if
+end function
+
+function c##CTRLID_BANK_ACCOUNT##_ongetdata(byref oCtrl) : c##CTRLID_BANK_ACCOUNT##_ongetdata = true
+  oCtrl.value = g_strBankAccount
+end function
+
+function c##CTRLID_BANK_ACCOUNT##_ondataentered(byref oCtrl, byval newValue): c##CTRLID_BANK_ACCOUNT##_ondataentered = true
+  g_strBankAccount = newValue
+end function
+
+'--------------------------------------------
+'podpowiedź dla schematu dekretacji w wierszu
+'--------------------------------------------
+function c##CTRLID_SCHEMAT_DEKR##_ongetdata(oCtrl)
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+    dim nInx: nInx = oRow.userprop.prop(PROP_REC_NUM)
+    if nInx > -1 then
+      oCtrl.value = g_oRecArray(nInx).p_strSchematDekr
+    else
+	    oCtrl.value = ""
+    end if
+  end if
+end function
+
+function c##CTRLID_SCHEMAT_DEKR##_ondataentered(oCtrl,value): c##CTRLID_SCHEMAT_DEKR##_ondataentered = false
+  dim oRow : set oRow = oCtrl.parent.parent
+  if not oRow.userprop is nothing then
+    dim nInx: nInx = oRow.userprop.prop(PROP_REC_NUM)
+    if nInx > -1 then
+    dim idSchemat: idSchemat = getIdSchematByName(value)
+      if idSchemat > clng(0) then
+        dim oSchem: set oSchem = trans_.getobj(TYPEID_N5SCHEMATDEKR,idSchemat)
+        g_oRecArray(nInx).p_idSchematDekr = oSchem.IdObj
+        g_oRecArray(nInx).p_strSchematDekr = oSchem.strNazwa
+      else
+        g_oRecArray(nInx).p_idSchematDekr = clng(0)
+        g_oRecArray(nInx).p_strSchematDekr = ""			
+      end if
+    end if
+  end if
+  c##CTRLID_SCHEMAT_DEKR##_ondataentered = true
+end function
+
+
+]]>
+      </script>
+  </config>
+<header>
+<table>
+<tbody>
+<tr>
+<td width = "2000" rowspan="5">
+            <picture image ='80139' tip='Wypełnij raport' width='1000' height='1000' href='varFunction="fRefresh"' />
+          </td>
+<td>
+<t fontsize ='5' bold='true'>Import wyciągów bankowych</t>
+  <t>&nbsp;</t>
+<t fontsize ='5' bold='true' name='CTRLID_REJESTR_DOKUMENTOW'><transfer mode='custom' /></t>
+          </td>
+        </tr>
+				<tr> <td></td></tr><tr><td></td></tr><tr><td></td></tr>
+				<tr>
+<td>
+<t fontsize ='5' bold='true' name='CTRLID_SALDO'><transfer mode='custom' /></t>
+                    </td>
+				</tr>
+        <tr>
+<td colspan ='2'>
+            <table name='CTRLID_ROW_BUTTONS'>
+                <tbody/>
+            </table>
+          </td>
+        </tr>			
+			</tbody>
+		</table>
+	</header>	
+  <body>
+<table>
+<tbody>
+<tr>
+<td colspan ='2'>
+            <table border='1' name='CTRLID_RESULT_TABLE'>
+                <tbody backcolor='white' bordercolor='#006697'/>
+            </table>
+          </td>
+        </tr> 
+      </tbody>
+    </table>
+  </body>
+	<footer>
+<table>
+<tbody>
+<tr>
+<td>
+<table name ='CTRLID_ACTION_TABLE'>
+              <tbody/>
+            </table>
+          </td>
+        </tr> 
+			</tbody>
+		</table>		
+	</footer>	
+</page>

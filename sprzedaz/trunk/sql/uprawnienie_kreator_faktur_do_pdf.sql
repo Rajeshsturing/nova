@@ -1,0 +1,11 @@
+
+
+-- skrypt uprawnienia dla kreatora wydruków faktur do PDF
+declare @idSodGroup int
+set @idSodGroup = (select idobj from n5sodgroup where strNazwa = 'Operacja - Kreatory - EuroHandel')
+declare @maxSecId int
+set @maxSecId = (select max(nSecId)+1 from n5sod where pSODGroup = @idSodGroup)
+declare @maxIdSod int
+set @maxIdSod = (select max(idobj)+1 from n5sod)
+insert into n5sod values (@maxIdSod,1,'Wydruków faktur do PDF',@idSodGroup,13881,0,'EB')
+go

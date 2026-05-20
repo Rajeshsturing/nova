@@ -1,0 +1,350 @@
+#include "h1000.h"
+#include "h1001.h"
+#include "h1002.h"
+#include "h1200.h"
+#include "h1201.h"
+#include "h1220.h"
+#include "h1240.h"
+
+<?xml version="1.0" encoding="windows-1250" ?>
+<page style='STYLE_PAGE' width='12000'>
+<config>
+
+<startpos>center</startpos>
+<title>Zapisz stronę jako...</title>
+<script>
+<!--
+	Zapisz stronę jako
+-->
+<![CDATA[
+
+#include "50203"
+#include "50211"
+#include "50516"
+#include "50122"
+#include "50123"
+
+dim pSrcPage : set pSrcPage = nothing
+
+function set_title(byval strTitle)
+	page_.topelement.title = "Zapisz stronę [" + strTitle + "] jako..."
+end function
+
+function set_srcpage(byref pPage)
+	set pSrcPage = pPage
+end function
+
+function std_savepage(byref pPage)
+
+	set_title pPage.topelement.title
+	set_srcpage pPage
+	
+	page_.domodalauto
+	set pSrcPage = nothing
+end function
+
+dim pFD		'globalny obiekt FileDrive
+
+function fopen():fopen=false
+	dim bOK
+	set pFD=CFileDrive(bOK)
+
+	if (not bOK) then
+		' 1, 0, "Nie udało się utworzyć obiektu ""FileSystemObject"""
+		view_message 6152, 0
+		exit function
+	end if
+
+	page_.ctrl(1).value = clng(1)
+	g_strPath = getuserprofile(USERPROF_SAVEPAGE_PATH)
+	
+	c2_ondataentered page_.ctrl(2), g_strPath
+	c1_ondataentered page_.ctrl(1), page_.ctrl(1).value
+
+	fopen=true
+end function
+
+function fclose()
+	dim pSubTrans
+	set pSubTrans=trans_.createsubtran()
+
+	setuserprofile USERPROF_SAVEPAGE_PATH, trim(g_strPath)
+	if (not trans_.saveobjects()) then
+		' 1, 0, "Nie udało się zapisać ustawień."
+		view_message 6153, 0
+	end if
+	
+	set pSubTrans=nothing
+	fclose=true
+end function
+
+function page_onOK()
+
+	dim strPath: strPath=trim(g_strPath)
+	dim strFileName : strFileName = pFD.GetFileName( strPath )
+
+	if (not pFD.isReady(pFD.GetDriveName( strPath ))) then
+		MessageBox "Dysk nie jest gotowy do pracy.", "Zapisz stronę jako...", vbOKOnly, vbInformation
+		exit function
+	end if
+
+	if (not pFD.IsFolder(pFD.getFolderName( strPath ))) then
+		MessageBox "Podany folder nie istnieje.", "Zapisz stronę jako...", vbOKOnly, vbInformation
+		exit function
+	end if
+
+	if strFileName = "" then
+		MessageBox "Należy podać nazwę pliku", "Zapisz stronę jako...", vbOKOnly, vbInformation
+		exit function
+	end if
+
+	if (pFD.isFile(strPath)) then
+		if MessageBox("Plik " + strPath + " już istnieje. Chcesz kontynuować i nadpisać istniejący plik?", "Plik już istnieje", vbYesNo, vbQuestion)<>vbYes then
+			exit function
+		end if
+
+		if (not pFD.DeleteFile(strPath)) then
+			MessageBox "Usunięcie pliku " + strPath + " nie jest możliwe. Zamknij aplikacje używające ten plik i spróbuj jeszcze raz.", "Nie usunięto pliku", vbOKOnly, vbInformation
+			exit function
+		end if
+	end if
+	
+	dim pSO
+	set pSO = doc_.createstreamobj()
+	
+	dim nFormat, strByTab:strByTab="0"
+	
+	select case page_.ctrl(1).value
+	case 1		'txt
+		nFormat = IDPAGE_TEXTCOPY
+		strByTab=page_.ctrl(3).value
+
+	case 2		'HTML
+		nFormat = IDPAGE_HTMLCOPY
+
+	case 3		'Excel
+		nFormat = IDPAGE_EXCELCOPY
+
+	case 4		'XML
+		nFormat = IDPAGE_XMLCOPY
+
+	end select
+
+	dim pModule
+	set pModule=doc_.getmodule(nFormat)
+
+	select case page_.ctrl(1).value
+	
+	case 1		'txt
+		if (strByTab="1") then
+			pModule.DontFormatWithSpaces
+		end if
+
+	end select
+
+	dim pPerf
+	set pPerf = doc_.performing("Trwa zapis strony . . . .")
+	
+	select case page_.ctrl(1).value
+		case 2	'HTML
+			page_onOK = pModule.std_export_page(pSrcPage, pSO, false)
+
+		case 3	'Excel
+			page_onOK = pModule.export_page_to_xls(pSrcPage, strPath)
+
+		case else
+			page_onOK = pModule.std_copy(pSrcPage, pSO)
+
+	end select
+
+	set pPerf = nothing
+
+	if (page_onOK) then
+
+		err.clear
+		on error resume next
+
+		select case page_.ctrl(1).value
+			case 4
+				pSO.savecoded strPath
+
+			case 3	'Excel
+				'nie mamy doczynienia ze stream'em
+			
+			case else
+				pSO.save strPath
+
+		end select
+
+		if (pFD.isFile(strPath) and err.number=0) then
+			' 1, 0, "Stronę zapisano jako " + strPath
+			view_message1 4084, 0, strPath
+			page_.goback
+		else
+			' 1, 0, "Nie udało się zapisać pliku na dysku."
+			view_message 6154, 0
+		end if
+
+		on error goto 0
+
+	else
+		' 1, 0, "Nie udało się wyeksportować strony do wybranego formatu."
+		view_message 6155, 0
+	end if
+
+end function
+
+function page_onCancel()
+	page_.goback()
+end function
+
+function OnChangeFolder()
+	dim strFolderName
+	strFolderName=SelectFolderNewFile("c:\", pFD.GetFileName( g_strPath ) )
+
+	if (strFolderName<>"") then
+		g_strPath=strFolderName
+		c2_ondataentered page_.ctrl(2), g_strPath
+	end if
+
+	c1_ondataentered page_.ctrl(1), page_.ctrl(1).value
+end function
+
+function HideShowFormatByTab(byval nValue)
+	if (nValue=1) then
+		page_.ctrl(3).disable=false
+	else
+		page_.ctrl(3).disable=true
+	end if
+end function
+
+function c1_ongetdata(byref oCtrl)
+	HideShowFormatByTab oCtrl.value
+	c1_ongetdata=true
+end function
+
+function c1_ondataentered(byref oCtrl, byval newValue)
+
+	dim strPath: strPath=trim(g_strPath)	
+	dim strFolderName:strFolderName=pFD.getFolderName(strPath)
+	dim strFileName:strFileName=pFD.GetFileName(strPath)
+	dim strExtension:strExtension=pFD.GetFileExtension(strFileName)
+
+	if (strFileName<>"") then
+		select case newValue
+			case 1 'tekst
+				strExtension="txt"
+			case 2 'html
+				strExtension="htm"
+			case 3 'excel
+				strExtension="xls"
+			case 4 'xml
+				strExtension="nxp"
+		end select
+
+		strFileName=pFD.RemoveExtension(strFileName)+"."+strExtension
+		g_strPath=strFolderName+"\"+strFileName
+		c2_ondataentered page_.ctrl(2), g_strPath
+	end if
+
+	HideShowFormatByTab newValue
+
+	c1_ondataentered=true
+end function
+
+dim g_strPath
+
+function c2_ongetdata(byref oCtrl): c2_ongetdata=true
+	oCtrl.value = CStr( g_strPath )
+end function
+
+function c2_ondataentered(byref oCtrl, byval newValue): c2_ondataentered=false
+	g_strPath = CStr( newValue )
+	c2_ondataentered=true
+end function
+
+]]>
+</script>
+</config>
+	<body>
+
+		<table style='STYLE_TABLE'>
+			<tbody>
+
+				<tr>
+				<td colspan='2'><t/></td>
+				</tr>
+
+				<tr>
+					<td colspan='2' style='STYLE_SECTION'>
+						<t>Format (postać strony)</t>
+					</td>
+				</tr>
+				
+				<tr>
+					<td colspan='2'>
+						<radio name='r1'>
+							<p border='0'>
+								<t>Zwykły tekst</t><br/>
+								<checkbox name='e3' border='0'>
+									<t>Formatując używaj tabulatorów</t>
+								</checkbox>
+							</p>
+							<t>HTML</t>
+							<t>Excel</t>
+							<t>NXP</t>
+						<transfer mode='custom'/>
+						</radio>
+					</td>
+				</tr>
+
+				<tr>
+					<td colspan='2'><t/></td>
+				</tr>
+
+				<tr>
+					<td colspan='2' style='STYLE_SECTION'>
+						<t>Plik docelowy</t>
+					</td>
+				</tr>
+
+				<tr>
+					<td>
+						<picture image='80004' href='varFunction="OnChangeFolder"'/>
+						<t href='varFunction="OnChangeFolder"'>Nazwa</t>
+					</td>
+					<td>
+						<edit name='e2' size='36' style='STYLE_CTRL'>
+							<transfer mode='custom'/>
+						</edit>
+					</td>
+				</tr>
+		
+				<tr>
+					<td colspan='2'>
+						<table>
+							<tbody>
+								<tr>
+									<td><t></t></td>
+								</tr>
+								<tr style='STYLE_ROW_BTN'>
+									<td width='min'>
+										<button style='STYLE_BUTTON' href='varFunction="page_onOK"'>Zapisz</button>
+									</td>
+									<td  width='max'>
+										<t/>
+									</td>
+									<td width='min'>
+										<button style='STYLE_BUTTON' href='varFunction="page_onCancel"'>Anuluj</button>										
+									</td>
+								</tr>
+							</tbody>
+						</table>
+					</td>
+				</tr>
+
+			</tbody>
+		</table>
+
+	</body>
+</page>

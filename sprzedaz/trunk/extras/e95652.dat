@@ -1,0 +1,709 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1200.h"
+#include "h1203.h"
+#include "h1220.h"
+#include "h1231.h"
+#include "h1240.h"
+#include "h1250.h"
+
+
+#define RAPORT_TITLE Wyroby pozostałe do realizacji
+#define CTRLID_NOWE_ZAMOW 1
+#define FILTR_MAGAZYN 4
+#define WYROBY_POZ_DO_REAL #wyroby_poz_do_real
+#define NAGLOWEK <text><% so.write "&nbsp; &nbsp;" + replace(cstr(pRec("c_strNazwaKlient")), "&", "&amp;") %></text>
+
+
+-->
+
+<page style='36'>
+<config>
+<title>RAPORT_TITLE</title>
+
+<script>
+<![CDATA[
+
+'''Tablice do obsługi checkboxów'''''''''''''''''''''''''''''''''''''
+
+dim pZlecenie : set pZlecenie = doc_.afc.new_navoarray()  'tablica z ilością produktu, która ma się znaleźć na zleceniu produkcyjnym
+dim pProdukt : set pProdukt = doc_.afc.new_navoarray()    'tablica z id produktu, który ma się znaleźć na zleceniu produkcyjnym
+dim pKlient : set pKlient = doc_.afc.new_navoarray()      'tablica z id klienta, tkóry ma się znaleźć na zleceniu produkcyjnym
+dim pId : set pId = doc_.afc.new_navoarray()              'tablica identyfikująca wiersz checkboxa (służy do usuwania z tabel odznaczonych elementów)
+
+
+
+'''Funkcja otwierająca nowy raport z poziomu raportu'''''''''''''''''
+'''''zmiana w util60140''''''''''''''''''''''''''''''''''''''''''''''
+
+function FuncTestowa(byval pHLI) 
+  doc_.postcommand "varCmd=CMD_OPEN_STATIC_PAGE varDestPage=60140 appvar_raport_type=95653 vs111='" + cstr(pHLI(200)) +" ' vs112='" + cstr(pHLI(201)) +"'" 
+end function
+
+function FuncTestowa1(byval pHLI) 
+  doc_.postcommand "varCmd=CMD_OPEN_STATIC_PAGE varDestPage=60140 appvar_raport_type=95656 vs113='" + cstr(pHLI(200)) +" ' vs114='" + cstr(pHLI(201)) +"'" 
+end function
+
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+
+'''Funkcja obsługi checkboxa - jeśli została zmieniona wartość''''''''
+
+function c##CTRLID_NOWE_ZAMOW##_ondataentered(pCtrl, Value)
+
+  if pCtrl.value="1" then                                    'zapisanie danych do tablic jeśli checkbox został zaznaczony
+    pProdukt.add pCtrl.parent.parent.userprop.prop(0)
+    'if (pCtrl.parent.parent.userprop.prop(1) - pCtrl.parent.parent.userprop.prop(2)) >=0 then
+      'pZlecenie.add (pCtrl.parent.parent.userprop.prop(1) - pCtrl.parent.parent.userprop.prop(2))
+      pZlecenie.add pCtrl.parent.parent.userprop.prop(1)
+    'else 
+      'pZlecenie.add 0
+    'end if
+    pKlient.add pCtrl.parent.parent.userprop(3)
+    pId.add pCtrl.parent.parent.userprop(4)
+    
+  else                                                         'usuwanie danych do tablic jeśli checkbox został odznaczony
+    dim idRmv : idRmv = pCtrl.parent.parent.userprop(4)        'id odznaczonego wiersza
+    dim idElem                                                 'indeks elementów do usunięcia
+    dim iterator
+    
+    
+    for iterator = 0 to (pId.UpperIndex+1)
+      if pId.value(iterator)=idRmv then 
+        idElem = iterator
+        exit for
+      end if
+    next
+    
+    pProdukt.Remove idElem
+    pZlecenie.Remove idElem
+    pKlient.Remove idElem
+    pId.Remove idElem
+  end if
+  
+  
+end function
+
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+
+'''Funkcja obsługi checkboxa ''''''''''''''''''''''''''''''''''''''''''
+
+function c##CTRLID_NOWE_ZAMOW##_ongetdata(byref pCtrl):c##CTRLID_NOWE_ZAMOW##_ongetdata=true
+end function
+
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+
+'''Funkcja obsługi przycisku - tworzy wypełnione Zlecenie produjcji'''' 
+
+function Zlec
+  dim pOpenFormZlec : set pOpenFormZlec = doc_.getmodule(60129).prepare_form_open_command(TYPEID_N5ZLECPROD,0,0)
+
+  if pOpenFormZlec is nothing then
+	        exit function
+  end if
+ 
+  dim pFormZlec : set pFormZlec = doc_.getpagehli(pOpenFormZlec)
+  if pFormZlec is nothing then
+	   exit function
+  end if 
+  
+  '----------Wypełnianie zlecenia----------
+  dim blad : blad =0
+  dim iterator
+  dim pPozZlec        ' obiekt pozycji zlecenia
+  dim pProd           ' obiekt porduktu, pobierany przez idObj z zaznaczonego wiersza
+  dim pKli            ' obiekt klienta, pobierany przez idObj z zaznaczonego wiersza
+  dim pJedynyKlient :
+  
+  set pJedynyKlient = trans_.getobj(TYPEID_N5KLIENT, pKlient.value(0))
+  
+  for iterator=0 to pZlecenie.UpperIndex 
+    set pProd = trans_.getobj(TYPEID_N5PRODUKT, pProdukt.value(iterator))
+    set pKli = trans_.getobj(TYPEID_N5KLIENT, pKlient.value(iterator))
+    
+    
+
+    if pJedynyKlient.idObj <> pKli.idObj then
+      trans_.message 7000, 0, "Zaznaczone zlecenia dotyczą różnych klientów"
+      blad =1
+    else if pZlecenie.value(iterator)=0 then
+        trans_.message 7000, 0, "Ilość zamówionego produktu i ilość produktu zleconego do produkcji są zgodne"
+      else
+        set pPozZlec = pFormZlec.root.listpozycje.addnew()
+        pPozZlec.pProdukt = pProd
+        pPozZlec.curIloscOpak=pZlecenie.value(iterator)
+        pFormZlec.root.pKlient=pKli
+      end if
+    end if
+  
+  next
+  
+  if blad=0 then
+    pFormZlec.domodalauto()
+  end if
+   
+end function
+
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+
+<%
+
+'''Standardowy raport''''''''''''''''''''''''''''''''''''''''''''''''''
+
+function query()
+  
+  dim temp_query
+  
+  temp_query = " create table WYROBY_POZ_DO_REAL " + vbNewLine +_
+               " ( "+_
+               " idZamow	integer not null, " + vbNewLine +_
+               " idProdukt integer not null, " + vbNewLine +_
+               " idOpak integer not null, " + vbNewLine +_
+               " idWZ integer not null, " + vbNewLine +_
+               " idZlecProd integer not null, " + vbNewLine +_
+               " curIloscZam decimal(14,4) not null, " + vbNewLine +_
+               " curIloscZamPoz decimal(14,4) not null, " + vbNewLine +_
+               " curIloscWZ decimal(14,4) not null, " + vbNewLine +_
+               " curIloscZlecProd decimal(14,4) not null, " + vbNewLine +_
+               " curIloscZlecProdPoz decimal(14,4) not null, " + vbNewLine +_
+               " curIloscMag decimal(14,4) not null, " + vbNewLine +_
+               " dDataReal datetime " + vbNewLine +_
+               " )"
+           
+  trans_.execsql temp_query
+           
+  temp_query = " insert into WYROBY_POZ_DO_REAL select " + vbNewLine +_
+               " v_zamow.p_idobj, v_zamow.c_pProdukt, v_zamow.c_pOpak,0,0,sum(v_zamow.c_curiloscopak),sum(v_zamow.c_curiloscopakpoz), " + vbNewLine +_
+               " 0.0,0.0,0.0,0.0,c_pzam_ddatareal " + vbNewLine +_
+               " from vlist_n5zamowienie_listpozycje v_zamow " + vbNewLine +_
+               " join n5produkt t_prod on v_zamow.c_pProdukt=t_prod.idObj " + vbNewLine +_
+               " join n5rejestrdok r on v_zamow.p_prejestrdok = r.idobj " + vbNewLine +_ 
+               " where r.eTyp = N5REJESTRDOK__ZAM_OBCE " + vbNewLine +_
+               " group by p_idobj,c_pzam_ddatareal,c_pProdukt,c_pOpak "
+               
+  trans_.execsql temp_query
+           
+  temp_query = " insert into WYROBY_POZ_DO_REAL select " + vbNewLine +_
+               " v_dokmag.p_wrefdokhandl,v_dokmag.c_pProdukt, v_dokmag.c_pOpak,v_dokmag.p_idObj,0,0.0,0.0,sum(v_dokmag.c_curiloscopak), " + vbNewLine +_
+               " 0.0,0.0,0.0,v_dokmag.c_dextra3 " + vbNewLine +_
+               " from vlist_n5dokmag_listpozycje v_dokmag " + vbNewLine +_
+               " join n5produkt t_prod on v_dokmag.c_pProdukt = t_prod.idObj " + vbNewLine +_
+               " where p_wrefdokhandl in (select idZamow from WYROBY_POZ_DO_REAL) " + vbNewLine +_
+               " and p_wrefdokhandl_wrt=10172 and p_nTypDok = N5REJESTRDOK__WZ " + vbNewLine +_
+               " group by p_idObj,p_wrefdokhandl,v_dokmag.c_dextra3,c_pProdukt,c_pOpak "
+               
+  trans_.execsql temp_query
+           
+  temp_query = " insert into WYROBY_POZ_DO_REAL select " + vbNewLine +_
+               " n5sprzedaz.pZamowienie,v_dokmag.c_pProdukt, v_dokmag.c_pOpak, v_dokmag.p_idObj,0,0.0,0.0,sum(v_dokmag.c_curiloscopak), " + vbNewLine +_
+               " 0.0,0.0,0.0,v_dokmag.c_dextra3 " + vbNewLine +_
+               " from vlist_n5dokmag_listpozycje v_dokmag " + vbNewLine +_
+               " join n5sprzedaz on v_dokmag.p_wrefdokhandl = n5sprzedaz.idobj and v_dokmag.p_wrefdokhandl_wrt=10129 " + vbNewLine +_
+               " inner join n5produkt t_prod on v_dokmag.c_pProdukt = t_prod.idObj " + vbNewLine +_
+               " where pZamowienie in (select idZamow from WYROBY_POZ_DO_REAL) " + vbNewLine +_
+               " and v_dokmag.p_nTypDok = N5REJESTRDOK__WZ " + vbNewLine +_
+               " group by v_dokmag.p_idObj,n5sprzedaz.pZamowienie,v_dokmag.c_dextra3,v_dokmag.c_pProdukt,v_dokmag.c_pOpak "
+               
+  trans_.execsql temp_query
+           
+  temp_query = " insert into WYROBY_POZ_DO_REAL select " + vbNewLine +_
+               " v_zlecprod.p_pzamowienie , v_zlecprod.c_pProdukt, v_zlecprod.c_pOpak,0,v_zlecprod.p_idObj,0.0,0.0,0.0, " + vbNewLine +_
+               " v_zlecprod.c_curIloscOpak ,v_zlecprod.c_curIloscOpakPoz,0.0,v_zlecprod.p_ddatareal " + vbNewLine +_
+               " from vlist_n5zlecprod_listpozycje v_zlecprod " + vbNewLine +_
+               " inner join n5produkt t_prod on v_zlecprod.c_pProdukt = t_prod.idObj " + vbNewLine +_
+               " where p_pzamowienie in (select idZamow from WYROBY_POZ_DO_REAL) "
+           
+  trans_.execsql temp_query    
+  
+  'tworzenie zapytania pobierającego nazwy magazynów do zapytania głównego
+  
+  dim oRecordset  
+  set oRecordset = trans_.createadors(_
+                                      "select" + vbnewline +_
+                                      "'idMag'=idObj," + vbnewline +_ 
+                                      "'strMag'=strNazwa" + vbnewline +_
+                                      "from n5magazyn")
+  
+  dim pos
+  dim strMagQuery : strMagQuery = ""
+  
+  while not oRecordset.eof
+    strMagQuery = strMagQuery + "'curMag" + cstr(oRecordset("idMag").value) + "' = isnull((select sum(gms_curilosc) from n5gmstan where gms_pProd = t_tmp.idProdukt and n5gmstan.gms_pMag = " + cstr(oRecordset("idMag").value) + "),0), " + vbnewline
+  oRecordset.movenext
+	wend
+  
+  
+           
+  query =  " select "+ vbnewline +_
+           " 'c_idZamow'=t_tmp.idZamow, "+ vbnewline +_
+           " 'c_pzam_dDataReal'=t_tmp.dDataReal, " + vbNewLine +_
+           " 'c_idZlecProd' = max(t_tmp.idZlecProd), "+ vbnewline +_
+           " 'c_strNrZamow'=max(t_zam.strNrDok), "+ vbnewline +_
+           " 'c_idProdukt'=t_tmp.idProdukt, "+ vbnewline +_
+           " 'c_strNazwaProd'=max(t_produkt.strNazwa), "+ vbnewline +_
+           " 'c_strInxProd'=max(t_produkt.strIndeks), "+ vbnewline +_
+           " 'c_curIloscZam'=sum(t_tmp.curIloscZam), "+ vbnewline +_
+           " 'c_curIloscZamPoz'=sum(t_tmp.curIloscZamPoz), "+ vbnewline +_
+           " 'c_curIloscWZ'=sum(t_tmp.curIloscWZ), "+ vbnewline +_
+           " 'c_curIloscZlecProd'=sum(t_tmp.curIloscZlecProd), "+ vbnewline +_
+           " 'c_curIloscZlecProdPoz'=sum(t_tmp.curIloscZam) - sum(t_tmp.curIloscWZ) - sum(t_tmp.curIloscZlecProd), "+ vbnewline +_
+           " 'c_idKlient' = max(t_zam.pKlient), "+ vbnewline +_
+           strMagQuery +_
+           " 'c_strNazwaKlient' = max(t_klient.strNazwa), "+ vbnewline +_
+           " 'c_dDataWyst' = max(t_zam.dDataWyst), "+ vbnewline +_
+           " 'c_dDataReal' = max(t_zam.dDataReal), "+ vbnewline +_
+           " 'c_strCecha1'= max(t_produkt.strCecha1), " + vbnewline +_
+           " 'c_strCecha2'= max(t_produkt.strCecha2), " + vbnewline +_
+           " 'c_strCecha3'= max(t_produkt.strCecha3) " + vbnewline +_
+           " from WYROBY_POZ_DO_REAL as t_tmp "+ vbnewline +_
+           " inner join n5zamowienie t_zam on t_tmp.idZamow = t_zam.idobj " + vbnewline +_
+           " inner join n5produkt t_produkt on t_tmp.idProdukt = t_produkt.idObj "+ vbnewline +_
+           " inner join n5grupaproduktow t_grupa on t_produkt.pGrupaProd = t_grupa.idobj " + vbnewline +_
+           " left outer join n5zlecprod t_zlec on t_tmp.idZlecProd = t_zlec.idobj "+ vbnewline +_
+           " left outer join n5dokmag t_wz on t_tmp.idWZ = t_wz.idObj "+ vbnewline +_
+           " inner join n5klient t_klient on t_zam.pKlient = t_klient.idObj "+ vbnewline +_
+           " where %1 and %2 and %3 and %4 and %6 and %7 and %9 and %10 and %11 " + vbnewline +_
+           " group by t_tmp.idZamow,t_tmp.dDataReal,t_tmp.idProdukt,t_tmp.idOpak "+ vbnewline +_
+           " having max(t_tmp.curIloscZamPoz)<>0 "+ vbnewline +_
+           " order by c_strInxProd,c_pzam_dDataReal,c_idZamow"
+           
+
+end function
+  
+%>
+
+<%
+
+dim pGrupaParam
+dim pParamArray
+dim pParamCechy 
+
+function default_param()
+  
+	set pParamArray = doc_.afc.new_navoarray()
+  pParamArray.add doc_.afc.rap.param.new_date_range("Data wystawienia").bindexpr("t_zam.dDataWyst")
+  pParamArray.add doc_.afc.rap.param.new_date_range("Data realizacji").bindexpr("t_tmp.dDataReal")
+	pParamArray.add doc_.afc.rap.param.new_text("Numer zamówienia").bindexpr("t_zam.strNrDok")
+	pParamArray.add doc_.afc.rap.param.new_text("Indeks produktu").bindexpr("t_produkt.strIndeks")
+  pParamArray.add doc_.getmodule(43025).new_filtr_magazyn("gms_pMag","N5TYPMAG_PODSTAWOWY,N5TYPMAG_ZWROTY,N5TYPMAG_PRODUKCJAWTOKU,N5TYPMAG_REZERWACJE")
+  
+	dim pGroupProd : set pGroupProd = doc_.afc.rap.param.new_choice("Grupa produktów").bindexpr("t_grupa.idobj")
+	doc_.afc.rap.param.init_on_query pGroupProd, trans_, "select strNazwa, idobj from n5grupaproduktow order by strNazwa"
+	pParamArray.add pGroupProd
+  
+  pParamArray.add doc_.afc.rap.param.new_text("Nazwa klienta").bindexpr("t_klient.strNazwa")
+  
+  set pParamCechy = doc_.afc.rap.param.new_choice("Kolumny dodatkowe")
+  with pParamCechy
+	  .multiple = true
+    .names.add "Cecha 1"
+    .values.add 1
+    .selected.add true
+    .names.add "Cecha 2"
+    .values.add 2
+    .selected.add true
+    .names.add "Cecha 3"
+    .values.add 3
+    .selected.add true    
+  end with
+  pParamArray.add pParamCechy
+  
+  pParamArray.add doc_.afc.rap.param.new_text("Cecha 1").bindexpr("t_produkt.strCecha1")
+  pParamArray.add doc_.afc.rap.param.new_text("Cecha 2").bindexpr("t_produkt.strCecha2")
+  pParamArray.add doc_.afc.rap.param.new_text("Cecha 3").bindexpr("t_produkt.strCecha3")
+  
+
+
+	set default_param = pParamArray
+  
+end function
+%>
+
+<%
+function write_actual_param(byref pActualParam)
+  dim iter
+  dim bAnyWritten : bAnyWritten = false
+  if not pActualParam is nothing then
+  for iter = 0 to pActualParam.upperIndex
+  if pActualParam.value(iter).get_desc() <> "" then 
+  bAnyWritten = true
+	  so.write "<t size='5' /><text fontsize='4'><![CD"+"ATA[" + pActualParam.value(iter).get_desc() + "]"+"]></text><br/>"
+  end if
+  next
+  end if
+  if not bAnyWritten then 
+	  so.write "<t fontsize='4'>brak</t><br/>"
+  end if
+	  so.write "<br/>"
+end function
+%>
+
+<%
+function section_header_1(byref pSection,byref pRec)
+%>
+<tr userprop='propc_section_start="1" propc_section_hidden="0" propc_section_req="0"' fontsize='4' bordercolor='black'>
+	<td style='27' colspan='<% so.write cstr(10 + nNumMag) %>' bordercolor='black'>
+		<picture name='<%so.write cstr(nSectionPicCounter)%>' tip='Zwiń' ignoresysdisable='true' image='PICTURE_SMALL_MINUS' width='SIZE_FOR_PLUS' height='SIZE_FOR_PLUS' href='vs1022="section_hideshow_hli" vn100="<%so.write cstr(nSectionPicCounter)%>"'/>
+    RXE_TEXT_LINK_FORM_VCC(TYPEID_N5ZAMOWIENIE,c_idZamow, c_strNrZamow) 
+    NAGLOWEK
+  </td>
+</tr>
+<%
+  nSectionPicCounter=nSectionPicCounter+1
+end function
+%>
+
+<%
+function section_header_2(byref pSection,byref pRec)
+%>
+<tr userprop='propc_section_start="1" propc_section_hidden="0" propc_section_req="0"' fontsize='4' bordercolor='black'>
+  <td width='min' bordercolor='white'><t>&nbsp;</t></td>
+	<td style='27' colspan='<% so.write cstr(9 + nNumMag) %>' bordercolor='black'>
+		<picture name='<%so.write cstr(nSectionPicCounter)%>' tip='Zwiń' ignoresysdisable='true' image='PICTURE_SMALL_MINUS' width='SIZE_FOR_PLUS' height='SIZE_FOR_PLUS' href='vs1022="section_hideshow_hli" vn100="<%so.write cstr(nSectionPicCounter)%>"'/>
+    RXE_TEXT(c_pzam_dDataReal)
+  </td>
+</tr>
+<%
+  nSectionPicCounter=nSectionPicCounter+1
+end function
+%>
+
+<%
+function section_footer_1(byref pSection)
+%>
+<tr fontsize='4' hide='true' userprop='propc_section_end="1"' bordercolor='black'>
+</tr>
+<%
+end function
+%>
+
+<%
+function section_footer_2(byref pSection)
+%>
+<tr fontsize='4' hide='true' userprop='propc_section_end="1"' bordercolor='black'>
+</tr>
+<%
+end function
+%>
+
+<%
+function body_row(byref pSection,byref pRec)
+  if pRapExec.RecNr mod 2 = 0 then
+%>
+
+<tr bordercolor='black' userprop="vc0='<% so.write pRec("c_idProdukt").value %>' vc1='<% so.write clng(pRec("c_curIloscZamPoz").value) %>' vc2='<% so.write clng(pRec("c_curIloscZlecProd").value) %>' vc3='<% so.write clng(pRec("c_idKlient").value) %>' vc4 ='<% so.write clng(pRapExec.RecNr)%>'">
+
+<%
+  else
+%>
+
+<tr style='37' bordercolor='black' userprop="vc0='<% so.write pRec("c_idProdukt").value %>' vc1='<% so.write clng(pRec("c_curIloscZamPoz").value) %>' vc2='<% so.write clng(pRec("c_curIloscZlecProd").value) %>' vc3='<% so.write clng(pRec("c_idKlient").value)%>' vc4 ='<% so.write clng(pRapExec.RecNr)%>'">
+
+<%
+  end if
+%>
+<td bordercolor='white' backcolor='white' width='min'><t>&nbsp;</t></td>
+<td bordercolor='white' backcolor='white' width='min'><t>&nbsp;</t></td>
+<td align='right'>RXE_LP</td>
+	<td>
+		RXE_TEXT(c_strInxProd)
+	</td>
+
+	<td>
+    RXE_TEXT_LINK_FORM_VCC(TYPEID_N5PRODUKT,c_idProdukt,c_strNazwaProd)
+	</td>
+	<td align='right'>
+    RXE_QUANTITY_CVV(c_curIloscZam,"",2)
+	</td>
+  <% if ccur(pRec("c_curIloscWZ").value) <> 0 then %>
+  <td align='right'>
+    <text href='varFunctionHLI = "FuncTestowa" vs200 = <% so.write cStr(pRec("c_idZamow").value) %> vs201 = <% so.write cStr(pRec("c_idProdukt").value) %>'><%so.write cstr(doc_.afc.display.quantity(pRec("c_curIloscWZ").value, "", 2))%></text>
+	</td>
+<% else %>
+  <td align='right'>
+    RXE_QUANTITY_CVV(c_curIloscWZ,"",2)
+  </td>
+<% end if%>
+<% if ccur(pRec("c_curIloscZlecProd").value) <> 0 then %>
+  <td align='right'>
+    <text href='varFunctionHLI = "FuncTestowa1" vs200 = <% so.write cStr(pRec("c_idZamow").value) %> vs201 = <% so.write cStr(pRec("c_idProdukt").value) %>'><%so.write cstr(doc_.afc.display.quantity(pRec("c_curIloscZlecProd").value, "", 2))%></text>
+	</td>
+<% else %>
+  <td align='right'>
+    RXE_QUANTITY_CVV(c_curIloscZlecProd,"",2)
+  </td>
+<% end if %>
+   <td align='right'>
+    RXE_QUANTITY_CVV(c_curIloscZlecProdPoz,"",2)
+	</td>
+<%
+  if bShowCecha1 then
+%>
+  <td width='min'>
+    RXE_TEXT(c_strCecha1)
+  </td>
+<%
+  end if
+%> 
+<%
+  if bShowCecha2 then
+%>
+  <td width='min'>
+    RXE_TEXT(c_strCecha2)
+  </td>
+<%
+  end if
+%> 
+<%
+  if bShowCecha3 then
+%>
+  <td width='min'>
+    RXE_TEXT(c_strCecha3)
+  </td>
+<%
+  end if
+%> 
+<% 
+dim i, strNazwaMagazynu
+
+for i = 0 to liczbaMag
+  if isSelectedMag.value(i) = true then 
+    strNazwaMagazynu = "curMag" + cstr(idSelectedMag.value(i))
+%>
+
+ <td align='right'>
+    <text><% so.write doc_.afc.display.quantity(pRec(strNazwaMagazynu),"",2) %></text>
+	</td>
+  
+<% 
+  end if 
+next
+%>
+  <td align='center'>   
+    <checkbox border='0' customredirect='CTRLID_NOWE_ZAMOW'>
+		<t/>
+      <transfer mode='custom' />
+		</checkbox>
+	</td>
+ 
+</tr>
+
+<%
+end function
+%>
+
+<%
+dim nNumMag
+
+function body_header(byref pSection,byref pRec)
+
+'generowanie kolumn magazynów
+
+  liczbaMag = pParamArray.value(FILTR_MAGAZYN).selected.UpperIndex()
+  dim tempIter
+  for tempIter=0 to liczbaMag
+    isSelectedMag.add pParamArray.value(FILTR_MAGAZYN).selected.value(tempIter)
+    strNazwaMag.add pParamArray.value(FILTR_MAGAZYN).names.value(tempIter)
+    idSelectedMag.add pParamArray.value(FILTR_MAGAZYN).values.value(tempIter)
+  next
+  
+  nNumMag = 0
+  for tempIter = 0 to liczbaMag
+    if isSelectedMag.value(tempIter) = true then
+      nNumMag = nNumMag + 1
+    end if
+  next  
+  
+  if bShowCecha1 then
+    nNumMag = nNumMag + 1
+  end if
+  if bShowCecha2 then
+    nNumMag = nNumMag + 1
+  end if
+  if bShowCecha3 then
+    nNumMag = nNumMag + 1
+  end if   
+  
+%>
+
+<table border='1'>
+<thead>
+<tr style='21'>
+	<td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+  <td bordercolor='transparent' width='min'><t>&nbsp;</t></td>
+	<td width='min'><t>LP</t></td>
+	<td width='max'>
+		<text><![CDATA[Indeks produktu]]></text>
+</td>
+
+<td width='max'>
+  <text><![CDATA[Nazwa]]></text>
+</td>
+<td width='max'>
+  <text><![CDATA[Ilość zamówiona]]></text>
+</td>
+<td width='min'>
+    <text><![CDATA[Ilość wydana (WZ)]]></text>
+</td>
+<td width='min'>
+  <text><![CDATA[Ilość zlecona do prod.]]></text>
+</td>
+  <td width='min'>
+    <text><![CDATA[Ilość pozostała do realizacji]]></text>
+  </td>
+<%
+  if bShowCecha1 then
+%>
+  <td width='min'>
+    <text><![CDATA[Cecha 1]]></text>
+  </td>
+<%
+  end if
+%>
+<%
+  if bShowCecha2 then
+%>
+  <td width='min'>
+    <text><![CDATA[Cecha 2]]></text>
+  </td>
+<%
+  end if
+%>
+<%
+  if bShowCecha3 then
+%>
+  <td width='min'>
+    <text><![CDATA[Cecha 3]]></text>
+  </td>
+<%
+  end if
+%>
+  
+<% 
+dim i
+
+for i = 0 to liczbaMag
+  if isSelectedMag.value(i) = true then 
+%>
+
+ <td align='right'>
+   <text><![CDATA[<% so.write strNazwaMag.value(i) %>]]></text>
+	</td>
+  
+<% 
+  end if 
+next
+%>
+<td width='min'>
+    <text><![CDATA[Dodaj zlecenie]]></text>
+</td>
+  
+</tr>
+</thead>
+<tbody>
+  
+<%
+end function
+%>
+
+<%
+function body_footer(byref pSection)
+%>
+</tbody>
+<tfoot>
+<tr style='21'>
+  <td style='27' align='right' colspan='<% so.write cstr(8 + nNumMag) %>'>
+    <t>
+      &nbsp;
+    </t>
+  </td>
+  <td style='27' align='right' colspan='2' >
+      <button href='varFunction="Zlec"'>Utwórz</button>
+  </td>
+</tr>
+</tfoot>
+</table>
+  
+<%
+end function
+%>
+<%dim nSectionPicCounter : nSectionPicCounter = 10000000%>
+function section_hideshow_hli(byref pHLI)
+  doc_.afc.formsection.section_hideshow page_, pHLI.prop(100)
+end function
+]]>
+</script>
+</config>
+<header>
+</header>
+<body>
+<p>
+  RAPORT_HEADER(3,0)
+</p>
+  <p>
+  <t size='2'/>
+  </p>
+
+  <p>
+    <text fontsize='7'><![CDATA[RAPORT_TITLE]]></text>
+  </p><br/><br/>
+  
+<%
+dim pParamTypPro
+%>
+   
+  <t fontsize='5' bold='true'>Kryteria selekcji:</t><br/>
+  
+<%
+
+dim liczbaMag                                                         ''liczba magazynów zaznaczonych na filtrze (żeby nie wywoływać UpperIndex caly czas) 
+dim isSelectedMag : set isSelectedMag  = doc_.afc.new_navoarray()     '' zaznaczone magazyny na filtrze         
+dim strNazwaMag : set strNazwaMag  = doc_.afc.new_navoarray()         '' nazwy zaznaczonych magazynów na filtrze
+dim idSelectedMag : set idSelectedMag  = doc_.afc.new_navoarray()
+
+'czy pokazywać kolumny dodatkowe (cecha 1, cecha 2, cecha 3)
+dim bShowCecha1 : bShowCecha1 = true
+dim bShowCecha2 : bShowCecha2 = true
+dim bShowCecha3 : bShowCecha3 = true
+
+dim pRapExec : set pRapExec = rapeng_.new_engine()
+  with pRapExec
+  .add_body_ex getref("body_header"),getref("body_footer"),getref("body_row")
+  .add_group_section 0,getref("section_header_1"),getref("section_footer_1")
+  .add_group_section 1,getref("section_header_2"),getref("section_footer_2")
+  if .prepare("RAPORT_TITLE",default_param(),rapeng_.get_raport_param(),query()) then
+
+    if not pParamCechy.selected.value(0) then
+      bShowCecha1 = false
+    end if
+    if not pParamCechy.selected.value(1) then
+      bShowCecha2 = false
+    end if
+    if not pParamCechy.selected.value(2) then
+      bShowCecha3 = false
+    end if    
+
+  dim pPerf : set pPerf = doc_.performing("Trwa przygotowywanie wyników...")
+  set pPerf = nothing
+
+  dim nropmag_str : nropmag_str = write_actual_param(rapeng_.get_raport_param())
+
+  '' drobna modyfikacja zapytania - parametr nropmag
+  ''.ReplaceQueryParam "OKRES_NROPMAG_WHERE",nropmag_str
+
+  if not .perform then
+  so.write "<p style='21'><t>Brak danych spełniających podane kryteria</t></p>"
+  end if
+  end if
+  end with
+  
+  trans_.execsql " drop table WYROBY_POZ_DO_REAL"
+     
+
+%>
+
+
+</body>
+<footer>
+</footer>
+</page>

@@ -1,0 +1,977 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<page>
+  <!--
+
+#include "h1000.h"
+#include "h1001.h"
+#include "h1004.h"
+#include "h1200.h"
+#include "h1230.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1240.h"
+#include "h1203.h"
+
+
+#define WZRD_MODE_PREPARE			1
+#define WZRD_MODE_VERIFY			2
+
+#define WZRD_FILTR_LISTA			2
+#define WZRD_FILTR_RAPORT			3
+#define WZRD_FILTR_AKTYWNE			1
+
+#ifdef APPCONFIG_RAPORT_BY_PROD_INX
+#define C_PRODUKT_ORDER			p_strIndeks
+#else
+#define C_PRODUKT_ORDER			p_strNazwa
+#endif
+
+-->
+
+  <config>
+    <title>Kreator inwentaryzacji</title>
+    <script>
+      <![CDATA[
+#include "50209"
+
+'messagebox
+#include "50122"
+
+'srvDate
+#include "50126"
+
+'fire_choicelist
+'UnderConstruction
+#include "50200"
+
+'choose_rejestr_dok
+#include "50517"
+#include "50101"
+#include "50516"
+
+function proccessStanMag_IP(byref pIP , byref pIR , byval pStanMagArray , byval pDaneWej ):proccessStanMag_IP = false
+
+	dim iter
+	dim pStanMag
+	'przechodzimy wszystkie przeczytane i uzupelnione stany 
+	for iter = 0 to pStanMagArray.upperIndex()
+		set pStanMag = pStanMagArray.value(iter)
+
+		if pStanMag.superata then
+			if pIP is nothing then
+				if not create_DokMag(pIP,N5REJESTRDOK__IP,pDaneWej.m_pMagazyn,pDaneWej.m_dDataWyst,pDaneWej.m_strOpis) then 
+					exit function
+				end if
+			end if
+			pStanMag.updateIP pIP
+		end if
+	next	
+	pIP.strUwagi = pIP.strUwagi + " "+ pDaneWej.m_strOpis
+
+	proccessStanMag_IP = trans_.saveobjects()
+end function
+
+
+function proccessStanMag_IR(byref pIP , byref pIR , byval pStanMagArray , byval pDaneWej ):proccessStanMag_IR = false
+
+	dim iter
+	dim pStanMag
+	'przechodzimy wszystkie przeczytane i uzupelnione stany 
+	for iter = 0 to pStanMagArray.upperIndex()
+		set pStanMag = pStanMagArray.value(iter)
+
+		'jezeli manko to uzupelniamy rozchod
+		if pStanMag.manko then
+			'jezeli dokuemntu nie ma to go tworzymy
+			if pIR is nothing then
+				if not create_DokMag(pIR,N5REJESTRDOK__IR,pDaneWej.m_pMagazyn,pDaneWej.m_dDataWyst,pDaneWej.m_strOpis) then 
+					exit function
+				end if
+			end if
+			'robimy update
+			pStanMag.updateIR pIR
+		end if
+	next	
+	pIR.strUwagi = pIR.strUwagi + " "+ pDaneWej.m_strOpis
+	proccessStanMag_IR = trans_.saveobjects()
+end function
+
+function make_IR(byval pStanMagArray , byval pDaneWej):make_IR = false
+
+	dim pTrans:set pTrans = trans_.createsubtran()
+
+
+	dim pIP:set pIP = nothing
+	dim pIR:set pIR = nothing
+
+	if not proccessStanMag_IR(pIP , pIR , pStanMagArray ,pDaneWej  ) then
+		exit function
+	end if
+
+	'jezeli mamy oba dokumenty to musumy to zrobic sprytniej
+	'wyswietlimy oba i je zapiszemy
+	if not pIP is nothing and not pIR is nothing then
+		pIP.usermodif true
+		pIR.usermodif true
+
+		do
+			
+			'zapamietujemy stan obiektow
+			dim bPrzychodNew
+			bPrzychodNew = pIP.isnew					
+			dim bPrzychodUserModif
+			bPrzychodUserModif = trans_.isobjselfdirty(TYPEID_N5DOKMAG, pIP.IdObj)
+
+			dim bRozchodNew
+			bRozchodNew = pIR.isnew					
+			dim bRozchodUserModif
+			bRozchodUserModif = trans_.isobjselfdirty(TYPEID_N5DOKMAG, pIR.IdObj)
+
+			dim pChoicePage
+			trans_.var(APPVAR_SHOW_STATUS) = clng(0)
+			set pChoicePage = doc_.getpagehli("varCmd=CMD_OPEN_WIZARD_PAGE varDestPage=20170")
+
+			dim nResult: nResult = 0
+
+			if (not pChoicePage is nothing) then
+				pChoicePage.add_document "Inwentaryzacja - przychód", bPrzychodNew, bPrzychodUserModif, 1
+				pChoicePage.add_document "Inwentaryzacja - rozchód",  bRozchodNew, bRozchodUserModif, 2
+
+				nResult = pChoicePage.domodalauto()
+
+				set pChoicePage = nothing
+
+				select case nResult
+					case 1
+						Show_DokMag pIP,pDaneWej 
+					case 2
+						Show_DokMag pIR,pDaneWej 
+				end select
+
+			end if
+
+			if (nResult = 0) then
+				if (bPrzychodNew or _
+					bPrzychodUserModif or _
+					bRozchodNew or _
+					bRozchodUserModif) then
+						if (MessageBox("Nie wszystkie dokumenty zostały zapisane. Chcesz zapisać dane?", "Niezapisane zmiany", vbYesNo, vbQuestion )=vbYes) then
+							nResult = -1
+						end if
+				end if
+			elseif (nResult = 1000) then
+				nResult = 0
+			end if
+
+
+		loop until (nResult = 0)
+
+		bPrzychodNew = pIP.isnew					
+		bPrzychodUserModif = trans_.isobjselfdirty(TYPEID_N5DOKMAG, pIP.IdObj)
+		bRozchodNew = pIR.isnew					
+		bRozchodUserModif = trans_.isobjselfdirty(TYPEID_N5DOKMAG, pIR.IdObj)
+
+		if bPrzychodNew or bPrzychodUserModif or bRozchodNew or bRozchodUserModif then
+			trans_.message 1002 , 0 , "Nie zapisano stworzonego dokumentu"
+			exit function
+		end if
+
+	else ' tylko jeden dokument
+		dim pDok:set pDok = nothing
+		if not pIP is nothing then
+			set pDok = pIP
+		end if
+
+		if not pIR is nothing then
+			set pDok = pIR
+		end if
+
+		if pDok is nothing then
+			trans_.message 1002 , 0 , "Nie stworzono zadnych dokumentów - nie wykryto niezgodnoścu pomiędzy stanem bazy a stanem faktycznym"
+			make_IR = true
+			exit function
+		end if
+
+
+		Show_DokMag pDok,pDaneWej
+
+		if pDok.isnew or trans_.isobjselfdirty(TYPEID_N5DOKMAG, pDok.IdObj) then
+			trans_.message 1002 , 0 , "Nie zapisano stworzonego dokumentu"
+			exit function
+		end if
+
+	end if
+
+	set pTrans = nothing
+
+
+	make_IR = true
+end function
+
+
+function make_IR_dopisz(byval pStanMagArray , byval pDaneWej, byval IR):make_IR_dopisz = false
+
+	dim pTrans:set pTrans = trans_.createsubtran()
+
+
+	dim pIP:set pIP = nothing
+	dim pIR:set pIR = trans_.getobj(TYPEID_N5DOKMAG,IR)
+
+	if not proccessStanMag_IR(pIP , pIR , pStanMagArray ,pDaneWej  ) then
+		exit function
+	end if
+
+	'jezeli mamy oba dokumenty to musumy to zrobic sprytniej
+	'wyswietlimy oba i je zapiszemy
+	if not pIP is nothing and not pIR is nothing then
+		pIP.usermodif true
+		pIR.usermodif true
+
+		do
+			
+			'zapamietujemy stan obiektow
+			dim bPrzychodNew
+			bPrzychodNew = pIP.isnew					
+			dim bPrzychodUserModif
+			bPrzychodUserModif = trans_.isobjselfdirty(TYPEID_N5DOKMAG, pIP.IdObj)
+
+			dim bRozchodNew
+			bRozchodNew = pIR.isnew					
+			dim bRozchodUserModif
+			bRozchodUserModif = trans_.isobjselfdirty(TYPEID_N5DOKMAG, pIR.IdObj)
+
+			dim pChoicePage
+			trans_.var(APPVAR_SHOW_STATUS) = clng(0)
+			set pChoicePage = doc_.getpagehli("varCmd=CMD_OPEN_WIZARD_PAGE varDestPage=20170")
+
+			dim nResult: nResult = 0
+
+			if (not pChoicePage is nothing) then
+				pChoicePage.add_document "Inwentaryzacja - przychód", bPrzychodNew, bPrzychodUserModif, 1
+				pChoicePage.add_document "Inwentaryzacja - rozchód",  bRozchodNew, bRozchodUserModif, 2
+
+				nResult = pChoicePage.domodalauto()
+
+				set pChoicePage = nothing
+
+				select case nResult
+					case 1
+						Show_DokMag pIP,pDaneWej 
+					case 2
+						Show_DokMag pIR,pDaneWej 
+				end select
+
+			end if
+
+			if (nResult = 0) then
+				if (bPrzychodNew or _
+					bPrzychodUserModif or _
+					bRozchodNew or _
+					bRozchodUserModif) then
+						if (MessageBox("Nie wszystkie dokumenty zostały zapisane. Chcesz zapisać dane?", "Niezapisane zmiany", vbYesNo, vbQuestion )=vbYes) then
+							nResult = -1
+						end if
+				end if
+			elseif (nResult = 1000) then
+				nResult = 0
+			end if
+
+
+		loop until (nResult = 0)
+
+		bPrzychodNew = pIP.isnew					
+		bPrzychodUserModif = trans_.isobjselfdirty(TYPEID_N5DOKMAG, pIP.IdObj)
+		bRozchodNew = pIR.isnew					
+		bRozchodUserModif = trans_.isobjselfdirty(TYPEID_N5DOKMAG, pIR.IdObj)
+
+		if bPrzychodNew or bPrzychodUserModif or bRozchodNew or bRozchodUserModif then
+			trans_.message 1002 , 0 , "Nie zapisano stworzonego dokumentu"
+			exit function
+		end if
+
+	else ' tylko jeden dokument
+		dim pDok:set pDok = nothing
+		if not pIP is nothing then
+			set pDok = pIP
+		end if
+
+		if not pIR is nothing then
+			set pDok = pIR
+		end if
+
+		if pDok is nothing then
+			trans_.message 1002 , 0 , "Nie stworzono zadnych dokumentów - nie wykryto niezgodnoścu pomiędzy stanem bazy a stanem faktycznym"
+			make_IR_dopisz = true
+			exit function
+		end if
+
+
+		Show_DokMag pDok,pDaneWej
+
+		if pDok.isnew or trans_.isobjselfdirty(TYPEID_N5DOKMAG, pDok.IdObj) then
+			trans_.message 1002 , 0 , "Nie zapisano stworzonego dokumentu"
+			exit function
+		end if
+
+	end if
+
+	set pTrans = nothing
+
+
+	make_IR_dopisz = true
+end function
+
+
+
+
+function make_IP_dopisz(byval pStanMagArray , byval pDaneWej, byval IP ):make_IP_dopisz = false
+
+	dim pTrans:set pTrans = trans_.createsubtran()
+
+
+	dim pIP:set pIP = trans_.getobj(TYPEID_N5DOKMAG,ip)
+	dim pIR:set pIR = nothing
+
+	if not proccessStanMag_IP(pIP , pIR , pStanMagArray , pDaneWej  ) then
+		exit function
+	end if
+
+	'jezeli mamy oba dokumenty to musumy to zrobic sprytniej
+	'wyswietlimy oba i je zapiszemy
+	if not pIP is nothing and not pIR is nothing then
+		pIP.usermodif true
+		pIR.usermodif true
+
+		do
+			
+			'zapamietujemy stan obiektow
+			dim bPrzychodNew
+			bPrzychodNew = pIP.isnew					
+			dim bPrzychodUserModif
+			bPrzychodUserModif = trans_.isobjselfdirty(TYPEID_N5DOKMAG, pIP.IdObj)
+
+			dim bRozchodNew
+			bRozchodNew = pIR.isnew					
+			dim bRozchodUserModif
+			bRozchodUserModif = trans_.isobjselfdirty(TYPEID_N5DOKMAG, pIR.IdObj)
+
+			dim pChoicePage
+			trans_.var(APPVAR_SHOW_STATUS) = clng(0)
+			set pChoicePage = doc_.getpagehli("varCmd=CMD_OPEN_WIZARD_PAGE varDestPage=20170")
+
+			dim nResult: nResult = 0
+
+			if (not pChoicePage is nothing) then
+				pChoicePage.add_document "Inwentaryzacja - przychód", bPrzychodNew, bPrzychodUserModif, 1
+				pChoicePage.add_document "Inwentaryzacja - rozchód",  bRozchodNew, bRozchodUserModif, 2
+
+				nResult = pChoicePage.domodalauto()
+
+				set pChoicePage = nothing
+
+				select case nResult
+					case 1
+						Show_DokMag pIP,pDaneWej 
+					case 2
+						Show_DokMag pIR,pDaneWej 
+				end select
+
+			end if
+
+			if (nResult = 0) then
+				if (bPrzychodNew or _
+					bPrzychodUserModif or _
+					bRozchodNew or _
+					bRozchodUserModif) then
+						if (MessageBox("Nie wszystkie dokumenty zostały zapisane. Chcesz zapisać dane?", "Niezapisane zmiany", vbYesNo, vbQuestion )=vbYes) then
+							nResult = -1
+						end if
+				end if
+			elseif (nResult = 1000) then
+				nResult = 0
+			end if
+
+
+		loop until (nResult = 0)
+
+		bPrzychodNew = pIP.isnew					
+		bPrzychodUserModif = trans_.isobjselfdirty(TYPEID_N5DOKMAG, pIP.IdObj)
+		bRozchodNew = pIR.isnew					
+		bRozchodUserModif = trans_.isobjselfdirty(TYPEID_N5DOKMAG, pIR.IdObj)
+
+		if bPrzychodNew or bPrzychodUserModif or bRozchodNew or bRozchodUserModif then
+			trans_.message 1002 , 0 , "Nie zapisano stworzonego dokumentu"
+			exit function
+		end if
+
+	else ' tylko jeden dokument
+		dim pDok:set pDok = nothing
+		if not pIP is nothing then
+			set pDok = pIP
+		end if
+
+		if not pIR is nothing then
+			set pDok = pIR
+		end if
+
+		if pDok is nothing then
+			trans_.message 1002 , 0 , "Nie stworzono zadnych dokumentów - nie wykryto niezgodnoścu pomiędzy stanem bazy a stanem faktycznym"
+			make_IP_dopisz = true
+			exit function
+		end if
+
+
+		Show_DokMag pDok,pDaneWej 
+
+		if pDok.isnew or trans_.isobjselfdirty(TYPEID_N5DOKMAG, pDok.IdObj) then
+			trans_.message 1002 , 0 , "Nie zapisano stworzonego dokumentu"
+			exit function
+		end if
+
+	end if
+
+	set pTrans = nothing
+
+
+	make_IP_dopisz = true
+end function
+
+
+
+
+
+function make_IP(byval pStanMagArray , byval pDaneWej ):make_IP = false
+
+	dim pTrans:set pTrans = trans_.createsubtran()
+
+
+	dim pIP:set pIP = nothing
+	dim pIR:set pIR = nothing
+
+	if not proccessStanMag_IP(pIP , pIR , pStanMagArray , pDaneWej  ) then
+		exit function
+	end if
+
+	'jezeli mamy oba dokumenty to musumy to zrobic sprytniej
+	'wyswietlimy oba i je zapiszemy
+	if not pIP is nothing and not pIR is nothing then
+		pIP.usermodif true
+		pIR.usermodif true
+
+		do
+			
+			'zapamietujemy stan obiektow
+			dim bPrzychodNew
+			bPrzychodNew = pIP.isnew					
+			dim bPrzychodUserModif
+			bPrzychodUserModif = trans_.isobjselfdirty(TYPEID_N5DOKMAG, pIP.IdObj)
+
+			dim bRozchodNew
+			bRozchodNew = pIR.isnew					
+			dim bRozchodUserModif
+			bRozchodUserModif = trans_.isobjselfdirty(TYPEID_N5DOKMAG, pIR.IdObj)
+
+			dim pChoicePage
+			trans_.var(APPVAR_SHOW_STATUS) = clng(0)
+			set pChoicePage = doc_.getpagehli("varCmd=CMD_OPEN_WIZARD_PAGE varDestPage=20170")
+
+			dim nResult: nResult = 0
+
+			if (not pChoicePage is nothing) then
+				pChoicePage.add_document "Inwentaryzacja - przychód", bPrzychodNew, bPrzychodUserModif, 1
+				pChoicePage.add_document "Inwentaryzacja - rozchód",  bRozchodNew, bRozchodUserModif, 2
+
+				nResult = pChoicePage.domodalauto()
+
+				set pChoicePage = nothing
+
+				select case nResult
+					case 1
+						Show_DokMag pIP,pDaneWej 
+					case 2
+						Show_DokMag pIR,pDaneWej 
+				end select
+
+			end if
+
+			if (nResult = 0) then
+				if (bPrzychodNew or _
+					bPrzychodUserModif or _
+					bRozchodNew or _
+					bRozchodUserModif) then
+						if (MessageBox("Nie wszystkie dokumenty zostały zapisane. Chcesz zapisać dane?", "Niezapisane zmiany", vbYesNo, vbQuestion )=vbYes) then
+							nResult = -1
+						end if
+				end if
+			elseif (nResult = 1000) then
+				nResult = 0
+			end if
+
+
+		loop until (nResult = 0)
+
+		bPrzychodNew = pIP.isnew					
+		bPrzychodUserModif = trans_.isobjselfdirty(TYPEID_N5DOKMAG, pIP.IdObj)
+		bRozchodNew = pIR.isnew					
+		bRozchodUserModif = trans_.isobjselfdirty(TYPEID_N5DOKMAG, pIR.IdObj)
+
+		if bPrzychodNew or bPrzychodUserModif or bRozchodNew or bRozchodUserModif then
+			trans_.message 1002 , 0 , "Nie zapisano stworzonego dokumentu"
+			exit function
+		end if
+
+	else ' tylko jeden dokument
+		dim pDok:set pDok = nothing
+		if not pIP is nothing then
+			set pDok = pIP
+		end if
+
+		if not pIR is nothing then
+			set pDok = pIR
+		end if
+
+		if pDok is nothing then
+			trans_.message 1002 , 0 , "Nie stworzono zadnych dokumentów - nie wykryto niezgodnoścu pomiędzy stanem bazy a stanem faktycznym"
+			make_IP = true
+			exit function
+		end if
+
+
+		Show_DokMag pDok,pDaneWej 
+
+		if pDok.isnew or trans_.isobjselfdirty(TYPEID_N5DOKMAG, pDok.IdObj) then
+			trans_.message 1002 , 0 , "Nie zapisano stworzonego dokumentu"
+			exit function
+		end if
+
+	end if
+
+	set pTrans = nothing
+
+
+	make_IP = true
+end function
+
+
+
+
+function Show_DokMag(byref pDokMag , byval pMagazyn)
+	if (not pDokMag is nothing) then
+		
+
+		dim pHli
+		set pHli = doc_.getmodule(60129).prepare_form_open_command(TYPEID_N5DOKMAG, pDokMag.IdObj, USAGE_EDIT)
+
+		dim pPage
+		set pPage = doc_.getpagehli( pHli )
+
+'		select case pPage.root.pRejestrDok.eTyp
+'			case N5REJESTRDOK__IP
+'				set pPage.root.pMagDocel = pMagazyn
+'			case N5REJESTRDOK__IR
+'				set pPage.root.pMagZrod = pMagazyn
+'		end select 
+		
+
+		if (not pPage is nothing) then
+			pPage.domodalauto
+		end if
+
+	end if
+end function
+
+
+private function create_DokMag(byref pDokMag , byval nTypDok , byval pMagazyn, byval dDataWyst, byval strOpis):create_DokMag = false
+
+	trans_.var(APPVAR_REJESTR_TYP) = CLng( nTypDok )
+
+	dim idRejestr
+	idRejestr = choose_rejestr_dok(CStr( nTypDok ), true, "Wybierz rejestr dokumentów")
+
+
+	if (idRejestr <= 0) then
+		view_message 6322, 0
+		exit function
+	end if
+
+	'Ustaw id rejestru dokumentów
+	trans_.var(APPVAR_REJESTR_DOKUMENTOW) = CLng( idRejestr )
+
+	set pDokMag = trans_.newobj( TYPEID_N5DOKMAG )
+
+	select case nTypDok
+		case N5REJESTRDOK__IP
+			set pDokMag.pMagDocel = pMagazyn
+		case N5REJESTRDOK__IR
+			set pDokMag.pMagZrod = pMagazyn
+	end select 
+
+  pDokMag.dDataWyst = dDataWyst
+  pDokMag.strUwagi = strOpis
+	if (pDokMag is nothing) then
+		view_message 6323, 0
+		exit function 
+	end if
+
+	create_DokMag = true
+
+end function
+
+function new_CInwentaryzacja
+set new_CInwentaryzacja = new CInwentaryzacja
+end function
+
+class CInwentaryzacja
+
+	public m_nMode ' tryb dzialania kreatora - w kroku PAGE_FORM_WIZZARD_INWENTARYZACJA_TRYB
+
+	public m_nFiltr
+	public m_nIdobjFiltr
+	public m_strNameFiltr
+
+
+	public m_pLista
+	public m_pRaport
+	public m_pMagazyn
+  public m_dDataWyst
+  public m_strOpis
+
+	public m_pRS
+	public m_pStanMag
+
+
+	private sub class_initialize()
+		m_nMode = clng(WZRD_MODE_PREPARE)
+		m_nFiltr = clng(1)
+
+		set m_pLista = nothing
+		set m_pRaport = nothing
+		set m_pMagazyn = nothing
+    m_dDataWyst = trans_.var(GVAR_TODAY)
+    m_strOpis = ""
+
+		set m_pStanMag = nothing
+
+	end sub
+
+
+	private sub show_obj(byval obj)
+		if not obj is nothing then
+			doc_.getmodule(60129).form_domodal obj.type ,obj.idobj,USAGE_VIEW
+		end if
+	end sub
+
+	public function pokaz_liste
+		show_obj m_pLista
+	end function
+
+	public function pokaz_magazyn
+		show_obj m_pMagazyn
+	end function
+
+	public function pokaz_raport
+		show_obj m_pRaport
+	end function
+
+	public function choose_magazyn
+		dim choice : choice = fire_choice_list( TYPEID_N5MAGAZYN,"Magazyn","","eTyp in (N5TYPMAG_PODSTAWOWY)","","")
+		if choice <> 0 then
+			set m_pMagazyn = trans_.getobj(TYPEID_N5MAGAZYN, choice)
+      trans_.var(1212)=m_pMagazyn.text
+		end if		
+	end function
+
+  public function choose_date (byref data)
+    m_dDataWyst = data
+    trans_.var(1213)=m_dDataWyst
+  end function
+
+	private function make_cursor_weryfikacja()
+
+		make_cursor_weryfikacja = false
+
+		dim strWhere:strWhere = get_where()
+		if strWhere = "" then
+			exit function
+		end if
+
+		dim query: query = trans_.afc.convert.Formatter( _
+		" select " + _
+		" p_idobj as prod_id  , " + _
+		" max(p_strNazwa) as prod_nazwa  , " + _
+		" c_idobj as opak_id , " + _
+		" max(c_strNazwa) as opak_nazwa , " + _
+		" coll_lp as lp ," + _
+		" sum(isnull(n5gmstan.gms_curIlosc,0)) as ilosc " + _
+		" from vlist_n5produkt_listOpakowania  " + _		
+		" cross join n5magazyn " + _
+		" left join n5gmstan on p_idobj = n5gmstan.gms_pProd and c_idobj = n5gmstan.gms_pOpak and n5magazyn.idobj = n5gmstan.gms_pMag " + _
+		" where %1 and n5magazyn.idobj = %2 " + _
+		" group by p_idobj,C_PRODUKT_ORDER,c_idobj,coll_lp " + _
+		" order by C_PRODUKT_ORDER,coll_lp ") _
+		.add(strWhere).add(m_pMagazyn.idobj).done()
+
+		dim rs:set rs = trans_.createadors(query)
+		set m_pRS = rs
+
+		make_cursor_weryfikacja = true
+
+	end function
+
+
+	private function make_cursor():make_cursor = false
+
+		dim strWhere:strWhere = get_where()
+		if strWhere = "" then
+			exit function
+		end if
+
+		dim query: query = trans_.afc.convert.Formatter( _
+		" select '%2' as mag , p_strIndeks as inx , p_idobj as prod_idobj , p_strNazwa as prod, " +_
+		" c_strNazwa as opak , coll_lp from vlist_n5produkt_listOpakowania as n5produkt " +_
+		" where %1 order by C_PRODUKT_ORDER,coll_lp " ) _
+		.add(strWhere).add(m_pMagazyn.text).done()
+
+		dim rs:set rs = trans_.createadors(query)
+
+		make_cursor = true
+
+		set m_pRS = rs
+	end function
+
+
+	private function get_where():get_where=""
+		get_where = doc_.getmodule(60300).bquery_where_for_produkt_filtr(m_nFiltr , m_nIdobjFiltr) + " and p_eRodzaj=N5PRODUKT_TOWAR "
+	end function
+
+
+
+	'*****************************************************
+	'poprawność wypełnienia informacji
+
+
+	public function magazyn_isEmpty()
+		magazyn_isEmpty = m_pMagazyn is nothing		
+		if magazyn_isEmpty then
+			trans_.message 7000 , 0 , "podane informacje nie są pełne"
+		end if
+	end function
+
+	'*****************************************************
+
+
+	public sub uruchom_arkusz
+
+		if not make_cursor then
+			exit sub
+		end if
+			
+		dim pOpenHLI : set pOpenHLI = doc_.createhlistr("varCmd = CMD_OPEN_STATIC_PAGE")
+		set pOpenHLI.prop(GVAR_DESTPAGE) = doc_.getmodule(60170).asp_appfile(95133, me)
+		doc_.getpagehli(pOpenHLI).domodalauto()
+
+	end sub
+
+
+	public sub na_kolektor
+
+		dim pProdCursorBuilder:set pProdCursorBuilder = doc_.getpagehli("varCmd=CMD_OPEN_WIZARD_PAGE varDestPage=DIALOG_PRODUKT_FILTR")
+		pProdCursorBuilder.init m_nFiltr , m_nIdobjFiltr
+
+		dim pCursor:set pCursor = pProdCursorBuilder.cursor_for_send_to_collector(m_pMagazyn.idobj)
+		if pCursor is nothing then
+			exit sub
+		end if
+
+		dim pCollectorUtil:set pCollectorUtil = doc_.getmodule(60205)
+		pCollectorUtil.send_products_to_collector pCursor
+
+	end sub
+
+
+	public sub wprowadz_stan
+
+		dim pStanMag_bufor:set pStanMag_bufor = doc_.afc.new_navoarray()
+
+
+		'if m_pStanMag is nothing then
+			if not wypelnij_stanmag(pStanMag_bufor) then
+				exit sub
+			end if
+		'else
+		'	to_bufor pStanMag_bufor			
+		'end if
+
+
+		dim page:set page = doc_.getpagehli("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=PAGE_FORM_WIZZARD_INWENTARYZACJA_STAN_FAKTYCZNY")
+   
+    page.bufor pStanMag_bufor
+		page.domodalauto()
+
+		if page.res then
+			from_bufor pStanMag_bufor
+		end if
+
+	end sub
+
+
+	private function from_bufor(byval bufor)
+		set m_pStanMag = doc_.afc.new_navoarray()
+		dim iter
+		for iter = 0 to bufor.upperIndex
+			m_pStanMag.add 	bufor.value(iter)
+		next
+	end function
+
+	private function to_bufor(byref bufor)
+
+		dim iter,pStanMagRecord
+		for iter = 0 to m_pStanMag.upperIndex
+			set pStanMagRecord = new CStanMagRecord
+			with pStanMagRecord
+				set .m_pProdukt = m_pStanMag.value(iter).m_pProdukt
+				set .m_pOpak = m_pStanMag.value(iter).m_pOpak
+				.m_nProduktIdobj = m_pStanMag.value(iter).m_nProduktIdobj
+				.m_pOpakIdobj = m_pStanMag.value(iter).m_pOpakIdobj
+				.m_nOpakLp = m_pStanMag.value(iter).m_nOpakLp
+				.m_curStanBaza = m_pStanMag.value(iter).m_curStanBaza
+				.m_curStanFaktyczny = m_pStanMag.value(iter).m_curStanFaktyczny
+				.m_curCena = m_pStanMag.value(iter).m_curCena
+				.m_dData = m_pStanMag.value(iter).m_dData
+			end with
+			
+			bufor.add pStanMagRecord 
+		next
+	end function
+
+
+	public sub z_kolektora
+		UnderConstruction
+	end sub
+
+
+	private function  wypelnij_stanmag(byref pStanMag_array):wypelnij_stanmag = false
+
+		if not make_cursor_weryfikacja then
+			exit function
+		end if
+
+		dim perf
+		set perf = doc_.performing("Trwa sprawdzanie stanów magazynowych . . .")
+
+		dim pStanMagRecord 
+
+
+		while not m_pRS.eof
+			
+			set pStanMagRecord = new CStanMagRecord
+			with pStanMagRecord 
+
+				.m_nProduktIdobj = clng(m_pRS.fields("prod_id").value)
+				.m_pOpakIdobj = clng(m_pRS.fields("opak_id").value)
+				.m_nOpakLp = clng(m_pRS.fields("lp").value)
+				.m_curStanBaza = ccur(m_pRS.fields("ilosc").value)
+				.m_curStanFaktyczny = ccur(m_pRS.fields("ilosc").value)
+				
+			end with
+			pStanMag_array.add pStanMagRecord			
+			m_pRS.movenext
+		wend
+
+		if pStanMag_array.UpperIndex() < 0 then	
+			trans_.message 7000 , 0 , "Wybrany sposób filtrowania produktów pomija je wszystkie. Nie można wprowadzić faktycznych stanów produktów."
+			wypelnij_stanmag = false
+			exit function	
+		end if
+		
+		wypelnij_stanmag = true	
+	end function
+
+			
+end class
+
+
+function new_CStanMagRecord_fill
+  set new_CStanMagRecord_fill = new CStanMagRecord_fill
+end function
+
+class CStanMagRecord_fill
+  public m_nMagazyn
+	public m_pProdukt
+	public m_pOpak
+	public m_nProduktIdobj
+	public m_pOpakIdobj
+	public m_nOpakLp
+	public m_curStanBaza
+	public m_curStanFaktyczny
+
+	public m_curCena
+	public m_dData
+
+	
+	private sub class_initialize()
+		set m_pProdukt = nothing
+		set m_pOpak = nothing
+    m_nMagazyn = ccur(0)
+
+		m_curCena = ccur(0)
+		m_dData = trans_.afc.globals.nulldate()
+		
+	end sub
+
+
+	public function produkt()
+		if not m_pProdukt is nothing then
+			produkt = m_pProdukt.text + " / " + m_pProdukt.strIndeks
+		else
+			produkt = "<brak>"
+		end if
+	end function
+
+
+	public function opakowanie()
+		if not m_pOpak is nothing then
+			opakowanie = m_pOpak.text
+		else
+			opakowanie = "<brak>"
+		end if
+	end function
+
+
+
+	public function manko()
+		manko = m_curStanFaktyczny < m_curStanBaza
+	end function
+
+	public function superata
+		superata = m_curStanFaktyczny > m_curStanBaza
+	end function
+
+	public function updateIP(byref pIP)
+		dim pPozycja:set pPozycja = insertPoz(pIP)
+		pPozycja.dDataWazn = m_dData
+		pPozycja.curCenaMag = m_curCena
+	end function
+
+	public function updateIR(byref pIR)
+		dim pPozycja:set pPozycja = insertPoz(pIR)
+	end function
+
+	private function insertPoz(byref pDokMag)
+		dim pPozycja:set pPozycja = pDokMag.listPozycje.addnew()
+		set pPozycja.pProdukt = trans_.getobj(TYPEID_N5PRODUKT,m_nProduktIdobj)
+		set pPozycja.popak = pPozycja.pProdukt.listOpakowania.get(m_nOpakLp)
+		pPozycja.curIloscOpak = abs(ccur(m_curStanFaktyczny - m_curStanBaza))
+		set insertPoz = pPozycja
+	end function
+
+end class
+
+
+
+]]>
+    </script>
+  </config>
+  <body></body>
+</page>
+

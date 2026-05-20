@@ -1,0 +1,1497 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+#include "h1000.h"
+#include "h1240.h"
+-->
+<page style='STYLE_PAGE'>
+
+<config>
+<script>
+<!-- 
+-->
+<![CDATA[
+#include "50203"
+#include "50516"
+
+#define DESC_FILE  "db15.desc"
+
+#define CTRLID_UPGRADE		15
+
+'/////////////////////////////////////////////////////////////////////
+'// generuje definicje 1 tabeli                                     //
+'// strOneTable - zwraca kod tabeli									//
+'//używane także przez 70105										//
+'/////////////////////////////////////////////////////////////////////
+
+sub generuj_create_one_table(byref oObjDef,byref strOneTable)
+	dim flddef
+	dim strSingleTable : strSingleTable = ""
+	if oObjDef.ispersist then
+		strSingleTable = strSingleTable + "create table " + oObjDef.tablename + vbCrLf +_
+		"(" + vbCrLf +_
+		vbTab + "IdObj integer not null," + vbCrLf +_
+		vbTab + "VersionId integer not null"
+		for each flddef in oObjDef
+			if flddef.name <> "IdObj" then	'ignoruj IdObj
+				if flddef.ispersist then
+					strSingleTable = strSingleTable + "," + vbCrLf + vbTab + flddef.name + " " + flddef.sqltypename + " not null"
+					if flddef.type = RELT_WILDREF then
+						strSingleTable = strSingleTable + "," + vbCrLf + vbTab + flddef.name + "_wrt integer not null"
+					end if
+				else
+					strSingleTable = strSingleTable + "," + vbCrLf + vbTab + "-- [virtual] " + flddef.name
+				end if
+			end if
+		next
+		strSingleTable = strSingleTable  + vbCrLf + ")" + vbCrLf + "go" + vbCrLf + vbCrLf 
+	else
+		strSingleTable = strSingleTable  + "-- skipped virtual table: " + oObjDef.tablename + vbCrLf 
+	end if
+	strOneTable = strSingleTable
+end sub
+
+'/////////////////////////////////////////////////////////////////////
+'// generuje definicje tabel                                        //
+'// strTables - zwraca kod tabel									//
+'/////////////////////////////////////////////////////////////////////
+
+sub generuj_create_tables(byref strTables)
+	dim stdobjdef
+
+	' 1, 1, "generowanie tablic"
+	view_message 4057, 0
+
+	strTables = "--========= creating database tables =========" + vbCrLf
+
+	for each stdobjdef in doc_.stdobjdef
+		dim strSingleTable
+		generuj_create_one_table stdobjdef,strSingleTable
+		strTables = strTables + strSingleTable
+		page_.updateview
+	next
+
+	strTables = strTables  + vbCrLf + "--end of tables" + vbCrLf + vbCrLf 
+end sub
+
+'/////////////////////////////////////////////////////////////////////
+'// generuje procedury skladowane                                   //
+'// strSP - zwraca kod procedury									//
+'// bDebug - dla wersji DEBUG										//
+'/////////////////////////////////////////////////////////////////////
+sub generuj_create_sp(byref strSP, byval bDebug,byval strLinked)
+	dim stdobjdef
+	dim flddef
+
+	' 1,1,"generowanie stored procedures"
+	view_message 4058, 0
+	dim strFields 
+	dim strFields2
+	dim strLinkedSP
+	dim strLocal
+
+	strSP = "--========= creating standard stored procedures =========" + vbCrLf + vbCrLf
+	for each stdobjdef in doc_.stdobjdef
+		dim strSingleSP : strSingleSP = ""
+		trans_.message 0,0,"dla tablicy " + stdobjdef.tablename
+
+		if stdobjdef.ispersist then
+			dim procname
+			strSingleSP = strSingleSP + "-- table: " + stdobjdef.tablename + vbCrLf
+			
+			'_select (output param)
+			procname = stdobjdef.tablename + "_select"
+			strSingleSP = strSingleSP + _
+				"create procedure " + procname + "(@idobj_par integer,@versionid_par integer output"
+				for each flddef in stdobjdef
+					if flddef.name <> "IdObj" then	'ignoruj IdObj
+						if flddef.ispersist then
+							strSingleSP = strSingleSP + ","+ vbCrLf + vbTab + "@" + flddef.name + "_par " + flddef.sqltypename + " output"
+							if flddef.type = RELT_WILDREF then
+								strSingleSP = strSingleSP + ","+ vbCrLf + vbTab + "@" + flddef.name + "_wrt_par " + flddef.sqltypename + " output"
+							end if
+						end if
+					end if
+				next
+				strSingleSP = strSingleSP + ") with encryption as " + vbCrLf +_
+				vbTab + "select @versionid_par=VersionId" 'idobj nie jest selekcjonowany bo jest znany
+				for each flddef in stdobjdef
+					if flddef.name <> "IdObj" then	'ignoruj IdObj
+						if flddef.ispersist then
+							strSingleSP = strSingleSP + ","+ vbCrLf + vbTab + "@"  + flddef.name + "_par="+ flddef.name
+							if flddef.type = RELT_WILDREF then
+								strSingleSP = strSingleSP + ","+ vbCrLf + vbTab + "@" + flddef.name + "_wrt_par=" + flddef.name + "_wrt"
+							end if
+						end if
+					end if
+				next
+				strSingleSP = strSingleSP + " from " + stdobjdef.tablename + " where IdObj=@idobj_par" + vbCrLf
+				strSingleSP = strSingleSP + "return @@rowcount" + vbCrLf
+				strSingleSP = strSingleSP + "go" + vbCrLf + vbCrLf
+			'_insert
+			procname = stdobjdef.tablename + "_insert"
+			strSingleSP = strSingleSP + _
+				"create procedure " + procname + "(@idobj_par integer,@versionid_par integer"
+				for each flddef in stdobjdef
+					if flddef.name <> "IdObj" then	'ignoruj IdObj
+						if flddef.ispersist then
+							strSingleSP = strSingleSP + ","+ vbCrLf + vbTab + "@" + flddef.name + "_par " + flddef.sqltypename
+							if flddef.type = RELT_WILDREF then
+								strSingleSP = strSingleSP + ","+ vbCrLf + vbTab + "@" + flddef.name + "_wrt_par " + flddef.sqltypename
+							end if
+						end if
+					end if
+				next
+				strSingleSP = strSingleSP + ") with encryption as " + vbCrLf
+
+				strFields = ""
+				strLocal = vbTab + "insert into " + stdobjdef.tablename + " values(@idobj_par,@versionid_par"
+				if strLinked <> "" then
+					strLinkedSP = vbTab + "exec " + strLinked + ".." + procname + " @idobj_par,@versionid_par"
+				end if
+				for each flddef in stdobjdef
+					if flddef.name <> "IdObj" then	'ignoruj IdObj
+						if flddef.ispersist then
+								strFields = strFields + ","+ vbCrLf + vbTab + "@" + flddef.name + "_par"
+								if flddef.type = RELT_WILDREF then
+									strFields = strFields + ","+ vbCrLf + vbTab + "@" + flddef.name + "_wrt_par"
+								end if
+						end if
+					end if
+				next
+				strLocal = strLocal + strFields + ")" + vbCrLf
+				if strLinked <> "" then
+					strLinkedSP = strLinkedSP + strFields  + vbCrLf
+					strSingleSP = strSingleSP + strLinkedSP
+				end if
+				strSingleSP = strSingleSP + strLocal
+				strSingleSP = strSingleSP + "return @@rowcount" + vbCrLf +_
+				"go" + vbCrLf + vbCrLf
+			'_update
+			procname = stdobjdef.tablename + "_update"
+			strSingleSP = strSingleSP + _
+				"create procedure " + procname + "(@idobj_par integer,@versionid_par integer"
+				for each flddef in stdobjdef
+					if flddef.name <> "IdObj" then	'ignoruj IdObj
+						if flddef.ispersist then
+							strSingleSP = strSingleSP + ","+ vbCrLf + vbTab + "@" + flddef.name + "_par " + flddef.sqltypename
+							if flddef.type = RELT_WILDREF then
+								strSingleSP = strSingleSP + ","+ vbCrLf + vbTab + "@" + flddef.name + "_wrt_par " + flddef.sqltypename
+							end if
+						end if
+					end if
+				next
+				strSingleSP = strSingleSP + ") with encryption as " + vbCrLf
+				strFields = ""
+				strFields2 = ""
+				strLocal = vbTab + "update " + stdobjdef.tablename + " set VersionId=@versionid_par"
+				if strLinked <> "" then
+					strLinkedSP = vbTab + "exec " + strLinked + ".." + procname + " @idobj_par,@versionid_par"
+				end if
+				for each flddef in stdobjdef
+					if flddef.name <> "IdObj" then	'ignoruj IdObj
+						if flddef.ispersist then
+							strFields = strFields + "," + vbCrLf + vbTab + flddef.name + "=@" + flddef.name + "_par"
+							strFields2 = strFields2 + ",@" + flddef.name + "_par"
+							if flddef.type = RELT_WILDREF then
+								strFields = strFields + "," + vbCrLf + vbTab + flddef.name + "_wrt=@" + flddef.name + "_wrt_par"
+								strFields2 = strFields2 + ",@" + flddef.name + "_wrt_par"
+							end if
+						end if
+					end if
+				next
+				strLocal = strLocal + strFields + vbCrLf + vbTab + "where idobj=@idobj_par" + vbCrLf
+				if strLinked <> "" then
+					strLinkedSP = strLinkedSP + strFields2 + vbCrLf
+					strSingleSP = strSingleSP + strLinkedSP + vbCrLf
+				end if
+				
+				strSingleSP = strSingleSP + strLocal + "return @@rowcount" + vbCrLf
+				strSingleSP = strSingleSP + "go" + vbCrLf + vbCrLf
+			'_delete
+			procname = stdobjdef.tablename + "_delete"
+			strSingleSP = strSingleSP + _
+			"create procedure " + procname + "(@idobj_par integer) with encryption as " + vbCrLf
+			strLocal = vbTab + "delete from " + stdobjdef.tablename + " where idobj=@idobj_par" + vbCrLf
+
+			if strLinked <> "" then
+				strLinkedSP = vbTab + "exec " + strLinked + ".." + procname + " @idobj_par" + vbCrLf + vbCrLf
+				strSingleSP = strSingleSP + strLinkedSP
+			end if
+
+			strSingleSP = strSingleSP + strLocal + "return @@rowcount" + vbCrLf
+			strSingleSP = strSingleSP + "go" + vbCrLf + vbCrLf
+			'_maxid
+			procname = stdobjdef.tablename + "_maxid"
+			strSingleSP = strSingleSP + _
+			"create procedure " + procname + "(@maxid_par integer output) with encryption as " + vbCrLf +_
+			vbTab + "select @maxid_par=max(idobj) from " + stdobjdef.tablename + vbCrLf +_
+			"go" + vbCrLf + vbCrLf
+			'_candel
+			procname = stdobjdef.tablename + "_candel"
+			strSingleSP = strSingleSP + _
+			"create procedure " + procname + "(@idobj_par integer) with encryption as " + vbCrLf
+			
+			dim stdobjdef2
+			dim flddef2
+
+			dim iter_candel : iter_candel = 0
+			for each stdobjdef2 in doc_.stdobjdef
+				for each flddef2 in stdobjdef2
+					if flddef2.ispersist then
+						if flddef2.type = RELT_REF then
+								if flddef2.reftypeid = stdobjdef.typeid then
+									if iter_candel <> 0 then
+										strSingleSP = strSingleSP + "union"  + vbCrLf
+									end if
+									strSingleSP = strSingleSP + "select TOP 5 'typeid'=cast(" + CStr(stdobjdef2.typeid) + " as integer),idobj from " +_
+									stdobjdef2.tablename + " where " + flddef2.name + "=@idobj_par" + vbCrLf
+									iter_candel = iter_candel + 1
+								end if
+						end if
+						if flddef2.type = RELT_WILDREF then
+							dim wildstdobj
+							dim wildref_iter : wildref_iter = 0
+							dim wildref_typeid
+							do
+								wildref_typeid = flddef2.wildreftypeid(wildref_iter)
+								if wildref_typeid = 0 then
+									exit do
+								end if
+								if wildref_typeid = stdobjdef.typeid then
+									if iter_candel <> 0 then
+										strSingleSP = strSingleSP + "union"  + vbCrLf
+									end if
+									strSingleSP = strSingleSP + "select TOP 5 'typeid'=cast(" + CStr(stdobjdef2.typeid) + " as integer),idobj from " + stdobjdef2.tablename +_
+									" where " + flddef2.name + "=@idobj_par and " + flddef2.name + "_wrt=" + CStr(stdobjdef.typeid) + vbCrLf
+									iter_candel = iter_candel + 1
+								end if
+								wildref_iter = wildref_iter + 1
+							loop
+						end if
+					end if
+				next
+			next
+			strSingleSP = strSingleSP + "go" + vbCrLf + vbCrLf
+		else
+			strSingleSP = strSingleSP  + "-- skipped virtual table: " + stdobjdef.tablename + vbCrLf 
+		end if
+		strSP = strSP + strSingleSP 
+		page_.updateview
+	next
+end sub
+
+sub generuj_drop_sp(byref strSP, byval bDebug)
+	dim stdobjdef
+	dim flddef
+
+	' 1,1,"generowanie stored procedures"
+	view_message 4058, 0
+
+	strSP = "--========= dropping standard stored procedures =========" + vbCrLf + vbCrLf
+	for each stdobjdef in doc_.stdobjdef
+		dim strSingleSP : strSingleSP = ""
+		trans_.message 0,0,"dla tablicy " + stdobjdef.tablename
+
+		if stdobjdef.ispersist then
+			dim procname
+			strSingleSP = strSingleSP + "-- table: " + stdobjdef.tablename + vbCrLf
+			
+			'_select (output param)
+			procname = stdobjdef.tablename + "_select"
+			strSingleSP = strSingleSP + "if exists (select * from sysobjects where name='" + procname + "')" + vbCrLf +_
+				vbTab + "drop procedure " + procname + vbCrLf +_
+				"go" + vbCrLf
+			'_insert
+			procname = stdobjdef.tablename + "_insert"
+			strSingleSP = strSingleSP + "if exists (select * from sysobjects where name='" + procname + "')" + vbCrLf +_
+				vbTab + "drop procedure " + procname + vbCrLf +_
+				"go" + vbCrLf
+			'_update
+			procname = stdobjdef.tablename + "_update"
+			strSingleSP = strSingleSP + "if exists (select * from sysobjects where name='" + procname + "')" + vbCrLf +_
+				vbTab + "drop procedure " + procname + vbCrLf +_
+				"go" + vbCrLf
+
+			'_delete
+			procname = stdobjdef.tablename + "_delete"
+			strSingleSP = strSingleSP + "if exists (select * from sysobjects where name='" + procname + "')" + vbCrLf +_
+				vbTab + "drop procedure " + procname + vbCrLf +_
+				"go" + vbCrLf
+			'_maxid
+			procname = stdobjdef.tablename + "_maxid"
+			strSingleSP = strSingleSP + "if exists (select * from sysobjects where name='" + procname + "')" + vbCrLf +_
+				vbTab + "drop procedure " + procname + vbCrLf +_
+				"go" + vbCrLf
+			'_candel
+			procname = stdobjdef.tablename + "_candel"
+			strSingleSP = strSingleSP + "if exists (select * from sysobjects where name='" + procname + "')" + vbCrLf +_
+				vbTab + "drop procedure " + procname + vbCrLf +_
+				"go" + vbCrLf
+		else
+			strSingleSP = strSingleSP  + "-- skipped virtual table: " + stdobjdef.tablename + vbCrLf 
+		end if
+		strSP = strSP + strSingleSP 
+		page_.updateview
+	next
+end sub
+' to_do: procedura generowania FK nie jest odporna na zmiany w tabelach
+' potrzebne byłoby usuwanie wszystkich FK związanych z tabelami w projekcie
+' lub jeśli jest to bezpieczne, wszystkich FK w bazie
+
+sub generuj_dropfk(byref strDropFK)
+	dim stdobjdef
+	dim flddef
+
+	' 1,1,"generowanie drop foreign key"
+	view_message 4059, 0
+
+	strDropFK = "--========= dropping FK =========" + vbCrLf + vbCrLf
+	for each stdobjdef in doc_.stdobjdef
+		if stdobjdef.ispersist then
+			dim iter : iter = 1
+			for each flddef in stdobjdef
+				dim strCntrName : strCntrName = ""
+				if flddef.type = RELT_REF and flddef.ispersist then
+					if not flddef.isrefopt then
+						dim fkstdobjdef: set fkstdobjdef = doc_.stdobjdef.getobjdef(flddef.reftypeid)
+						strCntrName = "FK_" + stdobjdef.tablename + "_" + fkstdobjdef.tablename + "_" + CStr(iter) 
+					end if
+				end if
+				if flddef.type = RELT_WILDREF then
+					strCntrName = "WRT_" + stdobjdef.tablename + "_" + flddef.name + "_" + CStr(iter)
+				end if
+				if flddef.type = RELT_ENUM then
+					strCntrName = "ENUM_" + stdobjdef.tablename + "_" + flddef.name + "_" + CStr(iter)
+				end if
+				if strCntrName <> "" then
+					strDropFK = strDropFK + "if exists (select * from sysobjects where name='" + strCntrName + "')" + vbCrLf +_
+					vbTab + "alter table " + stdobjdef.tablename + " drop constraint " +_
+					strCntrName + vbCrLf +_
+					"go" + vbCrLf 
+				end if
+				iter = iter + 1
+			next
+		else
+			strDropFK = strDropFK  + "-- skipped virtual table: " + stdobjdef.tablename + vbCrLf 
+		end if
+		page_.updateview
+	next
+	strDropFK = strDropFK + "--========= dropping PK =========" + vbCrLf + vbCrLf
+	for each stdobjdef in doc_.stdobjdef
+		if stdobjdef.ispersist then
+			strDropFK = strDropFK + "if exists (select * from sysobjects where name='PK_" + stdobjdef.tablename + "_IdObj')" + vbCrLf +_
+				vbTab + "alter table " + stdobjdef.tablename + " drop constraint PK_" +_
+			stdobjdef.tablename + "_IdObj" +  vbCrLf +_
+			"go" + vbCrLf 
+		end if
+	next
+	strDropFK = strDropFK + vbCrLf + vbCrLf
+end sub
+
+'/////////////////////////////////////////////////////////////////////
+'// generuje klucze obce		                                    //
+'// strAddFK - zwraca kod dla kluczy								//
+'/////////////////////////////////////////////////////////////////////
+sub generuj_create_fk(byref strAddFK)
+	'to_do: być może lepiej zakładanie FK umieścić w SP
+	dim stdobjdef
+	dim flddef
+
+	' 1,1,"generowanie foreign key"
+	view_message 4060, 0
+
+	strAddFK = "--========= creating PK =========" + vbCrLf + vbCrLf
+	for each stdobjdef in doc_.stdobjdef
+		if stdobjdef.ispersist then
+			strAddFK = strAddFK + "alter table " + stdobjdef.tablename + " add constraint PK_" +_
+				stdobjdef.tablename + "_IdObj primary key clustered (IdObj)" + vbCrLf +_
+				"go" + vbCrLf 
+		end if
+	next
+	strAddFK = strAddFK + "--========= creating FK =========" + vbCrLf + vbCrLf
+	for each stdobjdef in doc_.stdobjdef
+		if stdobjdef.ispersist then
+			dim iter : iter = 1
+			for each flddef in stdobjdef
+				if flddef.type = RELT_REF and flddef.ispersist then
+					if not flddef.isrefopt then
+						dim fkstdobjdef: set fkstdobjdef = doc_.stdobjdef.getobjdef(flddef.reftypeid)
+						strAddFK = strAddFK + "alter table " + stdobjdef.tablename + " add constraint FK_" +_
+							stdobjdef.tablename + "_" + fkstdobjdef.tablename + "_" + CStr(iter) + " foreign key (" +_
+							flddef.name + " ) references " + fkstdobjdef.tablename + " ( IdObj )" + vbCrLf +_
+							"go" + vbCrLf 
+					end if
+				end if
+				if flddef.type = RELT_WILDREF then
+					strAddFK = strAddFK + "alter table " + stdobjdef.tablename + " add constraint WRT_" +_
+					stdobjdef.tablename + "_" + flddef.name + "_" + CStr(iter) + " check (" + vbCrLf
+					dim wildref_iter : wildref_iter = 0
+					dim wildref_typeid
+					if flddef.isrefopt then
+						strAddFK = strAddFK + vbTab + flddef.name + "_wrt=0 or " + vbCrLf
+					end if
+					do
+						wildref_typeid = flddef.wildreftypeid(wildref_iter)
+						if wildref_typeid = 0 then
+							exit do
+						end if
+						'...
+						if wildref_iter <> 0 then
+							strAddFK = strAddFK + " or " + vbCrLf
+						end if
+						strAddFK = strAddFK + vbTab + flddef.name + "_wrt=" + CStr(wildref_typeid)
+						wildref_iter = wildref_iter + 1
+					loop
+					strAddFK = strAddFK  + vbCrLf + ")" + vbCrLf +_
+					"go" + vbCrLf 
+				end if
+				if flddef.type = RELT_ENUM then
+					strAddFK = strAddFK + "alter table " + stdobjdef.tablename + " add constraint ENUM_" +_
+					stdobjdef.tablename + "_" + flddef.name + "_" + CStr(iter) + " check (" + vbCrLf
+					dim maxenumval : maxenumval = 0
+					do 
+						if flddef.enumvalue(maxenumval) <> "" then
+							maxenumval = maxenumval + 1
+						else
+							exit do
+						end if
+					loop
+					strAddFK = strAddFK + flddef.name + " between 0 and " + cstr(maxenumval)
+					strAddFK = strAddFK  + vbCrLf + ")" + vbCrLf +_
+					"go" + vbCrLf 
+				end if
+
+				iter = iter + 1
+			next
+		else
+			strAddFK = strAddFK  + "-- skipped virtual table: " + stdobjdef.tablename + vbCrLf 
+		end if
+		page_.updateview
+	next
+end sub
+
+'/////////////////////////////////////////////////////////////////////
+'// generuje kod sprawdzający czy istnieja procedury                //
+'// sprawdzanie dzieci itp.
+'// jezeli istnieja to usuwaj										//
+'// strCSP - zwraca kod												//
+'/////////////////////////////////////////////////////////////////////
+sub generuj_checksp(byref strCSP)
+
+	'zwraca resultset w postaci:
+	'typeid, idobj, errorcode, param1 = (np. value which is bad), param2
+
+	' 1,1,"generowanie procedury testującej integralność"
+	view_message 4061, 0
+
+	dim stdobjdef,flddef
+		
+	strCSP = "--========== creating integrity test stored procedure" + vbCrLf + vbCrLf
+	strCSP = strCSP + "if exists (select * from sysobjects where name='n5check')" + vbCrLf +_
+		vbTab + "drop procedure n5check" + vbCrLf +_
+		"go" + vbCrLf + vbCrLf +_
+	"create procedure n5check with encryption as " + vbCrLf
+
+	'to_do: generowanie kodów błędów i większej ilości informacji
+
+	'1. sprawdzanie dzikich referencji
+	'-----------------------------------------------------------------------------------	
+	'SELECT
+	't0.IdObj, t0.Nazwa, t0.pn5prackontragrupa, t0.pn5prackontragrupa_wrt
+	'FROM
+	'n5Zaswyk t0
+	'LEFT OUTER JOIN n5pracownik t1 ON t0.pn5prackontragrupa = t1.IdObj and t0.pn5prackontragrupa_wrt = 1
+	'LEFT OUTER JOIN n5kontrahent t2 ON t0.pn5prackontragrupa = t2.IdObj and t0.pn5prackontragrupa_wrt = 2
+	'WHERE
+	'(t1.IdObj IS NULL) AND (t2.IdObj IS NULL)
+	'-----------------------------------------------------------------------------------	
+
+	for each stdobjdef in doc_.stdobjdef
+		if stdobjdef.ispersist then
+			for each flddef in stdobjdef
+				if flddef.type = RELT_WILDREF then
+					if not flddef.isrefopt then
+						dim str
+						dim wildref_iter : wildref_iter = 0
+						dim wildref_typeid
+						str = "select " + CStr(stdobjdef.typeid) + "," + stdobjdef.tablename + ".IdObj, 1 from " + stdobjdef.tablename + vbCrLf
+						do
+							wildref_typeid = flddef.wildreftypeid(wildref_iter)
+							if wildref_typeid = 0 then
+								exit do
+							end if
+							dim wrstdobjdef: set wrstdobjdef = doc_.stdobjdef.getobjdef(wildref_typeid)
+							str = str + vbTab + "left outer join " + wrstdobjdef.tablename + " on " +_
+								stdobjdef.tablename + "." + flddef.name + "=" + wrstdobjdef.tablename + ".IdObj"  +_
+								" and " + stdobjdef.tablename + "." + flddef.name + "_wrt=" + Cstr(wildref_typeid) + vbCrLf
+
+							wildref_iter = wildref_iter + 1
+						loop
+						str = str + " where " + vbCrLf
+						wildref_iter = 0
+						do
+							wildref_typeid = flddef.wildreftypeid(wildref_iter)
+							if wildref_typeid = 0 then
+								exit do
+							end if
+							if wildref_iter <> 0 then
+								str = str + " and " + vbCrLf
+							end if
+							set wrstdobjdef = doc_.stdobjdef.getobjdef(wildref_typeid)
+							str = str + vbTab + "(" + wrstdobjdef.tablename + ".IdObj is null)"
+							wildref_iter = wildref_iter + 1
+						loop
+						strCSP = strCSP + str  + vbCrLf + vbCrLf
+					end if
+				end if
+			next
+		end if
+		page_.updateview
+	next
+
+	'2. sprawdzanie referencji opcjonalnych
+	'-----------------------------------------------------------------------------------	
+	'SELECT
+	'	t3.IdObj, t3.pT
+	'		FROM
+	'	t3
+	'		LEFT OUTER JOIN t1 ON t3.pT = t1.IdObj
+	'	WHERE
+	'		(t3.pT <> 0) AND (t1.IdObj IS NULL)
+
+	for each stdobjdef in doc_.stdobjdef
+		if stdobjdef.ispersist then
+			for each flddef in stdobjdef
+				if flddef.type = RELT_REF and flddef.ispersist then
+					if flddef.isrefopt then
+						dim ropt_stdobjdef: set ropt_stdobjdef = doc_.stdobjdef.getobjdef(flddef.reftypeid)
+						str = "select " + CStr(stdobjdef.typeid) + ",t1.IdObj, 2 from " + stdobjdef.tablename + " t1 " + vbCrLf +_
+						" left outer join " + ropt_stdobjdef.tablename + " t2 on t1." + flddef.name +_
+						"=t2.IdObj where (t1." + flddef.name + "<>0 and t2.IdObj is null)" + vbCrLf 
+						strCSP = strCSP + str + vbCrLf
+					end if
+				end if
+			next
+		end if
+		page_.updateview
+	next
+
+	
+	'-----------------------------------------------------------------------------------	
+	'
+	' UWAGA! skrypt sprawdzający collections zakłada że dzieci danego typu mają ojców tylko
+	' jednego typu. np. obiekt typu pozycjafaktury może być dzieckiem obiektu faktura i żadnego
+	' innego. Gdyby było inaczej, należy tam gdzie jest warunek idcollection=xxx zmienić
+	' na idcollection in (xxx,yyy) wygenerowane dla wszystkich rodzajów ojców mający takie dziecko
+	'
+	'
+	'3. sprawdzanie collections
+	'-----------------------------------------------------------------------------------	
+	'Sprawdzenie czy są dziury w numeracji
+	'-----------------------------------------------------------------------------------	
+	'SELECT IdCollection, IdParent
+	'FROM collections
+	'GROUP BY IdCollection, IdParent
+	'HAVING MAX(LP) > COUNT(*)	
+	'-----------------------------------------------------------------------------------	
+	strCSP = strCSP + "select idcollection, idparent,3 from collections group by idcollection, idparent having max(lp) > count(*)" + vbCrLf
+	
+	'4. Sprawdzenie czy istnieje (znajduje się w tablicy "parent") wymieniony w kolekcji "ojciec"
+	'-----------------------------------------------------------------------------------
+	'SELECT DISTINCT c.IdParent, c.IdCollection
+	'FROM collections c LEFT OUTER JOIN parent p ON c.IdParent = p.IdObj
+	'WHERE p.IdObj IS NULL
+	'-----------------------------------------------------------------------------------	
+	for each stdobjdef in doc_.stdobjdef
+		if stdobjdef.ispersist then
+			dim iter : iter = 0
+			for each flddef in stdobjdef
+				if flddef.type = RELT_LIST then
+					str = "select distinct collections.idcollection,collections.idparent,4 from collections left outer join " +_
+					stdobjdef.tablename + " on collections.idparent="+ stdobjdef.tablename + ".idobj where idcollection=" +_
+					cstr(stdobjdef.typeid * 1000 + iter) + " and " + stdobjdef.tablename + ".idobj is null" + vbCrLf 
+					strCSP = strCSP + str + vbCrLf
+				end if
+				iter = iter + 1
+			next
+		end if
+		page_.updateview
+	next
+
+	'-----------------------------------------------------------------------------------	
+	'5. Sprawdzenie czy istnieje (znajduje się w tablicy tbl_dziecko1) dziecko w wymienionych kolekcjach (np. 1001 i 1002)
+	'SELECT c.IdObj, c.IdCollection
+	'FROM collections c LEFT OUTER JOIN tbl_dziecko1 c1 on c.IdObj=c1.IdObj
+	'WHERE (c1.IdObj IS NULL) AND (c.IdCollection IN (1001,1002))
+	'-----------------------------------------------------------------------------------	
+	for each stdobjdef in doc_.stdobjdef
+		if stdobjdef.ispersist then
+			iter = 0
+			for each flddef in stdobjdef
+				if flddef.type = RELT_LIST then
+					dim strTableChild
+					dim listdobjdef: set listdobjdef = doc_.stdobjdef.getobjdef(flddef.reftypeid)
+					strTableChild = listdobjdef.tablename
+					str = "select collections.idcollection, collections.idobj,5 from collections left outer join " +_
+					strTableChild + " on collections.idobj="+ strTableChild + ".idobj where idcollection=" +_
+					cstr(stdobjdef.typeid * 1000 + iter) + " and (" + strTableChild + ".idobj is null)" + vbCrLf 
+					strCSP = strCSP + str + vbCrLf
+				end if
+				iter = iter + 1
+			next
+		end if
+		page_.updateview
+	next
+
+
+	'-----------------------------------------------------------------------------------	
+	'6. Sprawdzenie czy w tablicy tbl_dziecko1 znajduje się dziecko (ekstra dziecko), które nie jest używane w żadnej z kolekcji w której mogłoby być użyte
+	'SELECT * FROM tbl_dziecko1 c1
+	'WHERE c1.IdObj NOT IN (SELECT c.IdObj FROM collections c WHERE c.IdCollection IN (1001,1002))
+	'-----------------------------------------------------------------------------------	
+	for each stdobjdef in doc_.stdobjdef
+		if stdobjdef.ispersist then
+			iter = 0
+			for each flddef in stdobjdef
+				if flddef.type = RELT_LIST then
+					set listdobjdef = doc_.stdobjdef.getobjdef(flddef.reftypeid)
+					strTableChild = listdobjdef.tablename
+					str = "select " + cstr(listdobjdef.typeid) + "," + strTableChild + ".idobj,6 from " + strTableChild + " where " + strTableChild +_
+					".idobj not in (select collections.idobj from collections where collections.idcollection=" +_
+					cstr(stdobjdef.typeid * 1000 + iter) + ")" + vbCrLf 
+					strCSP = strCSP + str + vbCrLf
+				end if
+				iter = iter + 1
+			next
+		end if
+		page_.updateview
+	next
+
+	'-----------------------------------------------------------------------------------	
+	' 7. Sprawdzenie czy nie ma powtórzeń dziecka w wymienionych kolekcjach. Kwerenda zwraca identyfikator "podejrzanego" dziecka
+	'SELECT IdObj
+	'FROM collections
+	'WHERE IdCollection in (11719007,11726003)
+	'GROUP BY IdObj
+	'HAVING COUNT(IdObj) > 1
+	'-----------------------------------------------------------------------------------	
+
+	strCSP = strCSP  + vbCrLf + "go" + vbCrLf + vbCrLf
+end sub
+
+'/////////////////////////////////////////////////////////////////////
+'// generuje indeksy								                //
+'// sprawdzanie dzieci itp.											//
+'// strInx - zwraca kod												//
+'/////////////////////////////////////////////////////////////////////
+sub generuj_create_indices(byref strInx)
+	dim stdobjdef
+	dim flddef
+
+	' 1, 1, "indeksów"
+	view_message 4062, 0
+
+	strInx = "--========= creating indices (UQ) =========" + vbCrLf + vbCrLf
+	for each stdobjdef in doc_.stdobjdef
+		if stdobjdef.ispersist then
+			dim iter : iter = 1
+			for each flddef in stdobjdef
+				if flddef.isunique and flddef.ispersist then
+				dim nazwa : nazwa = "UQ_" + stdobjdef.tablename + "_" + flddef.name 
+				'create index for unique field
+				strInx = strInx + "create unique index " + nazwa + " on " + stdobjdef.tablename + " (" + flddef.name + ")"  + vbCrLf +_
+				"go" + vbCrLf + vbCrLf
+				end if
+				iter = iter + 1
+			next
+		else
+			strInx = strInx  + "-- skipped virtual table: " + stdobjdef.tablename + vbCrLf 
+		end if
+		page_.updateview
+	next
+
+	strInx = strInx + "--========= creating indices (FKI) =========" + vbCrLf + vbCrLf
+	for each stdobjdef in doc_.stdobjdef
+		dim strSingleInx : strSingleInx = ""
+		if stdobjdef.ispersist then
+			iter = 1
+			for each flddef in stdobjdef
+				if flddef.type = RELT_REF and flddef.ispersist then
+					dim nazwa2 : nazwa2 = "FKI_" + stdobjdef.tablename + "_" + flddef.name
+					'create nex fki_ index
+					strSingleInx = strSingleInx + "create index " + nazwa2 + " on " + stdobjdef.tablename + " (" + flddef.name + ")"  + vbCrLf +_
+					"go" + vbCrLf + vbCrLf
+				end if
+				if flddef.type = RELT_WILDREF and flddef.ispersist then
+					dim nazwa3 : nazwa3 = "WFKI_" + stdobjdef.tablename + "_" + flddef.name
+					'create nex fki_ index
+					strSingleInx = strSingleInx + "create index " + nazwa3 + " on " + stdobjdef.tablename +_
+					" (" + flddef.name + "," + flddef.name + "_wrt )"  + vbCrLf +_
+					"go" + vbCrLf + vbCrLf
+				end if
+
+				iter = iter + 1
+			next
+		else
+			strSingleInx = strSingleInx  + "-- skipped virtual table: " + stdobjdef.tablename + vbCrLf 
+		end if
+		strInx = strInx + strSingleInx
+		page_.updateview
+	next
+end sub
+
+sub generuj_drop_indices(byref strInx)
+	dim stdobjdef
+	dim flddef
+
+	' 1, 1, "indeksów"
+	view_message 4062, 0
+
+	strInx = "--========= dropping indices (UQ) =========" + vbCrLf + vbCrLf
+	for each stdobjdef in doc_.stdobjdef
+		if stdobjdef.ispersist then
+			dim iter : iter = 1
+			for each flddef in stdobjdef
+				if flddef.isunique and flddef.ispersist then
+				dim nazwa : nazwa = "UQ_" + stdobjdef.tablename + "_" + flddef.name 
+				'drop existing index
+				strInx = strInx + "if exists (select * from sysindexes where name='"+nazwa+"')" + vbCrLf +_
+					vbTab + "drop index " + stdobjdef.tablename + "." + nazwa + vbCrLf +_
+					"go" + vbCrLf + vbCrLf
+				end if
+				iter = iter + 1
+			next
+		else
+			strInx = strInx  + "-- skipped virtual table: " + stdobjdef.tablename + vbCrLf 
+		end if
+		page_.updateview
+	next
+
+	strInx = strInx + "--========= dropping indices (FKI) =========" + vbCrLf + vbCrLf
+	for each stdobjdef in doc_.stdobjdef
+		dim strSingleInx : strSingleInx = ""
+		if stdobjdef.ispersist then
+			iter = 1
+			for each flddef in stdobjdef
+				if flddef.type = RELT_REF and flddef.ispersist then
+					dim nazwa2 : nazwa2 = "FKI_" + stdobjdef.tablename + "_" + flddef.name
+					'drop existing index
+					strSingleInx = strSingleInx + "if exists (select * from sysindexes where name='"+nazwa2+"')" + vbCrLf +_
+					vbTab + "drop index " + stdobjdef.tablename + "." + nazwa2 + vbCrLf +_
+					"go" + vbCrLf + vbCrLf
+				end if
+				if flddef.type = RELT_WILDREF and flddef.ispersist then
+					dim nazwa3 : nazwa3 = "WFKI_" + stdobjdef.tablename + "_" + flddef.name
+					'drop existing index
+					strSingleInx = strSingleInx + "if exists (select * from sysindexes where name='"+nazwa3+"')" + vbCrLf +_
+					vbTab + "drop index " + stdobjdef.tablename + "." + nazwa3 + vbCrLf +_
+					"go" + vbCrLf + vbCrLf
+				end if
+
+				iter = iter + 1
+			next
+		else
+			strSingleInx = strSingleInx  + "-- skipped virtual table: " + stdobjdef.tablename + vbCrLf 
+		end if
+		strInx = strInx + strSingleInx
+		page_.updateview
+	next
+end sub
+
+sub generuj_create_views(byref strViews)
+	dim stdobjdef
+	dim flddef
+	dim iter
+	dim strView
+
+	trans_.message 1,0, "generowanie view"	'nie tłumaczyć na view_message!
+	strViews = "--========= creating vlist_ views =========" + vbCrLf
+
+	for each stdobjdef in doc_.stdobjdef
+		if stdobjdef.ispersist then
+			iter = 0
+			for each flddef in stdobjdef
+				if flddef.type = RELT_LIST then
+					strView = "create view vlist_" + stdobjdef.tablename + "_" + flddef.name + " as select " + vbCrLf
+					strView = strView + "'coll_lp'=collections.lp,'p_versionid'=p.VersionId"
+					'pola tablicy ojca'
+					dim oParFD
+					for each oParFD in stdobjdef 
+						if oParFD.ispersist then
+							strView = strView + ",'p_" + LCase(oParFD.name) + "'=p." + oParFD.name + vbCrLf
+							if oParFD.type = RELT_WILDREF then
+								strView = strView + ",'p_" + LCase(oParFD.name) + "_wrt'=p." + oParFD.name + "_wrt" + vbCrLf
+							end if
+						end if
+					next
+					strView = strView + ",'c_versionid'=c.VersionId"
+					dim listdobjdef: set listdobjdef = doc_.stdobjdef.getobjdef(flddef.reftypeid)
+					'pola dziecka
+					dim oChildFD
+					for each oChildFD in listdobjdef
+						if oChildFD.ispersist then
+							strView = strView + ",'c_" + LCase(oChildFD.name) + "'=c." + oChildFD.name + vbCrLf
+							if oChildFD.type = RELT_WILDREF then
+								strView = strView + ",'c_" + LCase(oChildFD.name) + "_wrt'=c." + oChildFD.name + "_wrt" + vbCrLf
+							end if
+						end if
+					next 
+					strView = strView + " from " + stdobjdef.tablename + " as p" + vbCrLf +_
+					" join collections on p.idobj=collections.idparent and collections.idcollection = " + cstr(stdobjdef.typeid * 1000 + iter) + vbCrLf +_
+					" join " + listdobjdef.tablename + " as c on c.idobj = collections.idobj " + vbCrLf +_
+					" go" + vbCrLf + vbCrLf
+					strViews = strViews + strView
+				end if
+				iter = iter + 1
+			next
+		end if
+		page_.updateview
+	next
+end sub
+
+sub generuj_drop_views(byref strViews)
+	dim stdobjdef
+	dim flddef
+	dim iter
+	dim strView
+
+	trans_.message 1,0, "generowanie drop view"	'nie tłumaczyć na view_message!
+	strViews = "--========= dropping vlist_ views =========" + vbCrLf
+
+	for each stdobjdef in doc_.stdobjdef
+		if stdobjdef.ispersist then
+			iter = 0
+			for each flddef in stdobjdef
+				if flddef.type = RELT_LIST then
+					dim strViewName : strViewName = "vlist_" + stdobjdef.tablename + "_" + flddef.name
+					strView = "if exists (select * from sysobjects where name='" + strViewName + "')" + vbCrLf +_
+						vbTab + "drop view " + strViewName + vbCrLf +_
+						"go"+ vbCrLf
+					strViews = strViews + strView
+				end if
+				iter = iter + 1
+			next
+		end if
+		page_.updateview
+	next
+end sub
+
+'----------------------------------------------------------------------------------------------
+'----------------------------------------------------------------------------------------------
+sub generuj_special(byref strSpecial)
+	strSpecial = _
+		"if exists (select * from sysobjects where name = 'n2001_setprofile_value')"  + vbCrLf +_
+		"	drop procedure n2001_setprofile_value"  + vbCrLf +_
+		"go"  + vbCrLf +_
+		""  + vbCrLf +_
+		"create procedure n2001_setprofile_value(@Indeks_par integer, @Wartosc_par varchar(255))"  + vbCrLf +_
+		"as"  + vbCrLf +_
+		"declare @P1 int"  + vbCrLf +_
+		"select @P1 = 0"  + vbCrLf +_
+		"select @P1 = IdObj from n5globprof where Indeks = @Indeks_par"  + vbCrLf +_
+		"if @P1 = 0"  + vbCrLf +_
+		"	begin"  + vbCrLf +_
+		"		exec n5globprof_maxid @P1 output"  + vbCrLf +_
+		"		set @P1 = isNull(@P1,0) + 1"  + vbCrLf +_
+		"		execute n5globprof_insert @P1, 1, @Indeks_par, @Wartosc_par"  + vbCrLf +_
+		"	end"  + vbCrLf +_
+		"else"  + vbCrLf +_
+		"	begin"  + vbCrLf +_
+		"		update n5globprof set Wartosc=@Wartosc_par where idobj= @P1"  + vbCrLf +_
+		"	end"  + vbCrLf +_
+		"return 0"  + vbCrLf +_
+		"go"  + vbCrLf
+end sub
+
+'----------------------------------------------------------------------------------------------
+function generuj_description(byval strSQLFileName)
+	dim strDescFileName : strDescFileName = DESC_FILE
+	dim so: set so = doc_.createstreamobj()
+	dim stdobjdef
+	dim flddef
+
+	for each stdobjdef in doc_.stdobjdef
+		if stdobjdef.ispersist then
+			dim nFieldNr : nFieldNr = 0
+			for each flddef in stdobjdef
+				dim strLine
+				if flddef.ispersist then
+					strLine = cstr(stdobjdef.typeid) + vbTab + stdobjdef.tablename + vbTab + cstr(nFieldNr) + vbTab + flddef.name + vbTab + cstr(flddef.type) + vbTab +_
+						flddef.sqltypename + vbTab + "1" + vbTab + cstr(flddef.sqltype)+ vbCrLf
+					if flddef.type = RELT_WILDREF then
+						strLine = strLine +  cstr(stdobjdef.typeid) + vbTab + stdobjdef.tablename + vbTab + cstr(nFieldNr) + vbTab + flddef.name + "_wrt" + vbTab + cstr(flddef.type) + vbTab +_
+						flddef.sqltypename + vbTab + "1" + vbTab + cstr(flddef.sqltype)+ vbCrLf
+					end if
+				else
+					dim strSQLPseudoType
+					select case flddef.type
+					case RELT_FILE
+						strSQLPseudoType = "<file>"
+					case RELT_LIST
+						strSQLPseudoType = "<list>"
+					end select
+
+					strLine = cstr(stdobjdef.typeid) + vbTab + stdobjdef.tablename + vbTab + cstr(nFieldNr) + vbTab + flddef.name + vbTab + cstr(flddef.type) + vbTab +_
+						strSQLPseudoType + vbTab + "0" + vbTab + cstr(flddef.sqltype)  + vbCrLf
+				end if
+				nFieldNr = nFieldNr + 1
+				so.write strLine
+			next
+		end if
+	next
+
+	so.save strDescFileName
+end function
+
+function generuj_skrypt_to_files(strCreateObjFileName,strCreateTblFileName,strDropFileName)
+	dim strCreateSQL
+	dim strCreateTables
+	dim strCreateSP
+	dim strCreateView
+	dim strCreateFK
+	dim strCreateInx
+	dim strCreateCheckSP
+	dim strCreateSpecial
+
+
+	dim strDropSQL
+	dim strDropFK
+	dim strDropSP
+	dim strDropView
+	dim strDropInx
+
+	' 1, 1, "rozpoczęcie generowania skryptu"
+	view_message 4063, 0
+
+	strCreateSQL = "-- NAVO Enterprise SQL script (create) --" + vbCrLf +_
+		"-- generated: " + CStr(Now()) + vbCrLf
+	strDropSQL = "-- NAVO Enterprise SQL script (drop) --" + vbCrLf +_
+		"-- generated: " + CStr(Now()) + vbCrLf
+
+	if (page_.ctrl(2).value = "1") then
+		strCreateSQL = strCreateSQL + "use %DBNAME%" + vbCrLf + "go" + vbCrLf
+		strDropSQL = strDropSQL + "use %DBNAME%" + vbCrLf + "go" + vbCrLf
+	else
+		strCreateSQL = strCreateSQL + "use navo2002" + vbCrLf + "go" + vbCrLf
+		strDropSQL = strDropSQL + "use navo2002" + vbCrLf + "go" + vbCrLf 
+	end if
+
+	'---------- drop code----
+	generuj_dropfk			strDropFK
+	generuj_drop_views		strDropView
+	generuj_drop_sp			strDropSP, (page_.ctrl(2).value = "1")
+	generuj_drop_indices	strDropInx
+
+	'---------- create code --- 
+	if (page_.ctrl(CTRLID_UPGRADE).value = "0") then
+		generuj_create_tables	strCreateTables
+		if (page_.ctrl(2).value = "1") then
+			strCreateTables = "use %DBNAME%" + vbCrLf + "go" + vbCrLf + strCreateTables
+		else
+			strCreateTables = "use navo2002" + vbCrLf + "go" + vbCrLf + strCreateTables
+		end if
+	end if
+	generuj_create_views	strCreateView
+	generuj_create_sp		strCreateSP, (page_.ctrl(2).value = "1"),trim(page_.ctrl(22).value)
+	generuj_create_fk		strCreateFK
+	generuj_create_indices	strCreateInx
+	generuj_checksp			strCreateCheckSP
+	generuj_special			strCreateSpecial
+
+	dim strAllDrop : strAllDrop = strDropFK + strDropSP + strDropView + strDropInx
+
+	dim strAllCreate : strAllCreate = ""
+	
+
+	strAllCreate = strAllCreate + strCreateView + strCreateSP +_
+		strCreateFK + strCreateCheckSP + strCreateInx + strCreateSpecial
+
+	strCreateSQL = strCreateSQL + strAllCreate + "-- end of script ----" + vbCrLf
+	strDropSQL = strDropSQL + strAllDrop + "-- end of script ----" + vbCrLf
+
+	dim soCreateObj: set soCreateObj = doc_.createstreamobj()
+	dim soCreateTbl: set soCreateTbl = doc_.createstreamobj()
+	dim soDrop : set soDrop = doc_.createstreamobj()
+	soCreateObj.write strCreateSQL
+	soCreateObj.save strCreateObjFileName
+	if (page_.ctrl(CTRLID_UPGRADE).value = "0") then
+		soCreateTbl.write strCreateTables 
+		soCreateTbl.save strCreateTblFileName
+	end if
+
+	soDrop.write strDropSQL
+	soDrop.save strDropFileName
+
+'	if (page_.ctrl(3).value="1") then
+'		'wrzucaj na serwer
+'		
+'		dim sqls
+'		set sqls = createobject("SQLDMO.SQLServer")
+'		sqls.connect ".", "sa", ""
+'
+'		' 1, 1, "wykonywanie skryptu na serwerze SQL"
+'		view_message 4064, 0
+'	
+'		on error resume next
+'		err.clear
+'
+'		sqls.ExecuteImmediate strSQL
+'		if (err.number>0) then
+'			' 1, 1, err.description
+'			view_message 6146, 0
+'		else
+'			' 1, 1, "skrypt został wykonany poprawnie"
+'			view_message 4065, 0
+'		end if
+'
+'		on error goto 0
+'	end if
+
+end function
+
+function generuj_vbp
+	dim stdobjdef
+	for each stdobjdef in doc_.stdobjdef
+		dim so
+		set so = doc_.createstreamobj()
+		so.write "VERSION 1.0 CLASS" + vbCrLf
+		so.write "BEGIN" + vbCrLf
+		so.write "MultiUse = -1  'True" + vbCrLf
+		so.write "Persistable = 0  'NotPersistable" + vbCrLf
+		so.write "DataBindingBehavior = 0  'vbNone" + vbCrLf
+		so.write "DataSourceBehavior  = 0  'vbNone" + vbCrLf
+		so.write "MTSTransactionMode  = 0  'NotAnMTSObject" + vbCrLf
+		so.write "END" + vbCrLf
+		so.write "Attribute VB_Name = """ + stdobjdef.tablename + """" + vbCrLf
+		so.write "Attribute VB_GlobalNameSpace = False" + vbCrLf
+		so.write "Attribute VB_Creatable = True" + vbCrLf
+		so.write "Attribute VB_PredeclaredId = False" + vbCrLf
+		so.write "Attribute VB_Exposed = True" + vbCrLf
+		so.write "Attribute VB_Ext_KEY = ""Top_Level"" ,""Yes""" + vbCrLf
+		so.write vbCrLf
+		so.write "'script code begin" + vbCrLf
+		so.write "dim this_" + vbCrLf
+		so.write "dim trans_" + vbCrLf
+		so.write "dim doc_" + vbCrLf
+		so.write stdobjdef.scriptcode + vbCrLf
+		so.write "'script code end" + vbCrLf
+		so.save "c:\temp\vbp\" + stdobjdef.tablename + ".cls"
+	next	
+end function
+
+function generuj_skrypt
+	if page_.ctrl(5).value = "1" then
+		generuj_description page_.ctrl(1).text
+	else
+		if page_.ctrl(4).value = "1" then
+			generuj_vbp
+		else
+			generuj_skrypt_to_files page_.ctrl(1).text,page_.ctrl(21).text,page_.ctrl(11).text
+		end if
+	end if
+	trans_.message 0,0,"KONIEC!!"
+	msgbox "KONIEC!!"
+end function
+
+function fopen
+#ifdef _DEBUG
+	page_.ctrl(2).value="1"
+#endif
+
+	page_.ctrl(1).text = "c:\sprzedaz\create_objects_auto_14.sql"
+	page_.ctrl(11).text = "c:\sprzedaz\drop_objects_auto_14.sql"
+	page_.ctrl(21).text = "c:\sprzedaz\create_tables_auto_14.sql"
+	page_.ctrl(12).value = clng(13)
+	page_.ctrl(1001).text = "c:\sprzedaz\Obiekty danych #*varApplication.html"
+	page_.ctrl(2001).text = "C:\nx\apps\eb5\eb5nxobj\"
+	fopen = true
+end function
+
+dim strUpgrade : strUpgrade = "0"
+
+function c##CTRLID_UPGRADE##_ongetdata(byref oCtrl): c##CTRLID_UPGRADE##_ongetdata=true
+	oCtrl.value=strUpgrade
+end function
+
+function c##CTRLID_UPGRADE##_ondataentered(ctrl, value)
+	strUpgrade = value
+	c##CTRLID_UPGRADE##_ondataentered = true
+	if value = "1" then
+		page_.ctrl(1).text = replace(page_.ctrl(1).text,"\create","\upgrade")
+	else
+		page_.ctrl(1).text = replace(page_.ctrl(1).text,"\upgrade","\create")
+	end if
+	page_.ctrl(21).disable = (value = "1")
+end function
+
+'---------------------------------------------------------------------------
+class csortujstdobjdef
+	'-----------------------------------------------------------------------
+	' Zamień dwa elementy ze sobą
+	'-----------------------------------------------------------------------
+	public function swapelements(byref pnavoarray, byref nindexelem1, byref nindexelem2)
+		dim varElem
+		set varElem = pNavoArray.Value(nIndexElem1)
+
+		set pNavoArray.Value(nIndexElem1) = pNavoArray.Value(nIndexElem2)
+		set pNavoArray.Value(nIndexElem2) = varElem
+	end function
+
+	'-----------------------------------------------------------------------
+	'Czy element elem1 jest < elem2
+	'-----------------------------------------------------------------------
+	public function less(byval elem1, byval elem2)
+		Less = (elem1.tablename < elem2.tablename)
+	end function
+
+	'-----------------------------------------------------------------------
+	'Czy element elem1 jest > elem2
+	'-----------------------------------------------------------------------
+	public function more(byval elem1, byval elem2)
+		More = (elem1.tablename > elem2.tablename)
+	end function
+
+	'-----------------------------------------------------------------------
+	'Czy element elem1 jest = elem2
+	'-----------------------------------------------------------------------
+	public function equal(byval elem1, byval elem2)
+		Equal = (elem1.tablename = elem2.tablename)
+	end function
+
+end class
+
+function posortuj_obiekty
+	dim pArrStdObjDef
+	set pArrStdObjDef = doc_.afc.new_navoarray()
+	dim stdobjdef
+	for each stdobjdef in doc_.stdobjdef
+		pArrStdObjDef.Add stdobjdef
+	next 
+	set pArrStdObjDef.Operations = new csortujstdobjdef
+	pArrStdObjDef.Sort
+
+	set posortuj_obiekty = pArrStdObjDef
+end function
+
+function spisobiektow(byref pArrStdObjDef)
+	dim strTxt : strTxt = ""
+	dim iter
+
+	strTxt = "<p>Spis obiektów</p>" + vbCrLf + _
+		"<table border=""1"" cellpadding=""0"" cellspacing=""0"" style=""border-collapse: collapse"" bordercolor=""#111111"" width=""48%"" id=""AutoNumber1""> " + vbCrLf
+
+	for iter = 0 to pArrStdObjDef.UpperIndex()
+		
+		dim stdobjdef : set stdobjdef = pArrStdObjDef.Value(iter)
+		dim strRow
+		strRow = "<tr><td width=""38%""><font  size=""2"" face=""Verdana""><a href=""#" + stdobjdef.tablename + """>" + stdobjdef.tablename + "</a></font></td>" +_
+		"<td width=""62%""><font  size=""2"" face=""Verdana"">" + cstr(stdobjdef.typeid) + "</font></td></tr>" + vbCrLf
+		strTxt = strTxt + strRow
+	next
+	spisobiektow = strTxt + "</table>" + vbCrLf
+end function
+
+function file_header()
+	file_header = "<html>" + vbCrLf + "<head>" + vbCrLf + "<meta http-equiv=""Content-Language"" content=""pl"">" + _
+	"<meta http-equiv=""Content-Type"" content=""text/html; charset=windows-1250"">" + vbCrLf + _
+	"<title>Obiekty danych #*varApplication </title>"+ vbCrLf + "</head>" + vbCrLf + _
+	"<body><font  size=""4"" face=""Verdana""><p><b>Obiekty danych #*varApplication</b></p>" + vbCrLf +_
+	"<p>Wygenerowano: " + CStr(Now()) + "</p>" + vbCrLf
+end function
+
+function file_footer()
+	file_footer = "</font></body></html>" + vbCrLf
+end function
+
+function obiekt_danych(byref pStdObjDef)
+	dim strText
+	strText = "<p><b><a name=""" + pStdObjDef.tablename +""">"+ pStdObjDef.tablename + _
+	 "</a><br></b>" + cstr(pStdObjdef.typeid) + " (" + pStdObjdef.HumanName + ")</p>" + vbCrLf
+
+	strText = strText + "<table border=""1"" cellpadding=""0"" cellspacing=""0"" style=""border-collapse: collapse"" bordercolor=""#111111"" width=""470"">" + vbCrLf +_
+		"<tr><td ><font size=""2"" face=""Verdana""><b>Nazwa</b></font></td>" + _
+		"<td><font  size=""2"" face=""Verdana""><b>Typ</b></font></td>" + _
+		"<td><font  size=""2"" face=""Verdana""><b>Human name</b></font></td>" + _
+		"</tr>"
+	
+	dim flddef
+	dim fkstdobjdef
+	for each flddef in pStdObjDef
+		dim strRow
+		dim strType
+		strType = ""
+		select case flddef.type
+			case RELT_EMBED
+				if flddef.ispersist then
+					strType = strType + flddef.sqltypename
+				else
+					strType = strType + "[virtual]"
+				end if
+			case RELT_REF
+				set fkstdobjdef = doc_.stdobjdef.getobjdef(flddef.reftypeid)
+				strType = strType + "REF [<a href=""#" + fkstdobjdef.tablename + """>" + fkstdobjdef.tablename + "</a>]"
+			case RELT_WILDREF
+				strType = strType + "WILDREF<br/>"
+				dim wildstdobj
+				dim wildref_iter : wildref_iter = 0
+				dim wildref_typeid
+				do
+					wildref_typeid = flddef.wildreftypeid(wildref_iter)
+					if wildref_typeid = 0 then
+						exit do
+					end if
+					set fkstdobjdef = doc_.stdobjdef.getobjdef(wildref_typeid)
+					strType = strType + "[<a href=""#" + fkstdobjdef.tablename + """>" + fkstdobjdef.tablename + "</a>]<br/>"
+					wildref_iter = wildref_iter + 1
+				loop
+
+			case RELT_ENUM
+				strType = strType + "ENUM:<br/>"
+				
+				dim nEnum: nEnum = 0
+				do while (flddef.enumvalue(nEnum) <> "")
+							
+					strType = strType  + "[" + flddef.enumvalue(nEnum) + "]<br/>"
+					nEnum = nEnum + 1
+				loop
+			case RELT_LIST
+				set fkstdobjdef = doc_.stdobjdef.getobjdef(flddef.reftypeid)
+				strType = strType + "LIST [<a href=""#" + fkstdobjdef.tablename + """>" + fkstdobjdef.tablename + "</a>]"
+			case RELT_FILE
+				strType = strType + "FILE"
+		end select
+		strRow =  _
+			"<tr><td><font size=""2"" face=""Verdana"">" + flddef.name + "</font></td>" +_
+			"<td><font size=""2"" face=""Verdana"">" + strType + "</font></td>" +_
+			"<td><font size=""2"" face=""Verdana"">" + flddef.HumanName + "</font></td>" +_
+			"</tr>" + vbCrLf
+		
+		strText = strText + strRow
+	next
+
+	obiekt_danych = strText + "</table>" + vbCrLf
+end function
+'---------------------------------------------------------------------------
+function generuj_dokumentacje
+	dim pSO : set pSO = doc_.createstreamobj()
+	pSO.write file_header()
+	dim pArrStdObjDef
+	set pArrStdObjDef = posortuj_obiekty()
+	pSO.write spisobiektow(pArrStdObjDef)
+	dim iter
+	for iter = 0 to pArrStdObjDef.UpperIndex()
+		pSO.write obiekt_danych(pArrStdObjDef.value(iter))
+	next
+	pSO.write file_footer()
+	pSO.save page_.ctrl(1001).text
+end function
+
+function safe_ident(strVal)
+	strVal = trim(strVal)
+	if left(strVal,1) >= "0" and left(strVal,1) <= "9" then
+		strVal = "e" + strVal
+	end if
+	strVal = replace(strVal," ","_")
+	strVal = replace(strVal,"-","_")
+	strVal = replace(strVal,"ł","l")
+	strVal = replace(strVal,"ś","s")
+	strVal = replace(strVal,"ó","o")
+	strVal = replace(strVal,"ż","z")
+	strVal = replace(strVal,"ą","a")
+	strVal = replace(strVal,"ę","e")
+	strVal = replace(strVal,".","_")
+	strVal = replace(strVal,",","_")
+	strVal = replace(strVal,")","_")
+	strVal = replace(strVal,"(","_")
+	safe_ident = replace(strVal,"%","_")
+end function
+'---------------------------------------------------------------------------
+function generuj_dotnet_one(byref pStdObjDef)
+	dim pSO : set pSO = doc_.createstreamobj()
+	dim strFile : strFile = page_.ctrl(2001).text + pStdObjDef.tablename + ".cs"
+	pSO.write "//----------------------------------------------------------------" + vbCrLf
+	pSO.write "//data object class for " + pStdObjDef.tablename + " " + vbCrLf
+	pSO.write "//----------------------------------------------------------------" + vbCrLf
+	pSO.write "// typeid=" + cstr(pStdObjdef.typeid) + vbCrLf
+	pSO.write "// generated:" + CStr(Now()) + vbCrLf
+	pSO.write "//" + vbCrLf
+	pSO.write "//----------------------------------------------------------------" + vbCrLf
+	pSO.write "" + vbCrLf
+	pSO.write "using System;" + vbCrLf
+'	pSO.write "using System.Collections;" + vbCrLf
+	pSO.write "using nxappcore;" + vbCrLf
+	pSO.write "using nxappcore.nxobjects;" + vbCrLf
+	pSO.write "//----------------------------------------------------------------" + vbCrLf
+	pSO.write "namespace eb5nxobj" + vbCrLf
+	pSO.write "{" + vbCrLf
+	pSO.write vbTab + "public class " + pStdObjDef.tablename + " : nxobj_" + vbCrLf
+	pSO.write vbTab + "{" + vbCrLf
+	pSO.write vbTab + "" + vbCrLf
+	pSO.write vbTab + vbTab + "//----------------------------------------------------------------" + vbCrLf
+
+	'constructor
+	pSO.write vbTab + vbTab + "public " + pStdObjDef.tablename + "(object oNE2002Obj):" + vbCrLf
+	pSO.write vbTab + vbTab + vbTab + "base(oNE2002Obj)" + vbCrLf
+	pSO.write vbTab + vbTab + "{" + vbCrLf
+	pSO.write vbTab + vbTab + "}" + vbCrLf
+	pSO.write vbTab + vbTab + "" + vbCrLf
+	pSO.write vbTab + vbTab + "//----------------------------------------------------------------" + vbCrLf
+
+	dim flddef
+	'enums
+	pSO.write vbTab + vbTab + "//----------------------------------------------------------------" + vbCrLf
+	for each flddef in pStdObjDef
+		if flddef.type = RELT_ENUM then
+			pSO.write vbTab + vbTab + "public enum " + flddef.name + "_enum" + vbCrLf
+			pSO.write vbTab + vbTab + "{" + vbCrLf
+
+			dim nEnum: nEnum = 0
+			do while (flddef.enumvalue(nEnum) <> "")
+				pSO.write vbTab + vbTab + vbTab + safe_ident(flddef.enumvalue(nEnum)) + "," + vbCrLf
+				nEnum = nEnum + 1
+			loop
+
+			pSO.write vbTab + vbTab + "}" + vbCrLf
+			pSO.write vbTab + vbTab + ""  + vbCrLf
+		end if
+	next
+
+	for each flddef in pStdObjDef
+		dim strPropType : strPropType = "string"
+		dim strMethod : strMethod = "getstrfield"
+		if flddef.type = RELT_REF and flddef.ispersist then
+			dim refstdobjdef: set refstdobjdef = doc_.stdobjdef.getobjdef(flddef.reftypeid)
+			 strPropType = refstdobjdef.tablename
+			 strMethod = "(" + strPropType + ") getobjfield" 
+		else
+			if flddef.type = RELT_EMBED then
+				if flddef.sqltype = SQLcurrency or flddef.sqltype = SQLqty then
+					strPropType = "decimal"
+					strMethod = "getcurfield"
+				elseif flddef.sqltype = SQLdate then
+					strPropType = "DateTime"
+					strMethod = "getdatefield"
+				elseif flddef.sqltype = SQLlong then
+					strPropType = "int"
+					strMethod = "getlongfield"
+				end if
+			elseif flddef.type = RELT_ENUM then
+				strPropType = flddef.name + "_enum"
+				strMethod = "(" + flddef.name + "_enum)getlongfield"
+			elseif 	flddef.type = RELT_LIST then
+				dim listdobjdef: set listdobjdef = doc_.stdobjdef.getobjdef(flddef.reftypeid)
+				strPropType = listdobjdef.tablename + "_list"
+				strMethod = "(" + strPropType + ") null;// getobjfield"
+			end if
+		end if
+		
+		pSO.write vbTab + vbTab + "/// <summary>" + vbCrLf
+		pSO.write vbTab + vbTab + "/// " + flddef.humanname + vbCrLf
+		pSO.write vbTab + vbTab + "/// </summary>" + vbCrLf
+
+		pSO.write vbTab + vbTab + "public " + strPropType + " " + flddef.name + vbCrLf
+		pSO.write vbTab + vbTab + "{" + vbCrLf
+		pSO.write vbTab + vbTab + vbTab + "get"  + vbCrLf
+		pSO.write vbTab + vbTab + vbTab + "{"  + vbCrLf
+
+		dim nFldNr:nFldNr = pStdObjDef.getfieldindex(flddef.name)
+
+		pSO.write vbTab + vbTab + vbTab + vbTab + "return " + strMethod + "(" + cstr(nFldNr) + ");" + vbCrLf
+		pSO.write vbTab + vbTab + vbTab + "}"  + vbCrLf
+		pSO.write vbTab + vbTab + "}" + vbCrLf
+		pSO.write vbTab + vbTab + ""  + vbCrLf
+	next
+	pSO.write vbTab +  "" + vbCrLf
+	pSO.write vbTab +  "" + vbCrLf
+	pSO.write vbTab +  "" + vbCrLf
+	pSO.write vbTab +  "" + vbCrLf
+	pSO.write vbTab +  "" + vbCrLf
+	pSO.write vbTab +  "" + vbCrLf
+	pSO.write vbTab +  "}" + vbCrLf
+
+	if pStdObjDef.child then
+		pSO.write vbTab + "public class " + pStdObjDef.tablename + "_list" + vbCrLf
+		pSO.write vbTab + "{" + vbCrLf
+		pSO.write vbTab + "" + vbCrLf
+		pSO.write vbTab +  "}" + vbCrLf
+	end if
+
+	pSO.write "}" + vbCrLf
+	pSO.write "" + vbCrLf
+
+	pSO.save strFile
+end function
+'---------------------------------------------------------------------------
+function generuj_dotnet
+	dim stdobjdef
+	for each stdobjdef in doc_.stdobjdef
+		generuj_dotnet_one stdobjdef
+	next 
+end function
+]]>
+</script>
+</config>
+
+<header>
+</header>
+	<body>
+		<t> Generator skryptu dla Microsoft SQL</t><br/>
+		<table>
+		<tbody>
+		
+			<tr>
+				<td><button href='vs1017="generuj_skrypt"'>Generuj</button></td>
+				<td><t>jako wersja&nbsp;</t><intedit name='12' size='2' /></td>
+			</tr>
+			<tr>
+				<td><t>'create objects' do pliku</t><edit name='e1' size='40' /></td>
+			</tr>
+			<tr>
+				<td><t>linked server + db</t><edit name='22' size='40' /></td>
+			</tr>
+			<tr>
+				<td><t>'create tables' do pliku</t><edit name='e21' size='40' /></td>
+			</tr>
+			<tr>
+				<td><t>'drop objects' do pliku</t><edit name='e11' size='40' /></td>
+			</tr>
+			<tr>
+				<td><checkbox name='c2'><t><![CDATA[%DBNAME%]]></t></checkbox></td>
+			</tr>
+			<tr>
+				<td>
+					<checkbox name='c##CTRLID_UPGRADE'>
+						<transfer mode='custom' />
+						<t><![CDATA[upgrade]]></t>
+					</checkbox>
+				</td>
+			</tr>
+			<tr>
+				<td><checkbox name='c5'><t>tylko generuj description</t></checkbox></td>
+			</tr>
+			<tr><td><t size='1' /></td></tr>
+			<tr>
+				<td><checkbox name='c4'>
+				<t forecolor='red'>generuj VBP i .cls (Experimental)</t></checkbox></td>
+			</tr>
+			<tr>
+				<td><t>dokumentacja do pliku</t><edit name='e1001' size='60' /></td>
+			</tr>
+			<tr>
+				<td><button style='34' href='vs1017="generuj_dokumentacje"'>Generuj dokumentację</button></td>
+			</tr>
+			<tr>
+				<td><t>.NET do katalogu</t><edit name='e2001' size='60' /></td>
+			</tr>
+			<tr>
+				<td><button style='34' href='vs1017="generuj_dotnet"'>Generuj .NET</button></td>
+			</tr>
+
+		</tbody>
+		</table>
+		<br/>
+		<t name='e200'></t>
+	</body>
+	<footer>
+	</footer>
+</page>

@@ -1,0 +1,1251 @@
+#include "h1000.h"
+#include "h1004.h"
+#include "h1200.h"
+#include "h1201.h"
+#include "h1230.h"
+#include "h1220.h"
+#include "h1231.h"
+#include "h1232.h"
+#include "h1223.h"
+#include "h1240.h"
+
+#define CMD_CONTINUE			2000
+
+#define ID_CTRL_ALLMESSAGES		1001
+#define ID_CTRL_IGNORE			1002
+#define ID_CTRL_DATE			1003
+#define ID_CTRL_TIME			1004
+#define ID_ROW_DATE				1005
+#define ID_ROW_TIME				1006
+#define ID_RUN_FROM_PROC		1007
+#define ID_RUN_FROM_PAGE		1008
+#define ID_CTRL_RADIO_WYBOR		1009
+#define ID_CTRL_AUTOSAVE		1010
+
+
+#define PAGE_FORM_DOUBLE_MAIL			20504
+#define PAGE_FORM_CHOICE_MAIL_SENDER	20407
+#define PAGE_FORM_ADD_MAIL_SENDER		20312
+#define PAGE_FORM_COMMIT_MAIL_SAVE		20329
+
+
+<?xml version="1.0" encoding="windows-1250" ?>
+<page style='STYLE_PAGE'>
+<config>
+<title>Pobieranie poczty</title>
+<startpos>center</startpos>
+<script>
+
+<!--
+	ALWAYS MANUAL
+	Pobieranie poczty
+-->
+
+<![CDATA[
+
+#include "50203"
+#include "50516"
+#include "50206"
+#include "50211"
+#include "50101"
+#include "50122"
+#include "50126"
+#include "50200"
+
+dim bAllMessages			'true jezeli wszystkie wiadomosci
+dim dDataOd					'jeżeli nie wszystkie to powyżej tej daty
+dim nTime					'i powyżej czasu
+dim bIgnore					'true jeżeli igonrujemy wiadomości od nierozpo
+							'znanych adresatow
+
+dim bSaveAll				'true gdy mają być wczytywane wszystkie maile
+
+dim pMapi					'wsakźnik na obiekt poczty
+
+dim strError				'ostatni komunikat błędy MAPI
+
+
+
+class CMailMessage
+	public strNadawca		'nadawca
+	public strNadawcaName	'nazwa nadawcy
+	public strSubject		'temat
+	public strText			'tekst wiadomości
+	public dDateReceived	'data otrzymania
+	public nAttachemnts		'liczba zalacznikow
+	public arrAttachments	'tablica zalacznikow typu CNavoFile
+
+	Private Sub Class_Initialize()
+		set arrAttachments=trans_.afc.new_navoarray()
+	End Sub
+
+	Private Sub Class_Terminate()   'OK
+		set arrAttachments=nothing
+	End Sub
+
+end class
+
+'----------------------------------------------------------------------
+'rozpoczyna proces pobierania poczty, wyswietla formularz itp. wolane
+'z zewnatrz
+'----------------------------------------------------------------------
+function mail_receive()
+	strError=""
+
+	'pobieramy parametry lub konczymy gdy zrezygnowano
+	if (not mail_getparams()) then
+		exit function
+	end if
+
+
+	continue_page
+
+	set pMapi=nothing
+end function
+
+'----------------------------------------------------------------------
+'wołane gdy otwarcie jako samej strony
+'----------------------------------------------------------------------
+function continue_page()
+
+	strError=""
+	dim bExit : bExit = false
+	do while true
+		'podłączenie się do klienta poczty elektronicznej
+		if (not mail_connect()) then
+			dim nAnswer : nAnswer = MessageBox("Nie udało się podłączyć do poczty elektronicznej." +_
+			"Czy chcesz zainstalować/sprawdzić komponenty poczty ?", "Nie pobrano poczty", vbYesNo, vbQuestion)
+			if nAnswer <> vbYes then
+				bExit = true
+				exit do
+			else
+				if not doc_.getmodule(60126).install_mapi() then
+					bExit = true
+					exit do
+				end if
+			end if
+		else
+			exit do
+		end if
+	loop
+	if bExit then
+		exit function
+	end if
+
+	mail_read_loop
+
+	set pMapi=nothing
+	page_.goback 
+end function
+
+'----------------------------------------------------------------------
+'pobiera parametry dla filtra poczty z formularza
+'----------------------------------------------------------------------
+function mail_getparams():mail_getparams=false
+	page_.ctrl(ID_RUN_FROM_PROC).hide=false
+	page_.ctrl(ID_RUN_FROM_PAGE).hide=true
+
+	if (page_.domodalauto()=CMD_CONTINUE) then
+		mail_getparams=true
+	end if
+
+end function
+
+#include "50226"
+
+'----------------------------------------------------------------------
+'podejmuje próbe podłączenia się do klienta poczty
+'----------------------------------------------------------------------
+function mail_connect():mail_connect=false
+
+#ifdef _DEBUG
+#else
+	on error resume next
+#endif
+
+	dim pNavoMapi
+	set pNavoMapi=new CNavoMAPI
+
+	if (not pNavoMapi.connect()) then
+		exit function
+	end if
+
+	set pMapi = pNavoMapi.getMAIL()
+
+	if not isObject(pMapi) then
+		set pMapi = nothing
+		exit function
+	end if 
+
+	mail_connect=true
+end function
+
+'----------------------------------------------------------------------
+'szuka id zlecającego zadanie
+'na podstawie obiektu nadawcy maila
+'----------------------------------------------------------------------
+function FindIdZlecajacego(byref pObjNadawca, byref pZlecajacyObj, byref ZlecajacyDict)
+	dim strSQL
+	select case pObjNadawca.type
+		case TYPEID_N5KLIENT
+			strSQL = cstr(TYPEID_N5KLIENT)+cstr(pObjNadawca.strNazwa)
+		case TYPEID_N5KLIENT_PRACOWNIK
+			strSQL = cstr(TYPEID_N5KLIENT_PRACOWNIK) + trim(pObjNadawca.strImie) + " " + trim(pObjNadawca.strNazwisko) + " (" + trim(pObjNadawca.pKlient.strNazwa) + ")"
+		case TYPEID_N5PRACOWNIK
+			strSQL = cstr(TYPEID_N5PRACOWNIK)+trim(pObjNadawca.strImie) + " " + trim(pObjNadawca.strNazwisko)
+	end select		
+	
+	dim idZlecajacy:idZlecajacy = clng(0)
+	
+	'sprawdza, czy zlecajacy już był znaleziony
+	if ZlecajacyDict.Exists(strSQL) then
+		idZlecajacy = ZlecajacyDict.item(strSQL) 
+	end if
+
+	'Ustal indeks po ktorym bedziemy szukac (on wyznacza unikalnosc)
+	'i jezeli nie znajdziemy to dodamy obiekt o takim indeksie
+	dim strIndexWhere
+
+	select case pObjNadawca.type
+		case TYPEID_N5KLIENT
+			strIndexWhere = pObjNadawca.strNazwa
+
+		case TYPEID_N5KLIENT_PRACOWNIK
+			strIndexWhere = trim(pObjNadawca.strNazwisko) + " " +  trim(pObjNadawca.strImie) + " (" + trim(pObjNadawca.pKlient.strNazwa) + ")"
+
+		case TYPEID_N5PRACOWNIK
+			strIndexWhere = trim(pObjNadawca.strNazwisko) + " " + trim(pObjNadawca.strImie)
+ 
+	end select
+
+	strIndexWhere=LEFT(strIndexWhere, 64)
+
+		
+	'Jeżeli nie znalazł w dictionary - szuka w bazie ale po indeksie,
+	'ktory bedziemy chcieli do bazy wstawic jezeli go nie znajdziemy
+	if idZlecajacy = clng(0) then
+		idZlecajacy = trans_.findobjid(TYPEID_N5WYKONAWCA, "strIndeks='" + trans_.afc.convert.DoubleApostrophe( strIndexWhere ) + "'")
+		'" and (idobj in (select pWykonawca from n5uzytkownik where n5uzytkownik.idobj=" + CStr(getCurrentUserID()) + "))")
+	end if
+
+	'Jeżeli nie znalazł w dictionary ani w bazie - tworzy nowego wykonawcę 
+	if idZlecajacy = clng(0) then
+		
+		set pZlecajacyObj =trans_.newobj(TYPEID_N5WYKONAWCA)
+
+		select case pObjNadawca.type
+
+			'Uwaga!: Kolejnowsc podstawiania jest BARDZO ISTOTNA
+			'W pierwszej kolejnosci pZlecajacyObj.wrefObiekt = ...
+			'Potem pZlecajacyObj.strIndeks = ....
+			'Gwarantuje to nam iz recalc nie nadpisze nam naszego
+			'indexu
+
+			case TYPEID_N5KLIENT
+				set pZlecajacyObj.wrefObiekt = pObjNadawca
+				pZlecajacyObj.strIndeks = strIndexWhere
+
+			case TYPEID_N5KLIENT_PRACOWNIK
+				dim pObjKlient: set pObjKlient = pObjNadawca.pKlient
+				
+				set pZlecajacyObj.wrefObiekt = pObjNadawca
+				pZlecajacyObj.strIndeks = strIndexWhere
+
+			case TYPEID_N5PRACOWNIK
+				set pZlecajacyObj.wrefObiekt = pObjNadawca
+				pZlecajacyObj.strIndeks = strIndexWhere
+
+			end select	
+
+		ZlecajacyDict.Add cstr(pZlecajacyObj.type) + cstr(pZlecajacyObj.strIndeks), pZlecajacyObj.idobj
+		idZlecajacy = pZlecajacyObj.idobj
+	end if
+
+	set pZlecajacyObj = trans_.getobj(TYPEID_N5WYKONAWCA,idZlecajacy) 
+	FindIdZlecajacego = idZlecajacy
+end function
+	
+function CanReadMail()
+	CanReadMail = true
+
+	dim CurrFirma:set CurrFirma = GetCurrentFirma() 
+	if CurrFirma  is nothing then 
+		MessageBox "Nie została zdefiniowana własna firma ", "Brak zdefiniowanej firmy", vbOKOnly, vbInformation
+		CanReadMail = false
+		exit function
+	end if
+
+	
+	dim CurrUser:set CurrUser = GetCurrentUser() 
+	dim bCanContinue:bCanContinue = false
+	dim Text
+	While not bCanContinue
+		
+		bCanContinue = true
+		
+		Text = "Aktualne dane użytkownika nie pozwalają na import poczty."	
+		
+		if (CurrUser.pWykonawca is nothing) and  (CurrUser.strMail="") then
+			Text = Text + "Nie zdefiniowano domyślnego wykonawcy i adresu e-mail."
+			bCanContinue = false
+		elseif (CurrUser.strMail="") then 
+			Text = Text + " Nie podano adresu poczty elektronicznej."
+			bCanContinue = false
+		elseif (getCurrentWykonawca() is nothing) then
+			Text = Text + " Nie zdefiniowano domyslnego wykonawcy."
+			bCanContinue = false
+		end if
+		if not bCanContinue then
+			Text = Text + " Nacisnij ""Popraw"" aby podać potrzebne informacje lub ""Anuluj"" aby zakończyć." + vbNewLine
+			if MessageBoxCustom( Text, "Brak danych", vbYesNo, vbQuestion ,"Popraw;Anuluj")<>vbYes then
+				CanReadMail = false
+				exit function
+			else
+				doc_.getmodule(60129).form_domodal TYPEID_N5UZYTKOWNIK , getCurrentUserID() , USAGE_USER_MY_DATA
+			end if
+		end if
+	wend
+	dim IdTyp:IdTyp= trans_.findobjid(TYPEID_N5TYPDOKUMENTU, "strNazwa= 'Odebrana korespondencja'")
+	if IdTyp= clng(0) then
+		MessageBox "Nie został zdefiniowany odpowiedni typ dokumentu", "Brak typu dokumentu", vbOKOnly, vbInformation
+		CanReadMail = false
+		exit function
+	end if
+
+end function
+
+'----------------------------------------------------------------------
+'Znajduje indeks ostatnio wczytanej poczty
+'Piwonien zwrócić indeks
+'----------------------------------------------------------------------
+function find_last_mail_id()
+	dim strNadawca
+	dim strNadawcaName
+	dim strSubject
+	dim strText
+	dim dDateReceived
+	dim nAttachemnts
+	dim i:i=0
+	dim mail_read
+	dim dLastDate
+
+	dim strDateOd:strDateOd = cstr(dDataOd) 'getuserprofile(USERPROF_MAIL_LAST_UPDATE)	
+
+	if bAllMessages	then strDateOd = doc_.afc.globals.nulldate()
+	do
+		i=i+1
+		mail_read=pMapi.read(i, false, strNadawca, strNadawcaName, _
+			 strSubject, strText, dDateReceived, nAttachemnts)
+		
+		if cdate(dDateReceived) = doc_.afc.globals.nulldate() then
+			dDateReceived = trans_.var(GVAR_SYSDATE)
+		end if	
+
+		
+		if not mail_read then
+			find_last_mail_id =i-1
+			exit function
+		end if 
+	
+		if datevalue(dDateReceived) > cdate(strDateOd)  then
+			'dLastDate = cdate(dDateReceived)
+		else 'Jeżeli data otrzymania jest równa, lub mniejsza od zadanej
+			exit do
+		end if
+	loop while (1)
+	
+	
+
+	do
+		mail_read=pMapi.read(i, false, strNadawca, strNadawcaName, _
+			 strSubject, strText, dDateReceived, nAttachemnts)
+		
+		if cdate(dDateReceived) = doc_.afc.globals.nulldate() then
+			dDateReceived = trans_.var(GVAR_SYSDATE)
+		end if
+	
+		if not mail_read then
+			find_last_mail_id =i-1
+			exit function
+		end if 
+
+		if (datevalue(dDateReceived) = cdate(strDateOd)) and (trans_.afc.convert.time2long(timevalue(dDateReceived))> clng(nTime)) then
+			i=i+1
+		else
+			exit do
+		end if
+	loop while (1)
+	
+	
+	find_last_mail_id = i-1
+end function
+'----------------------------------------------------------------------
+'glówna pętla odczytu wiadomości
+'zwraca true jezeli sie uda
+'----------------------------------------------------------------------
+function mail_read_loop()
+	mail_read_loop=false
+
+	if not CanReadMail then exit function
+	
+	dim ZlecajacyDict:set ZlecajacyDict = nothing ' Dictionary dla wykonawców
+	set ZlecajacyDict = CreateObject("Scripting.Dictionary")
+	
+	dim i:i=1
+	dim pMailMessage
+	dim pObjNadawca: set pObjNadawca = nothing
+	dim pObjZlecajacy: set pObjZlecajacy = nothing
+
+	dim pInformation
+	set pInformation=doc_.performing("Import poczty trwa . . . ")
+	dim dLastMailDate:dLastMailDate = getuserprofile(USERPROF_MAIL_LAST_UPDATE)	
+	if trim(dLastMailDate)="" then
+		dLastMailDate = doc_.afc.globals.nulldate()
+	end if
+	dim dLastMailDateProf:dLastMailDateProf = dLastMailDate
+	dim bStopReading:bStopReading=false
+
+	i = find_last_mail_id
+	if i < clng(1) then exit function
+
+	dim bReadMail:bReadMail=true
+	dim IgnoreDoubleMail:IgnoreDoubleMail = false
+
+	while i>0 and mail_read(i, pMailMessage) and bReadMail
+
+		dim NadawcaIdobj
+		dim NadawcaTypeid
+		dim bAddZadanie
+		set pInformation=nothing
+		
+		'mail_find_sender ustawi 'idobj', 'typeid', 'pObjNadawca' nadawcy maila
+		if (trim(pMailMessage.strNadawca) <> "") then
+		
+			if(mail_find_sender(NadawcaIdobj, NadawcaTypeid, pMailMessage, pObjNadawca, ZlecajacyDict, bReadMail)) then
+			
+				set pInformation=doc_.performing("Import poczty trwa . . . ")
+
+				'MailContext
+				dim pMailContext:set pMailContext = new CMailContext
+
+				
+				'ZLECAJĄCY
+				'Znajdowanie nadawcy w tabeli N5WYKONAWCA
+				dim idZlecajacy
+				idZlecajacy=FindIdZlecajacego(pObjNadawca, pObjZlecajacy, ZlecajacyDict)
+
+				if idZlecajacy<=0 then
+					MessageBox "Problem ze zlecającym idZlecajacy = " + cstr(idZlecajacy), "Błąd", vbOKOnly, vbInformation					
+					exit function
+				end if
+				set pMailContext.pZlecajacy	= pObjZlecajacy
+					
+				'SUBJECT
+				if trim(pMailMessage.strSubject) <>"" then
+					pMailContext.strSubiect	=	pMailMessage.strSubject
+				else
+					pMailContext.strSubiect = "Poczta przychodząca" 
+				end if
+				
+				'BODY
+				pMailContext.strBody = pMailMessage.strText
+				
+				'NADAWCA
+				set pMailContext.pNadawca = pObjNadawca
+				
+				'ATTACHMENTS
+				set pMailContext.arrAttachment	=	pMailMessage.arrAttachments
+				
+				'DATA I CZAS
+				pMailContext.dDate			=	pMailMessage.dDateReceived
+				pMailContext.tTime = clng(cstr(hour(pMailMessage.dDateReceived))+cstr(minute(pMailMessage.dDateReceived)))
+				
+				'Sprawdź, czy już była taki mail
+				Dim SQL: SQL = " datediff(day, "+ doc_.afc.convert.date2SQL(cstr(pMailContext.dDate)) +",dDataZlec)=0"+_
+							   " AND tCzasZlec = '" + cstr(pMailContext.tTime)+_
+							   "' AND pZlecajacy = " + cstr(pMailContext.pZlecajacy.idobj)+_
+							   "  AND  strTemat = '" + trans_.afc.convert.DoubleApostrophe(cstr(pMailContext.strSubiect))+"'"
+								   
+				bAddZadanie = true
+
+				dim IdZadanie:IdZadanie = trans_.findobjid(TYPEID_N5ZADANIE, SQL)
+				if IdZadanie <> clng(0) then
+					if not IgnoreDoubleMail then	
+						dim hli : set hli = doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=PAGE_FORM_DOUBLE_MAIL")
+							dim oPage: set oPage=doc_.getpagehli(hli)
+							oPage.init_form cstr(pMailMessage.strSubject),+_
+											cstr(pMailMessage.strNadawcaName) +" ("+ cstr(pMailMessage.strNadawca) + ")", +_ 
+											doc_.afc.display.fulldate(pMailContext.dDate),+_
+											left(pMailContext.strBody, 1024)
+																
+							set pInformation=nothing
+						
+							dim nRes: nRes = oPage.domodalauto()
+	
+							select case nRes
+								case 0 'VAR_IGNORE_THIS
+									bAddZadanie = false
+									trans_.discard()
+								case 1 'VAR_IGNORE_ALL
+									bAddZadanie = false
+									IgnoreDoubleMail = true
+									trans_.discard()
+							end select
+							set pInformation=doc_.performing("Import poczty trwa . . . ")
+					else
+						'Ignoruj (bo IdZadanie<>0 i IgnoreDoubleMail = true)
+						bAddZadanie = false
+					end if
+				end if
+				
+				if bAddZadanie then
+					set pInformation = nothing
+					if AddZadanie(pMailContext) = false then 
+						exit function
+					end if
+				end if
+				dLastMailDate = pMailMessage.dDateReceived
+			end if
+		end if
+	
+		i=i-1
+	wend
+
+	set pInformation=nothing
+
+	set pMailMessage=nothing
+	set ZlecajacyDict = nothing
+
+	MessageBox "Import z poczty zakończył się pomyślnie. ", "Zakończono import", vbOKOnly, vbInformation
+	
+	trans_.discard()
+	if cdate(dLastMailDateProf) < cdate(dLastMailDate) then
+		setuserprofile USERPROF_MAIL_LAST_UPDATE,cstr(dLastMailDate)
+		if not trans_.saveobjects then
+			MessageBox "Problem z zachowaniem USERPROF_MAIL_LAST_UPDATE", "Błąd", vbOKOnly, vbCritical
+		end if
+	end if
+	mail_read_loop=true
+end function
+
+'----------------------------------------------------------------------
+'Funkcja zwraca true jeżeli udało się odszukać nadawcę lub został on
+'dodany przez user'a w przypadkach szczególnych. Gdy zwraca true to
+'nIdObj jest wypełniany identyfikatorem rekordu nadawcy a nTypeId typem
+'obiektu danego nadawcy 
+'Zrócenie false rónoznaczne jest z pominięciem całego danego e-mail'a
+'- nie będzie on wczytywany do zadania
+'----------------------------------------------------------------------
+function mail_find_sender(byref nIdObj, byref nTypeId, byref pMailMessage, byref pObjNadawca, byref WykonawcaDict, byref bReadMail):mail_find_sender=false
+	dim bCanContinue:
+	dim lRes
+	dim pNewHli
+	dim pUserPage
+	dim nResult
+	bReadMail = true
+	
+	lRes = FindNadawca(pObjNadawca, pMailMessage.strNadawca, WykonawcaDict)
+	
+	'Jeżeli znalazł więcej niż jeden
+	if lRes = clng(-1) then
+		trans_.var(APPVAR_SENDER_ADRESS) = cstr(pMailMessage.strNadawca)
+		trans_.var(APPVAR_SENDER_ID) = ""
+		trans_.var(APPVAR_UNKNOWN_SENDER_NAME) = cstr(pMailMessage.strNadawca) + "(" + cstr(pMailMessage.strNadawcaName) +")"
+		trans_.var(APPVAR_UNKNOWN_SENDER_SUBJECT) = cstr(pMailMessage.strSubject) 
+		trans_.var(APPVAR_UNKNOWN_SENDER_BODY) = cstr(pMailMessage.strText) 
+
+		set pNewHli=doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=PAGE_FORM_CHOICE_MAIL_SENDER")
+		set pUserPage=doc_.getpagehli(pNewHli)
+		nResult = pUserPage.domodalauto()
+		set pUserPage=nothing
+		if nResult = CMD_GOBACK then
+			exit function
+		else
+			dim ident:ident = trans_.var(APPVAR_SENDER_ID)
+			dim nPos:nPos = instr(1,ident,";")
+			if nPos > 0 then
+				nTypeId = clng(left(ident,nPos-1))
+				nIdObj = clng(mid(ident,nPos+1))
+				set pObjNadawca = trans_.getobj(nTypeId, nIdObj)
+				mail_find_sender = true
+			end if										
+			exit function
+		end if
+	end if
+	
+	trans_.var(APPVAR_SENDER_ADRESS) = cstr(pMailMessage.strNadawca)
+	trans_.var(APPVAR_UNKNOWN_SENDER_NAME) = cstr(pMailMessage.strNadawcaName)
+	trans_.var(APPVAR_UNKNOWN_SENDER_SUBJECT) = cstr(pMailMessage.strSubject) 
+	trans_.var(APPVAR_UNKNOWN_SENDER_BODY) = cstr(pMailMessage.strText) 	
+
+
+	'Jeżeli nie znalazł
+	if lRes = clng(0) then
+		if not bIgnore then
+			bCanContinue = false
+			while not bCanContinue
+				set pNewHli=doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=PAGE_FORM_ADD_MAIL_SENDER")
+				set pUserPage=doc_.getpagehli(pNewHli)
+				nResult = pUserPage.domodalauto()
+				
+				dim bGetSenderObject:bGetSenderObject = false
+				select case nResult 
+					case 0 'Przerwij czytanie
+						mail_find_sender = false
+						bReadMail = false
+						exit function
+					case 1 'Pomiń maila
+						mail_find_sender = false
+						exit function
+					case 2 'OK
+						'bCanContinue = true
+					case 3 'Wskazanie nadawcy bez zmiany adresu
+						bGetSenderObject = true
+				end select
+
+				if not bGetSenderObject then
+					set pUserPage=nothing
+					lRes = FindNadawca(pObjNadawca, pMailMessage.strNadawca, WykonawcaDict)
+					if (lRes <> clng(0))	then
+						bCanContinue = true
+					end if
+				else
+					set pObjNadawca = pUserPage.return_obj
+					if not pObjNadawca is nothing then
+						bCanContinue = true
+					end if
+
+				end if
+			wend
+		else
+			exit function
+		end if
+
+	end if
+	
+	'Jeżeli znalazł jednego
+	if lRes >0 then
+		if not bSaveAll then
+			dim pNewHli2: set pNewHli2=doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=PAGE_FORM_COMMIT_MAIL_SAVE")
+			dim pUserPage2: set pUserPage2=doc_.getpagehli(pNewHli2)
+
+
+			nTypeId = pObjNadawca.type
+			nIdObj = lRes		
+			
+			'init_form(byval sender_type, byval sender_id, byval subject, byval body)
+			pUserPage2.init_form nTypeId, nIdObj, cstr(pMailMessage.strSubject), cstr(pMailMessage.strText) 
+
+			dim nResult2:nResult2 = pUserPage2.domodalauto()		
+			select case nResult2 
+				case 0 'Przerwij czytanie
+					mail_find_sender = false
+					bReadMail = false
+					exit function
+				case 1 'Pomiń maila
+					mail_find_sender = false
+					exit function
+				case 2 'Save mail
+					mail_find_sender = true
+					exit function
+			end select
+		else
+			mail_find_sender = true
+			exit function
+		end if					
+	end if					
+end function
+
+'----------------------------------------------------------------------
+'zwraca true jezeli list moze byc wczytany jako zadanie tzn.
+'sprawdza odpowiednie daty z formularza i z listu
+'----------------------------------------------------------------------
+function mail_filtered(byref pMailMessage):mail_filtered=false
+	if (not bAllMessages) then
+
+		if (DateValue(pMailMessage.dDateReceived)>DateValue(CDate(dDataOd))) then
+			mail_filtered=true
+			exit function
+		else
+
+			if (DateValue(pMailMessage.dDateReceived)=DateValue(CDate(dDataOd))) then
+				'todo: sprawdzic format czasu czy zawsze 12 w nocy to 24
+				if (nTime<=trans_.afc.convert.time2long(pMailMessage.dDateReceived)) then
+					mail_filtered=true
+					exit function
+				end if
+			end if
+
+		end if
+
+	else
+		mail_filtered=true
+	end if
+end function
+
+'----------------------------------------------------------------------
+'odczytuje dokładnie jeden list i zraca wypełnioną strukturę CMailMessage
+'----------------------------------------------------------------------
+function mail_read(byval i, byref pMailMessage):mail_read=false
+	
+	if i<1 then exit function
+	set pMailMessage=new CMailMessage
+
+	dim strNadawca
+	dim strNadawcaName
+	dim strSubject
+	dim strText
+	dim dDateReceived
+	dim nAttachemnts
+	
+	mail_read=pMapi.read(i, false, strNadawca, strNadawcaName, _
+	 strSubject, strText, _
+	 dDateReceived, nAttachemnts)
+
+	if cdate(dDateReceived) = doc_.afc.globals.nulldate() then
+		dDateReceived = trans_.var(GVAR_SYSDATE)
+	end if
+
+	if (mail_read) then
+		
+		'obróbka adresu email (pełna postać to protokół:adres np. SMTP:ala@costam.com
+		dim nSemiColonPos : nSemiColonPos = instr(1,strNadawca,":")
+		if nSemiColonPos > 0 then
+			strNadawca = mid(strNadawca,nSemiColonPos+1)
+		end if
+
+		pMailMessage.strNadawca=strNadawca
+		pMailMessage.strNadawcaName=strNadawcaName
+		pMailMessage.strSubject=strSubject
+		pMailMessage.strText=strText
+		pMailMessage.dDateReceived=dDateReceived
+		pMailMessage.nAttachemnts=nAttachemnts
+
+		dim pSO 'stream object
+
+		dim pNavoFile
+
+		'jezeli znakow > 1024 to dodaj jako zalacznik
+		if (len(pMailMessage.strText)>1024) then
+			set pSO = doc_.createstreamobj()
+			pSO.write pMailMessage.strText
+
+			set pNavoFile=new CNavoFile
+			set pNavoFile.so=pSO
+			
+			dim strFileName: strFileName = FormatStringToFileName(strSubject)
+			if len(strFileName) > clng(15) then
+				strFileName = "Treść wiadomości (" + left(strFileName, 15) + "...).txt"
+			else
+				strFileName = "Treść wiadomości (" + strFileName + ").txt"
+			end if
+						
+			pNavoFile.filename = strFileName
+
+			pMailMessage.arrAttachments.Add pNavoFile
+
+			pMailMessage.strText=mid(pMailMessage.strText, 1, 1024)
+		end if
+
+		dim nAtt, strAttName, strAttStream
+		for nAtt=1 to (pMailMessage.nAttachemnts)
+			pMapi.getattachment nAtt, strAttName, strAttStream
+
+			set pSO = doc_.createstreamobj()
+			pSO.Attach strAttStream
+
+			set pNavoFile=new CNavoFile
+			set pNavoFile.so=pSO
+			pNavoFile.filename=strAttName
+
+			pMailMessage.arrAttachments.Add pNavoFile
+
+		next
+
+	end if
+
+end function
+
+'----------------------------------------------------------------------
+' czyta obiekt listu MAPI.MAIL i zraca wypełnioną strukturę CMailMessage
+'----------------------------------------------------------------------
+function mail_read_MAPI_MAIL(byref oMailItem, byref pMailMessage):mail_read_MAPI_MAIL=false
+	
+'	if i<1 then exit function
+	if oMailItem is nothing then exit function
+
+	set pMailMessage=new CMailMessage
+
+	dim strNadawca
+	dim strNadawcaName
+	dim strSubject
+	dim strText
+	dim dDateReceived
+	dim nAttachemnts
+	
+'	OLD:mail_read=pMapi.read(i, false, strNadawca, strNadawcaName, _
+'	 strSubject, strText, _
+'	 dDateReceived, nAttachemnts)
+'	NEW:Vtec version
+	strNadawca=oMailItem.SenderName
+	strNadawcaName=oMailItem.SenderName
+	strSubject=oMailItem.Subject
+	strText=oMailItem.Body
+	dDateReceived=oMailItem.ReceivedTime
+	nAttachemnts=oMailItem.Attachments.count
+'	/NEW Vtec version
+
+
+	if cdate(dDateReceived) = doc_.afc.globals.nulldate() then
+		dDateReceived = trans_.var(GVAR_SYSDATE)
+	end if
+
+	'obróbka adresu email (pełna postać to protokół:adres np. SMTP:ala@costam.com
+	dim nSemiColonPos : nSemiColonPos = instr(1,strNadawca,":")
+	if nSemiColonPos > 0 then
+		strNadawca = mid(strNadawca,nSemiColonPos+1)
+	end if
+
+	pMailMessage.strNadawca=strNadawca
+	pMailMessage.strNadawcaName=strNadawcaName
+	pMailMessage.strSubject=strSubject
+	pMailMessage.strText=strText
+	pMailMessage.dDateReceived=dDateReceived
+	pMailMessage.nAttachemnts=nAttachemnts
+
+	dim pSO 'stream object
+
+	dim pNavoFile
+
+	'jezeli znakow > 1024 to dodaj jako zalacznik
+	if (len(pMailMessage.strText)>1024) then
+		set pSO = doc_.createstreamobj()
+		pSO.write pMailMessage.strText
+
+		set pNavoFile=new CNavoFile
+		set pNavoFile.so=pSO
+		
+		dim strFileName: strFileName = FormatStringToFileName(strSubject)
+		if len(strFileName) > clng(15) then
+			strFileName = "Treść wiadomości (" + left(strFileName, 15) + "...).txt"
+		else
+			strFileName = "Treść wiadomości (" + strFileName + ").txt"
+		end if
+					
+		pNavoFile.filename = strFileName
+
+		pMailMessage.arrAttachments.Add pNavoFile
+
+		pMailMessage.strText=mid(pMailMessage.strText, 1, 1024)
+	end if
+
+
+
+	dim nAtt, strAttName, strAttStream
+	for nAtt=1 to (pMailMessage.nAttachemnts)
+		
+		'OLD:pMapi.getattachment nAtt, strAttName, strAttStream
+		'NEW:Vtec version
+		dim bOK, pFD, strTempPath
+		set pFD=CFileDrive( bOK )
+		if bOK then 
+			strTempPath=pFD.GetTempPath()+"\"
+		else
+			strTempPath="C:\Temp\"
+		end if
+		strAttName = oMailItem.Attachments.Item(nAtt).DisplayName
+		strAttStream = strTempPath+strAttName
+		oMailItem.Attachments.Item(nAtt).SaveAsFile(strAttStream)
+		'/NEW Vtec version
+
+	
+
+		set pSO = doc_.createstreamobj()
+		pSO.Attach strAttStream
+
+		set pNavoFile=new CNavoFile
+		set pNavoFile.so=pSO
+		pNavoFile.filename=strAttName
+
+		pMailMessage.arrAttachments.Add pNavoFile
+
+	next
+
+	mail_read_MAPI_MAIL=true
+end function
+
+'----------------------------------------------------------------------
+' obsługa zapsiu obiektu oMailItem do bazy danych
+'----------------------------------------------------------------------
+function saveMailItemToDB(ByRef oMailItem, ByRef IgnoreDoubleMail)
+
+	dim pMailMessage
+	if (not mail_read_MAPI_MAIL(oMailItem, pMailMessage)) then 
+		exit function
+	end if
+
+	dim ZlecajacyDict:set ZlecajacyDict = nothing ' Dictionary dla wykonawców
+	set ZlecajacyDict = CreateObject("Scripting.Dictionary")
+	
+	dim pObjNadawca: set pObjNadawca = nothing
+	dim pObjZlecajacy: set pObjZlecajacy = nothing
+
+	dim NadawcaIdobj
+	dim NadawcaTypeid
+	dim bReadMail
+
+	'mail_find_sender ustawi 'idobj', 'typeid', 'pObjNadawca' nadawcy maila
+	if (trim(pMailMessage.strNadawca) <> "") then
+
+		if(mail_find_sender(NadawcaIdobj, NadawcaTypeid, pMailMessage, pObjNadawca, ZlecajacyDict, bReadMail)) then
+		
+			'MailContext
+			dim pMailContext:set pMailContext = new CMailContext
+		
+			'ZLECAJĄCY
+			'Znajdowanie nadawcy w tabeli N5WYKONAWCA
+			dim idZlecajacy
+			idZlecajacy=FindIdZlecajacego(pObjNadawca, pObjZlecajacy, ZlecajacyDict)
+
+			if idZlecajacy<=0 then
+				MessageBox "Problem ze zlecającym idZlecajacy = " + cstr(idZlecajacy), "Błąd", vbOKOnly, vbInformation
+				exit function
+			end if
+
+			set pMailContext.pZlecajacy	= pObjZlecajacy
+			
+			'SUBJECT
+			if trim(pMailMessage.strSubject) <>"" then
+				pMailContext.strSubiect	=	pMailMessage.strSubject
+			else
+				pMailContext.strSubiect = "Poczta przychodząca" 
+			end if
+
+			'BODY
+			pMailContext.strBody = pMailMessage.strText
+
+			'NADAWCA
+			set pMailContext.pNadawca = pObjNadawca
+
+			'ATTACHMENTS
+			set pMailContext.arrAttachment = pMailMessage.arrAttachments
+
+			'DATA I CZAS
+			pMailContext.dDate = pMailMessage.dDateReceived
+			pMailContext.tTime = clng(cstr(hour(pMailMessage.dDateReceived))+cstr(minute(pMailMessage.dDateReceived)))
+
+
+			'Sprawdź, czy już był taki mail
+			Dim SQL: SQL = " datediff(day, "+ doc_.afc.convert.date2SQL(cstr(pMailContext.dDate)) +",dDataZlec)=0"+_
+						   " AND tCzasZlec = '" + cstr(pMailContext.tTime)+_
+						   "' AND pZlecajacy = " + cstr(pMailContext.pZlecajacy.idobj)+_
+						   "  AND  strTemat = '" + trans_.afc.convert.DoubleApostrophe(cstr(pMailContext.strSubiect))+"'"
+							   
+			dim bAddZadanie:bAddZadanie=true
+			dim IdZadanie:IdZadanie = trans_.findobjid(TYPEID_N5ZADANIE, SQL)
+
+			if IdZadanie <> clng(0) then
+				
+				if not IgnoreDoubleMail then	
+					dim hli : set hli = doc_.createhlistr("varCmd=CMD_OPEN_STATIC_PAGE varDestPage=PAGE_FORM_DOUBLE_MAIL")
+					
+						dim oPage: set oPage=doc_.getpagehli(hli)
+						oPage.init_form cstr(pMailMessage.strSubject),+_
+										cstr(pMailMessage.strNadawcaName) +" ("+ cstr(pMailMessage.strNadawca) + ")", +_ 
+										doc_.afc.display.fulldate(pMailContext.dDate),+_
+										left(pMailContext.strBody, 1024)
+															
+					
+						dim nRes: nRes = oPage.domodalauto()
+
+						select case nRes
+							case 0 'VAR_IGNORE_THIS
+								bAddZadanie = false
+								trans_.discard()
+
+							case 1 'VAR_IGNORE_ALL
+								bAddZadanie = false
+								IgnoreDoubleMail = true
+								trans_.discard()
+
+						end select
+				else
+					'Ignoruj (bo IdZadanie<>0 i IgnoreDoubleMail = true)
+					bAddZadanie = false
+				end if
+			end if
+
+			if bAddZadanie then
+				if AddZadanie(pMailContext) = false then
+					exit function
+				end if
+			end if
+
+		end if
+
+	else
+		MessageBox "Wiadomość """ + pMailMessage.strSubject + """ nie posiada nadawcy.", "Nie importuje", vbOKOnly, vbInformation
+		exit function			
+	end if
+
+end function
+
+
+'----------------------------------------------------------------------
+'ustawia ostatni błąd - dla MAPI
+'----------------------------------------------------------------------
+function mapi_error():mapi_error=false
+	if err.number>0 then
+		strError=err.description
+		mapi_error=true
+	end if
+end function
+
+'----------------------------------------------------------------------
+'wymiana danych miedzy kontorlkami a zmiennymu z informacjami
+'----------------------------------------------------------------------
+
+'jezeli wszystkie to nie pokazuj daty i czasu
+function HideShow()
+	select case page_.ctrl(50).value
+		case 1
+			page_.ctrl(ID_ROW_DATE).hide=true
+			page_.ctrl(ID_ROW_TIME).hide=true
+
+		case 2
+			page_.ctrl(ID_ROW_DATE).hide=false
+			page_.ctrl(ID_ROW_TIME).hide=false
+			page_.ctrl(ID_CTRL_DATE).disable=true
+			page_.ctrl(ID_CTRL_TIME).disable=true
+
+		case 3
+			page_.ctrl(ID_ROW_DATE).hide=false
+			page_.ctrl(ID_ROW_TIME).hide=false
+			page_.ctrl(ID_CTRL_DATE).disable=false
+			page_.ctrl(ID_CTRL_TIME).disable=false
+
+	end select
+
+end function
+
+'function c1001_ongetdata(byref oCtrl)
+	'if (bAllMessages) then
+'		oCtrl.value="1"
+'	else
+'		oCtrl.value="0"
+'	end if
+
+'	c1001_ongetdata=true
+'end function
+
+'function c1001_ondataentered(ctrl, value)
+'	if (value="1") then
+'		bAllMessages=true
+'	else
+'		bAllMessages=false
+'	end if
+'
+'	HideShow
+'	c1001_ondataentered = true
+'end function
+
+function c1002_ongetdata(byref oCtrl)
+	if (bIgnore) then
+		oCtrl.value="1"
+	else
+		oCtrl.value="0"
+	end if
+
+	c1002_ongetdata=true
+end function
+
+function c1002_ondataentered(ctrl, value)
+	if (value="1") then
+		bIgnore=true
+	else
+		bIgnore=false
+	end if
+
+	c1002_ondataentered = true
+end function
+
+function c1010_ongetdata(byref oCtrl)
+	if (bSaveAll) then
+		oCtrl.value="1"
+	else
+		oCtrl.value="0"
+	end if
+
+	c1010_ongetdata=true
+end function
+
+function c1010_ondataentered(ctrl, value)
+	if (value="1") then
+		bSaveAll=true
+	else
+		bSaveAll=false
+	end if
+
+	c1010_ondataentered = true
+end function
+
+
+function c1003_ongetdata(byref oCtrl)
+	oCtrl.value=dDataOd
+	c1003_ongetdata=true
+end function
+
+function c1003_ondataentered(ctrl, value)
+	dDataOd=CDate(value)
+	c1003_ondataentered = true
+end function
+
+function c1004_ongetdata(byref oCtrl): c1004_ongetdata=true
+	oCtrl.value=clng(nTime)
+end function
+
+function c1004_ondataentered(byref oCtrl, byval newValue): c1004_ondataentered=false
+	if isNumeric(newValue) then
+		
+		nTime=CLng(newValue)
+		c1004_ondataentered=true
+
+	else
+
+		if (Len(CStr(newValue))=0) then
+			nTime=CLng(0)
+			c1004_ondataentered=true
+		end if
+
+	end if 'isNumeric
+end function
+
+function c50_ongetdata(byref oCtrl)	
+	c50_ongetdata=true
+end function
+
+function c50_ondataentered(ctrl, value)
+	select case value
+		case 1
+			bAllMessages=true		
+		case 2
+			bAllMessages=false
+		case 3					
+			bAllMessages=false
+	end select
+	HideShow
+	c50_ondataentered = true
+end function
+
+
+function fopen()
+	if not HARUI(UAR_CMDID(CMDID_SEGREGOWANIE_POCZTY)) then
+		fopen=false
+		exit function
+	end if
+	
+	'parametry startowe dla formularza
+	bAllMessages=false
+	page_.ctrl(50).value = clng(2)
+	HideShow
+	dim strDateOd:strDateOd = getuserprofile(USERPROF_MAIL_LAST_UPDATE)
+	if strDateOd ="" then
+		dDataOd=doc_.afc.globals.nulldate()
+		nTime=clng(1200)
+	else
+		strDateOd = cdate(strDateOd)
+		dDataOd =DateValue(strDateOd)
+		
+		dim strHour:strHour = cstr(hour(strDateOd))
+		dim strMinute:strMinute = cstr(minute(strDateOd))
+		if len(strMinute)=1 then strMinute = strMinute+"0"
+		if len(strHour)=1 then strHour = "0" + strHour
+		nTime = strHour+strMinute
+		'nTime=trans_.afc.convert.time2long(Hour(strDateOd)+))
+	end if
+	bIgnore=false
+
+	page_.ctrl(ID_RUN_FROM_PROC).hide=true
+	page_.ctrl(ID_RUN_FROM_PAGE).hide=false
+
+end function
+
+function continue()
+	page_.result=CMD_CONTINUE
+	page_.goback
+end function
+
+]]>
+
+</script>
+</config>
+	<body>
+
+XFORMMWIZZARDBEGIN(PICTURE_WIZZARD_EMAIL_STEP1)
+			<tr>
+				<td>
+				<radio name='e50'>
+					<t>Wszystkie wiadomości</t>
+					<t>Nowe wiadomości</t>
+					<t>Od daty:</t>
+					<transfer mode='custom'/>
+				</radio>
+				</td>
+			</tr>
+
+			<tr name='e##ID_ROW_DATE'>
+				<td>
+					<t>Data od</t>
+				</td>
+				<td>
+					<date name='e##ID_CTRL_DATE' style='STYLE_CTRL'>
+						<transfer mode='custom'/>
+					</date>
+				</td>
+			</tr>
+
+			<tr name='e##ID_ROW_TIME'>
+				<td width='min'>
+					<t>Czas od</t>
+				</td>
+				<td>
+					<time name='e##ID_CTRL_TIME' size='5' style='STYLE_CTRL'>
+						<transfer mode='custom'/>
+					</time>
+				</td>
+			</tr>
+
+			<tr>
+				<td colspan='2'>
+					<checkbox name='c##ID_CTRL_IGNORE'><t>Ignorowanie wiadomości od nierozpoznanych adresatów</t>
+						<transfer mode='custom'/>
+					</checkbox>
+				</td>
+			</tr>
+			<tr>
+				<td colspan='2'>
+					<checkbox name='c##ID_CTRL_AUTOSAVE'><t>Automatycznie wczytuj wiadomości</t>
+						<transfer mode='custom'/>
+					</checkbox>
+				</td>
+			</tr>
+			</tbody>
+		</table>
+
+</td>
+</tr>
+</tbody>
+</table>
+
+<table>
+<tbody>
+	<tr style='STYLE_ROW_BTN'>
+	<td width='max'><t/></td>
+	<td><button style='STYLE_BUTTON' href='varFunction=continue' name="e##ID_RUN_FROM_PROC">Pobierz poczte</button></td>
+	<td><button style='STYLE_BUTTON' href='varFunction=continue_page' name="e##ID_RUN_FROM_PAGE">Pobierz poczte</button></td>
+	</tr>
+</tbody>
+</table>
+
+	</body>
+</page>

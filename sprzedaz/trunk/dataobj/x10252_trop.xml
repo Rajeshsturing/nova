@@ -1,0 +1,241 @@
+<?xml version="1.0" encoding="windows-1250" ?>
+<!--
+REV:KB:20080804
+
+#include "h1000.h" 
+#include "h1200.h" 
+#include "h1203.h" 
+#include "h1229.h"
+#include "h1231.h" 
+
+-->
+<class>
+	<identifier>TYPEID_N5TRANSAKCJA_OPERACJA</identifier>
+	<table>n5transakcja_operacja</table>
+  <humanname>Operacja na transakcji</humanname>
+  <idobj/>
+  <ref>
+    <name>trop_pTransakcja</name>
+    <humanname>Transakcja</humanname>
+    <typeid>TYPEID_N5TRANSAKCJA</typeid>
+  </ref>
+  <wildref>
+    <name>trop_wrefDokument</name>
+    <humanname>Dokument</humanname>
+    <typeid>TYPEID_N5SPRZEDAZ</typeid>
+    <typeid>TYPEID_N5ZAKUP</typeid>
+    <typeid>TYPEID_N5POZRATA</typeid>
+    <typeid>TYPEID_N5POZPLATNOSC</typeid>
+    <typeid>TYPEID_N5PLNALICZENIE</typeid>
+    <typeid>TYPEID_N5DEKRET</typeid>
+#ifdef ENABLE_DB11_F
+    <typeid>TYPEID_N5NOTAODS</typeid>
+#endif
+		<optional/>    
+  </wildref>
+  <embedded>
+    <name>trop_dDataOp</name>
+    <sqltype>SQLdate</sqltype>
+    <humanname>Data operacji</humanname>
+  </embedded>
+  <embedded>
+    <name>trop_curWn</name>
+    <sqltype>SQLcurrency</sqltype>
+    <humanname>Kwota Wn</humanname>
+  </embedded>
+  <embedded>
+    <name>trop_curMa</name>
+    <sqltype>SQLcurrency</sqltype>
+    <humanname>Kwota Ma</humanname>
+  </embedded>
+  <embedded>
+    <name>trop_curWnEwid</name>
+    <sqltype>SQLcurrency</sqltype>
+    <humanname>Kwota Wn (ewid)</humanname>
+  </embedded>
+  <embedded>
+    <name>trop_curMaEwid</name>
+    <sqltype>SQLcurrency</sqltype>
+    <humanname>Kwota Ma (ewid)</humanname>
+  </embedded>
+  <embedded>
+    <name>trop_curKursOp</name>
+    <sqltype>SQLqty</sqltype>
+    <humanname>Kurs operacji</humanname>
+  </embedded>
+  <embedded>
+    <name>trop_strOpis</name>
+    <sqltype>SQLvc64</sqltype>
+    <humanname>Opis operacji</humanname>
+  </embedded>
+  <ref>
+    <name>trop_pUzytRej</name>
+    <humanname>Użytkownik rejestrujący</humanname>
+    <typeid>TYPEID_N5UZYTKOWNIK</typeid>
+  </ref>
+  XDF_OSTMODYF(trop_)
+  
+#ifdef ENABLE_DB14
+  <embedded>
+    <name>trop_curWnVAT</name>
+    <sqltype>SQLcurrency</sqltype>
+    <humanname>Wn VAT</humanname>
+    <default>0.0</default>
+  </embedded>
+  <embedded>
+    <name>trop_curMaVAT</name>
+    <sqltype>SQLcurrency</sqltype>
+    <humanname>Ma VAT</humanname>
+    <default>0.0</default>
+  </embedded>
+#endif
+
+  <cursors>
+  DEFAULT_CURSOR(wg daty operacji,trop_dDataOp)
+</cursors>
+
+<script>
+  <![CDATA[
+  
+'GetCurrentUser
+#include "l50203.nxb"  
+
+'przelicz walute
+#include "50523"
+
+function n5transakcja_operacja_initnew()
+	set this_.trop_pUzytRej = GetCurrentUser()
+	set this_.trop_pUzytModyf = this_.trop_pUzytRej
+	this_.trop_curKursOp = ccur(1)
+  n5transakcja_operacja_initnew = true
+end function
+
+'sprawdza poprawność wprowadzonych danych
+function n5transakcja_operacja_check() : n5transakcja_operacja_check = false
+  if this_.trop_pTransakcja is nothing then
+    trans_.message 4090, 0, "Brak transakcji"
+    exit function
+  end if
+	n5transakcja_operacja_check = true
+end function
+
+'update kwot Wn, Ma dla danej transakcji
+function n5transakcja_operacja_update(byref pTransakcja,byval curWn,byval curMa,byval curWnEwid,byval curMaEwid, byval curWnVAT, byval curMaVAT)
+  n5transakcja_operacja_update = true
+  if trans_.var(GVAR_OPERATION_MODE) <> clng(OPERATION_MODE_UPGRADE) then 
+	  if not pTransakcja is nothing then
+#ifdef _IOW
+		dim bSaldoZero: bSaldoZero = (pTransakcja.curWn - pTransakcja.curMa = ccur(0) and pTransakcja.curWn > ccur(0))
+#endif     
+		  with pTransakcja
+         .curWn = .curWn + curWn
+         .curMa = .curMa + curMa
+         .curWnEwid = .curWnEwid + curWnEwid
+         .curMaEwid = .curMaEwid + curMaEwid
+#ifdef ENABLE_DB14
+      .trn_curWnVAT = .trn_curWnVAT + curWnVAT
+      .trn_curMaVAT = .trn_curMaVAT + curMaVAT
+#endif
+		  end with
+#ifdef _IOW
+        if bSaldoZero then
+            check_balance pTransakcja
+        end if
+#endif
+	  end if
+  end if  
+end function
+
+'------------------------------------------------------------------------------------
+'funkcja monitorująca podwojenie się kwoty na transakcji - do ewentualnego usunięcia!
+'------------------------------------------------------------------------------------
+sub check_balance(byref pTransakcja)
+  if pTransakcja.curWn = trans_.afc.convert.roundn(pTransakcja.curMa * 2,2) then
+    trans_.message 7000, 0, "Uwaga, nastąpiło podwojenie kwoty po stronie Wn dla transakcji o symbolu: " + pTransakcja.strSymTrans + ". Zweryfikuj poprawność bieżącego zapisu."
+  end if
+  if pTransakcja.curMa = trans_.afc.convert.roundn(pTransakcja.curWn * 2,2) then
+    trans_.message 7000, 0, "Uwaga, nastąpiło podwojenie kwoty po stronie Ma dla transakcji o symbolu: " + pTransakcja.strSymTrans + ". Zweryfikuj poprawność bieżącego zapisu."
+  end if  
+end sub
+
+function n5transakcja_operacja_befins()
+  'sprawdź poprawność danych
+  if not n5transakcja_operacja_check() then
+     n5transakcja_operacja_befins = false
+     exit function
+  end if
+  'dodaj kwoty z n5transakcja_operacja do n5transakcja
+  if trans_.var(GVAR_OPERATION_MODE) <> clng(OPERATION_MODE_UPGRADE) then
+#ifdef ENABLE_DB14
+  n5transakcja_operacja_befins = n5transakcja_operacja_update(this_.trop_pTransakcja,this_.trop_curWn,this_.trop_curMa,this_.trop_curWnEwid,this_.trop_curMaEwid, this_.trop_curWnVAT, this_.trop_curMaVAT)
+#else
+  n5transakcja_operacja_befins = n5transakcja_operacja_update(this_.trop_pTransakcja,this_.trop_curWn,this_.trop_curMa,this_.trop_curWnEwid,this_.trop_curMaEwid, 0.0, 0.0)
+#endif    
+
+#ifdef _IOW
+    if not n5transakcja_operacja_befins then
+      exit function
+    end if
+#endif    
+    this_.trop_pTransakcja.n5transakcja_auto_status
+  end if  
+	n5transakcja_operacja_befins = true
+end function
+
+function n5transakcja_operacja_befupd()
+  'sprawdź poprawność danych
+  if not n5transakcja_operacja_check() then
+     n5transakcja_operacja_befupd = false
+     exit function
+  end if
+  'zmiana z trop_pTransakcja <=> old_trop_pTransakcja
+#ifdef ENABLE_DB14
+  n5transakcja_operacja_befupd = n5transakcja_operacja_update(this_.old_trop_pTransakcja, -this_.old_trop_curWn, -this_.old_trop_curMa, -this_.old_trop_curWnEwid, -this_.old_trop_curMaEwid, - this_.old_trop_curWnVAT, - this_.old_trop_curMaVAT)
+#else
+  n5transakcja_operacja_befupd = n5transakcja_operacja_update(this_.old_trop_pTransakcja, -this_.old_trop_curWn, -this_.old_trop_curMa, -this_.old_trop_curWnEwid, -this_.old_trop_curMaEwid, 0.0, 0.0)
+#endif    
+  
+  'dodaj kwoty z n5transakcja_operacja do n5transakcja
+#ifdef ENABLE_DB14
+  n5transakcja_operacja_befupd = n5transakcja_operacja_update(this_.trop_pTransakcja, this_.trop_curWn, this_.trop_curMa, this_.trop_curWnEwid, this_.trop_curMaEwid, this_.trop_curWnVAT, this_.trop_curMaVAT)
+#else
+  n5transakcja_operacja_befupd = n5transakcja_operacja_update(this_.trop_pTransakcja, this_.trop_curWn, this_.trop_curMa, this_.trop_curWnEwid, this_.trop_curMaEwid, 0.0, 0.0)
+#endif    
+
+#ifdef _IOW
+  if not n5transakcja_operacja_befupd then
+    exit function
+  end if
+#endif
+
+  this_.trop_pTransakcja.n5transakcja_auto_status
+  n5transakcja_operacja_befupd = true
+end function
+
+function n5transakcja_operacja_befdel()
+#ifdef ENABLE_DB14
+  n5transakcja_operacja_update this_.trop_pTransakcja, -this_.trop_curWn, -this_.trop_curMa, -this_.trop_curWnEwid, -this_.trop_curMaEwid, - this_.trop_curWnVAT, - this_.trop_curMaVAT
+#else
+  n5transakcja_operacja_update this_.trop_pTransakcja, -this_.trop_curWn, -this_.trop_curMa, -this_.trop_curWnEwid, -this_.trop_curMaEwid, 0.0, 0.0
+#endif    
+
+  n5transakcja_operacja_befdel = true
+end function
+
+function n5transakcja_operacja_trop_curWn_change(oldval): n5transakcja_operacja_trop_curWn_change = true
+	this_.trop_curWnEwid = this_.trop_curWnEwid + przelicz_walute(this_.trop_curWn - oldval, this_.trop_curKursOp)	
+end function
+
+function n5transakcja_operacja_trop_curMa_change(oldval): n5transakcja_operacja_trop_curMa_change = true
+	this_.trop_curMaEwid = this_.trop_curMaEwid + przelicz_walute(this_.trop_curMa - oldval, this_.trop_curKursOp)
+end function
+
+function n5transakcja_operacja_trop_curKursOp_change(oldval): n5transakcja_operacja_trop_curKursOp_change = true
+	this_.trop_curWnEwid = przelicz_walute(this_.trop_curWn, this_.trop_curKursOp)	
+	this_.trop_curMaEwid = przelicz_walute(this_.trop_curMa, this_.trop_curKursOp)
+end function
+
+]]>
+  </script>  
+
+</class>
