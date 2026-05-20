@@ -49,15 +49,11 @@ RUN msbuild C:\src\navo.cocoon\navo.cocoon.webhost\navo.cocoon.webhost.csproj `
     /p:OutputPath=C:\publish\ `
     /p:OutDir=C:\publish\
 
-FROM mcr.microsoft.com/dotnet/framework/runtime:4.8-windowsservercore-ltsc2022
+FROM mcr.microsoft.com/dotnet/framework/sdk:4.8-windowsservercore-ltsc2022
 
 SHELL ["powershell", "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command"]
 
 WORKDIR C:\app
-
-RUN Invoke-WebRequest -UseBasicParsing https://aka.ms/vs/17/release/vc_redist.x86.exe -OutFile C:\vc_redist.x86.exe ; `
-    Start-Process C:\vc_redist.x86.exe -ArgumentList '/install','/quiet','/norestart' -Wait ; `
-    Remove-Item C:\vc_redist.x86.exe -Force
 
 COPY global_output C:\navo_eb\global_output
 COPY sprzedaz C:\navo_eb\sprzedaz
