@@ -4,6 +4,7 @@ $runtimeRoot = "C:\navo_eb\global_output"
 $appRoot = "C:\navo_eb\sprzedaz\trunk"
 $fileCacheRoot = "C:\Program Files (x86)\NAVO Enterprise\FileCache\"
 $regAsm = "$env:windir\Microsoft.NET\Framework\v4.0.30319\RegAsm.exe"
+$regSvr32 = "$env:windir\SysWOW64\regsvr32.exe"
 
 if (!(Test-Path $runtimeRoot)) {
     throw "Missing runtime root: $runtimeRoot"
@@ -49,7 +50,7 @@ function Invoke-LoggedCommand {
 
 function Register-NativeCom {
     param([Parameter(Mandatory=$true)][string]$FileName)
-    Invoke-LoggedCommand -FilePath "regsvr32.exe" -Arguments @("/s", (Join-Path $runtimeRoot $FileName))
+    Invoke-LoggedCommand -FilePath $regSvr32 -Arguments @("/s", (Join-Path $runtimeRoot $FileName))
 }
 
 function Register-DotNetCom {

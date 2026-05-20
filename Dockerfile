@@ -55,6 +55,10 @@ SHELL ["powershell", "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Co
 
 WORKDIR C:\app
 
+RUN Invoke-WebRequest -UseBasicParsing https://aka.ms/vs/17/release/vc_redist.x86.exe -OutFile C:\vc_redist.x86.exe ; `
+    Start-Process C:\vc_redist.x86.exe -ArgumentList '/install','/quiet','/norestart' -Wait ; `
+    Remove-Item C:\vc_redist.x86.exe -Force
+
 COPY global_output C:\navo_eb\global_output
 COPY sprzedaz C:\navo_eb\sprzedaz
 COPY docker/eb-runtime/ C:\eb-runtime\
