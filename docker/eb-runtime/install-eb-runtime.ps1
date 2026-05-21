@@ -39,7 +39,7 @@ New-Item -Force -Path "HKLM:\SOFTWARE\WOW6432Node\NAVO\NAVO2002\Setup" | Out-Nul
 New-Item -Force -Path "HKLM:\SOFTWARE\WOW6432Node\NAVO\NAVO2002\Support" | Out-Null
 
 Set-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\NAVO\NAVO2002\Applications\EuroBusiness 5.0" -Name "Version" -Value "1"
-Set-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\NAVO\NAVO2002\Applications\EuroBusiness 5.0" -Name "DefaultDB" -Value "kt"
+Set-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\NAVO\NAVO2002\Applications\EuroBusiness 5.0" -Name "DefaultDB" -Value "navo2002"
 Set-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\NAVO\NAVO2002\Applications\EuroBusiness 5.0" -Name "ClientVersion" -Value "14"
 Set-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\NAVO\NAVO2002\Applications\EuroBusiness 5.0" -Name "Root" -Value $appRoot
 Set-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\NAVO\NAVO2002\Applications\EuroBusiness 5.0" -Name "Root_1" -Value $appRoot
