@@ -1,20 +1,35 @@
 $ErrorActionPreference = "Stop"
 
-$runtimeRoot = "C:\navo_eb\global_output"
-$appRoot = "C:\navo_eb\sprzedaz\trunk"
+$runtimeSourceRoot = "C:\navo_eb\global_output"
+$appSourceRoot = "C:\navo_eb\sprzedaz\trunk"
+$runtimeRoot = "C:\navo_eb\System"
+$appRoot = "C:\navo_eb\Applications\EuroBusiness 5.0"
+$extrasRoot = Join-Path $appRoot "Extras"
 $fileCacheRoot = "C:\navo_eb\FileCache\"
 $regAsm = "$env:windir\Microsoft.NET\Framework\v4.0.30319\RegAsm.exe"
 $regSvr32 = "$env:windir\SysWOW64\regsvr32.exe"
 
-if (!(Test-Path $runtimeRoot)) {
-    throw "Missing runtime root: $runtimeRoot"
+if (!(Test-Path $runtimeSourceRoot)) {
+    throw "Missing runtime source root: $runtimeSourceRoot"
 }
 
-if (!(Test-Path $appRoot)) {
-    throw "Missing EuroBusiness application root: $appRoot"
+if (!(Test-Path $appSourceRoot)) {
+    throw "Missing EuroBusiness application source root: $appSourceRoot"
 }
 
+Write-Host "Preparing NAVO installed folder layout..."
+New-Item -ItemType Directory -Force -Path $runtimeRoot | Out-Null
+New-Item -ItemType Directory -Force -Path $appRoot | Out-Null
+New-Item -ItemType Directory -Force -Path $extrasRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $fileCacheRoot | Out-Null
+
+Copy-Item -Path (Join-Path $runtimeSourceRoot "*") -Destination $runtimeRoot -Recurse -Force
+Copy-Item -Path (Join-Path $appSourceRoot "*") -Destination $appRoot -Recurse -Force
+
+$splashSource = Join-Path $runtimeRoot "splash.jpg"
+if (Test-Path $splashSource) {
+    Copy-Item -Path $splashSource -Destination (Join-Path $extrasRoot "splash.jpg") -Force
+}
 
 Write-Host "Writing NAVO registry settings..."
 New-Item -Force -Path "HKLM:\SOFTWARE\WOW6432Node\NAVO\NAVO2002\Applications\EuroBusiness 5.0" | Out-Null
@@ -27,6 +42,7 @@ Set-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\NAVO\NAVO2002\Applications\Eu
 Set-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\NAVO\NAVO2002\Applications\EuroBusiness 5.0" -Name "DefaultDB" -Value "kt"
 Set-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\NAVO\NAVO2002\Applications\EuroBusiness 5.0" -Name "ClientVersion" -Value "14"
 Set-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\NAVO\NAVO2002\Applications\EuroBusiness 5.0" -Name "Root" -Value $appRoot
+Set-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\NAVO\NAVO2002\Applications\EuroBusiness 5.0" -Name "Root_1" -Value $appRoot
 Set-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\NAVO\NAVO2002\FileCache" -Name "Root" -Value $fileCacheRoot
 Set-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\NAVO\NAVO2002\Setup" -Name "InstallationRoot" -Value "C:\navo_eb\"
 Set-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\NAVO\NAVO2002\Setup" -Name "MainUID" -Value "{7FD634C6-C735-42D6-B46D-A8960DB08127}"
