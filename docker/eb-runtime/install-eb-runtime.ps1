@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $runtimeRoot = "C:\navo_eb\global_output"
 $appRoot = "C:\navo_eb\sprzedaz\trunk"
-$fileCacheRoot = "C:\Program Files (x86)\NAVO Enterprise\FileCache\"
+$fileCacheRoot = "C:\navo_eb\FileCache\"
 $regAsm = "$env:windir\Microsoft.NET\Framework\v4.0.30319\RegAsm.exe"
 $regSvr32 = "$env:windir\SysWOW64\regsvr32.exe"
 
