@@ -56,6 +56,8 @@ SHELL ["powershell", "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Co
 WORKDIR C:\app
 
 COPY global_output C:\navo_eb\global_output
+COPY _tools C:\navo_eb\_tools
+COPY navo2008_engine C:\navo_eb\navo2008_engine
 COPY sprzedaz C:\navo_eb\sprzedaz
 COPY docker/eb-runtime/ C:\eb-runtime\
 RUN C:\eb-runtime\install-eb-runtime.ps1
