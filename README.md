@@ -24,10 +24,15 @@ Expected health response:
 
 - `navo.cocoon/` - WebHost and Web API source.
 - `global_output/` - NAVO/EuroBusiness runtime DLL/EXE/OCX files used for build and COM registration.
+- `navo2008/` - NAVO native engine source; the Docker build uses this to rebuild patched native DLLs.
 - `navo2008_engine/` - vendor-provided Debug/Release native engine output, including desktop launcher and registration scripts.
 - `sprzedaz/trunk/` - EuroBusiness application XML/forms/scripts referenced by NAVO registry settings.
 - `_tools/` - vendor-provided setup tools, registry template, DB creation script, and sample database backup.
 - `docker/eb-runtime/` - container install and COM registration scripts.
+
+The first Docker build may take longer because it installs Visual Studio C++
+Build Tools when `cl.exe` is missing, then rebuilds the patched NAVO native
+DLLs before runtime registration.
 
 ## Demo Database
 

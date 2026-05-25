@@ -11,6 +11,14 @@ WORKDIR C:\src
 
 COPY navo.cocoon C:\src\navo.cocoon
 COPY global_output C:\src\global_output
+COPY navo2008_engine C:\src\navo2008_engine
+COPY docker/native-build/ C:\native-build\
+
+RUN C:\native-build\install-vctools.ps1
+
+COPY navo2008 C:\src\navo2008
+
+RUN C:\native-build\build-navo2008.ps1
 
 RUN msbuild C:\src\navo.cocoon\navo.cocoon.webapi\navo.cocoon.webapi.csproj `
     /t:Restore `
@@ -55,9 +63,10 @@ SHELL ["powershell", "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Co
 
 WORKDIR C:\app
 
-COPY global_output C:\navo_eb\global_output
+COPY --from=build C:\src\global_output C:\navo_eb\global_output
 COPY _tools C:\navo_eb\_tools
-COPY navo2008_engine C:\navo_eb\navo2008_engine
+COPY --from=build C:\src\navo2008_engine C:\navo_eb\navo2008_engine
+COPY --from=build C:\src\navo2008 C:\navo_eb\navo2008
 COPY sprzedaz C:\navo_eb\sprzedaz
 COPY docker/eb-runtime/ C:\eb-runtime\
 RUN C:\eb-runtime\install-eb-runtime.ps1
