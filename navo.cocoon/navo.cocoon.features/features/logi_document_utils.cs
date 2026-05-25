@@ -1015,27 +1015,32 @@ namespace navo.cocoon.features
             {
                 foreach (ne_pozzamowienie oOrderLine in oOrder.listPozycje.items)
                 {
+                    ne_produkt oProduct = _safe_ref(() => oOrderLine.pProdukt);
+                    ne_produkt_opakowanie oPackage = _safe_ref(() => oOrderLine.pOpak);
+                    ne_produkt_opakowanie oSubstitutePackage = _safe_ref(() => oPackage?.pZamiennik);
+                    ne_produkt oSubstituteProduct = _safe_ref(() => oSubstitutePackage?.parent);
+
                     oDocument.editable_lines.Add(
                         new logi_document_line
                         {
-                            ID = oOrderLine.IdObj.ToString(),
-                            product_id = oOrderLine.pProdukt.IdObj.ToString(),
-                            product_code = oOrderLine.pProdukt.strIndeks,
+                            ID = _safe_string(() => oOrderLine.IdObj.ToString()),
+                            product_id = _safe_string(() => oProduct?.IdObj.ToString()),
+                            product_code = _safe_string(() => oProduct?.strIndeks),
 
-                            product_manufacturer_code = oAccess.login_result.show_prod_manufacturer_code ? oOrderLine.pProdukt.strCecha1 : "",
-                            product_oem_code = oAccess.login_result.show_prod_oem_code ? oOrderLine.pProdukt.strCecha3 : "",
+                            product_manufacturer_code = oAccess.login_result.show_prod_manufacturer_code ? _safe_string(() => oProduct?.strCecha1) : "",
+                            product_oem_code = oAccess.login_result.show_prod_oem_code ? _safe_string(() => oProduct?.strCecha3) : "",
 
-                            product_name = oOrderLine.pProdukt.strNazwa,
-                            product_int_name = oOrderLine.pProdukt.strNazwaMiedzynarodowa,
-                            product_substitute = oOrderLine.pOpak.pZamiennik?.parent.strIndeks,
-                            quantity = oOrderLine.curIloscOpak,
-                            base_unit_price_netto_doc_curr = oOrderLine.curCenaBazowaNettoWal,
-                            discount = oOrderLine.curRabat,
-                            final_unit_price_netto_doc_curr = oOrderLine.curCenaNettoWal,
-                            netto_value_doc_curr = oOrderLine.curWartWal,
-                            product_unit_weight = oOrderLine.pOpak.curWagaNetto,
-                            tax_code = ne_produkt.vatcode_2_name(oOrderLine.pProdukt.eVAT),
-                            tax_rate = ne_produkt.vatcode_2_rate(oOrderLine.pProdukt.eVAT)
+                            product_name = _safe_string(() => oProduct?.strNazwa),
+                            product_int_name = _safe_string(() => oProduct?.strNazwaMiedzynarodowa),
+                            product_substitute = _safe_string(() => oSubstituteProduct?.strIndeks),
+                            quantity = _safe_decimal(() => oOrderLine.curIloscOpak),
+                            base_unit_price_netto_doc_curr = _safe_decimal(() => oOrderLine.curCenaBazowaNettoWal),
+                            discount = _safe_decimal(() => oOrderLine.curRabat),
+                            final_unit_price_netto_doc_curr = _safe_decimal(() => oOrderLine.curCenaNettoWal),
+                            netto_value_doc_curr = _safe_decimal(() => oOrderLine.curWartWal),
+                            product_unit_weight = _safe_decimal(() => oPackage?.curWagaNetto ?? 0.0m),
+                            tax_code = _safe_string(() => oProduct == null ? "" : ne_produkt.vatcode_2_name(oProduct.eVAT)),
+                            tax_rate = _safe_decimal(() => oProduct == null ? 0.0m : ne_produkt.vatcode_2_rate(oProduct.eVAT))
                         });
                 }
 
@@ -1075,32 +1080,74 @@ namespace navo.cocoon.features
 
                 foreach (ne_pozsprzedaz oInvoiceLine in oInvoice.listPozycje.items)
                 {
+                    ne_produkt oProduct = _safe_ref(() => oInvoiceLine.pProdukt);
+                    ne_produkt_opakowanie oPackage = _safe_ref(() => oInvoiceLine.pOpak);
+                    ne_produkt_opakowanie oSubstitutePackage = _safe_ref(() => oPackage?.pZamiennik);
+                    ne_produkt oSubstituteProduct = _safe_ref(() => oSubstitutePackage?.parent);
+
                     oDocument.editable_lines.Add(new logi_document_line
                     {
-                        ID = oInvoiceLine.IdObj.ToString(),
-                        product_id = oInvoiceLine.pProdukt.IdObj.ToString(),
-                        product_code = oInvoiceLine.pProdukt.strIndeks,
-                        product_manufacturer_code = oAccess.login_result.show_prod_manufacturer_code ? oInvoiceLine.pProdukt.strCecha1 : "",
-                        product_oem_code = oAccess.login_result.show_prod_oem_code ? oInvoiceLine.pProdukt.strCecha3 : "",
+                        ID = _safe_string(() => oInvoiceLine.IdObj.ToString()),
+                        product_id = _safe_string(() => oProduct?.IdObj.ToString()),
+                        product_code = _safe_string(() => oProduct?.strIndeks),
+                        product_manufacturer_code = oAccess.login_result.show_prod_manufacturer_code ? _safe_string(() => oProduct?.strCecha1) : "",
+                        product_oem_code = oAccess.login_result.show_prod_oem_code ? _safe_string(() => oProduct?.strCecha3) : "",
 
-                        product_name = oInvoiceLine.pProdukt.strNazwa,
-                        product_int_name = oInvoiceLine.pProdukt.strNazwaMiedzynarodowa,
-                        product_substitute = oInvoiceLine.pOpak.pZamiennik?.parent.strIndeks,
+                        product_name = _safe_string(() => oProduct?.strNazwa),
+                        product_int_name = _safe_string(() => oProduct?.strNazwaMiedzynarodowa),
+                        product_substitute = _safe_string(() => oSubstituteProduct?.strIndeks),
 
-                        quantity = oInvoiceLine.curIloscOpak,
-                        base_unit_price_netto_doc_curr = oInvoiceLine.curCenaBazowaNettoWal,
-                        discount = oInvoiceLine.curRabat,
-                        final_unit_price_netto_doc_curr = oInvoiceLine.curCenaNettoWal,
-                        netto_value_doc_curr = oInvoiceLine.curWartWal,
-                        product_unit_weight = oInvoiceLine.pOpak.curWagaNetto,
-                        tax_code = ne_produkt.vatcode_2_name(oInvoiceLine.pProdukt.eVAT),
-                        tax_rate = ne_produkt.vatcode_2_rate(oInvoiceLine.pProdukt.eVAT)
+                        quantity = _safe_decimal(() => oInvoiceLine.curIloscOpak),
+                        base_unit_price_netto_doc_curr = _safe_decimal(() => oInvoiceLine.curCenaBazowaNettoWal),
+                        discount = _safe_decimal(() => oInvoiceLine.curRabat),
+                        final_unit_price_netto_doc_curr = _safe_decimal(() => oInvoiceLine.curCenaNettoWal),
+                        netto_value_doc_curr = _safe_decimal(() => oInvoiceLine.curWartWal),
+                        product_unit_weight = _safe_decimal(() => oPackage?.curWagaNetto ?? 0.0m),
+                        tax_code = _safe_string(() => oProduct == null ? "" : ne_produkt.vatcode_2_name(oProduct.eVAT)),
+                        tax_rate = _safe_decimal(() => oProduct == null ? 0.0m : ne_produkt.vatcode_2_rate(oProduct.eVAT))
                     });
                 }
             }
 
             return oDocument;
         }
+
+        private static T _safe_ref<T>(Func<T> fpValue) where T : class
+        {
+            try
+            {
+                return fpValue();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static string _safe_string(Func<string> fpValue)
+        {
+            try
+            {
+                return fpValue() ?? "";
+            }
+            catch
+            {
+                return "";
+            }
+        }
+
+        private static decimal _safe_decimal(Func<decimal> fpValue)
+        {
+            try
+            {
+                return fpValue();
+            }
+            catch
+            {
+                return 0.0m;
+            }
+        }
+
         public static customer read_customer(this ne_trans oTransaction, int IdObj)
         {
             ne_klient oKlient = ne_klient.getobj(oTransaction, IdObj);

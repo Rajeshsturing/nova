@@ -47,7 +47,7 @@ Set-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\NAVO\NAVO2002\FileCache" -Nam
 Set-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\NAVO\NAVO2002\Setup" -Name "InstallationRoot" -Value "C:\navo_eb\"
 Set-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\NAVO\NAVO2002\Setup" -Name "MainUID" -Value "{7FD634C6-C735-42D6-B46D-A8960DB08127}"
 Set-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\NAVO\NAVO2002\Support" -Name "AllowScriptDebugger" -Value "188cb150-82a4-4498-87d0-ebd8d9a00fb8"
-Set-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\NAVO\NAVO2002\Support" -Name "DisableFastModDate" -Value "Y"
+Remove-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\NAVO\NAVO2002\Support" -Name "DisableFastModDate" -ErrorAction SilentlyContinue
 
 Set-Location $runtimeRoot
 
@@ -121,6 +121,29 @@ Write-Host "Registering NAVO .NET COM components..."
 Write-Host "Registering NAVO local servers..."
 Invoke-LoggedCommand -FilePath (Join-Path $runtimeRoot "navo2012.server.exe") -Arguments @("/regserver")
 Invoke-LoggedCommand -FilePath (Join-Path $runtimeRoot "navo2012.cache.exe") -Arguments @("/regserver", "/root", $fileCacheRoot)
+
+Write-Host "Creating EuroBusiness application database..."
+$appDbInitScript = Join-Path $env:TEMP "init-eb-appdb.ps1"
+Set-Content -Path $appDbInitScript -Encoding Default -Value @"
+`$ErrorActionPreference = "Stop"
+`$appdb = New-Object -ComObject "navoappdb.appdbmanager"
+`$createResult = `$appdb.create("EuroBusiness 5.0", "$appRoot", 1)
+Write-Host "AppDB create result: `$createResult"
+`$initResult = `$appdb.init("EuroBusiness 5.0")
+Write-Host "AppDB init result: `$initResult"
+`$appdb.compiledataobj()
+Write-Host "AppDB data objects compiled."
+"@
+Invoke-LoggedCommand -FilePath "$env:windir\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -Arguments @(
+    "-NoLogo",
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    $appDbInitScript
+)
+Remove-Item -Path $appDbInitScript -Force -ErrorAction SilentlyContinue
+Remove-Item -Path (Join-Path $fileCacheRoot "*") -Recurse -Force -ErrorAction SilentlyContinue
 
 Write-Host "Verifying navo2002.client COM registration..."
 [void][type]::GetTypeFromProgID("navo2002.client", $true)
