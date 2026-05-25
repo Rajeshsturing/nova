@@ -10,10 +10,7 @@ set REGASM=%windir%\Microsoft.NET\Framework\v4.0.30319\RegAsm.exe
 echo === .NET RegAsm (first batch) ===
 "%REGASM%" /codebase navo.cocoon.data.dll
 "%REGASM%" /codebase navo.cocoon.features.dll
-"%REGASM%" /codebase nxm.easy.dll
 "%REGASM%" /codebase nxm.ebext.features.dll
-"%REGASM%" /codebase nxm.biz.store.dll
-"%REGASM%" /codebase navo.cocoon.store.dll
 
 echo === regsvr32 (native COM, first batch) ===
 regsvr32 -s navoafc.dll

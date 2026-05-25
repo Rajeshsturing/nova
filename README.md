@@ -29,6 +29,24 @@ Expected health response:
 - `_tools/` - vendor-provided setup tools, registry template, DB creation script, and sample database backup.
 - `docker/eb-runtime/` - container install and COM registration scripts.
 
+## Demo Database
+
+The vendor-provided seeded demo backup is `_tools/navo2002_turing_2026_06_25.sqlbak`.
+Use this backup for business/API testing instead of the older empty backup.
+
+Demo login:
+
+```text
+Administrator / 12TR34
+```
+
+The vendor confirmed the previously referenced `nxm.easy.dll`, `nxm.biz.store.dll`,
+and `navo.cocoon.store.dll` are obsolete/dead projects for the current branch. The
+cleaned `_tools/register_new.bat` no longer registers them.
+
+The vendor's 2026-05-25 notes and loaded assembly list are included in `_tools/`.
+Sample business printouts are included in `_tools/printouts-2026-05-25/`.
+
 ## Useful Endpoints
 
 - `GET /api/v4/health/ws`
