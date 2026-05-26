@@ -93,6 +93,7 @@ New-Item -ItemType Directory -Force -Path $engineReleaseRoot | Out-Null
 "CL: $cl" | Add-Content -Path $buildLog -Encoding ASCII
 
 $projects = @(
+    "navopx2008\navopx2008.vcxproj",
     "navoscript2008\navoscript2008.vcxproj",
     "navoprsr2008\navoprsr2008.vcxproj",
     "navoui2008\navoui2008.vcxproj",
@@ -104,6 +105,8 @@ foreach ($project in $projects) {
 }
 
 $rebuiltFiles = @(
+    "navo2012.proxy.dll",
+    "navo2012.proxy.lib",
     "navo2012.scripting.dll",
     "navo2012.scripting.lib",
     "navo2012.ui.parser.dll",
