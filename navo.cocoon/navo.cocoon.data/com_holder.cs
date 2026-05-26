@@ -5,6 +5,7 @@
 //--------------------------------------------------------------------------
 
 using System;
+using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
 
@@ -23,7 +24,18 @@ namespace navo.cocoon.data.utils
         /// returns plain type</summary>
         public TType invoke_method_plain<TType>(String strMethodName, params object[] oParams)
         {
-            return (TType)m_oCOMObject.GetType().InvokeMember(strMethodName, BindingFlags.InvokeMethod, null, m_oCOMObject, oParams);
+            Trace("invoke_method_plain begin method=" + strMethodName + " argc=" + (oParams == null ? 0 : oParams.Length));
+            try
+            {
+                object oResult = m_oCOMObject.GetType().InvokeMember(strMethodName, BindingFlags.InvokeMethod, null, m_oCOMObject, oParams);
+                Trace("invoke_method_plain ok method=" + strMethodName + " result_type=" + (oResult == null ? "null" : oResult.GetType().FullName) + " result=" + Convert.ToString(oResult));
+                return (TType)oResult;
+            }
+            catch (Exception ex)
+            {
+                Trace("invoke_method_plain exception method=" + strMethodName + " " + ex);
+                throw;
+            }
         }
 
         /// <summary>
@@ -76,5 +88,21 @@ namespace navo.cocoon.data.utils
         /// <summary>COM Object </summary>
         private object m_oCOMObject;
         #endregion
+
+        private static void Trace(string message)
+        {
+            try
+            {
+                string path = Environment.GetEnvironmentVariable("NAVO_COCOON_DIAG_LOG");
+                if (string.IsNullOrWhiteSpace(path))
+                {
+                    path = @"C:\app\cocoon-diagnostics.log";
+                }
+                File.AppendAllText(path, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " [com_holder] " + message + Environment.NewLine);
+            }
+            catch
+            {
+            }
+        }
     }
 }
