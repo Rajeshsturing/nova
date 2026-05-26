@@ -34,7 +34,9 @@ The first Docker build may take longer because it installs Visual Studio C++
 Build Tools when `cl.exe` is missing, then rebuilds the patched NAVO native
 DLLs before runtime registration. On small Windows container disks, create a
 pre-seeded builder image with VC++ tools installed and build with
-`NAVO_BUILD_IMAGE=navo-cocoon:buildtools-windows`.
+`NAVO_BUILD_IMAGE=navo-cocoon:buildtools-windows`. If patched native DLLs were
+built out-of-band and copied into `global_output/`, build with
+`NAVO_SKIP_NATIVE_BUILD=1`.
 
 ## Demo Database
 

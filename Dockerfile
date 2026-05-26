@@ -8,6 +8,9 @@ FROM ${NAVO_BUILD_IMAGE} AS build
 
 SHELL ["powershell", "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command"]
 
+ARG NAVO_SKIP_NATIVE_BUILD=0
+ENV NAVO_SKIP_NATIVE_BUILD=${NAVO_SKIP_NATIVE_BUILD}
+
 WORKDIR C:\src
 
 COPY navo.cocoon C:\src\navo.cocoon
@@ -15,11 +18,19 @@ COPY global_output C:\src\global_output
 COPY navo2008_engine C:\src\navo2008_engine
 COPY docker/native-build/ C:\native-build\
 
-RUN C:\native-build\install-vctools.ps1
+RUN if ($env:NAVO_SKIP_NATIVE_BUILD -eq '1') { `
+        Write-Host 'Skipping VC++ toolchain install because NAVO_SKIP_NATIVE_BUILD=1' `
+    } else { `
+        C:\native-build\install-vctools.ps1 `
+    }
 
 COPY navo2008 C:\src\navo2008
 
-RUN C:\native-build\build-navo2008.ps1
+RUN if ($env:NAVO_SKIP_NATIVE_BUILD -eq '1') { `
+        Write-Host 'Skipping NAVO native rebuild because NAVO_SKIP_NATIVE_BUILD=1' `
+    } else { `
+        C:\native-build\build-navo2008.ps1 `
+    }
 
 RUN msbuild C:\src\navo.cocoon\navo.cocoon.webapi\navo.cocoon.webapi.csproj `
     /t:Restore `
