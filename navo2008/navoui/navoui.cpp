@@ -21,7 +21,7 @@ static char THIS_FILE[] = __FILE__;
 		#ifdef _DEBUG
 			#pragma comment(lib, "..\\..\\..\\navo2008_engine\\Debug\\navo2012.ui.parser.lib")
 		#else
-			#pragma comment(lib, "..\\..\\..\\navo2008_engine\\Debug\\navo2012.ui.parser.lib")
+			#pragma comment(lib, "..\\..\\..\\navo2008_engine\\Release\\navo2012.ui.parser.lib")
 		#endif
 		#else
 		#ifdef _DEBUG
