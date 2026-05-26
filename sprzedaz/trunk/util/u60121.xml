@@ -51,31 +51,42 @@ nLicenceID = CLng(0)
 ' inicjowanie, ktore zawsze musi byc wolane
 '----------------------------------------------------------------------
 function system_init_always() : system_init_always = false
+	cocoon_remote_diag "system_init_always begin"
 	if not check_platform() then
+		cocoon_remote_diag "system_init_always check_platform false"
 		exit function
 	end if
+	cocoon_remote_diag "system_init_always check_platform ok"
 
 	nx_.apprep.attach_definition_manager doc_.stdobjdef
+	cocoon_remote_diag "system_init_always attach_definition_manager ok"
 	dim pM60170 : set pM60170 = doc_.getmodule(60170)
+	cocoon_remote_diag "system_init_always getmodule 60170 ok"
 
 	dim iter
 	for iter = 95500 to 95505
 		nx_.apprep.load pM60170.preprocess_repository(doc_.getappfile(iter))
+		cocoon_remote_diag "system_init_always apprep loaded " + CStr(iter)
 	next
 	nx_.apprep.load pM60170.preprocess_repository(doc_.getappfile(95599))
+	cocoon_remote_diag "system_init_always apprep loaded 95599"
+	cocoon_remote_diag "system_init_always eb5util begin version=" + CStr(trans_.var( GVAR_NAVO2001VERSION ))
+
 
   if (trans_.var( GVAR_NAVO2001VERSION ) < "16.10.24") then
 	  set nx_.slot0 = doc_.system.activex("eb5util.eb5utilhub")
   else
 	  set nx_.slot0 = nx_.create_net_object("navo2012.net.eb5util.dll", "eb5util.eb5utilhub, navo2012.net.eb5util")
 	end if
-  
+	cocoon_remote_diag "system_init_always eb5util ok"
+
 	'only required before ENGINE2008
 	if False then
 		set nx_.slot1 = doc_.system.activex("eb5hand.eb5handhub")
 		set nx_.slot2 = doc_.system.activex("eb5fk.eb5fkhub")
 	end if
 
+	cocoon_remote_diag "system_init_always success"
 	system_init_always = true
 end function
 '----------------------------------------------------------------------
@@ -455,39 +466,123 @@ function system_init_first_time() : system_init_first_time = false
 	system_init_first_time = true
 end function
 
+
+sub cocoon_remote_diag(byval strMessage)
+  on error resume next
+  dim oFSO : set oFSO = CreateObject("Scripting.FileSystemObject")
+  dim oFile : set oFile = oFSO.OpenTextFile("C:\app\navo-native-diagnostics.log", 8, true)
+  oFile.WriteLine CStr(Now()) + " [u60121] " + strMessage
+  oFile.Close
+end sub
+
+function cocoon_remote_err_text()
+  cocoon_remote_err_text = "err=" + CStr(Err.Number) + " desc=" + Err.Description
+end function
+
 '----------------------------------------------------------------------
 'remote system init
 'optimistic approach - everything is properly setup
 '----------------------------------------------------------------------
 function remote_system_init(byval strUser,byval strPassword)
 	remote_system_init = false
-	
-	if not system_init_always() then
+	on error resume next
+
+	cocoon_remote_diag "remote_system_init begin user=" + strUser
+	Err.Clear
+
+	dim bAlways : bAlways = system_init_always()
+	if Err.Number <> 0 then
+		cocoon_remote_diag "remote_system_init system_init_always exception " + cocoon_remote_err_text()
+		Err.Clear
+		exit function
+	end if
+	cocoon_remote_diag "remote_system_init system_init_always result=" + CStr(bAlways)
+	if not bAlways then
 		exit function
 	end if
 
 	trans_.var(GVAR_USER)=CLng(0)
-	'normal operation mode
-	trans_.var(GVAR_OPERATION_MODE) = clng(OPERATION_MODE_NORMAL)
-	LicInit
+	if Err.Number <> 0 then
+		cocoon_remote_diag "remote_system_init set GVAR_USER zero exception " + cocoon_remote_err_text()
+		Err.Clear
+		exit function
+	end if
+	cocoon_remote_diag "remote_system_init GVAR_USER zero ok"
 
-	'logowanie
+	trans_.var(GVAR_OPERATION_MODE) = clng(OPERATION_MODE_NORMAL)
+	if Err.Number <> 0 then
+		cocoon_remote_diag "remote_system_init set operation mode exception " + cocoon_remote_err_text()
+		Err.Clear
+		exit function
+	end if
+	cocoon_remote_diag "remote_system_init operation mode ok"
+
+	LicInit
+	if Err.Number <> 0 then
+		cocoon_remote_diag "remote_system_init LicInit exception " + cocoon_remote_err_text()
+		Err.Clear
+		exit function
+	end if
+	cocoon_remote_diag "remote_system_init LicInit ok"
+
 	dim strErrorMsg
-	dim idUser : idUser = doc_.getmodule(60106).try_logon_user(strUser,strPassword,strErrorMsg)
+	dim pLoginModule : set pLoginModule = doc_.getmodule(60106)
+	if Err.Number <> 0 or (pLoginModule is nothing) then
+		cocoon_remote_diag "remote_system_init getmodule 60106 exception " + cocoon_remote_err_text()
+		Err.Clear
+		exit function
+	end if
+	cocoon_remote_diag "remote_system_init getmodule 60106 ok"
+
+	dim idUser : idUser = pLoginModule.try_logon_user(strUser,strPassword,strErrorMsg)
+	if Err.Number <> 0 then
+		cocoon_remote_diag "remote_system_init try_logon_user exception " + cocoon_remote_err_text()
+		Err.Clear
+		exit function
+	end if
+	cocoon_remote_diag "remote_system_init try_logon_user id=" + CStr(idUser) + " msg=" + CStr(strErrorMsg)
 	if idUser = 0 then
 		exit function
 	end if
 
 	trans_.var(GVAR_USER)= idUser
-	trans_.afc.userprofile.set_user trans_,trans_.var(GVAR_USER)
-
-	if (not system_bookkeeping_init(false)) then
+	if Err.Number <> 0 then
+		cocoon_remote_diag "remote_system_init set GVAR_USER id exception " + cocoon_remote_err_text()
+		Err.Clear
 		exit function
 	end if
-	
+	cocoon_remote_diag "remote_system_init set GVAR_USER id ok"
+
+	trans_.afc.userprofile.set_user trans_,trans_.var(GVAR_USER)
+	if Err.Number <> 0 then
+		cocoon_remote_diag "remote_system_init userprofile.set_user exception " + cocoon_remote_err_text()
+		Err.Clear
+		exit function
+	end if
+	cocoon_remote_diag "remote_system_init userprofile.set_user ok"
+
+	dim bBookkeeping : bBookkeeping = system_bookkeeping_init(false)
+	if Err.Number <> 0 then
+		cocoon_remote_diag "remote_system_init system_bookkeeping_init exception " + cocoon_remote_err_text()
+		Err.Clear
+		exit function
+	end if
+	cocoon_remote_diag "remote_system_init system_bookkeeping_init result=" + CStr(bBookkeeping)
+	if not bBookkeeping then
+		exit function
+	end if
+
 	system_set_global_variables
-	
+	if Err.Number <> 0 then
+		cocoon_remote_diag "remote_system_init system_set_global_variables exception " + cocoon_remote_err_text()
+		Err.Clear
+		exit function
+	end if
+	cocoon_remote_diag "remote_system_init system_set_global_variables ok"
+
 	remote_system_init = true
+	cocoon_remote_diag "remote_system_init success"
+	on error goto 0
 end function
 '----------------------------------------------------------------------
 'zapisz nowa wersje bazy danych
