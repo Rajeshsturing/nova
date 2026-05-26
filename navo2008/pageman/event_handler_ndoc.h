@@ -16,7 +16,6 @@ class nui_transfer;
 class ned::ned_event_info__;
 class ned::cned_window;
 class ned::cned_element;
-enum ned::eEventInfoType;
 class CNEO_trans;
 class CNEO_user;
 class ned::ned_event_command_list;
