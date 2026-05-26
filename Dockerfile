@@ -3,7 +3,8 @@
 # NAVO Cocoon is Windows-only: it targets .NET Framework 4.8 and creates the
 # COM object "navo2002.client". Build and run with Windows containers.
 
-FROM mcr.microsoft.com/dotnet/framework/sdk:4.8-windowsservercore-ltsc2022 AS build
+ARG NAVO_BUILD_IMAGE=mcr.microsoft.com/dotnet/framework/sdk:4.8-windowsservercore-ltsc2022
+FROM ${NAVO_BUILD_IMAGE} AS build
 
 SHELL ["powershell", "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command"]
 
