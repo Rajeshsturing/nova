@@ -44,6 +44,29 @@ function Find-NavoCl {
     return $null
 }
 
+function Find-NavoWindowsSdk {
+    $includeRoot = "${env:ProgramFiles(x86)}\Windows Kits\10\Include"
+    if (!(Test-Path $includeRoot)) {
+        return $null
+    }
+
+    $versions = Get-ChildItem -Path $includeRoot -Directory -ErrorAction SilentlyContinue |
+        Where-Object { Test-Path (Join-Path $_.FullName "shared\basetsd.h") } |
+        Sort-Object Name -Descending
+    foreach ($version in $versions) {
+        $midl = Join-Path "${env:ProgramFiles(x86)}\Windows Kits\10\bin" (Join-Path $version.Name "x86\midl.exe")
+        if (Test-Path $midl) {
+            return [pscustomobject]@{
+                Version = $version.Name
+                Root = "${env:ProgramFiles(x86)}\Windows Kits\10\"
+                MIDL = $midl
+            }
+        }
+    }
+
+    return $null
+}
+
 function Invoke-NavoMSBuild {
     param([Parameter(Mandatory=$true)][string]$ProjectPath)
 
@@ -57,6 +80,8 @@ function Invoke-NavoMSBuild {
         /p:Platform=Win32 `
         /p:BuildProjectReferences=false `
         /p:TrackFileAccess=false `
+        /p:WindowsTargetPlatformVersion=$script:windowsSdkVersion `
+        /p:WindowsSDKDir=$script:windowsSdkRoot `
         /v:minimal
 
     if ($LASTEXITCODE -ne 0) {
@@ -86,11 +111,26 @@ if (!$cl) {
     throw "VC++ cl.exe was not found; the image cannot rebuild the patched NAVO native DLLs."
 }
 
+$windowsSdk = Find-NavoWindowsSdk
+if (!$windowsSdk) {
+    throw "Windows SDK basetsd.h/midl.exe was not found; the image cannot rebuild the patched NAVO native DLLs."
+}
+$windowsSdkVersion = $windowsSdk.Version
+$windowsSdkRoot = $windowsSdk.Root
+$windowsSdkBinX86 = Split-Path -Path $windowsSdk.MIDL -Parent
+$env:WindowsSDKDir = $windowsSdkRoot
+$env:WindowsSdkDir = $windowsSdkRoot
+$env:WindowsSDKVersion = "$windowsSdkVersion\"
+$env:WindowsTargetPlatformVersion = $windowsSdkVersion
+$env:Path = "$windowsSdkBinX86;$env:Path"
+
 New-Item -ItemType Directory -Force -Path $engineReleaseRoot | Out-Null
 
 "Native build started: $(Get-Date -Format o)" | Set-Content -Path $buildLog -Encoding ASCII
 "MSBuild: $msbuild" | Add-Content -Path $buildLog -Encoding ASCII
 "CL: $cl" | Add-Content -Path $buildLog -Encoding ASCII
+"WindowsSDK: $windowsSdkVersion $($windowsSdk.MIDL)" | Add-Content -Path $buildLog -Encoding ASCII
+"WindowsSDKBinX86: $windowsSdkBinX86" | Add-Content -Path $buildLog -Encoding ASCII
 
 $projects = @(
     "navopx2008\navopx2008.vcxproj",

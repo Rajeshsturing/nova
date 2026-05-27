@@ -18,13 +18,38 @@ function Find-NavoCl {
     return $null
 }
 
+function Find-NavoWindowsSdk {
+    $includeRoot = "${env:ProgramFiles(x86)}\Windows Kits\10\Include"
+    if (!(Test-Path $includeRoot)) {
+        return $null
+    }
+
+    $versions = Get-ChildItem -Path $includeRoot -Directory -ErrorAction SilentlyContinue |
+        Where-Object { Test-Path (Join-Path $_.FullName "shared\basetsd.h") } |
+        Sort-Object Name -Descending
+    foreach ($version in $versions) {
+        $midl = Join-Path "${env:ProgramFiles(x86)}\Windows Kits\10\bin" (Join-Path $version.Name "x86\midl.exe")
+        if (Test-Path $midl) {
+            return [pscustomobject]@{
+                Version = $version.Name
+                Include = $version.FullName
+                MIDL = $midl
+            }
+        }
+    }
+
+    return $null
+}
+
 $existingCl = Find-NavoCl
-if ($existingCl) {
+$existingSdk = Find-NavoWindowsSdk
+if ($existingCl -and $existingSdk) {
     Write-Host "VC++ toolchain already present: $existingCl"
+    Write-Host "Windows SDK already present: $($existingSdk.Version) $($existingSdk.MIDL)"
     exit 0
 }
 
-Write-Host "VC++ toolchain is missing; installing Visual Studio Build Tools C++ components..."
+Write-Host "VC++ toolchain or Windows SDK is missing; installing Visual Studio Build Tools C++ components..."
 $tempRoot = "C:\TEMP"
 New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
 $installer = Join-Path $tempRoot "vs_buildtools.exe"
@@ -38,10 +63,12 @@ $arguments = @(
     "--norestart",
     "--nocache",
     "--installPath", "C:\BuildTools",
+    "--add", "Microsoft.VisualStudio.Workload.VCTools",
+    "--includeRecommended",
     "--add", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
     "--add", "Microsoft.VisualStudio.Component.VC.ATL",
     "--add", "Microsoft.VisualStudio.Component.VC.ATLMFC",
-    "--add", "Microsoft.VisualStudio.Component.Windows10SDK.20348"
+    "--add", "Microsoft.VisualStudio.Component.Windows10SDK.19041"
 )
 
 $process = Start-Process -FilePath $installer -ArgumentList $arguments -Wait -PassThru -NoNewWindow
@@ -54,4 +81,10 @@ if (!$installedCl) {
     throw "Visual Studio Build Tools install completed, but cl.exe was not found."
 }
 
+$installedSdk = Find-NavoWindowsSdk
+if (!$installedSdk) {
+    throw "Visual Studio Build Tools install completed, but Windows SDK basetsd.h/midl.exe was not found."
+}
+
 Write-Host "VC++ toolchain installed: $installedCl"
+Write-Host "Windows SDK installed: $($installedSdk.Version) $($installedSdk.MIDL)"
