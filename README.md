@@ -20,6 +20,15 @@ Expected health response:
 "NAVO.Cocoon for EuroBusiness 5.0 2024.11.23.00"
 ```
 
+## UI Mode
+
+Normal EuroBusiness desktop/UI mode is for interactive testing,
+configuration, and support on a Windows VM with RDP. Cocoon is not required
+for UI mode.
+
+See [docs/ui-mode.md](docs/ui-mode.md) and
+`tools/windows/setup-ui-mode.ps1` for the Windows setup/launch helper.
+
 ## Included Runtime Pieces
 
 - `navo.cocoon/` - WebHost and Web API source.
