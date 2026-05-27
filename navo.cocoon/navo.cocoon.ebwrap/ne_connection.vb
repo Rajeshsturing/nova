@@ -1,7 +1,7 @@
 ﻿'//--------------------------------------------------------------------------
 '// NAVO.Cocoon project
 '// Copyright NAVO Sp. z o.o. All Rights reserved 2016
-'// 
+'//
 '//--------------------------------------------------------------------------
 
 Imports System.Runtime.InteropServices
@@ -68,7 +68,15 @@ Public Class ne_connection
     End Sub
 
     Public Function getmodule(ByVal iModule As Integer) As Object
-        Return m_oClientDoc.getmodule(iModule)
+        Trace("getmodule begin module=" & CStr(iModule))
+        Try
+            Dim oModule As Object = m_oClientDoc.getmodule(iModule)
+            Trace("getmodule ok module=" & CStr(iModule) & " null=" & CStr(oModule Is Nothing) & " type=" & If(oModule Is Nothing, "null", oModule.GetType().FullName))
+            Return oModule
+        Catch ex As Exception
+            Trace("getmodule exception module=" & CStr(iModule) & " " & ex.ToString())
+            Throw
+        End Try
     End Function
 
     Public Function createhli() As ne_property_set

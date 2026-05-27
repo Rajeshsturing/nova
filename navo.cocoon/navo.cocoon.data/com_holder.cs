@@ -1,7 +1,7 @@
 ﻿//--------------------------------------------------------------------------
 // NAVO.Cocoon project
 // Copyright NAVO Sp. z o.o. All Rights reserved 2016
-// 
+//
 //--------------------------------------------------------------------------
 
 using System;
@@ -19,21 +19,30 @@ namespace navo.cocoon.data.utils
         public com_holder(object oCOMObject)
         {
             m_oCOMObject = oCOMObject;
+            Trace("holder created null=" + (oCOMObject == null) + " type=" + (oCOMObject == null ? "null" : oCOMObject.GetType().FullName));
         }
         /// <summary>invokes method on owned object
         /// returns plain type</summary>
         public TType invoke_method_plain<TType>(String strMethodName, params object[] oParams)
         {
-            Trace("invoke_method_plain begin method=" + strMethodName + " argc=" + (oParams == null ? 0 : oParams.Length));
+            Trace("invoke_method_plain begin method=" + strMethodName
+                + " argc=" + (oParams == null ? 0 : oParams.Length)
+                + " target_null=" + (m_oCOMObject == null)
+                + " target_type=" + (m_oCOMObject == null ? "null" : m_oCOMObject.GetType().FullName));
             try
             {
+                if (m_oCOMObject == null)
+                {
+                    throw new InvalidOperationException("Cannot invoke COM method on a null COM object.");
+                }
+
                 object oResult = m_oCOMObject.GetType().InvokeMember(strMethodName, BindingFlags.InvokeMethod, null, m_oCOMObject, oParams);
                 Trace("invoke_method_plain ok method=" + strMethodName + " result_type=" + (oResult == null ? "null" : oResult.GetType().FullName) + " result=" + Convert.ToString(oResult));
                 return (TType)oResult;
             }
             catch (Exception ex)
             {
-                Trace("invoke_method_plain exception method=" + strMethodName + " " + ex);
+                Trace("invoke_method_plain exception method=" + strMethodName + " " + FormatException(ex));
                 throw;
             }
         }
@@ -88,6 +97,22 @@ namespace navo.cocoon.data.utils
         /// <summary>COM Object </summary>
         private object m_oCOMObject;
         #endregion
+
+        private static string FormatException(Exception ex)
+        {
+            if (ex == null)
+            {
+                return "null";
+            }
+
+            string strMessage = ex.GetType().FullName + " hresult=0x" + ex.HResult.ToString("X8") + " message=" + ex.Message;
+            if (ex.InnerException != null)
+            {
+                strMessage += " inner=[" + FormatException(ex.InnerException) + "]";
+            }
+            strMessage += Environment.NewLine + ex.StackTrace;
+            return strMessage;
+        }
 
         private static void Trace(string message)
         {

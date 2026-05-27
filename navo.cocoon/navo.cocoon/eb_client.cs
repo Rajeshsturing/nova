@@ -1,7 +1,7 @@
 ﻿//--------------------------------------------------------------------------
 // NAVO.Cocoon project
 // Copyright NAVO Sp. z o.o. All Rights reserved 2016
-// 
+//
 //--------------------------------------------------------------------------
 
 using navo.cocoon.data;
@@ -118,29 +118,54 @@ namespace navo.cocoon
             last_access = DateTime.UtcNow;
         }
 
-        /// <summary>connect to EB using internal credentials (it can be real EB-user or predefined surrogate identity 
+        /// <summary>connect to EB using internal credentials (it can be real EB-user or predefined surrogate identity
         /// (i.e. for anonymous requests, logins delegated for customers)</summary>
         public bool connect(login_request oInternalLogin)
         {
-            m_oNEConnection = new ne_connection();
+            Trace("connect begin app=" + oInternalLogin?.application_name
+                + " db=" + oInternalLogin?.database
+                + " server=" + oInternalLogin?.eb_server
+                + " account=" + oInternalLogin?.account_id
+                + " mode=" + oInternalLogin?.mode
+                + " ui=" + oInternalLogin?.ui_style);
 
-            database_name = string.IsNullOrWhiteSpace(oInternalLogin.database) ? "navo2002" : oInternalLogin.database;
-            string strApplicationName = oInternalLogin.application_name._is_void_() ? "EuroBusiness 5.0" : oInternalLogin.application_name;
-
-            //create client
-            m_oNEConnection.create(
-                strApplicationName,
-                oInternalLogin.eb_server ?? "",
-                database_name, oInternalLogin.ui_style, oInternalLogin.mode.Trim().ToLowerInvariant() == "nxm");
-
-            //try login
-            _ensure_support_module();
-            if (!m_oSupportModule.invoke_method_plain<bool>("navo_client_init", oInternalLogin.account_id, oInternalLogin.account_password ?? ""))
+            try
             {
-                return false;
-            }
+                m_oNEConnection = new ne_connection();
 
-            return true;
+                database_name = string.IsNullOrWhiteSpace(oInternalLogin.database) ? "navo2002" : oInternalLogin.database;
+                string strApplicationName = oInternalLogin.application_name._is_void_() ? "EuroBusiness 5.0" : oInternalLogin.application_name;
+                bool bNXMTransport = (oInternalLogin.mode ?? "").Trim().ToLowerInvariant() == "nxm";
+
+                //create client
+                Trace("connect ne_connection.create begin app=" + strApplicationName + " db=" + database_name + " nxm=" + bNXMTransport);
+                m_oNEConnection.create(
+                    strApplicationName,
+                    oInternalLogin.eb_server ?? "",
+                    database_name, oInternalLogin.ui_style, bNXMTransport);
+                Trace("connect ne_connection.create ok");
+
+                //try login
+                Trace("connect ensure support module begin module=" + SUPPORT_MODULE);
+                _ensure_support_module();
+                Trace("connect ensure support module ok");
+
+                Trace("connect navo_client_init begin account=" + oInternalLogin.account_id);
+                bool bInitResult = m_oSupportModule.invoke_method_plain<bool>("navo_client_init", oInternalLogin.account_id, oInternalLogin.account_password ?? "");
+                Trace("connect navo_client_init result=" + bInitResult);
+                if (!bInitResult)
+                {
+                    return false;
+                }
+
+                Trace("connect success");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Trace("connect exception " + FormatException(ex));
+                throw;
+            }
         }
 
         public static Tuple<login_result, eb_client> try_create_client(
@@ -238,8 +263,8 @@ namespace navo.cocoon
 
                                 string strSQL =
 $@"select k.IdObj, k.strNazwa, k.strNIP, kp.strEmail, kp.strImie + ' ' + kp.strNazwisko, kp.strTel1, k.pWaluta, kp.strWWW , kp.strTytul
-from n5klient_pracownik kp 
-join n5klient k on kp.pKlient = k.IdObj 
+from n5klient_pracownik kp
+join n5klient k on kp.pKlient = k.IdObj
 where kp.strEmail2 <> '' and kp.strEmail2 = '{oLoginRequest.account_password}' and k.strIndeks='{oLoginRequest.account_id}'";
 
                                 using (ne_recordset oRecordSet = oTransaction.createadors(strSQL))
@@ -453,7 +478,10 @@ where kp.strEmail2 <> '' and kp.strEmail2 = '{oLoginRequest.account_password}' a
         {
             if (m_oSupportModule == null)
             {
-                m_oSupportModule = new com_holder(m_oNEConnection.getmodule(SUPPORT_MODULE));
+                Trace("_ensure_support_module getmodule begin module=" + SUPPORT_MODULE);
+                object oModule = m_oNEConnection.getmodule(SUPPORT_MODULE);
+                Trace("_ensure_support_module getmodule ok null=" + (oModule == null) + " type=" + (oModule == null ? "null" : oModule.GetType().FullName));
+                m_oSupportModule = new com_holder(oModule);
             }
         }
 
@@ -475,5 +503,37 @@ where kp.strEmail2 <> '' and kp.strEmail2 = '{oLoginRequest.account_password}' a
         internal DateTime last_access { get; private set; }
 
         private int SUPPORT_MODULE = 60400;
+
+        private static string FormatException(Exception ex)
+        {
+            if (ex == null)
+            {
+                return "null";
+            }
+
+            string strMessage = ex.GetType().FullName + " hresult=0x" + ex.HResult.ToString("X8") + " message=" + ex.Message;
+            if (ex.InnerException != null)
+            {
+                strMessage += " inner=[" + FormatException(ex.InnerException) + "]";
+            }
+            strMessage += Environment.NewLine + ex.StackTrace;
+            return strMessage;
+        }
+
+        private static void Trace(string message)
+        {
+            try
+            {
+                string path = Environment.GetEnvironmentVariable("NAVO_COCOON_DIAG_LOG");
+                if (string.IsNullOrWhiteSpace(path))
+                {
+                    path = @"C:\app\cocoon-diagnostics.log";
+                }
+                File.AppendAllText(path, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " [eb_client] " + message + Environment.NewLine);
+            }
+            catch
+            {
+            }
+        }
     }
 }
