@@ -313,6 +313,24 @@ static void _cocoon_window_script_diag(const CString & roMessage)
 	}
 }
 
+static CString _cocoon_window_format_params(DISPPARAMS* pDispParams)
+{
+	if (pDispParams == NULL)
+	{
+		return _T("args=null");
+	}
+
+	CString oText;
+	oText.Format(_T("argc=%u"), pDispParams->cArgs);
+	for (UINT iter = 0; iter < pDispParams->cArgs && pDispParams->rgvarg != NULL; iter++)
+	{
+		CString oArg;
+		oArg.Format(_T(" arg%u_vt=0x%04x"), iter, pDispParams->rgvarg[iter].vt);
+		oText += oArg;
+	}
+	return oText;
+}
+
 void cned_window::set_prop_script(const ng_string& roScriptCodeString)
 {
 	m_oScriptCodeString = ng_string(_T("Option Explicit\r\n")) + roScriptCodeString;
@@ -397,13 +415,10 @@ HRESULT cned_window::Window_GetIDsOfNames(LPOLESTR* rgszNames, UINT cNames, DISP
 		//metoda skryptu - zrób offset dispid
 		*rgDispId += WINDOW_DISPID_OFFSET;
 	}
-	if (oName.CompareNoCase(_T("navo_client_init")) == 0)
-	{
-		CString oDiag;
-		oDiag.Format(_T("Window_GetIDsOfNames name=%s hr=0x%08lx dispid=%ld"),
-			(LPCTSTR)oName, hr, (rgDispId != NULL) ? *rgDispId : -1);
-		_cocoon_window_script_diag(oDiag);
-	}
+	CString oDiag;
+	oDiag.Format(_T("Window_GetIDsOfNames name=%s hr=0x%08lx dispid=%ld cNames=%u"),
+		(LPCTSTR)oName, hr, (rgDispId != NULL) ? *rgDispId : -1, cNames);
+	_cocoon_window_script_diag(oDiag);
 	return hr;
 }
 
@@ -427,23 +442,23 @@ HRESULT cned_window::Window_Invoke(DISPID dispId, REFIID riid, LCID lCid, WORD w
 			oFunctionName.Format(_T("#%ld"), lScriptDispId);
 		}
 
-		const bool bTrace = (oFunctionName.CompareNoCase(_T("navo_client_init")) == 0);
-		if (bTrace)
-		{
-			CString oBeginDiag;
-			oBeginDiag.Format(_T("Window_Invoke begin function=%s dispid=%ld argc=%u"),
-				(LPCTSTR)oFunctionName, dispId, pDispParams != NULL ? pDispParams->cArgs : 0);
-			_cocoon_window_script_diag(oBeginDiag);
-		}
+		CString oBeginDiag;
+		oBeginDiag.Format(_T("Window_Invoke begin function=%s dispid=%ld wFlags=0x%04x %s"),
+			(LPCTSTR)oFunctionName, dispId, wFlags, (LPCTSTR)_cocoon_window_format_params(pDispParams));
+		_cocoon_window_script_diag(oBeginDiag);
 
 		HRESULT hr = __Invoke(lScriptDispId, riid, lCid, wFlags, pDispParams, pVarResult, pExceptInfo, puArgError);
 
-		if (bTrace || FAILED(hr))
 		{
 			CString oSource;
 			CString oDescription;
 			SCODE scode = 0;
 			WORD wCode = 0;
+			VARTYPE vtResult = VT_EMPTY;
+			if (pVarResult != NULL)
+			{
+				vtResult = pVarResult->vt;
+			}
 			if (pExceptInfo != NULL)
 			{
 				if (pExceptInfo->bstrSource != NULL)
@@ -459,9 +474,17 @@ HRESULT cned_window::Window_Invoke(DISPID dispId, REFIID riid, LCID lCid, WORD w
 			}
 
 			CString oEndDiag;
-			oEndDiag.Format(_T("Window_Invoke end function=%s hr=0x%08lx wCode=%u scode=0x%08lx source=%s desc=%s"),
-				(LPCTSTR)oFunctionName, hr, wCode, scode, (LPCTSTR)oSource, (LPCTSTR)oDescription);
+			oEndDiag.Format(_T("Window_Invoke end function=%s hr=0x%08lx result_vt=0x%04x wCode=%u scode=0x%08lx source=%s desc=%s"),
+				(LPCTSTR)oFunctionName, hr, vtResult, wCode, scode, (LPCTSTR)oSource, (LPCTSTR)oDescription);
 			_cocoon_window_script_diag(oEndDiag);
+		}
+
+		if (FAILED(hr) && puArgError != NULL)
+		{
+			CString oArgDiag;
+			oArgDiag.Format(_T("Window_Invoke arg_error function=%s arg=%u"),
+				(LPCTSTR)oFunctionName, *puArgError);
+			_cocoon_window_script_diag(oArgDiag);
 		}
 
 		return hr;

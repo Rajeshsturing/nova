@@ -26,6 +26,18 @@
 'przelicz_walute
 #include "50523"
 
+sub cocoon_login_diag(byval strMessage)
+	on error resume next
+	dim oFSO : set oFSO = CreateObject("Scripting.FileSystemObject")
+	dim oFile : set oFile = oFSO.OpenTextFile("C:\app\navo-native-diagnostics.log", 8, true)
+	oFile.WriteLine CStr(Now()) + " [u60106] " + strMessage
+	oFile.Close
+end sub
+
+function cocoon_login_err_text()
+	cocoon_login_err_text = "err=" + CStr(Err.Number) + " desc=" + Err.Description
+end function
+
 function HARimpl(nAction)
 	HARimpl = FindRight(nAction, false)
 end function
@@ -378,31 +390,63 @@ end sub
 
 function try_logon_user(byval strUser,byval strPassword,byref strErrorDesc)
 	try_logon_user  = 0
+	on error resume next
+	cocoon_login_diag "try_logon_user begin user=" + strUser
 
-	dim idUser : idUser = trans_.findobjid(TYPEID_N5UZYTKOWNIK, _
-		"strLogin='" + doc_.afc.convert.DoubleApostrophe(strUser) + "' and " + _
-		"strHaslo='" + doc_.afc.convert.DoubleApostrophe(strPassword) + "'")
+	dim strWhere
+	strWhere = "strLogin='" + doc_.afc.convert.DoubleApostrophe(strUser) + "' and " + _
+		"strHaslo='" + doc_.afc.convert.DoubleApostrophe(strPassword) + "'"
+	if Err.Number <> 0 then
+		cocoon_login_diag "try_logon_user build where exception " + cocoon_login_err_text()
+		Err.Clear
+		exit function
+	end if
+
+	dim idUser : idUser = trans_.findobjid(TYPEID_N5UZYTKOWNIK, strWhere)
+	if Err.Number <> 0 then
+		cocoon_login_diag "try_logon_user findobjid exception " + cocoon_login_err_text()
+		Err.Clear
+		exit function
+	end if
+	cocoon_login_diag "try_logon_user findobjid id=" + CStr(idUser)
 
 	if (idUser > 0) then
 		dim pUser : set pUser = trans_.getobj(TYPEID_N5UZYTKOWNIK, idUser)
+		if Err.Number <> 0 then
+			cocoon_login_diag "try_logon_user getobj exception " + cocoon_login_err_text()
+			Err.Clear
+			exit function
+		end if
 
 		if pUser is nothing then
 			strErrorDesc = "Dane tego uzytkownika w³aœnie sa zmieniane - w tej chwili nie mo¿na siê zalogowaæ."
+			cocoon_login_diag "try_logon_user user object null"
 			exit function
 		else
 			'sprawdzamy czy ma prawo sie zalogowac
-			if pUser.eAktywny <> N5UZYTKOWNIK_AKTYWNY then
+			dim eActive : eActive = pUser.eAktywny
+			if Err.Number <> 0 then
+				cocoon_login_diag "try_logon_user eAktywny exception " + cocoon_login_err_text()
+				Err.Clear
+				exit function
+			end if
+			cocoon_login_diag "try_logon_user eAktywny=" + CStr(eActive)
+			if eActive <> N5UZYTKOWNIK_AKTYWNY then
 				strErrorDesc = "Ten u¿ytkownik nie ma prawa logowania siê do systemu."
+				cocoon_login_diag "try_logon_user inactive user"
 				exit function
 			end if
 		end if
 
 	else
 		strErrorDesc = "Podane has³o lub nazwa u¿ytkownika nie jest poprawne."
+		cocoon_login_diag "try_logon_user bad credentials"
 		exit function
 	end if
 	
 	try_logon_user = idUser
+	cocoon_login_diag "try_logon_user success id=" + CStr(idUser)
+	on error goto 0
 end function
 
 'sprawdzanie uprawnieñ dla cennika

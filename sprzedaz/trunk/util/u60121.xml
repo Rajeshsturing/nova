@@ -51,34 +51,37 @@ nLicenceID = CLng(0)
 ' inicjowanie, ktore zawsze musi byc wolane
 '----------------------------------------------------------------------
 function system_init_always() : system_init_always = false
+	on error resume next
 	cocoon_remote_diag "system_init_always begin"
-	if not check_platform() then
+
+	dim bPlatform : bPlatform = check_platform()
+	if cocoon_remote_has_error("system_init_always check_platform") then exit function
+	if not bPlatform then
 		cocoon_remote_diag "system_init_always check_platform false"
 		exit function
 	end if
-	cocoon_remote_diag "system_init_always check_platform ok"
 
 	nx_.apprep.attach_definition_manager doc_.stdobjdef
-	cocoon_remote_diag "system_init_always attach_definition_manager ok"
+	if cocoon_remote_has_error("system_init_always attach_definition_manager") then exit function
+
 	dim pM60170 : set pM60170 = doc_.getmodule(60170)
-	cocoon_remote_diag "system_init_always getmodule 60170 ok"
+	if cocoon_remote_has_error("system_init_always getmodule 60170") then exit function
 
 	dim iter
 	for iter = 95500 to 95505
 		nx_.apprep.load pM60170.preprocess_repository(doc_.getappfile(iter))
-		cocoon_remote_diag "system_init_always apprep loaded " + CStr(iter)
+		if cocoon_remote_has_error("system_init_always apprep load " + CStr(iter)) then exit function
 	next
 	nx_.apprep.load pM60170.preprocess_repository(doc_.getappfile(95599))
-	cocoon_remote_diag "system_init_always apprep loaded 95599"
+	if cocoon_remote_has_error("system_init_always apprep load 95599") then exit function
 	cocoon_remote_diag "system_init_always eb5util begin version=" + CStr(trans_.var( GVAR_NAVO2001VERSION ))
 
-
-  if (trans_.var( GVAR_NAVO2001VERSION ) < "16.10.24") then
-	  set nx_.slot0 = doc_.system.activex("eb5util.eb5utilhub")
-  else
-	  set nx_.slot0 = nx_.create_net_object("navo2012.net.eb5util.dll", "eb5util.eb5utilhub, navo2012.net.eb5util")
+	if (trans_.var( GVAR_NAVO2001VERSION ) < "16.10.24") then
+		set nx_.slot0 = doc_.system.activex("eb5util.eb5utilhub")
+	else
+		set nx_.slot0 = nx_.create_net_object("navo2012.net.eb5util.dll", "eb5util.eb5utilhub, navo2012.net.eb5util")
 	end if
-	cocoon_remote_diag "system_init_always eb5util ok"
+	if cocoon_remote_has_error("system_init_always eb5util") then exit function
 
 	'only required before ENGINE2008
 	if False then
@@ -88,6 +91,7 @@ function system_init_always() : system_init_always = false
 
 	cocoon_remote_diag "system_init_always success"
 	system_init_always = true
+	on error goto 0
 end function
 '----------------------------------------------------------------------
 'rozpoczyna proces incjowania. zwraca true jezeli aplikacja zostala
@@ -479,6 +483,17 @@ function cocoon_remote_err_text()
   cocoon_remote_err_text = "err=" + CStr(Err.Number) + " desc=" + Err.Description
 end function
 
+function cocoon_remote_has_error(byval strStep)
+	cocoon_remote_has_error = false
+	if Err.Number <> 0 then
+		cocoon_remote_diag strStep + " exception " + cocoon_remote_err_text()
+		Err.Clear
+		cocoon_remote_has_error = true
+	else
+		cocoon_remote_diag strStep + " ok"
+	end if
+end function
+
 '----------------------------------------------------------------------
 'remote system init
 'optimistic approach - everything is properly setup
@@ -613,16 +628,21 @@ end function
 '	- dodane ustawianie precyzji wyswietlania cen
 '----------------------------------------------------------------------
 private function system_bookkeeping_init(byval bUI): system_bookkeeping_init = false
+	on error resume next
+	cocoon_remote_diag "system_bookkeeping_init begin bUI=" + CStr(bUI)
 
 	'precyzja wyswietlania cen
 
 	trans_.var(GVAR_PRICE_PREC) = getglobprofileLong(GLOBPROF_PRICE_PREC)
+	if cocoon_remote_has_error("system_bookkeeping_init price precision") then exit function
 
 
 	trans_.var(GVAR_WALUTA_FIRMY_UNIT) = getCurrentFirma().pWaluta.strSkrot
+	if cocoon_remote_has_error("system_bookkeeping_init firma currency") then exit function
 
 	'poziom weryfikacji GM'a
 	trans_.var(GVAR_GM_ACCURACY_LEVEL) = getglobprofileLong(GLOBPROF_NAPRAWA_AFT_DEL_INS)
+	if cocoon_remote_has_error("system_bookkeeping_init gm accuracy") then exit function
 
 	'rok ksiêgowy
 	trans_.var(GVAR_ROKKSIEG) = CLng(0)
@@ -635,19 +655,23 @@ private function system_bookkeeping_init(byval bUI): system_bookkeeping_init = f
 	'{{
 		dim strSQLToday
 		strSQLToday = doc_.afc.convert.date2SQL(getCurrentDate())
+		if cocoon_remote_has_error("system_bookkeeping_init current date sql") then exit function
 
 		dim pRKCursor
 		set pRKCursor = trans_.createrawcursor(TYPEID_N5ROKKSIEG, "dDataRozp <= " + strSQLToday + " and dDataZakon >= " + strSQLToday, "dDataRozp desc, dDataZakon desc", "")
+		if cocoon_remote_has_error("system_bookkeeping_init rks cursor") then exit function
 
 		if (pRKCursor.exists(1)) then
 			setCurrentRKS( pRKCursor.get(1).IdObj )
 		end if
+		if cocoon_remote_has_error("system_bookkeeping_init current rks") then exit function
 	'}}
 	'REV:KB:TODO
 
 
 	dim pCurrentUser
 	set pCurrentUser = getCurrentUser()
+	if cocoon_remote_has_error("system_bookkeeping_init getCurrentUser") then exit function
 
 	if (not pCurrentUser is nothing) then
 		if (not pCurrentUser.pWykonawca is nothing) then
@@ -659,6 +683,7 @@ private function system_bookkeeping_init(byval bUI): system_bookkeeping_init = f
 			end if
 		end if
 	end if
+	if cocoon_remote_has_error("system_bookkeeping_init current user context") then exit function
 
 	'Je¿eli jednostka nie zosta³a okreœlona na podstawie u¿ytkownika
 	if (trans_.var(GVAR_CURR_JO)=0) then
@@ -666,6 +691,7 @@ private function system_bookkeeping_init(byval bUI): system_bookkeeping_init = f
 		'tak to zostaje ona domyœlnie wybrana
 		dim nIdJednOrg
 		nIdJednOrg = trans_.findobjid(TYPEID_N5JEDN_ORG, "")
+		if cocoon_remote_has_error("system_bookkeeping_init default org find") then exit function
 		
 		if (nIdJednOrg > 0) then
 			trans_.var(GVAR_CURR_JO) = CLng(nIdJednOrg)
@@ -675,6 +701,7 @@ private function system_bookkeeping_init(byval bUI): system_bookkeeping_init = f
 	if (trans_.var(GVAR_ROKKSIEG)=0 or _
 		trans_.var(GVAR_CURR_JO)=0) then
 		
+		cocoon_remote_diag "system_bookkeeping_init missing context rok=" + CStr(trans_.var(GVAR_ROKKSIEG)) + " jo=" + CStr(trans_.var(GVAR_CURR_JO))
 		if not bUI then
 			exit function
 		end if 
@@ -704,7 +731,10 @@ private function system_bookkeeping_init(byval bUI): system_bookkeeping_init = f
 
 	end if
 
-	if (not system_add_warehouse()) then
+	cocoon_remote_diag "system_bookkeeping_init system_add_warehouse begin"
+	dim bWarehouseAdded : bWarehouseAdded = system_add_warehouse()
+	if cocoon_remote_has_error("system_bookkeeping_init system_add_warehouse") then exit function
+	if (not bWarehouseAdded) then
 		if bUI then
 			MessageBox "Nie uda³o siê dodaæ magazynu podstawowego.", "Uruchomienie aplikacji", vbOkOnly, vbInformation
 			exit function
@@ -740,7 +770,9 @@ private function system_bookkeeping_init(byval bUI): system_bookkeeping_init = f
 	end if
 #endif
 
+	cocoon_remote_diag "system_bookkeeping_init success"
 	system_bookkeeping_init = true
+	on error goto 0
 end function
 
 
@@ -1346,11 +1378,14 @@ end function
 ' (nie wynikajace z formularzy init'u danych)
 '----------------------------------------------------------------------
 private function system_set_global_variables()
+	on error resume next
+	cocoon_remote_diag "system_set_global_variables begin"
 
 	'Dotyczy polityki rabatowej (definiowanie cen)
 	'ZAWSZE W£¥CZONE!!!
 	'if (getglobprofileBOOL(GLOBPROF_USE_CUSTOM_PRICES)) then
 	trans_.var( GVAR_USE_CUSTOM_PRICES ) = CLng(1)
+	if cocoon_remote_has_error("system_set_global_variables custom prices") then exit function
 	'else
 	'	trans_.var( GVAR_USE_CUSTOM_PRICES ) = CLng(0)
 	'end if
@@ -1362,20 +1397,26 @@ private function system_set_global_variables()
 	else
 		trans_.var(GVAR_CUSTOMER_AUTOCOMPLETE) = clng(0)
 	end if
+	if cocoon_remote_has_error("system_set_global_variables customer autocomplete") then exit function
 
 #comment '-------------------------------------------
 #comment 'NX code
 #comment 'dodawanie magazynow do nx_.apprep
 #comment '-------------------------------------------
+	cocoon_remote_diag "system_set_global_variables warehouse cursor begin"
 	dim oCursor : set oCursor = trans_.createcursor(TYPEID_N5MAGAZYN,CURSOR_MAGAZYNY_NORMALNE)
+	if cocoon_remote_has_error("system_set_global_variables warehouse cursor") then exit function
 	dim oMagazyn
 	for each oMagazyn in oCursor
 		oMagazyn.n5magazyn_register_in_apprep
 	next
+	if cocoon_remote_has_error("system_set_global_variables warehouse register") then exit function
 	
 	nx_update_cena_human_name
+	if cocoon_remote_has_error("system_set_global_variables nx_update_cena_human_name") then exit function
 #comment '-------------------------------------------
   
+  cocoon_remote_diag "system_set_global_variables nxm block begin"
   if has_nxm_feature("") then
     dim oNXMFeatures
     set oNXMFeatures = nx_.nxm_features
@@ -1404,7 +1445,10 @@ private function system_set_global_variables()
     
   end if
   
+	if cocoon_remote_has_error("system_set_global_variables nxm block") then exit function
+	cocoon_remote_diag "system_set_global_variables success"
 	system_set_global_variables = true
+	on error goto 0
 end function
 
 
