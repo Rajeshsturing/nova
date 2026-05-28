@@ -173,15 +173,9 @@ bool cndoc_navopage::prepare()
 				get_integrator()->get_pcmu(oPageSOV.GetLong(),poPropertyProviderSP);
 			
 			CCacheUserHolder oCUH(poPCMUSP);
-			if (oPageSOV.GetLong() == IDPAGE_APPGLOBALMODULE)
-			{
-				_cocoon_navopage_diag(CString(_T("prepare read_page_xml begin page=")) + Long2String(oPageSOV.GetLong()) + _T(" hli=") + m_poOpeningHLISP->WriteToString());
-			}
+			_cocoon_navopage_diag(CString(_T("prepare read_page_xml begin page=")) + Long2String(oPageSOV.GetLong()) + _T(" hli=") + m_poOpeningHLISP->WriteToString());
 			read_page_xml(oCUH.get_stream(),m_poWindowSP,get_integrator()->get_definition_manager());
-			if (oPageSOV.GetLong() == IDPAGE_APPGLOBALMODULE)
-			{
-				_cocoon_navopage_diag(_T("prepare read_page_xml end page=13"));
-			}
+			_cocoon_navopage_diag(CString(_T("prepare read_page_xml end page=")) + Long2String(oPageSOV.GetLong()));
 			oCUH.OK();
 
 			oTitleString = Long2String(oPageSOV.GetLong());

@@ -53,6 +53,47 @@ using namespace ned;
 static char THIS_FILE[] = __FILE__;
 #endif
 
+static void _cocoon_navopage_auto_diag(const CString& roMessage)
+{
+	try
+	{
+		CFile oFile;
+		if (!oFile.Open(_T("C:\\app\\navo-native-diagnostics.log"),
+			CFile::modeCreate | CFile::modeNoTruncate | CFile::modeWrite | CFile::shareDenyNone))
+		{
+			return;
+		}
+
+		oFile.SeekToEnd();
+		CString oLine;
+		CTime oNow = CTime::GetCurrentTime();
+		oLine.Format(_T("%s [navopage_auto] %s\r\n"),
+			(LPCTSTR)oNow.Format(_T("%Y-%m-%d %H:%M:%S")), (LPCTSTR)roMessage);
+		oFile.Write((LPCTSTR)oLine, oLine.GetLength() * sizeof(TCHAR));
+	}
+	catch (...)
+	{
+	}
+}
+
+static CString _cocoon_navopage_auto_format_params(DISPPARAMS* pDispParams)
+{
+	if (pDispParams == NULL)
+	{
+		return _T("args=null");
+	}
+
+	CString oText;
+	oText.Format(_T("argc=%u"), pDispParams->cArgs);
+	for (UINT iter = 0; iter < pDispParams->cArgs && pDispParams->rgvarg != NULL; iter++)
+	{
+		CString oArg;
+		oArg.Format(_T(" arg%u_vt=0x%04x"), iter, pDispParams->rgvarg[iter].vt);
+		oText += oArg;
+	}
+	return oText;
+}
+
 //-----------------------------------------------------------------------------
 //{{AFX_MSG_MAP(cndoc_navopage)
 //}}AFX_MSG_MAP
@@ -536,9 +577,17 @@ STDMETHODIMP cndoc_navopage::XDynaDispatch::
 
 	ALL_TRY
 	{
+		CString oName;
+		if (rgszNames != NULL && cNames > 0 && rgszNames[0] != NULL)
+		{
+			oName = rgszNames[0];
+		}
+
 		HRESULT hr = ((IDispatch*)&pThis->m_xDispatch)->GetIDsOfNames(riid,rgszNames,cNames,lCid,rgDispId);
+		CString oPath(_T("native"));
 		if(hr == DISP_E_UNKNOWNNAME)
 		{
+			oPath = _T("window");
 			hr = pThis->m_poWindowSP->Window_GetIDsOfNames(rgszNames,cNames,rgDispId);
 			if(hr == S_OK)
 			{
@@ -549,6 +598,13 @@ STDMETHODIMP cndoc_navopage::XDynaDispatch::
 		{
 			ASSERT(*rgDispId < PAGE_DISPID_OFFSET);
 		}
+
+		CString oDiag;
+		oDiag.Format(_T("GetIDsOfNames name=%s path=%s hr=0x%08lx dispid=%ld cNames=%u window_null=%d"),
+			(LPCTSTR)oName, (LPCTSTR)oPath, hr,
+			(rgDispId != NULL && cNames > 0) ? *rgDispId : -1, cNames,
+			pThis->m_poWindowSP.PointsNull() ? 1 : 0);
+		_cocoon_navopage_auto_diag(oDiag);
 		return hr;
 	}
 	TOP_ALL_CATCH(pThis->GetErrorStorage(),DISP_E_EXCEPTION);
@@ -564,12 +620,22 @@ STDMETHODIMP cndoc_navopage::XDynaDispatch::
 	{
 		if(dispId == DISPID_VALUE)
 		{
+			_cocoon_navopage_auto_diag(_T("Invoke DISPID_VALUE member not found"));
 			return DISP_E_MEMBERNOTFOUND;
 		}
 		if(dispId < PAGE_DISPID_OFFSET)
 		{
+			CString oBeginDiag;
+			oBeginDiag.Format(_T("Invoke native begin dispid=%ld wFlags=0x%04x %s"),
+				dispId, wFlags, (LPCTSTR)_cocoon_navopage_auto_format_params(pDispParams));
+			_cocoon_navopage_auto_diag(oBeginDiag);
+
 			HRESULT hr = ((IDispatch*)&pThis->m_xDispatch)->
 					Invoke(dispId,riid,lCid,wFlags,pDispParams,pVarResult,pExceptInfo,puArgError);
+			CString oDiag;
+			oDiag.Format(_T("Invoke native end dispid=%ld hr=0x%08lx result_vt=0x%04x"),
+				dispId, hr, (pVarResult != NULL) ? pVarResult->vt : VT_EMPTY);
+			_cocoon_navopage_auto_diag(oDiag);
 			ASSERT(hr != DISP_E_MEMBERNOTFOUND);
 			return hr;
 		}
@@ -580,8 +646,40 @@ STDMETHODIMP cndoc_navopage::XDynaDispatch::
 			
 			cndoc_transaction_switch_holder oSwitchToMeHolder(pThis->get_integrator()->get_current_transaction(),pThis->get_transaction());
 
-			return pThis->m_poWindowSP->Window_Invoke(dispId-PAGE_DISPID_OFFSET,riid,lCid,
+			CString oBeginDiag;
+			oBeginDiag.Format(_T("Invoke window begin dispid=%ld script_dispid=%ld wFlags=0x%04x %s"),
+				dispId, dispId-PAGE_DISPID_OFFSET, wFlags,
+				(LPCTSTR)_cocoon_navopage_auto_format_params(pDispParams));
+			_cocoon_navopage_auto_diag(oBeginDiag);
+
+			HRESULT hr = pThis->m_poWindowSP->Window_Invoke(dispId-PAGE_DISPID_OFFSET,riid,lCid,
 				wFlags,pDispParams,pVarResult,pExceptInfo,puArgError);
+
+			CString oSource;
+			CString oDescription;
+			SCODE scode = 0;
+			WORD wCode = 0;
+			if (pExceptInfo != NULL)
+			{
+				if (pExceptInfo->bstrSource != NULL)
+				{
+					oSource = pExceptInfo->bstrSource;
+				}
+				if (pExceptInfo->bstrDescription != NULL)
+				{
+					oDescription = pExceptInfo->bstrDescription;
+				}
+				scode = pExceptInfo->scode;
+				wCode = pExceptInfo->wCode;
+			}
+
+			CString oDiag;
+			oDiag.Format(_T("Invoke window end dispid=%ld script_dispid=%ld hr=0x%08lx result_vt=0x%04x wCode=%u scode=0x%08lx source=%s desc=%s"),
+				dispId, dispId-PAGE_DISPID_OFFSET, hr,
+				(pVarResult != NULL) ? pVarResult->vt : VT_EMPTY,
+				wCode, scode, (LPCTSTR)oSource, (LPCTSTR)oDescription);
+			_cocoon_navopage_auto_diag(oDiag);
+			return hr;
 		}
 	}
 	TOP_ALL_CATCH_AUTOMATION(pThis->GetErrorStorage(),pExceptInfo);
