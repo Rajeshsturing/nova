@@ -552,7 +552,11 @@ STDMETHODIMP cndoc_navopage::XDynaDispatch::GetTypeInfoCount(UINT* pCount)
 
 	ALL_TRY
 	{
-		return ((IDispatch*)&pThis->m_xDispatch)->GetTypeInfoCount(pCount);
+		HRESULT hr = ((IDispatch*)&pThis->m_xDispatch)->GetTypeInfoCount(pCount);
+		CString oDiag;
+		oDiag.Format(_T("GetTypeInfoCount hr=0x%08lx count=%u"), hr, (pCount != NULL) ? *pCount : 0);
+		_cocoon_navopage_auto_diag(oDiag);
+		return hr;
 	}
 	TOP_ALL_CATCH(pThis->GetErrorStorage(),DISP_E_EXCEPTION);
 }
@@ -563,7 +567,12 @@ STDMETHODIMP cndoc_navopage::XDynaDispatch::GetTypeInfo(UINT iTInfo,LCID lcid,IT
 	
 	ALL_TRY
 	{
-		return ((IDispatch*)&pThis->m_xDispatch)->GetTypeInfo(iTInfo,lcid,ppTInfo);
+		HRESULT hr = ((IDispatch*)&pThis->m_xDispatch)->GetTypeInfo(iTInfo,lcid,ppTInfo);
+		CString oDiag;
+		oDiag.Format(_T("GetTypeInfo iTInfo=%u lcid=%lu hr=0x%08lx typeinfo_null=%d"),
+			iTInfo, lcid, hr, (ppTInfo == NULL || *ppTInfo == NULL) ? 1 : 0);
+		_cocoon_navopage_auto_diag(oDiag);
+		return hr;
 	}
 	TOP_ALL_CATCH(pThis->GetErrorStorage(),DISP_E_EXCEPTION);
 }

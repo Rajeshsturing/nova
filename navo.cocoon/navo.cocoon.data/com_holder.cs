@@ -28,7 +28,8 @@ namespace navo.cocoon.data.utils
             Trace("invoke_method_plain begin method=" + strMethodName
                 + " argc=" + (oParams == null ? 0 : oParams.Length)
                 + " target_null=" + (m_oCOMObject == null)
-                + " target_type=" + (m_oCOMObject == null ? "null" : m_oCOMObject.GetType().FullName));
+                + " target_type=" + (m_oCOMObject == null ? "null" : m_oCOMObject.GetType().FullName)
+                + " " + FormatParams(oParams));
             try
             {
                 if (m_oCOMObject == null)
@@ -36,6 +37,7 @@ namespace navo.cocoon.data.utils
                     throw new InvalidOperationException("Cannot invoke COM method on a null COM object.");
                 }
 
+                TraceDispatchProbe(strMethodName);
                 object oResult = m_oCOMObject.GetType().InvokeMember(strMethodName, BindingFlags.InvokeMethod, null, m_oCOMObject, oParams);
                 Trace("invoke_method_plain ok method=" + strMethodName + " result_type=" + (oResult == null ? "null" : oResult.GetType().FullName) + " result=" + Convert.ToString(oResult));
                 return (TType)oResult;
@@ -112,6 +114,121 @@ namespace navo.cocoon.data.utils
             }
             strMessage += Environment.NewLine + ex.StackTrace;
             return strMessage;
+        }
+
+        private void TraceDispatchProbe(string strMethodName)
+        {
+            IntPtr pUnknown = IntPtr.Zero;
+            IntPtr pDispatch = IntPtr.Zero;
+            try
+            {
+                pUnknown = Marshal.GetIUnknownForObject(m_oCOMObject);
+                pDispatch = Marshal.GetIDispatchForObject(m_oCOMObject);
+
+                IDispatchRaw oDispatch = m_oCOMObject as IDispatchRaw;
+                if (oDispatch == null && pDispatch != IntPtr.Zero)
+                {
+                    oDispatch = (IDispatchRaw)Marshal.GetTypedObjectForIUnknown(pDispatch, typeof(IDispatchRaw));
+                }
+                if (oDispatch == null)
+                {
+                    Trace("dispatch_probe method=" + strMethodName
+                        + " iunknown=0x" + pUnknown.ToInt64().ToString("X")
+                        + " idispatch=0x" + pDispatch.ToInt64().ToString("X")
+                        + " cast_ok=False");
+                    return;
+                }
+
+                uint iTypeInfoCount;
+                int iTypeInfoHr = oDispatch.GetTypeInfoCount(out iTypeInfoCount);
+                string[] strNames = new string[] { strMethodName };
+                int[] iDispIds = new int[] { -1 };
+                Guid oIidNull = Guid.Empty;
+                int iGetIdsHr = oDispatch.GetIDsOfNames(ref oIidNull, strNames, 1, 0, iDispIds);
+
+                Trace("dispatch_probe method=" + strMethodName
+                    + " iunknown=0x" + pUnknown.ToInt64().ToString("X")
+                    + " idispatch=0x" + pDispatch.ToInt64().ToString("X")
+                    + " cast_ok=True"
+                    + " typeinfo_hr=0x" + iTypeInfoHr.ToString("X8")
+                    + " typeinfo_count=" + iTypeInfoCount
+                    + " getids_hr=0x" + iGetIdsHr.ToString("X8")
+                    + " dispid=" + iDispIds[0]);
+            }
+            catch (Exception ex)
+            {
+                Trace("dispatch_probe exception method=" + strMethodName + " " + FormatException(ex));
+            }
+            finally
+            {
+                if (pDispatch != IntPtr.Zero)
+                {
+                    Marshal.Release(pDispatch);
+                }
+                if (pUnknown != IntPtr.Zero)
+                {
+                    Marshal.Release(pUnknown);
+                }
+            }
+        }
+
+        private static string FormatParams(object[] oParams)
+        {
+            if (oParams == null || oParams.Length == 0)
+            {
+                return "params=[]";
+            }
+
+            string strResult = "params=[";
+            for (int i = 0; i < oParams.Length; i++)
+            {
+                object oParam = oParams[i];
+                if (i > 0)
+                {
+                    strResult += "; ";
+                }
+                strResult += i + ":";
+                if (oParam == null)
+                {
+                    strResult += "null";
+                }
+                else
+                {
+                    strResult += oParam.GetType().FullName + "=" + Convert.ToString(oParam);
+                }
+            }
+            return strResult + "]";
+        }
+
+        [ComImport]
+        [Guid("00020400-0000-0000-C000-000000000046")]
+        [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        private interface IDispatchRaw
+        {
+            [PreserveSig]
+            int GetTypeInfoCount(out uint pctinfo);
+
+            [PreserveSig]
+            int GetTypeInfo(uint iTInfo, int lcid, out IntPtr ppTInfo);
+
+            [PreserveSig]
+            int GetIDsOfNames(
+                ref Guid riid,
+                [MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPWStr, SizeParamIndex = 2)] string[] rgszNames,
+                int cNames,
+                int lcid,
+                [MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 2)] int[] rgDispId);
+
+            [PreserveSig]
+            int Invoke(
+                int dispIdMember,
+                ref Guid riid,
+                int lcid,
+                ushort wFlags,
+                IntPtr pDispParams,
+                IntPtr pVarResult,
+                IntPtr pExcepInfo,
+                IntPtr puArgErr);
         }
 
         private static void Trace(string message)

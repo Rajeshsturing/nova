@@ -290,18 +290,54 @@ LPDISPATCH cndoc_application::fwd_getmoduleAUTO(long IdPage)
 	ALL_TRY
 	{
 		ASSERT(m_poIntegratorSP.PointsObject());
+		{
+			CString oDiag;
+			oDiag.Format(_T("fwd_getmodule begin page=%ld"), IdPage);
+			_cocoon_application_diag(oDiag);
+		}
+
 		SCP<cndoc_page__> poModuleSP = m_poIntegratorSP->create_module(IdPage);
 		if (poModuleSP.PointsObject())
 		{
+			LPDISPATCH lpStaticDispatch = poModuleSP->GetDispatch(false);
 			LPDISPATCH lpDispatch = poModuleSP->GetDynamicDispatch(true);
 			CString oDiag;
-			oDiag.Format(_T("fwd_getmodule page=%ld dispatch=0x%08lx iid=%ld"),
-				IdPage, (long)lpDispatch, poModuleSP->get_iid());
+			oDiag.Format(_T("fwd_getmodule page=%ld page_ptr=0x%08lx static_dispatch=0x%08lx return_dispatch=0x%08lx iid=%ld"),
+				IdPage, (long)poModuleSP.Get(), (long)lpStaticDispatch, (long)lpDispatch, poModuleSP->get_iid());
 			_cocoon_application_diag(oDiag);
+
+			if (lpDispatch != NULL)
+			{
+				try
+				{
+					LPOLESTR pNames[3];
+					pNames[0] = L"navo_client_init";
+					pNames[1] = L"navo_client_get_trans";
+					pNames[2] = L"get_this";
+					for (long iter = 0; iter < 3; iter++)
+					{
+						DISPID dispid = DISPID_UNKNOWN;
+						HRESULT hr = lpDispatch->GetIDsOfNames(IID_NULL, &pNames[iter], 1, LOCALE_SYSTEM_DEFAULT, &dispid);
+						CString oProbeDiag;
+						oProbeDiag.Format(_T("fwd_getmodule probe page=%ld name=%s hr=0x%08lx dispid=%ld"),
+							IdPage, CString(pNames[iter]), hr, dispid);
+						_cocoon_application_diag(oProbeDiag);
+					}
+				}
+				catch (...)
+				{
+					CString oProbeDiag;
+					oProbeDiag.Format(_T("fwd_getmodule probe page=%ld threw native exception"), IdPage);
+					_cocoon_application_diag(oProbeDiag);
+				}
+			}
 			return lpDispatch;
 		}
 		else
 		{
+			CString oDiag;
+			oDiag.Format(_T("fwd_getmodule page=%ld create_module returned null"), IdPage);
+			_cocoon_application_diag(oDiag);
 			return NULL;
 		}
 	}
