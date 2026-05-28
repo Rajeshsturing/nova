@@ -91,9 +91,9 @@ function Invoke-NavoMSBuild {
         /p:BuildProjectReferences=false `
         /p:TrackFileAccess=false `
         /p:WindowsTargetPlatformVersion=$script:windowsSdkVersion `
-        /p:WindowsSDKDir=$script:windowsSdkRoot `
-        /p:WindowsSDK_ExecutablePath_x86=$script:windowsSdkBinX86Slash `
-        /p:WindowsSDK_ExecutablePath_x64=$script:windowsSdkBinX64Slash `
+        /p:WindowsSDKDir=$script:windowsSdkRootForMsbuild `
+        /p:WindowsSDK_ExecutablePath_x86=$script:windowsSdkBinX86ForMsbuild `
+        /p:WindowsSDK_ExecutablePath_x64=$script:windowsSdkBinX64ForMsbuild `
         /v:minimal
 
     if ($LASTEXITCODE -ne 0) {
@@ -133,6 +133,9 @@ $windowsSdkBinX86 = Split-Path -Path $windowsSdk.MIDL -Parent
 $windowsSdkBinX64 = Join-Path $windowsSdkRoot (Join-Path "bin" (Join-Path $windowsSdkVersion "x64"))
 $windowsSdkBinX86Slash = "$windowsSdkBinX86\"
 $windowsSdkBinX64Slash = "$windowsSdkBinX64\"
+$windowsSdkRootForMsbuild = $windowsSdkRoot.TrimEnd("\")
+$windowsSdkBinX86ForMsbuild = $windowsSdkBinX86.TrimEnd("\")
+$windowsSdkBinX64ForMsbuild = $windowsSdkBinX64.TrimEnd("\")
 $env:WindowsSDKDir = $windowsSdkRoot
 $env:WindowsSdkDir = $windowsSdkRoot
 $env:WindowsSDKVersion = "$windowsSdkVersion\"
@@ -147,6 +150,7 @@ New-Item -ItemType Directory -Force -Path $engineReleaseRoot | Out-Null
 "MSBuild: $msbuild" | Add-Content -Path $buildLog -Encoding ASCII
 "CL: $cl" | Add-Content -Path $buildLog -Encoding ASCII
 "WindowsSDK: $windowsSdkVersion $($windowsSdk.MIDL)" | Add-Content -Path $buildLog -Encoding ASCII
+"WindowsSDKRootForMSBuild: $windowsSdkRootForMsbuild" | Add-Content -Path $buildLog -Encoding ASCII
 "WindowsSDKBinX86: $windowsSdkBinX86" | Add-Content -Path $buildLog -Encoding ASCII
 "WindowsSDKBinX64: $windowsSdkBinX64" | Add-Content -Path $buildLog -Encoding ASCII
 
