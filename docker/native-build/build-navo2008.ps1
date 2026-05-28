@@ -81,13 +81,6 @@ function Find-NavoWindowsSdk {
     return $null
 }
 
-function ConvertTo-MSBuildPropertyList {
-    param([Parameter(Mandatory=$true)][string[]]$Items)
-
-    return (($Items | Where-Object { $_ }) |
-        ForEach-Object { $_.Replace("%", "%25").Replace(";", "%3B") }) -join "%3B"
-}
-
 function Invoke-NavoMSBuild {
     param([Parameter(Mandatory=$true)][string]$ProjectPath)
 
@@ -105,10 +98,6 @@ function Invoke-NavoMSBuild {
         /p:WindowsSDKDir=$script:windowsSdkRootForMsbuild `
         /p:WindowsSDK_ExecutablePath_x86=$script:windowsSdkBinX86ForMsbuild `
         /p:WindowsSDK_ExecutablePath_x64=$script:windowsSdkBinX64ForMsbuild `
-        /p:WindowsSDK_IncludePath=$script:nativeIncludePathForMsbuildArg `
-        /p:WindowsSDK_LibraryPath_x86=$script:nativeLibPathForMsbuildArg `
-        /p:IncludePath=$script:nativeIncludePathForMsbuildArg `
-        /p:LibraryPath=$script:nativeLibPathForMsbuildArg `
         /v:minimal
 
     if ($LASTEXITCODE -ne 0) {
@@ -169,8 +158,6 @@ $nativeLibPath = @(
 ) | Where-Object { Test-Path $_ }
 $nativeIncludePathForMsbuild = ($nativeIncludePath -join ";")
 $nativeLibPathForMsbuild = ($nativeLibPath -join ";")
-$nativeIncludePathForMsbuildArg = ConvertTo-MSBuildPropertyList -Items $nativeIncludePath
-$nativeLibPathForMsbuildArg = ConvertTo-MSBuildPropertyList -Items $nativeLibPath
 $env:WindowsSDKDir = $windowsSdkRoot
 $env:WindowsSdkDir = $windowsSdkRoot
 $env:WindowsSDKVersion = "$windowsSdkVersion\"
