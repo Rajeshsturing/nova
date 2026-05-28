@@ -59,10 +59,14 @@ function Find-NavoWindowsSdk {
         $include = Join-Path $includeRoot $version
         $midl = Join-Path "${env:ProgramFiles(x86)}\Windows Kits\10\bin" (Join-Path $version "x86\midl.exe")
         $windowsHeader = Join-Path $include "um\Windows.h"
+        $unknownIdl = Join-Path $include "um\unknwn.idl"
+        $oaIdl = Join-Path $include "um\oaidl.idl"
         $umLib = Join-Path "${env:ProgramFiles(x86)}\Windows Kits\10\Lib" (Join-Path $version "um\x86\kernel32.lib")
         $ucrtLib = Join-Path "${env:ProgramFiles(x86)}\Windows Kits\10\Lib" (Join-Path $version "ucrt\x86\ucrt.lib")
         if ((Test-Path (Join-Path $include "shared\basetsd.h")) -and
             (Test-Path $windowsHeader) -and
+            (Test-Path $unknownIdl) -and
+            (Test-Path $oaIdl) -and
             (Test-Path $midl) -and
             (Test-Path $umLib) -and
             (Test-Path $ucrtLib)) {
@@ -94,6 +98,10 @@ function Invoke-NavoMSBuild {
         /p:WindowsSDKDir=$script:windowsSdkRootForMsbuild `
         /p:WindowsSDK_ExecutablePath_x86=$script:windowsSdkBinX86ForMsbuild `
         /p:WindowsSDK_ExecutablePath_x64=$script:windowsSdkBinX64ForMsbuild `
+        /p:WindowsSDK_IncludePath=$script:nativeIncludePathForMsbuild `
+        /p:WindowsSDK_LibraryPath_x86=$script:nativeLibPathForMsbuild `
+        /p:IncludePath=$script:nativeIncludePathForMsbuild `
+        /p:LibraryPath=$script:nativeLibPathForMsbuild `
         /v:minimal
 
     if ($LASTEXITCODE -ne 0) {
@@ -152,14 +160,16 @@ $nativeLibPath = @(
     (Join-Path $windowsSdkRoot (Join-Path "Lib" (Join-Path $windowsSdkVersion "ucrt\x86"))),
     (Join-Path $windowsSdkRoot (Join-Path "Lib" (Join-Path $windowsSdkVersion "um\x86")))
 ) | Where-Object { Test-Path $_ }
+$nativeIncludePathForMsbuild = ($nativeIncludePath -join ";")
+$nativeLibPathForMsbuild = ($nativeLibPath -join ";")
 $env:WindowsSDKDir = $windowsSdkRoot
 $env:WindowsSdkDir = $windowsSdkRoot
 $env:WindowsSDKVersion = "$windowsSdkVersion\"
 $env:WindowsTargetPlatformVersion = $windowsSdkVersion
 $env:WindowsSDK_ExecutablePath_x86 = $windowsSdkBinX86Slash
 $env:WindowsSDK_ExecutablePath_x64 = $windowsSdkBinX64Slash
-$env:WindowsSDK_IncludePath = ($nativeIncludePath -join ";")
-$env:WindowsSDK_LibraryPath_x86 = ($nativeLibPath -join ";")
+$env:WindowsSDK_IncludePath = $nativeIncludePathForMsbuild
+$env:WindowsSDK_LibraryPath_x86 = $nativeLibPathForMsbuild
 $env:INCLUDE = (($nativeIncludePath + @($env:INCLUDE)) | Where-Object { $_ }) -join ";"
 $env:LIB = (($nativeLibPath + @($env:LIB)) | Where-Object { $_ }) -join ";"
 $env:Path = "$windowsSdkBinX86;$windowsSdkBinX64;$env:Path"

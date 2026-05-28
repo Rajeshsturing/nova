@@ -33,10 +33,14 @@ function Find-NavoWindowsSdk {
         $include = Join-Path $includeRoot $version
         $midl = Join-Path "${env:ProgramFiles(x86)}\Windows Kits\10\bin" (Join-Path $version "x86\midl.exe")
         $windowsHeader = Join-Path $include "um\Windows.h"
+        $unknownIdl = Join-Path $include "um\unknwn.idl"
+        $oaIdl = Join-Path $include "um\oaidl.idl"
         $umLib = Join-Path "${env:ProgramFiles(x86)}\Windows Kits\10\Lib" (Join-Path $version "um\x86\kernel32.lib")
         $ucrtLib = Join-Path "${env:ProgramFiles(x86)}\Windows Kits\10\Lib" (Join-Path $version "ucrt\x86\ucrt.lib")
         if ((Test-Path (Join-Path $include "shared\basetsd.h")) -and
             (Test-Path $windowsHeader) -and
+            (Test-Path $unknownIdl) -and
+            (Test-Path $oaIdl) -and
             (Test-Path $midl) -and
             (Test-Path $umLib) -and
             (Test-Path $ucrtLib)) {
@@ -93,7 +97,7 @@ if (!$installedCl) {
 
 $installedSdk = Find-NavoWindowsSdk
 if (!$installedSdk) {
-    throw "Visual Studio Build Tools install completed, but Windows SDK basetsd.h/midl.exe was not found."
+    throw "Visual Studio Build Tools install completed, but complete Windows SDK headers/IDLs/libs were not found."
 }
 
 Write-Host "VC++ toolchain installed: $installedCl"
