@@ -591,13 +591,35 @@ STDMETHODIMP cndoc_navopage::XDynaDispatch::
 		{
 			oName = rgszNames[0];
 		}
+		{
+			CString oBeginDiag;
+			oBeginDiag.Format(_T("GetIDsOfNames begin name=%s cNames=%u window_null=%d"),
+				(LPCTSTR)oName, cNames, pThis->m_poWindowSP.PointsNull() ? 1 : 0);
+			_cocoon_navopage_auto_diag(oBeginDiag);
+		}
 
 		HRESULT hr = ((IDispatch*)&pThis->m_xDispatch)->GetIDsOfNames(riid,rgszNames,cNames,lCid,rgDispId);
 		CString oPath(_T("native"));
+		{
+			CString oNativeDiag;
+			oNativeDiag.Format(_T("GetIDsOfNames native name=%s hr=0x%08lx dispid=%ld"),
+				(LPCTSTR)oName, hr, (rgDispId != NULL && cNames > 0) ? *rgDispId : -1);
+			_cocoon_navopage_auto_diag(oNativeDiag);
+		}
 		if(hr == DISP_E_UNKNOWNNAME)
 		{
 			oPath = _T("window");
-			hr = pThis->m_poWindowSP->Window_GetIDsOfNames(rgszNames,cNames,rgDispId);
+			try
+			{
+				hr = pThis->m_poWindowSP->Window_GetIDsOfNames(rgszNames,cNames,rgDispId);
+			}
+			catch (...)
+			{
+				CString oThrowDiag;
+				oThrowDiag.Format(_T("GetIDsOfNames window threw name=%s"), (LPCTSTR)oName);
+				_cocoon_navopage_auto_diag(oThrowDiag);
+				throw;
+			}
 			if(hr == S_OK)
 			{
 				*rgDispId += PAGE_DISPID_OFFSET;

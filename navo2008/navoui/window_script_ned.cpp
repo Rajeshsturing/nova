@@ -394,16 +394,36 @@ const long WINDOW_DISPID_OFFSET = 100;
 
 HRESULT cned_window::Window_GetIDsOfNames(LPOLESTR* rgszNames, UINT cNames, DISPID* rgDispId)
 {
-	//wbudowane metody cned_window s¹ rzadko u¿ywane,
-	//wiêc próbujemy najpierw ze skryptem
-
 	CString oName;
 	if (rgszNames != NULL && cNames > 0 && rgszNames[0] != NULL)
 	{
 		oName = rgszNames[0];
 	}
+	{
+		CString oBeginDiag;
+		oBeginDiag.Format(_T("Window_GetIDsOfNames begin name=%s cNames=%u functions=%ld"),
+			(LPCTSTR)oName, cNames, (long)m_oFunctionsArray.GetSize());
+		_cocoon_window_script_diag(oBeginDiag);
+	}
 
-	HRESULT hr = __GetIDsOfNames(rgszNames, cNames, rgDispId);
+	HRESULT hr = S_OK;
+	try
+	{
+		hr = __GetIDsOfNames(rgszNames, cNames, rgDispId);
+	}
+	catch (...)
+	{
+		CString oThrowDiag;
+		oThrowDiag.Format(_T("Window_GetIDsOfNames script_lookup threw name=%s"), (LPCTSTR)oName);
+		_cocoon_window_script_diag(oThrowDiag);
+		throw;
+	}
+	{
+		CString oScriptDiag;
+		oScriptDiag.Format(_T("Window_GetIDsOfNames script_lookup name=%s hr=0x%08lx dispid=%ld"),
+			(LPCTSTR)oName, hr, (rgDispId != NULL) ? *rgDispId : -1);
+		_cocoon_window_script_diag(oScriptDiag);
+	}
 
 	if (hr == DISP_E_UNKNOWNNAME)
 	{
@@ -412,7 +432,6 @@ HRESULT cned_window::Window_GetIDsOfNames(LPOLESTR* rgszNames, UINT cNames, DISP
 	}
 	else
 	{
-		//metoda skryptu - zrób offset dispid
 		*rgDispId += WINDOW_DISPID_OFFSET;
 	}
 	CString oDiag;

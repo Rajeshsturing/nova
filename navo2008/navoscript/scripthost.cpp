@@ -170,20 +170,39 @@ CScriptHostImpl::CScriptHostImpl(const CLSID& rClassId) :
 	m_lCharacterPosition(0)
 {
 	EnableAutomation();
+	_cocoon_scripthost_diag(_T("impl ctor begin"));
 	VERIFY(CreateDebugApplication() == S_OK);
 	m_oActiveScriptParseSCP.QueryInterface(m_oActiveScriptSCP);
+	{
+		CString oDiag;
+		oDiag.Format(_T("impl ctor after QueryInterface script_null=%d parse_null=%d"),
+			m_oActiveScriptSCP.PointsNull() ? 1 : 0,
+			m_oActiveScriptParseSCP.PointsNull() ? 1 : 0);
+		_cocoon_scripthost_diag(oDiag);
+	}
 
 	HRESULT hr = m_oActiveScriptSCP->SetScriptSite(&m_xActiveScriptSite);
+	{
+		CString oDiag;
+		oDiag.Format(_T("impl ctor SetScriptSite hr=0x%08lx"), hr);
+		_cocoon_scripthost_diag(oDiag);
+	}
 	if (hr != S_OK)
 	{
 		ThrowNavoException1(ERCO_SETSCRIPTSITE_FAILED, IDPAGE_NOTAVAILABLE, SCODE_To_String(hr));
 	};
 	hr = m_oActiveScriptParseSCP->InitNew();
+	{
+		CString oDiag;
+		oDiag.Format(_T("impl ctor InitNew hr=0x%08lx"), hr);
+		_cocoon_scripthost_diag(oDiag);
+	}
 	if (hr != S_OK)
 	{
 		ThrowNavoException1(ERCO_SCRIPT_INIT_FAILED, IDPAGE_NOTAVAILABLE, SCODE_To_String(hr));
 	}
 	memset((LPVOID)&m_oExcepInfo, 0, sizeof(m_oExcepInfo));
+	_cocoon_scripthost_diag(_T("impl ctor end"));
 }
 
 HRESULT CScriptHostImpl::PrepareDebugging(LPCOLESTR pScriptCode)
@@ -228,9 +247,20 @@ HRESULT CScriptHostImpl::PrepareDebugging(LPCOLESTR pScriptCode)
 
 void CScriptHostImpl::AddNamedItem(SCP<CNamedItemInfo>& rpoNamedItemSP)
 {
+	CString oName(rpoNamedItemSP->GetName());
+	{
+		CString oDiag;
+		oDiag.Format(_T("AddNamedItem begin name=%s"), (LPCTSTR)oName);
+		_cocoon_scripthost_diag(oDiag);
+	}
 	m_oNamedItemsMap[rpoNamedItemSP->GetName()] = rpoNamedItemSP;
 
 	HRESULT hr = m_oActiveScriptSCP->AddNamedItem(rpoNamedItemSP->GetName(), SCRIPTITEM_ISVISIBLE | SCRIPTITEM_ISSOURCE);
+	{
+		CString oDiag;
+		oDiag.Format(_T("AddNamedItem end name=%s hr=0x%08lx"), (LPCTSTR)oName, hr);
+		_cocoon_scripthost_diag(oDiag);
+	}
 	
 	if (S_OK != hr)
 	{
@@ -242,27 +272,66 @@ void CScriptHostImpl::AddNamedItem(SCP<CNamedItemInfo>& rpoNamedItemSP)
 void CScriptHostImpl::Init(LPCOLESTR pScriptCode, LPCTSTR pDocumentName)
 {
 	m_oDocumentNameString = CString(pDocumentName);
+	{
+		CString oDiag;
+		oDiag.Format(_T("impl Init begin doc=%s script_len=%lu"),
+			pDocumentName, pScriptCode != NULL ? (unsigned long)wcslen(pScriptCode) : 0);
+		_cocoon_scripthost_diag(oDiag);
+	}
 
-	VERIFY(PrepareDebugging(pScriptCode) == S_OK);
+	HRESULT hrDebug = PrepareDebugging(pScriptCode);
+	{
+		CString oDiag;
+		oDiag.Format(_T("impl Init PrepareDebugging hr=0x%08lx"), hrDebug);
+		_cocoon_scripthost_diag(oDiag);
+	}
+	VERIFY(hrDebug == S_OK);
 
 	HRESULT hr = m_oActiveScriptParseSCP->ParseScriptText(pScriptCode, NULL, NULL, NULL, 0, 0,
 		SCRIPTTEXT_ISPERSISTENT, NULL, &m_oExcepInfo);
+	{
+		CString oErr;
+		if (hr != S_OK)
+		{
+			oErr = GetErrorDesc();
+		}
+		CString oDiag;
+		oDiag.Format(_T("impl Init ParseScriptText hr=0x%08lx err=%s"), hr, (LPCTSTR)oErr);
+		_cocoon_scripthost_diag(oDiag);
+	}
 	if (hr != S_OK)
 	{
 		ThrowNavoException2(ERCO_SCRIPTENGINE_PARSINGFAILED, IDPAGE_NOTAVAILABLE, (LPCTSTR)GetErrorDesc(),
 			SCODE_To_String(hr));
 	};
 	hr = m_oActiveScriptSCP->SetScriptState(SCRIPTSTATE_CONNECTED);
+	{
+		CString oErr;
+		if (hr != S_OK)
+		{
+			oErr = GetErrorDesc();
+		}
+		CString oDiag;
+		oDiag.Format(_T("impl Init SetScriptState CONNECTED hr=0x%08lx err=%s"), hr, (LPCTSTR)oErr);
+		_cocoon_scripthost_diag(oDiag);
+	}
 	if (hr != S_OK)
 	{
 		ThrowNavoException1(ERCO_SETSCRIPTSTATE_FAILED, IDPAGE_NOTAVAILABLE, SCODE_To_String(hr));
 	};
 	hr = m_oActiveScriptSCP->GetScriptDispatch(NULL, &m_oDispatchSCP.GetRawPointer());
+	{
+		CString oDiag;
+		oDiag.Format(_T("impl Init GetScriptDispatch hr=0x%08lx dispatch_null=%d"),
+			hr, m_oDispatchSCP.PointsNull() ? 1 : 0);
+		_cocoon_scripthost_diag(oDiag);
+	}
 	if (hr != S_OK)
 	{
 		ThrowNavoException1(ERCO_GETSCRIPTDISPATCH_FAILED, IDPAGE_NOTAVAILABLE, SCODE_To_String(hr));
 	};
 	ASSERT(m_oDispatchSCP.PointsObject());
+	_cocoon_scripthost_diag(_T("impl Init end"));
 }
 
 void CScriptHostImpl::InitWithNXID(LPCTSTR lpNXID)
@@ -447,6 +516,15 @@ STDMETHODIMP CScriptHostImpl::XActiveScriptSite::OnScriptError(IActiveScriptErro
 		&pThis->m_oLineNumber, &pThis->m_lCharacterPosition);
 	ASSERT(hr == S_OK);
 	hr = pScriptError->GetExceptionInfo(&pThis->m_oExcepInfo);
+	{
+		CString oDiag;
+		oDiag.Format(_T("OnScriptError hr=0x%08lx line=%lu char=%ld source=%s desc=%s text=%s"),
+			hr, pThis->m_oLineNumber, pThis->m_lCharacterPosition,
+			(LPCTSTR)CString(pThis->m_oExcepInfo.bstrSource),
+			(LPCTSTR)CString(pThis->m_oExcepInfo.bstrDescription),
+			(LPCTSTR)pThis->m_oSourceLineTextString);
+		_cocoon_scripthost_diag(oDiag);
+	}
 	return E_FAIL;
 };
 
@@ -598,34 +676,106 @@ DISPID CScriptHost::GetDISPID(const OLECHAR* pocName)
 //-----------------------------------------------------
 void CScriptUser::_InitScript()
 {
-	if (m_poScriptHostSP.PointsNull())
+	CString strScriptCode(GetScriptCode());
+	CString strNXID(GetScriptNXID());
+	CString oFunctions;
+	for (long iter = 0; iter <= m_oFunctionsArray.GetUpperBound(); iter++)
 	{
-		ASSERT(!m_bCompiled);
-
-		//_Compile();
-		CString strScriptCode(GetScriptCode());
-		CString strNXID(GetScriptNXID());
-
-		m_poScriptHostSP = NewSCP(new CScriptHost());
-
-		_PushNamedItems();
-
-		if (!strNXID.IsEmpty())
+		if (oFunctions.GetLength() > 0)
 		{
-			m_poScriptHostSP->InitWithNXID(strNXID);
+			oFunctions += _T(",");
+		}
+		oFunctions += m_oFunctionsArray[iter].m_oNameString;
+		if (oFunctions.GetLength() > 1800)
+		{
+			oFunctions += _T(",...");
+			break;
+		}
+	}
+	{
+		CString oDiag;
+		oDiag.Format(_T("_InitScript entry host_null=%d compiled=%d nxid=%s script_len=%d functions=%ld named_items=%ld names=%s"),
+			m_poScriptHostSP.PointsNull() ? 1 : 0, m_bCompiled ? 1 : 0,
+			(LPCTSTR)strNXID, strScriptCode.GetLength(),
+			(long)m_oFunctionsArray.GetSize(), (long)m_oNIIArray.GetSize(), (LPCTSTR)oFunctions);
+		_cocoon_scripthost_diag(oDiag);
+	}
+
+	CString oStage(_T("entry"));
+	try
+	{
+		if (m_poScriptHostSP.PointsNull())
+		{
+			ASSERT(!m_bCompiled);
+
+			//_Compile();
+			oStage = _T("create_host");
+			m_poScriptHostSP = NewSCP(new CScriptHost());
+			_cocoon_scripthost_diag(_T("_InitScript create_host ok"));
+
+			oStage = _T("push_named_items");
+			{
+				CString oDiag;
+				oDiag.Format(_T("_InitScript push_named_items begin count=%ld"), (long)m_oNIIArray.GetSize());
+				_cocoon_scripthost_diag(oDiag);
+			}
+			_PushNamedItems();
+			_cocoon_scripthost_diag(_T("_InitScript push_named_items ok"));
+
+			if (!strNXID.IsEmpty())
+			{
+				oStage = _T("init_with_nxid");
+				CString oDiag;
+				oDiag.Format(_T("_InitScript InitWithNXID begin nxid=%s"), (LPCTSTR)strNXID);
+				_cocoon_scripthost_diag(oDiag);
+				m_poScriptHostSP->InitWithNXID(strNXID);
+				_cocoon_scripthost_diag(_T("_InitScript InitWithNXID ok"));
+			}
+			else
+			{
+				oStage = _T("init_raw_script");
+				CString oDocNameString;
+				GetDocumentName(oDocNameString);
+				{
+					CString oDiag;
+					oDiag.Format(_T("_InitScript Init raw begin doc=%s"), (LPCTSTR)oDocNameString);
+					_cocoon_scripthost_diag(oDiag);
+				}
+				m_poScriptHostSP->Init(CBStr(strScriptCode), oDocNameString);
+				_cocoon_scripthost_diag(_T("_InitScript Init raw ok"));
+			}
+
+			for (long iter = 0; iter <= m_oFunctionsArray.GetUpperBound(); iter++)
+			{
+				oStage = _T("resolve_dispid");
+				CString oName = m_oFunctionsArray[iter].m_oNameString;
+				{
+					CString oDiag;
+					oDiag.Format(_T("_InitScript resolve begin index=%ld name=%s"), iter, (LPCTSTR)oName);
+					_cocoon_scripthost_diag(oDiag);
+				}
+				DISPID dispid = m_poScriptHostSP->GetDISPID(CBStr(oName));
+				m_oFunctionsArray[iter].m_dispid = dispid;
+				{
+					CString oDiag;
+					oDiag.Format(_T("_InitScript resolve ok index=%ld name=%s dispid=%ld"),
+						iter, (LPCTSTR)oName, dispid);
+					_cocoon_scripthost_diag(oDiag);
+				}
+			}
+			_cocoon_scripthost_diag(_T("_InitScript complete"));
 		}
 		else
 		{
-			CString oDocNameString;
-			GetDocumentName(oDocNameString);
-			m_poScriptHostSP->Init(CBStr(strScriptCode), oDocNameString);
+			_cocoon_scripthost_diag(_T("_InitScript skipped already initialized"));
 		}
-
-		for (long iter = 0; iter <= m_oFunctionsArray.GetUpperBound(); iter++)
-		{
-			DISPID dispid = m_poScriptHostSP->GetDISPID(CBStr(m_oFunctionsArray[iter].m_oNameString));
-			m_oFunctionsArray[iter].m_dispid = dispid;
-		}
+	}
+	catch (...)
+	{
+		CString oDiag;
+		oDiag.Format(_T("_InitScript exception stage=%s nxid=%s"), (LPCTSTR)oStage, (LPCTSTR)strNXID);
+		_cocoon_scripthost_diag(oDiag);
+		throw;
 	}
 }
 
@@ -747,7 +897,19 @@ HRESULT CScriptUser::__GetIDsOfNames(LPOLESTR* rgszNames, UINT cNames, DISPID* r
 		oName = rgszNames[0];
 	}
 
-	_InitScript();
+	_cocoon_scripthost_diag(_T("__GetIDsOfNames before _InitScript"));
+	try
+	{
+		_InitScript();
+	}
+	catch (...)
+	{
+		CString oDiag;
+		oDiag.Format(_T("__GetIDsOfNames _InitScript threw name=%s"), (LPCTSTR)oName);
+		_cocoon_scripthost_diag(oDiag);
+		throw;
+	}
+	_cocoon_scripthost_diag(_T("__GetIDsOfNames after _InitScript"));
 	HRESULT hr = S_OK;
 	while (cNames)
 	{
