@@ -575,7 +575,16 @@ GetDocumentContextFromPosition(DWORD dwSourceContext, ULONG uCharacterOffset,
 {
 	METHOD_PROLOGUE(CScriptHostImpl, ActiveScriptSiteDebug)
 
-		ASSERT(pThis->m_poDebugDocHelperSP.PointsObject());
+	if (ppsc != NULL)
+	{
+		*ppsc = NULL;
+	}
+	if (!_g_bAllowDebugging || pThis->m_poDebugDocHelperSP.PointsNull())
+	{
+		_cocoon_scripthost_diag(_T("ActiveScriptSiteDebug GetDocumentContextFromPosition disabled"));
+		return E_NOTIMPL;
+	}
+
 	ULONG ulStartPos;
 	HRESULT hr = pThis->m_poDebugDocHelperSP->GetScriptBlockInfo(dwSourceContext, NULL,
 		&ulStartPos, NULL);
@@ -591,11 +600,15 @@ STDMETHODIMP CScriptHostImpl::XActiveScriptSiteDebug::GetApplication(IDebugAppli
 {
 	METHOD_PROLOGUE(CScriptHostImpl, ActiveScriptSiteDebug)
 
-		if (!_g_bAllowDebugging)
-		{
-			return E_NOTIMPL;
-		}
-	ASSERT(_g_poDebugApplicationSP.PointsObject());
+	if (ppda != NULL)
+	{
+		*ppda = NULL;
+	}
+	if (!_g_bAllowDebugging || _g_poDebugApplicationSP.PointsNull())
+	{
+		_cocoon_scripthost_diag(_T("ActiveScriptSiteDebug GetApplication disabled"));
+		return E_NOTIMPL;
+	}
 	*ppda = _g_poDebugApplicationSP.Get();
 	return S_OK;
 }
@@ -604,7 +617,16 @@ STDMETHODIMP CScriptHostImpl::XActiveScriptSiteDebug::GetRootApplicationNode(
 	/* [out] */ IDebugApplicationNode** ppdanRoot)
 {
 	METHOD_PROLOGUE(CScriptHostImpl, ActiveScriptSiteDebug)
-		ASSERT(_g_poDebugApplicationSP.PointsObject());
+
+	if (ppdanRoot != NULL)
+	{
+		*ppdanRoot = NULL;
+	}
+	if (!_g_bAllowDebugging || _g_poDebugApplicationSP.PointsNull())
+	{
+		_cocoon_scripthost_diag(_T("ActiveScriptSiteDebug GetRootApplicationNode disabled"));
+		return E_NOTIMPL;
+	}
 	return _g_poDebugApplicationSP->GetRootNode(ppdanRoot);
 }
 
@@ -612,9 +634,23 @@ STDMETHODIMP CScriptHostImpl::XActiveScriptSiteDebug::OnScriptErrorDebug(
 	IActiveScriptErrorDebug* /*pErrorDebug*/, BOOL* pfEnterDebugger,
 	BOOL* pfCallOnScriptErrorWhenContinuing)
 {
+	if (!_g_bAllowDebugging)
+	{
+		if (pfEnterDebugger != NULL)
+		{
+			*pfEnterDebugger = FALSE;
+		}
+		if (pfCallOnScriptErrorWhenContinuing != NULL)
+		{
+			*pfCallOnScriptErrorWhenContinuing = TRUE;
+		}
+		_cocoon_scripthost_diag(_T("ActiveScriptSiteDebug OnScriptErrorDebug disabled"));
+		return E_NOTIMPL;
+	}
+
 	*pfEnterDebugger = TRUE;
 	*pfCallOnScriptErrorWhenContinuing = TRUE;
-	return _g_bAllowDebugging ? S_OK : E_NOTIMPL;
+	return S_OK;
 }
 #endif
 //-------------------------------------------------------------------------------
