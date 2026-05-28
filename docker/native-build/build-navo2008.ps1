@@ -136,12 +136,32 @@ $windowsSdkBinX64Slash = "$windowsSdkBinX64\"
 $windowsSdkRootForMsbuild = $windowsSdkRoot.TrimEnd("\")
 $windowsSdkBinX86ForMsbuild = $windowsSdkBinX86.TrimEnd("\")
 $windowsSdkBinX64ForMsbuild = $windowsSdkBinX64.TrimEnd("\")
+$vcToolsRoot = Split-Path -Path (Split-Path -Path (Split-Path -Path (Split-Path -Path $cl -Parent) -Parent) -Parent) -Parent
+$nativeIncludePath = @(
+    (Join-Path $vcToolsRoot "ATLMFC\include"),
+    (Join-Path $vcToolsRoot "include"),
+    (Join-Path $windowsSdkRoot (Join-Path "Include" (Join-Path $windowsSdkVersion "ucrt"))),
+    (Join-Path $windowsSdkRoot (Join-Path "Include" (Join-Path $windowsSdkVersion "shared"))),
+    (Join-Path $windowsSdkRoot (Join-Path "Include" (Join-Path $windowsSdkVersion "um"))),
+    (Join-Path $windowsSdkRoot (Join-Path "Include" (Join-Path $windowsSdkVersion "winrt"))),
+    (Join-Path $windowsSdkRoot (Join-Path "Include" (Join-Path $windowsSdkVersion "cppwinrt")))
+) | Where-Object { Test-Path $_ }
+$nativeLibPath = @(
+    (Join-Path $vcToolsRoot "ATLMFC\lib\x86"),
+    (Join-Path $vcToolsRoot "lib\x86"),
+    (Join-Path $windowsSdkRoot (Join-Path "Lib" (Join-Path $windowsSdkVersion "ucrt\x86"))),
+    (Join-Path $windowsSdkRoot (Join-Path "Lib" (Join-Path $windowsSdkVersion "um\x86")))
+) | Where-Object { Test-Path $_ }
 $env:WindowsSDKDir = $windowsSdkRoot
 $env:WindowsSdkDir = $windowsSdkRoot
 $env:WindowsSDKVersion = "$windowsSdkVersion\"
 $env:WindowsTargetPlatformVersion = $windowsSdkVersion
 $env:WindowsSDK_ExecutablePath_x86 = $windowsSdkBinX86Slash
 $env:WindowsSDK_ExecutablePath_x64 = $windowsSdkBinX64Slash
+$env:WindowsSDK_IncludePath = ($nativeIncludePath -join ";")
+$env:WindowsSDK_LibraryPath_x86 = ($nativeLibPath -join ";")
+$env:INCLUDE = (($nativeIncludePath + @($env:INCLUDE)) | Where-Object { $_ }) -join ";"
+$env:LIB = (($nativeLibPath + @($env:LIB)) | Where-Object { $_ }) -join ";"
 $env:Path = "$windowsSdkBinX86;$windowsSdkBinX64;$env:Path"
 
 New-Item -ItemType Directory -Force -Path $engineReleaseRoot | Out-Null
@@ -153,6 +173,9 @@ New-Item -ItemType Directory -Force -Path $engineReleaseRoot | Out-Null
 "WindowsSDKRootForMSBuild: $windowsSdkRootForMsbuild" | Add-Content -Path $buildLog -Encoding ASCII
 "WindowsSDKBinX86: $windowsSdkBinX86" | Add-Content -Path $buildLog -Encoding ASCII
 "WindowsSDKBinX64: $windowsSdkBinX64" | Add-Content -Path $buildLog -Encoding ASCII
+"VCToolsRoot: $vcToolsRoot" | Add-Content -Path $buildLog -Encoding ASCII
+"INCLUDE: $env:INCLUDE" | Add-Content -Path $buildLog -Encoding ASCII
+"LIB: $env:LIB" | Add-Content -Path $buildLog -Encoding ASCII
 
 $projects = @(
     "navopx2008\navopx2008.vcxproj",
