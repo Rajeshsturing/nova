@@ -40,6 +40,29 @@ using namespace ned;
 static char THIS_FILE[] = __FILE__;
 #endif
 
+static void _cocoon_stockcontainer_diag(const CString& roMessage)
+{
+	try
+	{
+		CFile oFile;
+		if (!oFile.Open(_T("C:\\app\\navo-native-diagnostics.log"),
+			CFile::modeCreate | CFile::modeNoTruncate | CFile::modeWrite | CFile::shareDenyNone))
+		{
+			return;
+		}
+
+		oFile.SeekToEnd();
+		CString oLine;
+		CTime oNow = CTime::GetCurrentTime();
+		oLine.Format(_T("%s [stockcontainer_ndoc] %s\r\n"),
+			(LPCTSTR)oNow.Format(_T("%Y-%m-%d %H:%M:%S")), (LPCTSTR)roMessage);
+		oFile.Write((LPCTSTR)oLine, oLine.GetLength() * sizeof(TCHAR));
+	}
+	catch (...)
+	{
+	}
+}
+
 cndoc_navoview_stock_container::cndoc_navoview_stock_container(CNavoException & roErrorStorage):
 	m_roErrorStorage(roErrorStorage)
 {
@@ -314,15 +337,28 @@ STDMETHODIMP cndoc_navoview_stock_container::XDynaDispatch::
 
 	ALL_TRY
 	{
+		CString oName;
+		if (rgszNames != NULL && cNames > 0 && rgszNames[0] != NULL)
+		{
+			oName = rgszNames[0];
+		}
+
 		HRESULT hr = ((IDispatch*)&pThis->m_xDispatch)->GetIDsOfNames(riid,rgszNames,cNames,lCid,rgDispId);
+		CString oPath(_T("native"));
 		if(hr == DISP_E_UNKNOWNNAME)
 		{
 			hr = pThis->_get_window()->Window_GetIDsOfNames(rgszNames,cNames,rgDispId);
+			oPath = _T("window");
 			if(hr == S_OK)
 			{
 				*rgDispId += FIRST_SCRIPT_DISPID;
 			}
 		}
+		CString oDiag;
+		oDiag.Format(_T("GetIDsOfNames name=%s path=%s hr=0x%08lx dispid=%ld cNames=%u"),
+			(LPCTSTR)oName, (LPCTSTR)oPath, hr,
+			(rgDispId != NULL && cNames > 0) ? *rgDispId : -1, cNames);
+		_cocoon_stockcontainer_diag(oDiag);
 		return hr;
 	}
 	TOP_ALL_CATCH(pThis->_error_storage(),DISP_E_EXCEPTION);
@@ -338,12 +374,17 @@ STDMETHODIMP cndoc_navoview_stock_container::XDynaDispatch::
 	{
 		if(dispId == DISPID_VALUE)
 		{
+			_cocoon_stockcontainer_diag(_T("Invoke DISPID_VALUE member not found"));
 			return DISP_E_MEMBERNOTFOUND;
 		}
 		if(dispId < FIRST_SCRIPT_DISPID)
 		{
 			HRESULT hr = ((IDispatch*)&pThis->m_xDispatch)->
 					Invoke(dispId,riid,lCid,wFlags,pDispParams,pVarResult,pExceptInfo,puArgError);
+			CString oDiag;
+			oDiag.Format(_T("Invoke native dispid=%ld hr=0x%08lx wFlags=0x%04x result_vt=0x%04x"),
+				dispId, hr, wFlags, (pVarResult != NULL) ? pVarResult->vt : VT_EMPTY);
+			_cocoon_stockcontainer_diag(oDiag);
 			ASSERT(hr != DISP_E_MEMBERNOTFOUND);
 			return hr;
 		}
@@ -352,8 +393,14 @@ STDMETHODIMP cndoc_navoview_stock_container::XDynaDispatch::
 			CInvokeForwarderHolder oPage_InvokeForwarderHolder(pThis->_get_page_disp_fwdr(),
 				NewSCP((IDispatch*)&pThis->m_xDynaDispatch,true));
 			
-			return pThis->_get_window()->Window_Invoke(dispId-FIRST_SCRIPT_DISPID,riid,lCid,
+			HRESULT hr = pThis->_get_window()->Window_Invoke(dispId-FIRST_SCRIPT_DISPID,riid,lCid,
 				wFlags,pDispParams,pVarResult,pExceptInfo,puArgError);
+			CString oDiag;
+			oDiag.Format(_T("Invoke window dispid=%ld script_dispid=%ld hr=0x%08lx wFlags=0x%04x result_vt=0x%04x"),
+				dispId, dispId-FIRST_SCRIPT_DISPID, hr, wFlags,
+				(pVarResult != NULL) ? pVarResult->vt : VT_EMPTY);
+			_cocoon_stockcontainer_diag(oDiag);
+			return hr;
 		}
 	}
 	TOP_ALL_CATCH_AUTOMATION(pThis->_error_storage(),pExceptInfo);

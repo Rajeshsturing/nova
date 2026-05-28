@@ -40,6 +40,47 @@ false;
 #endif
 #endif
 
+static void _cocoon_scripthost_diag(const CString& roMessage)
+{
+	try
+	{
+		CFile oFile;
+		if (!oFile.Open(_T("C:\\app\\navo-native-diagnostics.log"),
+			CFile::modeCreate | CFile::modeNoTruncate | CFile::modeWrite | CFile::shareDenyNone))
+		{
+			return;
+		}
+
+		oFile.SeekToEnd();
+		CString oLine;
+		CTime oNow = CTime::GetCurrentTime();
+		oLine.Format(_T("%s [scripthost] %s\r\n"),
+			(LPCTSTR)oNow.Format(_T("%Y-%m-%d %H:%M:%S")), (LPCTSTR)roMessage);
+		oFile.Write((LPCTSTR)oLine, oLine.GetLength() * sizeof(TCHAR));
+	}
+	catch (...)
+	{
+	}
+}
+
+static CString _cocoon_scripthost_format_params(DISPPARAMS* pDispParams)
+{
+	if (pDispParams == NULL)
+	{
+		return _T("args=null");
+	}
+
+	CString oText;
+	oText.Format(_T("argc=%u"), pDispParams->cArgs);
+	for (UINT iter = 0; iter < pDispParams->cArgs && pDispParams->rgvarg != NULL; iter++)
+	{
+		CString oArg;
+		oArg.Format(_T(" arg%u_vt=0x%04x"), iter, pDispParams->rgvarg[iter].vt);
+		oText += oArg;
+	}
+	return oText;
+}
+
 void CleanupScriptEngineEtc()
 {
 	if (_g_poProcessDebugManageSP.PointsObject())
@@ -699,17 +740,34 @@ DISPID CScriptUser::GetDISPID(const OLECHAR* pcFunctionName)
 
 HRESULT CScriptUser::__GetIDsOfNames(LPOLESTR* rgszNames, UINT cNames, DISPID* rgDispId)
 {
+	UINT nOriginalNames = cNames;
+	CString oName;
+	if (rgszNames != NULL && cNames > 0 && rgszNames[0] != NULL)
+	{
+		oName = rgszNames[0];
+	}
+
 	_InitScript();
+	HRESULT hr = S_OK;
 	while (cNames)
 	{
 		rgDispId[cNames - 1] = GetDISPID(rgszNames[cNames - 1]);
 		if (rgDispId[cNames - 1] == DISPID_NONE)
 		{
-			return DISP_E_UNKNOWNNAME;
+			hr = DISP_E_UNKNOWNNAME;
+			break;
 		}
 		cNames--;
 	}
-	return S_OK;
+
+	CString oDiag;
+	oDiag.Format(_T("__GetIDsOfNames nxid=%s name=%s hr=0x%08lx dispid=%ld cNames=%u functions=%ld"),
+		GetScriptNXID(), (LPCTSTR)oName, hr,
+		(rgDispId != NULL && nOriginalNames > 0) ? rgDispId[0] : -1,
+		nOriginalNames, m_oFunctionsArray.GetSize());
+	_cocoon_scripthost_diag(oDiag);
+
+	return hr;
 }
 
 HRESULT CScriptUser::__Invoke(DISPID dispId, REFIID riid, LCID lCid, WORD wFlags,
@@ -721,11 +779,53 @@ HRESULT CScriptUser::__Invoke(DISPID dispId, REFIID riid, LCID lCid, WORD wFlags
 	{
 		if (m_oFunctionsArray[iter].m_dispid == dispId)
 		{
-			ASSERT(m_oNIIArray.GetSize() == 0);	//name added too late
-			return m_poScriptHostSP->m_poImplementation->m_oDispatchSCP->
+			CString oFunctionName = m_oFunctionsArray[iter].m_oNameString;
+			CString oBeginDiag;
+			oBeginDiag.Format(_T("__Invoke begin nxid=%s function=%s dispid=%ld wFlags=0x%04x %s"),
+				GetScriptNXID(), (LPCTSTR)oFunctionName, dispId, wFlags,
+				(LPCTSTR)_cocoon_scripthost_format_params(pDispParams));
+			_cocoon_scripthost_diag(oBeginDiag);
+
+			ASSERT(m_oNIIArray.GetSize() == 0); //name added too late
+			HRESULT hr = m_poScriptHostSP->m_poImplementation->m_oDispatchSCP->
 				Invoke(dispId, riid, lCid, wFlags, pDispParams, pVarResult, pExceptInfo, puArgError);
+
+			CString oSource;
+			CString oDescription;
+			SCODE scode = 0;
+			WORD wCode = 0;
+			VARTYPE vtResult = VT_EMPTY;
+			if (pVarResult != NULL)
+			{
+				vtResult = pVarResult->vt;
+			}
+			if (pExceptInfo != NULL)
+			{
+				if (pExceptInfo->bstrSource != NULL)
+				{
+					oSource = pExceptInfo->bstrSource;
+				}
+				if (pExceptInfo->bstrDescription != NULL)
+				{
+					oDescription = pExceptInfo->bstrDescription;
+				}
+				scode = pExceptInfo->scode;
+				wCode = pExceptInfo->wCode;
+			}
+
+			CString oEndDiag;
+			oEndDiag.Format(_T("__Invoke end nxid=%s function=%s hr=0x%08lx result_vt=0x%04x wCode=%u scode=0x%08lx source=%s desc=%s"),
+				GetScriptNXID(), (LPCTSTR)oFunctionName, hr, vtResult, wCode, scode,
+				(LPCTSTR)oSource, (LPCTSTR)oDescription);
+			_cocoon_scripthost_diag(oEndDiag);
+			return hr;
 		}
 	}
+
+	CString oDiag;
+	oDiag.Format(_T("__Invoke member not found nxid=%s dispid=%ld wFlags=0x%04x"),
+		GetScriptNXID(), dispId, wFlags);
+	_cocoon_scripthost_diag(oDiag);
 	return DISP_E_MEMBERNOTFOUND;
 }
 
