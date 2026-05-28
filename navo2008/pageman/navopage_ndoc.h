@@ -38,6 +38,16 @@ public:
 	{
 		return m_poWindowSP;
 	}
+
+	LPDISPATCH GetDynamicDispatch(bool bAddRef = false)
+	{
+		LPDISPATCH lpDispatch = (IDispatch*)&m_xDynaDispatch;
+		if (bAddRef && lpDispatch != NULL)
+		{
+			lpDispatch->AddRef();
+		}
+		return lpDispatch;
+	}
 	
 	virtual long print(LPCTSTR lpPrinterName,const neps::cneps_printer_config & roPrinterConfig,
 		SCP<IDispatch> poPrintInfoSinkSP);

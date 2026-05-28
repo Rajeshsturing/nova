@@ -271,6 +271,11 @@ LPDISPATCH cndoc_application::fwd_getmoduleAUTO(long IdPage)
 		SCP<cndoc_page__> poModuleSP = m_poIntegratorSP->create_module(IdPage);
 		if (poModuleSP.PointsObject())
 		{
+			cndoc_navopage * poNavoPage = dynamic_cast<cndoc_navopage *>(poModuleSP.Get());
+			if (poNavoPage != NULL)
+			{
+				return poNavoPage->GetDynamicDispatch(true);
+			}
 			return poModuleSP->GetDispatch(true);
 		}
 		else
