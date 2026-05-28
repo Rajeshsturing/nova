@@ -32,9 +32,11 @@ function Find-NavoWindowsSdk {
     foreach ($version in $versions) {
         $include = Join-Path $includeRoot $version
         $midl = Join-Path "${env:ProgramFiles(x86)}\Windows Kits\10\bin" (Join-Path $version "x86\midl.exe")
+        $windowsHeader = Join-Path $include "um\Windows.h"
         $umLib = Join-Path "${env:ProgramFiles(x86)}\Windows Kits\10\Lib" (Join-Path $version "um\x86\kernel32.lib")
         $ucrtLib = Join-Path "${env:ProgramFiles(x86)}\Windows Kits\10\Lib" (Join-Path $version "ucrt\x86\ucrt.lib")
         if ((Test-Path (Join-Path $include "shared\basetsd.h")) -and
+            (Test-Path $windowsHeader) -and
             (Test-Path $midl) -and
             (Test-Path $umLib) -and
             (Test-Path $ucrtLib)) {

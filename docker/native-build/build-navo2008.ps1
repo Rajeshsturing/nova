@@ -58,9 +58,11 @@ function Find-NavoWindowsSdk {
     foreach ($version in $versions) {
         $include = Join-Path $includeRoot $version
         $midl = Join-Path "${env:ProgramFiles(x86)}\Windows Kits\10\bin" (Join-Path $version "x86\midl.exe")
+        $windowsHeader = Join-Path $include "um\Windows.h"
         $umLib = Join-Path "${env:ProgramFiles(x86)}\Windows Kits\10\Lib" (Join-Path $version "um\x86\kernel32.lib")
         $ucrtLib = Join-Path "${env:ProgramFiles(x86)}\Windows Kits\10\Lib" (Join-Path $version "ucrt\x86\ucrt.lib")
         if ((Test-Path (Join-Path $include "shared\basetsd.h")) -and
+            (Test-Path $windowsHeader) -and
             (Test-Path $midl) -and
             (Test-Path $umLib) -and
             (Test-Path $ucrtLib)) {
@@ -90,6 +92,8 @@ function Invoke-NavoMSBuild {
         /p:TrackFileAccess=false `
         /p:WindowsTargetPlatformVersion=$script:windowsSdkVersion `
         /p:WindowsSDKDir=$script:windowsSdkRoot `
+        /p:WindowsSDK_ExecutablePath_x86=$script:windowsSdkBinX86Slash `
+        /p:WindowsSDK_ExecutablePath_x64=$script:windowsSdkBinX64Slash `
         /v:minimal
 
     if ($LASTEXITCODE -ne 0) {
@@ -126,11 +130,16 @@ if (!$windowsSdk) {
 $windowsSdkVersion = $windowsSdk.Version
 $windowsSdkRoot = $windowsSdk.Root
 $windowsSdkBinX86 = Split-Path -Path $windowsSdk.MIDL -Parent
+$windowsSdkBinX64 = Join-Path $windowsSdkRoot (Join-Path "bin" (Join-Path $windowsSdkVersion "x64"))
+$windowsSdkBinX86Slash = "$windowsSdkBinX86\"
+$windowsSdkBinX64Slash = "$windowsSdkBinX64\"
 $env:WindowsSDKDir = $windowsSdkRoot
 $env:WindowsSdkDir = $windowsSdkRoot
 $env:WindowsSDKVersion = "$windowsSdkVersion\"
 $env:WindowsTargetPlatformVersion = $windowsSdkVersion
-$env:Path = "$windowsSdkBinX86;$env:Path"
+$env:WindowsSDK_ExecutablePath_x86 = $windowsSdkBinX86Slash
+$env:WindowsSDK_ExecutablePath_x64 = $windowsSdkBinX64Slash
+$env:Path = "$windowsSdkBinX86;$windowsSdkBinX64;$env:Path"
 
 New-Item -ItemType Directory -Force -Path $engineReleaseRoot | Out-Null
 
@@ -139,6 +148,7 @@ New-Item -ItemType Directory -Force -Path $engineReleaseRoot | Out-Null
 "CL: $cl" | Add-Content -Path $buildLog -Encoding ASCII
 "WindowsSDK: $windowsSdkVersion $($windowsSdk.MIDL)" | Add-Content -Path $buildLog -Encoding ASCII
 "WindowsSDKBinX86: $windowsSdkBinX86" | Add-Content -Path $buildLog -Encoding ASCII
+"WindowsSDKBinX64: $windowsSdkBinX64" | Add-Content -Path $buildLog -Encoding ASCII
 
 $projects = @(
     "navopx2008\navopx2008.vcxproj",
