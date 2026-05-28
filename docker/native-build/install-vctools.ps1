@@ -24,15 +24,23 @@ function Find-NavoWindowsSdk {
         return $null
     }
 
-    $versions = Get-ChildItem -Path $includeRoot -Directory -ErrorAction SilentlyContinue |
-        Where-Object { Test-Path (Join-Path $_.FullName "shared\basetsd.h") } |
-        Sort-Object Name -Descending
+    $allVersions = Get-ChildItem -Path $includeRoot -Directory -ErrorAction SilentlyContinue |
+        Select-Object -ExpandProperty Name
+    $preferredVersions = @("10.0.19041.0", "10.0.20348.0")
+    $versions = @($preferredVersions + ($allVersions | Sort-Object -Descending)) |
+        Select-Object -Unique
     foreach ($version in $versions) {
-        $midl = Join-Path "${env:ProgramFiles(x86)}\Windows Kits\10\bin" (Join-Path $version.Name "x86\midl.exe")
-        if (Test-Path $midl) {
+        $include = Join-Path $includeRoot $version
+        $midl = Join-Path "${env:ProgramFiles(x86)}\Windows Kits\10\bin" (Join-Path $version "x86\midl.exe")
+        $umLib = Join-Path "${env:ProgramFiles(x86)}\Windows Kits\10\Lib" (Join-Path $version "um\x86\kernel32.lib")
+        $ucrtLib = Join-Path "${env:ProgramFiles(x86)}\Windows Kits\10\Lib" (Join-Path $version "ucrt\x86\ucrt.lib")
+        if ((Test-Path (Join-Path $include "shared\basetsd.h")) -and
+            (Test-Path $midl) -and
+            (Test-Path $umLib) -and
+            (Test-Path $ucrtLib)) {
             return [pscustomobject]@{
-                Version = $version.Name
-                Include = $version.FullName
+                Version = $version
+                Include = $include
                 MIDL = $midl
             }
         }
