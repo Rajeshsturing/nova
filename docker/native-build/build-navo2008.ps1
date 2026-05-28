@@ -81,6 +81,32 @@ function Find-NavoWindowsSdk {
     return $null
 }
 
+function Write-NavoNativeBuildProps {
+    param([Parameter(Mandatory=$true)][string]$Path)
+
+    $props = @"
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemDefinitionGroup Condition="'`$(Configuration)|`$(Platform)'=='Release|Win32'">
+    <Midl>
+      <AdditionalIncludeDirectories>`$(WindowsSDKDir)\Include\`$(WindowsTargetPlatformVersion)\um;`$(WindowsSDKDir)\Include\`$(WindowsTargetPlatformVersion)\shared;`$(WindowsSDKDir)\Include\`$(WindowsTargetPlatformVersion)\ucrt;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </Midl>
+    <ClCompile>
+      <AdditionalIncludeDirectories>`$(WindowsSDKDir)\Include\`$(WindowsTargetPlatformVersion)\um;`$(WindowsSDKDir)\Include\`$(WindowsTargetPlatformVersion)\shared;`$(WindowsSDKDir)\Include\`$(WindowsTargetPlatformVersion)\ucrt;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <ResourceCompile>
+      <AdditionalIncludeDirectories>`$(WindowsSDKDir)\Include\`$(WindowsTargetPlatformVersion)\um;`$(WindowsSDKDir)\Include\`$(WindowsTargetPlatformVersion)\shared;`$(WindowsSDKDir)\Include\`$(WindowsTargetPlatformVersion)\ucrt;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+    <Link>
+      <AdditionalLibraryDirectories>`$(WindowsSDKDir)\Lib\`$(WindowsTargetPlatformVersion)\um\x86;`$(WindowsSDKDir)\Lib\`$(WindowsTargetPlatformVersion)\ucrt\x86;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+    </Link>
+  </ItemDefinitionGroup>
+</Project>
+"@
+
+    Set-Content -Path $Path -Value $props -Encoding UTF8
+}
+
 function Invoke-NavoMSBuild {
     param([Parameter(Mandatory=$true)][string]$ProjectPath)
 
@@ -98,6 +124,7 @@ function Invoke-NavoMSBuild {
         /p:WindowsSDKDir=$script:windowsSdkRootForMsbuild `
         /p:WindowsSDK_ExecutablePath_x86=$script:windowsSdkBinX86ForMsbuild `
         /p:WindowsSDK_ExecutablePath_x64=$script:windowsSdkBinX64ForMsbuild `
+        /p:ForceImportBeforeCppTargets=$script:nativeBuildPropsPath `
         /v:minimal
 
     if ($LASTEXITCODE -ne 0) {
@@ -172,6 +199,9 @@ $env:Path = "$windowsSdkBinX86;$windowsSdkBinX64;$env:Path"
 
 New-Item -ItemType Directory -Force -Path $engineReleaseRoot | Out-Null
 
+$nativeBuildPropsPath = Join-Path $solutionRoot "navo-native-build.props"
+Write-NavoNativeBuildProps -Path $nativeBuildPropsPath
+
 "Native build started: $(Get-Date -Format o)" | Set-Content -Path $buildLog -Encoding ASCII
 "MSBuild: $msbuild" | Add-Content -Path $buildLog -Encoding ASCII
 "CL: $cl" | Add-Content -Path $buildLog -Encoding ASCII
@@ -180,6 +210,7 @@ New-Item -ItemType Directory -Force -Path $engineReleaseRoot | Out-Null
 "WindowsSDKBinX86: $windowsSdkBinX86" | Add-Content -Path $buildLog -Encoding ASCII
 "WindowsSDKBinX64: $windowsSdkBinX64" | Add-Content -Path $buildLog -Encoding ASCII
 "VCToolsRoot: $vcToolsRoot" | Add-Content -Path $buildLog -Encoding ASCII
+"NativeBuildProps: $nativeBuildPropsPath" | Add-Content -Path $buildLog -Encoding ASCII
 "INCLUDE: $env:INCLUDE" | Add-Content -Path $buildLog -Encoding ASCII
 "LIB: $env:LIB" | Add-Content -Path $buildLog -Encoding ASCII
 
