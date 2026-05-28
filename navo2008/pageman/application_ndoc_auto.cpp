@@ -49,6 +49,28 @@ using namespace ned;
 #include "navoview_impl_cont_ndoc.h"
 #include "mainwindow_ndoc.h"
 
+static void _cocoon_application_diag(const CString& roMessage)
+{
+	try
+	{
+		CFile oFile;
+		if (!oFile.Open(_T("C:\\app\\navo-native-diagnostics.log"),
+			CFile::modeCreate | CFile::modeNoTruncate | CFile::modeWrite | CFile::shareDenyNone))
+		{
+			return;
+		}
+
+		oFile.SeekToEnd();
+		CString oLine;
+		CTime oNow = CTime::GetCurrentTime();
+		oLine.Format(_T("%s [application_ndoc] %s\r\n"),
+			(LPCTSTR)oNow.Format(_T("%Y-%m-%d %H:%M:%S")), (LPCTSTR)roMessage);
+		oFile.Write((LPCTSTR)oLine, oLine.GetLength() * sizeof(TCHAR));
+	}
+	catch (...)
+	{
+	}
+}
 
 BEGIN_DISPATCH_MAP(cndoc_application, CNavoThread)
 	//{{AFX_DISPATCH_MAP(cndoc_application)
@@ -271,12 +293,12 @@ LPDISPATCH cndoc_application::fwd_getmoduleAUTO(long IdPage)
 		SCP<cndoc_page__> poModuleSP = m_poIntegratorSP->create_module(IdPage);
 		if (poModuleSP.PointsObject())
 		{
-			cndoc_navopage * poNavoPage = dynamic_cast<cndoc_navopage *>(poModuleSP.Get());
-			if (poNavoPage != NULL)
-			{
-				return poNavoPage->GetDynamicDispatch(true);
-			}
-			return poModuleSP->GetDispatch(true);
+			LPDISPATCH lpDispatch = poModuleSP->GetDynamicDispatch(true);
+			CString oDiag;
+			oDiag.Format(_T("fwd_getmodule page=%ld dispatch=0x%08lx iid=%ld"),
+				IdPage, (long)lpDispatch, poModuleSP->get_iid());
+			_cocoon_application_diag(oDiag);
+			return lpDispatch;
 		}
 		else
 		{

@@ -50,6 +50,11 @@ public:
 	SCP<CNEO_trans> get_transaction();
 
 	virtual bool on_action_results(ned_action_result & roActionResults);
+
+	virtual LPDISPATCH GetDynamicDispatch(bool bAddRef = false)
+	{
+		return GetDispatch(bAddRef);
+	}
 	
 	virtual long print(LPCTSTR lpPrinterName,const neps::cneps_printer_config & roPrinterConfig,
 		SCP<IDispatch> poPrintInfoSinkSP) = 0;

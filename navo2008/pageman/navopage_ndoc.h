@@ -39,7 +39,7 @@ public:
 		return m_poWindowSP;
 	}
 
-	LPDISPATCH GetDynamicDispatch(bool bAddRef = false)
+	virtual LPDISPATCH GetDynamicDispatch(bool bAddRef = false)
 	{
 		LPDISPATCH lpDispatch = (IDispatch*)&m_xDynaDispatch;
 		if (bAddRef && lpDispatch != NULL)
