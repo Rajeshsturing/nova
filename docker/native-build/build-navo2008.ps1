@@ -98,10 +98,6 @@ function Invoke-NavoMSBuild {
         /p:WindowsSDKDir=$script:windowsSdkRootForMsbuild `
         /p:WindowsSDK_ExecutablePath_x86=$script:windowsSdkBinX86ForMsbuild `
         /p:WindowsSDK_ExecutablePath_x64=$script:windowsSdkBinX64ForMsbuild `
-        /p:WindowsSDK_IncludePath=$script:nativeIncludePathForMsbuild `
-        /p:WindowsSDK_LibraryPath_x86=$script:nativeLibPathForMsbuild `
-        /p:IncludePath=$script:nativeIncludePathForMsbuild `
-        /p:LibraryPath=$script:nativeLibPathForMsbuild `
         /v:minimal
 
     if ($LASTEXITCODE -ne 0) {
