@@ -6,6 +6,7 @@ $runtimeRoot = "C:\navo_eb\System"
 $appRoot = "C:\navo_eb\Applications\EuroBusiness 5.0"
 $extrasRoot = Join-Path $appRoot "Extras"
 $fileCacheRoot = "C:\navo_eb\FileCache\"
+$tempFilesRoot = "C:\navo_eb\TempFiles"
 $regAsm = "$env:windir\Microsoft.NET\Framework\v4.0.30319\RegAsm.exe"
 $regSvr32 = "$env:windir\SysWOW64\regsvr32.exe"
 
@@ -22,6 +23,7 @@ New-Item -ItemType Directory -Force -Path $runtimeRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $appRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $extrasRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $fileCacheRoot | Out-Null
+New-Item -ItemType Directory -Force -Path $tempFilesRoot | Out-Null
 
 Copy-Item -Path (Join-Path $runtimeSourceRoot "*") -Destination $runtimeRoot -Recurse -Force
 Copy-Item -Path (Join-Path $appSourceRoot "*") -Destination $appRoot -Recurse -Force
