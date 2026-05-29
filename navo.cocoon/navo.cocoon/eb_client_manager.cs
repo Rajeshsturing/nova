@@ -107,6 +107,11 @@ namespace navo.cocoon
 
                 Tuple<login_result, eb_client> oTuple = eb_client.try_create_client(oExternalLogin, fpNEObjectFactory, fpNEObjectListFactory);
 
+                if (oTuple.Item2 == null)
+                {
+                    return oTuple.Item1;
+                }
+
                 string strToken = _generate_token();
                 oTuple.Item1.token = strToken;
 
