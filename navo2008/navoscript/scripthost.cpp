@@ -96,6 +96,7 @@ static HRESULT CreateDebugApplication()
 {
 	if (!_g_bAllowDebugging)
 	{
+		_cocoon_scripthost_diag(_T("CreateDebugApplication skipped disabled"));
 		return S_OK;
 	}
 #ifdef _DEBUG
@@ -105,6 +106,7 @@ static HRESULT CreateDebugApplication()
 		if (oDenyString == "Y")
 		{
 			_g_bAllowDebugging = FALSE;
+			_cocoon_scripthost_diag(_T("CreateDebugApplication disabled by registry"));
 			return S_OK;
 		}
 	}
@@ -114,8 +116,9 @@ static HRESULT CreateDebugApplication()
 		SafeGetRegistryKeyString(HKEY_LOCAL_MACHINE, GetSupportRegistryKeyName(), _T("AllowScriptDebugger"), oAllowString);
 		if (oAllowString != "188cb150-82a4-4498-87d0-ebd8d9a00fb8")
 		{
-			ASSERT(false);		//masz nieprawid³owy wpis w registry
+			ASSERT(false);
 			_g_bAllowDebugging = FALSE;
+			_cocoon_scripthost_diag(_T("CreateDebugApplication disabled missing allow token"));
 			return S_OK;
 		}
 	}
@@ -128,27 +131,55 @@ static HRESULT CreateDebugApplication()
 		}
 		catch (...)
 		{
-			return E_FAIL;
+			_g_bAllowDebugging = FALSE;
+			_cocoon_scripthost_diag(_T("CreateDebugApplication CreateInstance failed; debugging disabled"));
+			return S_OK;
+		}
+		if (_g_poProcessDebugManageSP.PointsNull())
+		{
+			_g_bAllowDebugging = FALSE;
+			_cocoon_scripthost_diag(_T("CreateDebugApplication ProcessDebugManager null; debugging disabled"));
+			return S_OK;
 		}
 		HRESULT hr = _g_poProcessDebugManageSP->CreateApplication(&_g_poDebugApplicationSP.GetRawPointer());
 		if (hr != S_OK)
 		{
-			return hr;
+			CString oDiag;
+			oDiag.Format(_T("CreateDebugApplication CreateApplication hr=0x%08lx; debugging disabled"), hr);
+			_cocoon_scripthost_diag(oDiag);
+			_g_bAllowDebugging = FALSE;
+			_g_poDebugApplicationSP = 0;
+			_g_poProcessDebugManageSP = 0;
+			return S_OK;
 		}
 		ASSERT(_g_poDebugApplicationSP.PointsObject());
 		hr = _g_poDebugApplicationSP->SetName(L"NAVO Enterprise 2023");
 		if (hr != S_OK)
 		{
-			return hr;
+			CString oDiag;
+			oDiag.Format(_T("CreateDebugApplication SetName hr=0x%08lx; debugging disabled"), hr);
+			_cocoon_scripthost_diag(oDiag);
+			_g_bAllowDebugging = FALSE;
+			_g_poDebugApplicationSP = 0;
+			_g_poProcessDebugManageSP = 0;
+			return S_OK;
 		}
 		hr = _g_poProcessDebugManageSP->AddApplication(_g_poDebugApplicationSP, &_g_dwDebugAppCookie);
 		if (hr != S_OK)
 		{
-			return hr;
+			CString oDiag;
+			oDiag.Format(_T("CreateDebugApplication AddApplication hr=0x%08lx; debugging disabled"), hr);
+			_cocoon_scripthost_diag(oDiag);
+			_g_bAllowDebugging = FALSE;
+			_g_poDebugApplicationSP = 0;
+			_g_poProcessDebugManageSP = 0;
+			return S_OK;
 		}
 	}
+	_cocoon_scripthost_diag(_T("CreateDebugApplication ok"));
 	return S_OK;
 }
+
 
 BEGIN_INTERFACE_MAP(CScriptHostImpl, CCmdTargetInterface)
 	INTERFACE_PART(CScriptHostImpl, IID_IActiveScriptSite, ActiveScriptSite)
@@ -209,41 +240,63 @@ HRESULT CScriptHostImpl::PrepareDebugging(LPCOLESTR pScriptCode)
 {
 	if (!_g_bAllowDebugging)
 	{
+		_cocoon_scripthost_diag(_T("PrepareDebugging skipped disabled"));
 		return S_OK;
 	}
-	ASSERT(_g_poProcessDebugManageSP.PointsObject());
-	//TO_DO maybe addref na debug application
+	if (_g_poProcessDebugManageSP.PointsNull() || _g_poDebugApplicationSP.PointsNull())
+	{
+		_g_bAllowDebugging = FALSE;
+		_cocoon_scripthost_diag(_T("PrepareDebugging skipped missing debug application"));
+		return S_OK;
+	}
+
 	HRESULT hr = _g_poProcessDebugManageSP->CreateDebugDocumentHelper(NULL, &m_poDebugDocHelperSP.GetRawPointer());
 	if (hr != S_OK)
 	{
-		return hr;
+		CString oDiag;
+		oDiag.Format(_T("PrepareDebugging CreateDebugDocumentHelper hr=0x%08lx; skipped"), hr);
+		_cocoon_scripthost_diag(oDiag);
+		return S_OK;
 	}
 	CBStr oDocumentNameBstr(m_oDocumentNameString);
-	ASSERT(_g_poDebugApplicationSP.PointsObject());
 	hr = m_poDebugDocHelperSP->Init(_g_poDebugApplicationSP, oDocumentNameBstr, oDocumentNameBstr, TEXT_DOC_ATTR_READONLY);
 	if (hr != S_OK)
 	{
-		return hr;
+		CString oDiag;
+		oDiag.Format(_T("PrepareDebugging Init hr=0x%08lx; skipped"), hr);
+		_cocoon_scripthost_diag(oDiag);
+		return S_OK;
 	}
 	hr = m_poDebugDocHelperSP->Attach(NULL);
 	if (hr != S_OK)
 	{
-		return hr;
+		CString oDiag;
+		oDiag.Format(_T("PrepareDebugging Attach hr=0x%08lx; skipped"), hr);
+		_cocoon_scripthost_diag(oDiag);
+		return S_OK;
 	}
 	hr = m_poDebugDocHelperSP->AddUnicodeText(pScriptCode);
 	if (hr != S_OK)
 	{
-		return hr;
+		CString oDiag;
+		oDiag.Format(_T("PrepareDebugging AddUnicodeText hr=0x%08lx; skipped"), hr);
+		_cocoon_scripthost_diag(oDiag);
+		return S_OK;
 	}
 	ULONG scriptLength = wcslen(pScriptCode);
 	DWORD dwNothing;
 	hr = m_poDebugDocHelperSP->DefineScriptBlock(0, scriptLength, m_oActiveScriptSCP, FALSE, &dwNothing);
 	if (hr != S_OK)
 	{
-		return hr;
+		CString oDiag;
+		oDiag.Format(_T("PrepareDebugging DefineScriptBlock hr=0x%08lx; skipped"), hr);
+		_cocoon_scripthost_diag(oDiag);
+		return S_OK;
 	}
+	_cocoon_scripthost_diag(_T("PrepareDebugging ok"));
 	return S_OK;
 }
+
 
 void CScriptHostImpl::AddNamedItem(SCP<CNamedItemInfo>& rpoNamedItemSP)
 {
@@ -279,6 +332,7 @@ void CScriptHostImpl::Init(LPCOLESTR pScriptCode, LPCTSTR pDocumentName)
 		_cocoon_scripthost_diag(oDiag);
 	}
 
+	_cocoon_scripthost_diag(_T("impl Init PrepareDebugging begin"));
 	HRESULT hrDebug = PrepareDebugging(pScriptCode);
 	{
 		CString oDiag;
