@@ -324,69 +324,122 @@ void CScriptHostImpl::AddNamedItem(SCP<CNamedItemInfo>& rpoNamedItemSP)
 
 void CScriptHostImpl::Init(LPCOLESTR pScriptCode, LPCTSTR pDocumentName)
 {
-	m_oDocumentNameString = CString(pDocumentName);
+	CString oStage(_T("entry"));
+	try
 	{
-		CString oDiag;
-		oDiag.Format(_T("impl Init begin doc=%s script_len=%lu"),
-			pDocumentName, pScriptCode != NULL ? (unsigned long)wcslen(pScriptCode) : 0);
-		_cocoon_scripthost_diag(oDiag);
-	}
+		m_oDocumentNameString = CString(pDocumentName);
+		{
+			CString oDiag;
+			oDiag.Format(_T("impl Init begin doc=%s script_len=%lu"),
+				pDocumentName, pScriptCode != NULL ? (unsigned long)wcslen(pScriptCode) : 0);
+			_cocoon_scripthost_diag(oDiag);
+		}
 
-	_cocoon_scripthost_diag(_T("impl Init PrepareDebugging begin"));
-	HRESULT hrDebug = PrepareDebugging(pScriptCode);
-	{
-		CString oDiag;
-		oDiag.Format(_T("impl Init PrepareDebugging hr=0x%08lx"), hrDebug);
-		_cocoon_scripthost_diag(oDiag);
-	}
-	VERIFY(hrDebug == S_OK);
+		oStage = _T("PrepareDebugging");
+		_cocoon_scripthost_diag(_T("impl Init PrepareDebugging begin"));
+		HRESULT hrDebug = PrepareDebugging(pScriptCode);
+		{
+			CString oDiag;
+			oDiag.Format(_T("impl Init PrepareDebugging hr=0x%08lx"), hrDebug);
+			_cocoon_scripthost_diag(oDiag);
+		}
+		VERIFY(hrDebug == S_OK);
 
-	HRESULT hr = m_oActiveScriptParseSCP->ParseScriptText(pScriptCode, NULL, NULL, NULL, 0, 0,
-		SCRIPTTEXT_ISPERSISTENT, NULL, &m_oExcepInfo);
-	{
-		CString oErr;
+		oStage = _T("ParseScriptText");
+		_cocoon_scripthost_diag(_T("impl Init ParseScriptText begin"));
+		HRESULT hr = m_oActiveScriptParseSCP->ParseScriptText(pScriptCode, NULL, NULL, NULL, 0, 0,
+			SCRIPTTEXT_ISPERSISTENT, NULL, &m_oExcepInfo);
+		{
+			CString oErr;
+			if (hr != S_OK)
+			{
+				oErr = GetErrorDesc();
+			}
+			CString oDiag;
+			oDiag.Format(_T("impl Init ParseScriptText hr=0x%08lx err=%s"), hr, (LPCTSTR)oErr);
+			_cocoon_scripthost_diag(oDiag);
+		}
 		if (hr != S_OK)
 		{
-			oErr = GetErrorDesc();
+			ThrowNavoException2(ERCO_SCRIPTENGINE_PARSINGFAILED, IDPAGE_NOTAVAILABLE, (LPCTSTR)GetErrorDesc(),
+				SCODE_To_String(hr));
+		};
+
+		oStage = _T("SetScriptState_CONNECTED");
+		_cocoon_scripthost_diag(_T("impl Init SetScriptState CONNECTED begin"));
+		hr = m_oActiveScriptSCP->SetScriptState(SCRIPTSTATE_CONNECTED);
+		{
+			CString oErr;
+			if (hr != S_OK)
+			{
+				oErr = GetErrorDesc();
+			}
+			CString oDiag;
+			oDiag.Format(_T("impl Init SetScriptState CONNECTED hr=0x%08lx err=%s"), hr, (LPCTSTR)oErr);
+			_cocoon_scripthost_diag(oDiag);
 		}
-		CString oDiag;
-		oDiag.Format(_T("impl Init ParseScriptText hr=0x%08lx err=%s"), hr, (LPCTSTR)oErr);
-		_cocoon_scripthost_diag(oDiag);
-	}
-	if (hr != S_OK)
-	{
-		ThrowNavoException2(ERCO_SCRIPTENGINE_PARSINGFAILED, IDPAGE_NOTAVAILABLE, (LPCTSTR)GetErrorDesc(),
-			SCODE_To_String(hr));
-	};
-	hr = m_oActiveScriptSCP->SetScriptState(SCRIPTSTATE_CONNECTED);
-	{
-		CString oErr;
 		if (hr != S_OK)
 		{
-			oErr = GetErrorDesc();
+			ThrowNavoException1(ERCO_SETSCRIPTSTATE_FAILED, IDPAGE_NOTAVAILABLE, SCODE_To_String(hr));
+		};
+
+		oStage = _T("GetScriptDispatch");
+		_cocoon_scripthost_diag(_T("impl Init GetScriptDispatch begin"));
+		hr = m_oActiveScriptSCP->GetScriptDispatch(NULL, &m_oDispatchSCP.GetRawPointer());
+		{
+			CString oDiag;
+			oDiag.Format(_T("impl Init GetScriptDispatch hr=0x%08lx dispatch_null=%d"),
+				hr, m_oDispatchSCP.PointsNull() ? 1 : 0);
+			_cocoon_scripthost_diag(oDiag);
 		}
-		CString oDiag;
-		oDiag.Format(_T("impl Init SetScriptState CONNECTED hr=0x%08lx err=%s"), hr, (LPCTSTR)oErr);
-		_cocoon_scripthost_diag(oDiag);
+		if (hr != S_OK)
+		{
+			ThrowNavoException1(ERCO_GETSCRIPTDISPATCH_FAILED, IDPAGE_NOTAVAILABLE, SCODE_To_String(hr));
+		};
+		ASSERT(m_oDispatchSCP.PointsObject());
+		_cocoon_scripthost_diag(_T("impl Init end"));
 	}
-	if (hr != S_OK)
-	{
-		ThrowNavoException1(ERCO_SETSCRIPTSTATE_FAILED, IDPAGE_NOTAVAILABLE, SCODE_To_String(hr));
-	};
-	hr = m_oActiveScriptSCP->GetScriptDispatch(NULL, &m_oDispatchSCP.GetRawPointer());
+	catch (...)
 	{
 		CString oDiag;
-		oDiag.Format(_T("impl Init GetScriptDispatch hr=0x%08lx dispatch_null=%d"),
-			hr, m_oDispatchSCP.PointsNull() ? 1 : 0);
+		oDiag.Format(_T("impl Init exception stage=%s err=%s"), (LPCTSTR)oStage, (LPCTSTR)GetErrorDesc());
 		_cocoon_scripthost_diag(oDiag);
+		throw;
 	}
-	if (hr != S_OK)
-	{
-		ThrowNavoException1(ERCO_GETSCRIPTDISPATCH_FAILED, IDPAGE_NOTAVAILABLE, SCODE_To_String(hr));
-	};
-	ASSERT(m_oDispatchSCP.PointsObject());
-	_cocoon_scripthost_diag(_T("impl Init end"));
 }
+
+
+DISPID CScriptHostImpl::GetDISPID(const OLECHAR* pocName) const
+{
+	CString oName;
+	if (pocName != NULL)
+	{
+		oName = pocName;
+	}
+	{
+		CString oDiag;
+		oDiag.Format(_T("impl GetDISPID begin name=%s dispatch_null=%d"),
+			(LPCTSTR)oName, m_oDispatchSCP.PointsNull() ? 1 : 0);
+		_cocoon_scripthost_diag(oDiag);
+	}
+	ASSERT(m_oDispatchSCP.PointsObject());
+	try
+	{
+		DISPID dispid = DispatchGetIdOfName(m_oDispatchSCP.ConstCastObject(), pocName);
+		CString oDiag;
+		oDiag.Format(_T("impl GetDISPID end name=%s dispid=%ld"), (LPCTSTR)oName, dispid);
+		_cocoon_scripthost_diag(oDiag);
+		return dispid;
+	}
+	catch (...)
+	{
+		CString oDiag;
+		oDiag.Format(_T("impl GetDISPID exception name=%s"), (LPCTSTR)oName);
+		_cocoon_scripthost_diag(oDiag);
+		throw;
+	}
+}
+
 
 void CScriptHostImpl::InitWithNXID(LPCTSTR lpNXID)
 {
@@ -487,19 +540,30 @@ GetItemInfo(LPCOLESTR lpItemName, DWORD dwReturnMask, IUnknown** ppIUnknown,
 	ITypeInfo** ppTypeInfo)
 {
 	METHOD_PROLOGUE(CScriptHostImpl, ActiveScriptSite)
-		if (dwReturnMask & SCRIPTINFO_ITYPEINFO)
+
+	CString oItemName(lpItemName);
+	{
+		CString oDiag;
+		oDiag.Format(_T("ActiveScriptSite GetItemInfo begin item=%s mask=0x%08lx"),
+			(LPCTSTR)oItemName, dwReturnMask);
+		_cocoon_scripthost_diag(oDiag);
+	}
+
+	if (dwReturnMask & SCRIPTINFO_ITYPEINFO)
+	{
+		if (ppTypeInfo == NULL)
 		{
-			if (ppTypeInfo == NULL)
-			{
-				return E_INVALIDARG;
-			}
-			*ppTypeInfo = NULL;
+			_cocoon_scripthost_diag(_T("ActiveScriptSite GetItemInfo invalid null typeinfo out"));
+			return E_INVALIDARG;
 		}
+		*ppTypeInfo = NULL;
+	}
 
 	if (dwReturnMask & SCRIPTINFO_IUNKNOWN)
 	{
 		if (ppIUnknown == NULL)
 		{
+			_cocoon_scripthost_diag(_T("ActiveScriptSite GetItemInfo invalid null unknown out"));
 			return E_INVALIDARG;
 		}
 		*ppIUnknown = NULL;
@@ -508,6 +572,9 @@ GetItemInfo(LPCOLESTR lpItemName, DWORD dwReturnMask, IUnknown** ppIUnknown,
 	SCP<CNamedItemInfo> poNamedItemSP;
 	if (!pThis->m_oNamedItemsMap.Lookup(lpItemName, poNamedItemSP))
 	{
+		CString oDiag;
+		oDiag.Format(_T("ActiveScriptSite GetItemInfo missing item=%s"), (LPCTSTR)oItemName);
+		_cocoon_scripthost_diag(oDiag);
 		return TYPE_E_ELEMENTNOTFOUND;
 	}
 	ASSERT(poNamedItemSP.PointsObject());
@@ -521,9 +588,17 @@ GetItemInfo(LPCOLESTR lpItemName, DWORD dwReturnMask, IUnknown** ppIUnknown,
 	}
 	if (dwReturnMask & SCRIPTINFO_IUNKNOWN)
 	{
-		ASSERT(poNamedItemSP->Dispatch());	//IDispatch is a must
+		ASSERT(poNamedItemSP->Dispatch());
 		poNamedItemSP->Dispatch()->AddRef();
 		*ppIUnknown = poNamedItemSP->Dispatch();
+	}
+	{
+		CString oDiag;
+		oDiag.Format(_T("ActiveScriptSite GetItemInfo end item=%s unknown_null=%d typeinfo_null=%d"),
+			(LPCTSTR)oItemName,
+			(ppIUnknown == NULL || *ppIUnknown == NULL) ? 1 : 0,
+			(ppTypeInfo == NULL || *ppTypeInfo == NULL) ? 1 : 0);
+		_cocoon_scripthost_diag(oDiag);
 	}
 	return S_OK;
 };
@@ -531,34 +606,67 @@ GetItemInfo(LPCOLESTR lpItemName, DWORD dwReturnMask, IUnknown** ppIUnknown,
 STDMETHODIMP CScriptHostImpl::XActiveScriptSite::GetDocVersionString(BSTR*)
 {
 	METHOD_PROLOGUE(CScriptHostImpl, ActiveScriptSite)
-		return E_NOTIMPL;
+	_cocoon_scripthost_diag(_T("ActiveScriptSite GetDocVersionString E_NOTIMPL"));
+	return E_NOTIMPL;
 };
 
 STDMETHODIMP CScriptHostImpl::XActiveScriptSite::GetLCID(LCID* pLCID)
 {
 	METHOD_PROLOGUE(CScriptHostImpl, ActiveScriptSite)
-		ASSERT(pLCID);
+	if (pLCID == NULL)
+	{
+		_cocoon_scripthost_diag(_T("ActiveScriptSite GetLCID null out"));
+		return E_POINTER;
+	}
 	(*pLCID) = GetWorkingLCID();
+	{
+		CString oDiag;
+		oDiag.Format(_T("ActiveScriptSite GetLCID lcid=%lu"), *pLCID);
+		_cocoon_scripthost_diag(oDiag);
+	}
 	return S_OK;
 };
 
-STDMETHODIMP CScriptHostImpl::XActiveScriptSite::OnScriptTerminate(const VARIANT*, const EXCEPINFO* /*pExcepInfo*/)
+STDMETHODIMP CScriptHostImpl::XActiveScriptSite::OnScriptTerminate(const VARIANT* pvarResult, const EXCEPINFO* pExcepInfo)
 {
 	METHOD_PROLOGUE(CScriptHostImpl, ActiveScriptSite)
-		return S_OK;
+	CString oSource;
+	CString oDescription;
+	VARTYPE vtResult = VT_EMPTY;
+	if (pvarResult != NULL)
+	{
+		vtResult = pvarResult->vt;
+	}
+	if (pExcepInfo != NULL)
+	{
+		oSource = pExcepInfo->bstrSource;
+		oDescription = pExcepInfo->bstrDescription;
+	}
+	{
+		CString oDiag;
+		oDiag.Format(_T("ActiveScriptSite OnScriptTerminate result_vt=0x%04x source=%s desc=%s"),
+			vtResult, (LPCTSTR)oSource, (LPCTSTR)oDescription);
+		_cocoon_scripthost_diag(oDiag);
+	}
+	return S_OK;
 };
 
-STDMETHODIMP CScriptHostImpl::XActiveScriptSite::OnStateChange(SCRIPTSTATE)
+STDMETHODIMP CScriptHostImpl::XActiveScriptSite::OnStateChange(SCRIPTSTATE ssScriptState)
 {
 	METHOD_PROLOGUE(CScriptHostImpl, ActiveScriptSite)
-		return S_OK;
+	{
+		CString oDiag;
+		oDiag.Format(_T("ActiveScriptSite OnStateChange state=%d"), ssScriptState);
+		_cocoon_scripthost_diag(oDiag);
+	}
+	return S_OK;
 };
 
 STDMETHODIMP CScriptHostImpl::XActiveScriptSite::OnScriptError(IActiveScriptError* pScriptError)
 {
 	METHOD_PROLOGUE(CScriptHostImpl, ActiveScriptSite)
 
-		CBStr oErrorLineTextBStr;
+	CBStr oErrorLineTextBStr;
 	HRESULT hr = pScriptError->GetSourceLineText(&oErrorLineTextBStr.GetRawPointer());
 	if (hr == S_OK)
 	{
@@ -585,30 +693,39 @@ STDMETHODIMP CScriptHostImpl::XActiveScriptSite::OnScriptError(IActiveScriptErro
 STDMETHODIMP CScriptHostImpl::XActiveScriptSite::OnEnterScript()
 {
 	METHOD_PROLOGUE(CScriptHostImpl, ActiveScriptSite)
-		return S_OK;
+	_cocoon_scripthost_diag(_T("ActiveScriptSite OnEnterScript"));
+	return S_OK;
 };
 
 STDMETHODIMP CScriptHostImpl::XActiveScriptSite::OnLeaveScript()
 {
 	METHOD_PROLOGUE(CScriptHostImpl, ActiveScriptSite)
-		return S_OK;
+	_cocoon_scripthost_diag(_T("ActiveScriptSite OnLeaveScript"));
+	return S_OK;
 };
 
 STDMETHODIMP CScriptHostImpl::XActiveScriptSiteWindow::GetWindow(HWND* phWindow)
 {
 	METHOD_PROLOGUE(CScriptHostImpl, ActiveScriptSiteWindow)
-		ASSERT(AfxGetThread());
+	if (phWindow == NULL)
+	{
+		_cocoon_scripthost_diag(_T("ActiveScriptSiteWindow GetWindow null out"));
+		return E_POINTER;
+	}
+	ASSERT(AfxGetThread());
 	if (AfxGetThread()->m_pMainWnd)
 	{
 		*phWindow = AfxGetThread()->m_pMainWnd->m_hWnd;
 	}
 	else
 	{
-		/*
-			to jest wymagane, gdy skrypt wykonuje siê bez UI, a chce wyœwietliæ
-			komunikat (msg box)
-		*/
 		*phWindow = ::GetDesktopWindow();
+	}
+	{
+		CString oDiag;
+		oDiag.Format(_T("ActiveScriptSiteWindow GetWindow hwnd=0x%08lx mainwnd_null=%d"),
+			(long)(*phWindow), AfxGetThread()->m_pMainWnd ? 0 : 1);
+		_cocoon_scripthost_diag(oDiag);
 	}
 	return S_OK;
 }
@@ -616,11 +733,21 @@ STDMETHODIMP CScriptHostImpl::XActiveScriptSiteWindow::GetWindow(HWND* phWindow)
 STDMETHODIMP CScriptHostImpl::XActiveScriptSiteWindow::EnableModeless(BOOL bEnable)
 {
 	METHOD_PROLOGUE(CScriptHostImpl, ActiveScriptSiteWindow)
-		HWND hWnd;
-	GetWindow(&hWnd);
+	HWND hWnd;
+	HRESULT hr = GetWindow(&hWnd);
+	if (hr != S_OK)
+	{
+		return hr;
+	}
 	::EnableWindow(hWnd, bEnable);
+	{
+		CString oDiag;
+		oDiag.Format(_T("ActiveScriptSiteWindow EnableModeless enable=%d hwnd=0x%08lx"), bEnable, (long)hWnd);
+		_cocoon_scripthost_diag(oDiag);
+	}
 	return S_OK;
 }
+
 
 #ifdef _FULL_DEBUG_SUPPORT
 STDMETHODIMP CScriptHostImpl::XActiveScriptSiteDebug::

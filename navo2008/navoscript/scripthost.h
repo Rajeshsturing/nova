@@ -37,11 +37,7 @@ public:
 		
 		return invoke_ok;
 	};
-	DISPID GetDISPID(const OLECHAR* pocName) const
-	{
-		ASSERT(m_oDispatchSCP.PointsObject());
-		return DispatchGetIdOfName(m_oDispatchSCP.ConstCastObject(), pocName);
-	}
+	DISPID GetDISPID(const OLECHAR* pocName) const;
 	//{{AFX_VIRTUAL(CScriptHostImpl)
 	//}}AFX_VIRTUAL
 	virtual ~CScriptHostImpl();
