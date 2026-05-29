@@ -174,13 +174,23 @@ join n5rejestrdok r on z.pRejestrDok = r.IdObj and r.eTyp in (33, 56)
 
                 if (oParams.get_lines)
                 {
+                    List<int> arrIds;
+
                     using (ne_trans oTransaction = oClientAccess.create_transaction())
                     using (ne_recordset oRecordset = oTransaction.createadors(strSQL))
                     {
-                        oQueryResults.direct_data = _read_first_column_ids(oRecordset)
-                            .Select(id_ => oTransaction.read_order(oClientAccess, id_, true))
-                            .ToArray();
+                        arrIds = _read_first_column_ids(oRecordset);
                     }
+
+                    oQueryResults.direct_data = arrIds
+                        .Select(id_ =>
+                        {
+                            using (ne_trans oDocumentTransaction = oClientAccess.create_transaction())
+                            {
+                                return oDocumentTransaction.read_order(oClientAccess, id_, true);
+                            }
+                        })
+                        .ToArray();
                 }
                 else
                 {
@@ -315,13 +325,23 @@ join n5rejestrdok r on s.pRejestrDok = r.IdObj and r.eTyp in (1, 2, 35, 36, 49, 
 
                 if (oParams.get_lines)
                 {
+                    List<int> arrIds;
+
                     using (ne_trans oTransaction = oClientAccess.create_transaction())
                     using (ne_recordset oRecordset = oTransaction.createadors(strSQL))
                     {
-                        oQueryResults.direct_data = _read_first_column_ids(oRecordset)
-                            .Select(id_ => oTransaction.read_invoice(oClientAccess, id_, true))
-                            .ToArray();
+                        arrIds = _read_first_column_ids(oRecordset);
                     }
+
+                    oQueryResults.direct_data = arrIds
+                        .Select(id_ =>
+                        {
+                            using (ne_trans oDocumentTransaction = oClientAccess.create_transaction())
+                            {
+                                return oDocumentTransaction.read_invoice(oClientAccess, id_, true);
+                            }
+                        })
+                        .ToArray();
                 }
                 else
                 {
