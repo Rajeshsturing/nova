@@ -1,4 +1,4 @@
-﻿//--------------------------------------------------------------------------
+//--------------------------------------------------------------------------
 // NAVO.Cocoon project
 // Copyright NAVO Sp. z o.o. All Rights reserved 2016
 // 
@@ -172,9 +172,22 @@ join n5rejestrdok r on z.pRejestrDok = r.IdObj and r.eTyp in (33, 56)
                     return oDocument;
                 };
 
-                ne_trans oTransaction = oClientAccess.create_transaction();
+                if (oParams.get_lines)
+                {
+                    using (ne_trans oTransaction = oClientAccess.create_transaction())
+                    using (ne_recordset oRecordset = oTransaction.createadors(strSQL))
+                    {
+                        oQueryResults.direct_data = _read_first_column_ids(oRecordset)
+                            .Select(id_ => oTransaction.read_order(oClientAccess, id_, true))
+                            .ToArray();
+                    }
+                }
+                else
+                {
+                    ne_trans oTransaction = oClientAccess.create_transaction();
 
-                oQueryResults.set_data(oTransaction, oTransaction.createadors(strSQL), fpConvertToResults_);
+                    oQueryResults.set_data(oTransaction, oTransaction.createadors(strSQL), fpConvertToResults_);
+                }
             }
 
             return oQueryResults;
@@ -300,12 +313,38 @@ join n5rejestrdok r on s.pRejestrDok = r.IdObj and r.eTyp in (1, 2, 35, 36, 49, 
                     return oDocument;
                 };
 
-                ne_trans oTransaction = oClientAccess.create_transaction();
+                if (oParams.get_lines)
+                {
+                    using (ne_trans oTransaction = oClientAccess.create_transaction())
+                    using (ne_recordset oRecordset = oTransaction.createadors(strSQL))
+                    {
+                        oQueryResults.direct_data = _read_first_column_ids(oRecordset)
+                            .Select(id_ => oTransaction.read_invoice(oClientAccess, id_, true))
+                            .ToArray();
+                    }
+                }
+                else
+                {
+                    ne_trans oTransaction = oClientAccess.create_transaction();
 
-                oQueryResults.set_data(oTransaction, oTransaction.createadors(strSQL), fpConvertToResults_);
+                    oQueryResults.set_data(oTransaction, oTransaction.createadors(strSQL), fpConvertToResults_);
+                }
             }
 
             return oQueryResults;
+        }
+
+        private static List<int> _read_first_column_ids(ne_recordset oRecordset)
+        {
+            List<int> arrIds = new List<int>();
+
+            while (!oRecordset.EOF)
+            {
+                arrIds.Add(Convert.ToInt32(oRecordset.get_field(0)));
+                oRecordset.MoveNext();
+            }
+
+            return arrIds;
         }
 
         public static eb_query_results customers(eb_client_access oClientAccess, ebqp_customers oParams)
